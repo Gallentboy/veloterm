@@ -117,7 +117,7 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
     const state = editor.saveViewState();
     if (!state) return;
     viewStateCache.set(fileId, state);
-    latestPropsRef.current.onViewStateChange(state);
+    latestPropsRef.current.onViewStateChange(fileId, state);
   }, []);
 
   /** 父层下发的内容与 model 不一致且确非本地编辑回报时，重置 model 内容（加载完成/保存回执/回滚） */
@@ -207,7 +207,7 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
         const prevState = editor.saveViewState();
         if (prevState) {
           viewStateCache.set(prevFileId, prevState);
-          latestPropsRef.current.onViewStateChange(prevState);
+          latestPropsRef.current.onViewStateChange(prevFileId, prevState);
         }
       }
     }

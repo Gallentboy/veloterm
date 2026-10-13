@@ -95,13 +95,12 @@ export function EditorScreen() {
     }
   }, [activeFileId, saveFile]);
 
-  const handleViewStateChangeForActive = useCallback(
-    (viewState: unknown) => {
-      if (activeFileId !== null) {
-        handleViewStateChange(activeFileId, viewState);
-      }
+  // 契约 v2：viewState 上报携带 fileId，切文件瞬间的归档不会错位
+  const handleViewStateChangeById = useCallback(
+    (fileId: number, viewState: unknown) => {
+      handleViewStateChange(fileId, viewState);
     },
-    [activeFileId, handleViewStateChange],
+    [handleViewStateChange],
   );
 
   const handleCursorChange = useCallback((line: number, column: number) => {
@@ -157,7 +156,7 @@ export function EditorScreen() {
           readOnly={readOnly}
           onContentChange={handleContentChangeForActive}
           onSaveRequest={handleSaveRequestForActive}
-          onViewStateChange={handleViewStateChangeForActive}
+          onViewStateChange={handleViewStateChangeById}
           onCursorChange={handleCursorChange}
         />
       </div>

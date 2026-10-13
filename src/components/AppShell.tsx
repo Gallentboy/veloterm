@@ -23,7 +23,7 @@ import { isMacOS } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { getDbKv, setDbKv } from '@/services/dbStorage';
 import { useSftpStore } from '@/services/SftpProvider';
-import { EditorProvider } from '@/editor/EditorProvider';
+import { useEditorStore } from '@/editor/EditorProvider';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
 
 /** 主面板圆角（ZCode workspaceShellWindowChrome 规则）：macOS Tahoe 26+ 为 12px。 */
@@ -77,6 +77,8 @@ function persistSidebarWidth(widthPx: number): void {
  */
 export function AppShell() {
   const { t } = useTranslation();
+  // 编辑器会话（Provider 挂在 App 层，这里拿 openFile 供文件页入口调用）
+  const { openFile: openEditorFile } = useEditorStore();
   const { isSidebarVisible, toggleSidebar } = useAppPanels();
   const { createSession } = useTerminalStore();
   const { createSession: createSftpSession } = useSftpStore();
@@ -242,8 +244,7 @@ export function AppShell() {
   // 窗口底座（ZCode DesktopWindowFrame 同款）：mac 走半透明 alt 叠 vibrancy，
   // 无 vibrancy 的平台用不透明 win-alt 兜底，避免半透明混出异常灰块。
   return (
-    <EditorProvider>
-      <div
+    <div
         className={cn(
           'flex h-dvh flex-col overflow-hidden',
           isMacOS ? 'bg-background-alt' : 'bg-background-win-alt',
@@ -310,6 +311,10 @@ export function AppShell() {
                   <FilesScreen
                     isVisible={page === 'files'}
                     onNavigateHosts={() => setPage('hosts')}
+                    onOpenEditor={(file) => {
+                      openEditorFile(file);
+                      setPage('editor');
+                    }}
                   />
                 </div>
                 {page === 'home' ? (
@@ -348,6 +353,5 @@ export function AppShell() {
           <DesktopTopOverlay isSidebarVisible={isSidebarVisible} onToggleSidebar={toggleSidebar} />
         </div>
       </div>
-    </EditorProvider>
   );
 }

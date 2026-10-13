@@ -56,7 +56,8 @@ export interface MonacoDocumentCardProps {
   onContentChange(content: string): void;
   /** Cmd/Ctrl+S */
   onSaveRequest(): void;
-  onViewStateChange(viewState: unknown): void;
+  /** viewState 上报携带 fileId：切文件瞬间上报的是旧文件的 viewState，按 id 归档不会错位 */
+  onViewStateChange(fileId: number, viewState: unknown): void;
   onCursorChange(line: number, column: number): void;
 }
 
