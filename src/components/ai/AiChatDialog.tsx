@@ -142,6 +142,12 @@ export function AiChatDialog({ open, onClose, initialPrompt }: AiChatDialogProps
 
   const provider = providers.find((p) => p.id === providerId);
 
+  // Modal 自身无 open 概念（其他调用方均条件挂载），这里必须显式守卫，
+  // 否则全屏遮罩常驻、拦截所有点击。
+  if (!open) {
+    return null;
+  }
+
   return (
     <Modal
       title={t('ai.chat.title')}
