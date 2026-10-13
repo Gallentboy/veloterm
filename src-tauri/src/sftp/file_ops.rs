@@ -52,23 +52,29 @@ pub async fn sftp_read_file(
   state: State<'_, SftpState>,
 ) -> Result<SftpFileContent, String> {
   let session_key = host_id.to_string();
+  let t0 = std::time::Instant::now();
   let client = get_or_connect_sftp(&state, &session_key).await?;
+  let t_conn = t0.elapsed();
 
   // 1. stat 校验大小上限
+  let t1 = std::time::Instant::now();
   let meta = client
     .metadata(&remote_path)
     .await
     .map_err(|e| format!("Failed to stat remote file '{remote_path}': {e}"))?;
+  let t_stat = t1.elapsed();
   let size = meta.len();
   if size > MAX_EDITABLE_FILE_SIZE_BYTES {
     return Err("文件超过 5MB，不可编辑".to_string());
   }
 
   // 2. 打开文件，读前 512 字节做文本嗅探
+  let t2 = std::time::Instant::now();
   let mut remote_file = client
     .open(&remote_path)
     .await
     .map_err(|e| format!("Failed to open remote file '{remote_path}': {e}"))?;
+  let t_open = t2.elapsed();
 
   let mut probe = vec![0u8; SNIFF_PROBE_BYTES.min(size as usize)];
   let mut probed = 0usize;
@@ -107,7 +113,15 @@ pub async fn sftp_read_file(
     }
   }
 
+  let t3 = std::time::Instant::now();
   let size = data.len() as u64;
+  // 显式关闭句柄：泄漏的 open handle 会在服务器侧累积，导致后续操作变慢/挂起
+  let _ = remote_file.close().await;
+  log::info!(
+    "[SFTP] read_file '{remote_path}' done: conn={t_conn:?} stat={t_stat:?} open={t_open:?} read={:?} total={:?} bytes={size}",
+    t3.elapsed(),
+    t0.elapsed()
+  );
   Ok(SftpFileContent {
     content: String::from_utf8_lossy(&data).into_owned(),
     size,
