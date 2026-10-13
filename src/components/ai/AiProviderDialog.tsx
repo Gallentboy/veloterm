@@ -119,8 +119,8 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
             <span className="mr-2 max-w-48 truncate text-ui-xs text-success">{t('ai.provider.testOk')}</span>
           )}
           {testState === 'fail' && (
-            <span className="mr-2 max-w-48 truncate text-ui-xs text-destructive" title={testMessage}>
-              {t('ai.provider.testFail')}
+            <span className="mr-2 max-w-56 truncate text-ui-xs text-destructive" title={testMessage}>
+              {testMessage || t('ai.provider.testFail')}
             </span>
           )}
           <Button variant="ghost" onClick={onClose}>

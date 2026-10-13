@@ -198,10 +198,15 @@ where
     }
   }
 
-  let mut builder = model.completion_request("").messages(messages);
+  // rig 的 build() 会把 prompt 追加到消息尾部：若传空串会产生一条空 user 消息，
+  // 部分服务商会拒绝。这里把最后一条 user 消息作为 prompt，其余进 chat_history。
+  let prompt = messages.pop().unwrap_or_else(|| rig::message::Message::user(""));
+  let mut builder = model.completion_request(prompt).messages(messages);
   if let Some(p) = preamble {
     builder = builder.preamble(p);
   }
+  // Anthropic 硬性要求 max_tokens；其他供应商无害
+  builder = builder.max_tokens(4096);
   let request = builder.build();
 
   let mut stream = model.stream(request).await.map_err(|e| e.to_string())?;
