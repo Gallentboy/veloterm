@@ -38,6 +38,8 @@ export default {
       keys: 'API Key（多 Key 轮询）',
       keyN: 'Key {{index}}',
       addKey: '添加 Key',
+      loadModels: '拉取模型列表',
+      noModels: '该 Key 下没有可用模型',
       rotationHint: '多个 Key 会在请求间轮询分摊限流配额',
       isDefault: '设为默认供应商',
       test: '测试连通',

@@ -71,3 +71,8 @@ export function testAiProvider(
   channel.onmessage = onChunk;
   return invoke<void>('ai_provider_test', { record, onChunk: channel });
 }
+
+/** 列出供应商可用模型 */
+export function listAiModels(record: AiProvider): Promise<string[]> {
+  return invoke<string[]>('ai_list_models', { record });
+}

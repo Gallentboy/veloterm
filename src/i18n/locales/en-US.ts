@@ -38,6 +38,8 @@ export default {
       keys: 'API Keys (rotation)',
       keyN: 'Key {{index}}',
       addKey: 'Add key',
+      loadModels: 'Fetch model list',
+      noModels: 'No models available for this key',
       rotationHint: 'Multiple keys rotate per request to spread rate limits',
       isDefault: 'Set as default provider',
       test: 'Test',
