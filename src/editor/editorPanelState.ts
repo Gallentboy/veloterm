@@ -60,17 +60,22 @@ export function findFileByPath(
   return null;
 }
 
+/**
+ * 新增文件条目。id 由调用方预先生成并传入——保持更新器纯函数：
+ * StrictMode 会双调用 setState 更新器，若在更新器内部生成随机/递增 id，
+ * 两次结果不一致会导致 React 采纳的 state 与 ref 镜像分裂（id 各归各的世界）。
+ */
 export function addFile(
   state: EditorPanelState,
   params: {
+    id: number;
     hostId: number;
     remotePath: string;
-    existingIds?: readonly number[];
   },
 ): { state: EditorPanelState; file: EditorFileDescriptor } {
   const fileName = getRemoteFileName(params.remotePath);
   const file: EditorFileDescriptor = {
-    id: nextFileId(params.existingIds ?? state.fileIds),
+    id: params.id,
     hostId: params.hostId,
     remotePath: params.remotePath,
     fileName,

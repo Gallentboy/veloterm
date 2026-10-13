@@ -13,6 +13,7 @@ import { computeBaseHash, loadRemoteContent, saveRemoteContent } from '@/editor/
 import {
   activateFile as activateFileState,
   addFile,
+  nextFileId,
   collectHostFileIds,
   findFileByPath,
   markHostOffline,
@@ -309,16 +310,18 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         applyPanelState((current) => activateFileState(current, existing.id));
         return existing.id;
       }
-      let createdId = 0;
+      // id 在更新器外预生成：保持更新器纯函数（StrictMode 双调用下结果一致，
+      // 避免 state 与 ref 镜像按不同 id 分裂——曾致点编辑不触发读取、点标签才读）
+      const newId = nextFileId(panelStateRef.current.fileIds);
       applyPanelState((current) => {
-        const { state, file } = addFile(current, {
+        const { state } = addFile(current, {
+          id: newId,
           hostId: params.hostId,
           remotePath: params.remotePath,
         });
-        createdId = file.id;
         return state;
       });
-      return createdId;
+      return newId;
     },
     [applyPanelState],
   );
