@@ -12,6 +12,10 @@ export default {
     settings: '设置',
   },
   ai: {
+    errorChip: {
+      ask: '问 AI',
+      dismiss: '忽略',
+    },
     chat: {
       title: '问 AI',
       placeholder: '描述问题，如：SSH 连接超时怎么排查',

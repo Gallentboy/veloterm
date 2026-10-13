@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { AskAiErrorChip } from '@/components/ai/AskAiErrorChip';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { BroadcastCommandBar } from '@/components/terminal/BroadcastCommandBar';
 import { TerminalGridContainer } from '@/components/terminal/TerminalGridContainer';
@@ -25,6 +26,8 @@ export interface TerminalScreenProps {
   isVisible?: boolean;
   isPanelResizing?: boolean;
   onNavigateHosts?: () => void;
+  /** 打开 AI 对话（可携带错误现场） */
+  onOpenAiChat?: (prompt?: string) => void;
 }
 
 /**
@@ -39,6 +42,7 @@ export function TerminalScreen({
   isVisible = true,
   isPanelResizing = false,
   onNavigateHosts,
+  onOpenAiChat,
 }: TerminalScreenProps) {
   const { t } = useTranslation();
   const { hosts } = useHostsStore();
@@ -180,7 +184,7 @@ export function TerminalScreen({
   return (
     <section
       data-testid="terminal-screen"
-      className="flex h-full min-h-0 flex-col overflow-hidden bg-background"
+      className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background"
     >
       {/* 顶部多 Tab 栏（ZCode Terminal 顶栏规范） */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5">
@@ -403,6 +407,8 @@ export function TerminalScreen({
       {isBroadcastActive && sessions.length > 0 && (
         <BroadcastCommandBar sessions={sessions} onClose={toggleBroadcast} />
       )}
+
+      <AskAiErrorChip onAsk={(prompt) => onOpenAiChat?.(prompt)} />
     </section>
   );
 }
