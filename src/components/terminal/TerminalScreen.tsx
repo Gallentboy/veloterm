@@ -12,10 +12,10 @@ import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { BroadcastCommandBar } from '@/components/terminal/BroadcastCommandBar';
 import { TerminalGridContainer } from '@/components/terminal/TerminalGridContainer';
-import { TerminalSession } from '@/components/terminal/TerminalSession';
 import { TerminalTabTrigger } from '@/components/terminal/TerminalTabTrigger';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { useHostsStore } from '@/hosts/HostsProvider';
 import { cn } from '@/lib/utils';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
 import { formatTerminalTabTitle } from '@/terminal/terminalPanelState';
@@ -41,6 +41,7 @@ export function TerminalScreen({
   onNavigateHosts,
 }: TerminalScreenProps) {
   const { t } = useTranslation();
+  const { hosts } = useHostsStore();
   const {
     transport,
     sessions,
@@ -207,6 +208,58 @@ export function TerminalScreen({
               {t('terminal.title')}
             </span>
           )}
+
+          {/* 新建终端 Tab 按钮（支持本地终端或快捷连接远程主机） */}
+          {sessions.length > 0 && (
+            <div className="relative inline-flex items-center shrink-0">
+              <ControlHintTooltip title="新建终端 (⌘T)" side="bottom">
+                <div className="relative flex items-center justify-center">
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    className="h-7 w-7 rounded-lg text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
+                    onClick={() => createSession()}
+                    aria-label="新建终端"
+                  >
+                    <Plus className="size-3.5" />
+                  </Button>
+                  {hosts.length > 0 && (
+                    <select
+                      id="new-terminal-session-select"
+                      aria-label="新建终端或连接主机"
+                      value=""
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === 'local') {
+                          createSession();
+                        } else {
+                          const hostId = Number(val);
+                          const host = hosts.find((h) => h.id === hostId);
+                          if (host) {
+                            createSession({ hostId: host.id, customTitle: host.name });
+                          }
+                        }
+                      }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer text-xs"
+                    >
+                      <option value="" disabled>
+                        新建终端...
+                      </option>
+                      <option value="local">💻 新建本地终端</option>
+                      <optgroup label="远程主机连接">
+                        {hosts.map((host) => (
+                          <option key={host.id} value={host.id}>
+                            🖥️ {host.name} ({host.username}@{host.host})
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  )}
+                </div>
+              </ControlHintTooltip>
+            </div>
+          )}
         </div>
 
         {/* 右侧状态与辅助动作 */}
@@ -228,27 +281,33 @@ export function TerminalScreen({
           ) : null}
 
           {/* 协同广播开关按钮 */}
-          {sessions.length > 1 && (
+          {sessions.length > 0 && (
             <ControlHintTooltip
-              title={isBroadcastActive ? '关闭协同广播 (⌘⇧B)' : '开启多终端协同广播 (⌘⇧B)'}
+              title={isBroadcastActive ? '收起协同广播 (⌘⇧B)' : '开启多终端协同广播 (⌘⇧B)'}
               side="bottom"
               align="end"
             >
               <Button
                 type="button"
-                size="icon-md"
+                size="sm"
                 variant={isBroadcastActive ? 'secondary' : 'ghost'}
                 onClick={toggleBroadcast}
-                className={cn('size-7 rounded-lg relative', isBroadcastActive && 'bg-primary/10 text-primary')}
+                className={cn(
+                  'h-7 px-2 text-xs font-medium gap-1.5 rounded-lg border transition-all',
+                  isBroadcastActive
+                    ? 'border-primary/50 bg-primary/10 text-primary shadow-xs ring-1 ring-primary/20'
+                    : 'border-border/60 text-foreground-muted hover:text-foreground hover:bg-hover'
+                )}
                 aria-label="协同广播"
               >
                 <Radio className={cn('size-3.5', isBroadcastActive && 'text-primary animate-pulse')} />
+                <span>{isBroadcastActive ? '广播中' : '广播'}</span>
               </Button>
             </ControlHintTooltip>
           )}
 
-          {/* 网格视图 / 标签视图切换按钮 */}
-          {sessions.length > 1 && (
+          {/* 网格平铺视图 / 标签页视图切换按钮 */}
+          {sessions.length > 0 && (
             <ControlHintTooltip
               title={layoutMode === 'grid' ? '切换为标签页视图 (⌘⇧G)' : '切换为九宫格平铺视图 (⌘⇧G)'}
               side="bottom"
@@ -256,16 +315,27 @@ export function TerminalScreen({
             >
               <Button
                 type="button"
-                size="icon-md"
+                size="sm"
                 variant={layoutMode === 'grid' ? 'secondary' : 'ghost'}
                 onClick={toggleLayoutMode}
-                className={cn('size-7 rounded-lg', layoutMode === 'grid' && 'bg-primary/10 text-primary')}
+                className={cn(
+                  'h-7 px-2 text-xs font-medium gap-1.5 rounded-lg border transition-all',
+                  layoutMode === 'grid'
+                    ? 'border-primary/50 bg-primary/10 text-primary shadow-xs ring-1 ring-primary/20'
+                    : 'border-border/60 text-foreground-muted hover:text-foreground hover:bg-hover'
+                )}
                 aria-label="切换网格视图"
               >
                 {layoutMode === 'grid' ? (
-                  <LayoutGrid className="size-3.5" />
+                  <>
+                    <LayoutGrid className="size-3.5 text-primary" />
+                    <span>宫格</span>
+                  </>
                 ) : (
-                  <Grid2X2 className="size-3.5" />
+                  <>
+                    <Grid2X2 className="size-3.5" />
+                    <span>宫格</span>
+                  </>
                 )}
               </Button>
             </ControlHintTooltip>
@@ -309,54 +379,24 @@ export function TerminalScreen({
               : undefined
           }
         />
-      ) : layoutMode === 'grid' ? (
-        /* 九宫格 / 平铺网格矩阵模式 */
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <TerminalGridContainer
-            sessions={sessions}
-            activeSessionId={activeSession?.id ?? 0}
-            maximizedSessionId={maximizedSessionId}
-            transport={transport}
-            isPanelResizing={isPanelResizing}
-            isVisible={isVisible}
-            onActivateSession={activateSession}
-            onMaximizeSession={setMaximizedSessionId}
-            onCloseSession={closeSession}
-            onShellLabelChange={updateShellLabel}
-            onSizeChange={handleSizeChange}
-            onWebglStatusChange={handleWebglStatusChange}
-            onExit={handleSessionExit}
-          />
-        </div>
       ) : (
-        /* 标准单 Tab 标签模式（非激活 Tab hidden 保活） */
-        <div className="min-h-0 flex-1 overflow-hidden p-3 pt-2">
-          {sessions.map((session) => {
-            const isTabActive = session.id === activeSession?.id;
-            return (
-              <div
-                key={session.id}
-                role="tabpanel"
-                aria-hidden={!isTabActive}
-                data-state={isTabActive ? 'active' : 'inactive'}
-                className={cn('h-full min-h-0 w-full', !isTabActive && 'hidden')}
-              >
-                <TerminalSession
-                  sessionId={session.id}
-                  transport={transport}
-                  cwd={session.cwd}
-                  hostId={session.hostId}
-                  isVisible={isVisible && isTabActive}
-                  isPanelResizing={isPanelResizing}
-                  onShellLabelChange={updateShellLabel}
-                  onSizeChange={handleSizeChange}
-                  onWebglStatusChange={handleWebglStatusChange}
-                  onExit={handleSessionExit}
-                />
-              </div>
-            );
-          })}
-        </div>
+        /* 统一布局容器：宫格平铺 / 标签页仅切换 CSS 类，TerminalSession 保挂载不重挂 */
+        <TerminalGridContainer
+          layoutMode={layoutMode}
+          sessions={sessions}
+          activeSessionId={activeSession?.id ?? 0}
+          maximizedSessionId={maximizedSessionId}
+          transport={transport}
+          isPanelResizing={isPanelResizing}
+          isVisible={isVisible}
+          onActivateSession={activateSession}
+          onMaximizeSession={setMaximizedSessionId}
+          onCloseSession={closeSession}
+          onShellLabelChange={updateShellLabel}
+          onSizeChange={handleSizeChange}
+          onWebglStatusChange={handleWebglStatusChange}
+          onExit={handleSessionExit}
+        />
       )}
 
       {/* 协同广播命令输入栏（吸附于底部） */}
