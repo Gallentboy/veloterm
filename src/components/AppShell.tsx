@@ -89,6 +89,11 @@ export function AppShell() {
     return () => clearTimeout(timer);
   }, []);
 
+  const { isSidebarVisible, toggleSidebar } = useAppPanels();
+  const { createSession } = useTerminalStore();
+  const { createSession: createSftpSession } = useSftpStore();
+  const [page, setPage] = useState<Page>('home');
+
   // 进入文件页 = 用户可能马上要编辑文件，无延迟再触发一次（与上面去重，模块只拉一次）
   const [hasWarmedOnFiles, setHasWarmedOnFiles] = useState(false);
   useEffect(() => {
@@ -97,10 +102,6 @@ export function AppShell() {
       void import('@/components/editor/MonacoDocumentCard');
     }
   }, [page, hasWarmedOnFiles]);
-  const { isSidebarVisible, toggleSidebar } = useAppPanels();
-  const { createSession } = useTerminalStore();
-  const { createSession: createSftpSession } = useSftpStore();
-  const [page, setPage] = useState<Page>('home');
   const [sidebarWidthPx, setSidebarWidthPx] = useState<number>(() => readStoredSidebarWidth());
 
   const shellRef = useRef<HTMLDivElement>(null);
