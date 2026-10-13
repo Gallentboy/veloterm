@@ -122,6 +122,16 @@ export default {
       clearFinished: 'Clear finished',
       queued: 'queued',
       retry: 'Retry',
+      copy: 'Remote copy',
+    },
+    pane: {
+      emptyTitle: 'No session on this side',
+      emptyDesc: 'Pick a host tab above or connect a new one; with hosts on both sides, drag files across panes to copy',
+      emptyAction: 'Connect host',
+    },
+    drag: {
+      unsupportedDir: 'Dragging folders is not supported yet — compress first or drag files individually',
+      sameTarget: 'Source and target paths are identical, nothing to copy',
     },
     transferCompleted: 'Transfer Completed',
     transferCancelled: 'Cancelled',

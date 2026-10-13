@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import {
+  copyRemoteFile,
   downloadRemoteFile,
   uploadLocalFile,
   type TransferProgress,
@@ -8,18 +9,27 @@ import {
 /**
  * 全局 SFTP 传输队列：并行调度（可配并发数）、失败自动重试（可配次数 + 手动重试）、
  * 可选限速（0 = 不限速）。跨会话/主机共享一个队列，设置持久化到 localStorage。
+ * 支持上传 / 下载 / 远端到远端复制（copy：源端 sessionId+remotePath，目标端
+ * targetSessionId+targetRemotePath，由 Rust 后端流式中转，不经本地磁盘）。
  */
 
-export type TransferDirection = 'upload' | 'download';
+export type TransferDirection = 'upload' | 'download' | 'copy';
 
 export type TransferTaskStatus = 'queued' | 'active' | 'done' | 'error' | 'canceled';
 
 export interface TransferTask {
   id: number;
   direction: TransferDirection;
+  /** copy 方向时为源端会话；upload/download 方向为操作会话 */
   sessionId: string;
+  /** copy 方向时为源端路径 */
   remotePath: string;
-  localPath: string;
+  /** 本地路径（copy 方向远端到远端直传，无本地路径） */
+  localPath?: string;
+  /** 复制目标端会话（仅 direction = 'copy'） */
+  targetSessionId?: string;
+  /** 复制目标端路径（仅 direction = 'copy'） */
+  targetRemotePath?: string;
   fileName: string;
   totalBytes: number;
   transferred: number;
@@ -56,9 +66,16 @@ const AUTO_RETRY_DELAY_MS = 1200;
 
 interface EnqueueParams {
   direction: TransferDirection;
+  /** copy 方向时为源端会话；upload/download 方向为操作会话 */
   sessionId: string;
+  /** copy 方向时为源端路径 */
   remotePath: string;
-  localPath: string;
+  /** 本地路径（copy 方向可省略） */
+  localPath?: string;
+  /** 复制目标端会话（仅 direction = 'copy'） */
+  targetSessionId?: string;
+  /** 复制目标端路径（仅 direction = 'copy'） */
+  targetRemotePath?: string;
   fileName: string;
   onFinished?: (task: TransferTask) => void;
 }
@@ -111,6 +128,8 @@ class TransferQueue {
       sessionId: params.sessionId,
       remotePath: params.remotePath,
       localPath: params.localPath,
+      targetSessionId: params.targetSessionId,
+      targetRemotePath: params.targetRemotePath,
       fileName: params.fileName,
       totalBytes: 0,
       transferred: 0,
@@ -211,21 +230,31 @@ class TransferQueue {
     const speedLimit = this.settings.speedLimitBps;
     try {
       const handle =
-        task.direction === 'upload'
-          ? await uploadLocalFile(
+        task.direction === 'copy'
+          ? await copyRemoteFile(
+              // 远端到远端复制：sessionId/remotePath 为源端，targetSessionId/targetRemotePath 为目标端
               task.sessionId,
-              task.localPath,
               task.remotePath,
+              task.targetSessionId ?? '',
+              task.targetRemotePath ?? '',
               (progress: TransferProgress) => this.onProgress(task.id, progress),
               speedLimit,
             )
-          : await downloadRemoteFile(
-              task.sessionId,
-              task.remotePath,
-              task.localPath,
-              (progress: TransferProgress) => this.onProgress(task.id, progress),
-              speedLimit,
-            );
+          : task.direction === 'upload'
+            ? await uploadLocalFile(
+                task.sessionId,
+                task.localPath ?? '',
+                task.remotePath,
+                (progress: TransferProgress) => this.onProgress(task.id, progress),
+                speedLimit,
+              )
+            : await downloadRemoteFile(
+                task.sessionId,
+                task.remotePath,
+                task.localPath ?? '',
+                (progress: TransferProgress) => this.onProgress(task.id, progress),
+                speedLimit,
+              );
       task.cancel = handle.cancel;
       this.emit();
       await handle.done;

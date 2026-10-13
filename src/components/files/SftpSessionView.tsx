@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  ArrowLeftRight,
   ArrowUp,
   Download,
   File,
@@ -136,6 +137,17 @@ function formatModifiedTime(timestampSec: number): string {
   });
 }
 
+/** 面板间拖拽复制的自定义 MIME 载荷标识 */
+const SFTP_DRAG_MIME = 'application/x-veloterm-sftp';
+
+/** 拖拽载荷：源面板会话 + 被拖拽条目信息 */
+interface SftpDragPayload {
+  sessionId: string;
+  path: string;
+  name: string;
+  isDir: boolean;
+}
+
 export interface SftpSessionViewProps {
   sessionId: string;
   hostId: number;
@@ -144,6 +156,8 @@ export interface SftpSessionViewProps {
   onPathChange?: (path: string) => void;
   /** 打开可编辑文件到编辑器页 */
   onOpenEditor?: (file: { hostId: number; remotePath: string }) => void;
+  /** 面板获得焦点（双栏场景下用于标记激活面板，任意指针交互捕获触发） */
+  onPaneFocus?: () => void;
 }
 
 export function SftpSessionView({
@@ -153,6 +167,7 @@ export function SftpSessionView({
   isVisible: _isVisible,
   onPathChange,
   onOpenEditor,
+  onPaneFocus,
 }: SftpSessionViewProps) {
   const { t } = useTranslation();
   const [currentPath, setCurrentPath] = useState<string>(initialPath || '/');
@@ -162,6 +177,8 @@ export function SftpSessionView({
   const [error, setError] = useState<string | null>(null);
   const [itemToDelete, setItemToDelete] = useState<RemoteFileItem | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  // 是否正被拖拽悬停（作为放置目标时的高亮态）
+  const [isDropTarget, setIsDropTarget] = useState<boolean>(false);
 
   // 刷新当前路径目录
   const loadDirectory = useCallback(
@@ -288,12 +305,81 @@ export function SftpSessionView({
     }
   };
 
+  // ===== 面板间拖拽复制：整个面板作为放置目标 =====
+
+  /** 拖拽悬停：仅识别自定义 SFTP 载荷才允许放置 */
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer.types.includes(SFTP_DRAG_MIME)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      setIsDropTarget(true);
+    }
+  };
+
+  /** 真正离开面板边界才取消高亮（在子元素间移动不取消） */
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      setIsDropTarget(false);
+    }
+  };
+
+  /** 放置：解析载荷并入队远端复制任务（目录拖拽/源目标相同均拒绝并提示） */
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDropTarget(false);
+    const raw = e.dataTransfer.getData(SFTP_DRAG_MIME);
+    if (!raw) return;
+    let payload: SftpDragPayload;
+    try {
+      payload = JSON.parse(raw) as SftpDragPayload;
+    } catch {
+      return; // 非法载荷直接忽略
+    }
+    if (!payload?.sessionId || !payload.path || !payload.name) return;
+    if (payload.isDir) {
+      setError(t('files.drag.unsupportedDir'));
+      return;
+    }
+    const targetPath =
+      currentPath === '/' ? `/${payload.name}` : `${currentPath}/${payload.name}`;
+    if (payload.sessionId === sessionId && payload.path === targetPath) {
+      setError(t('files.drag.sameTarget'));
+      return;
+    }
+    // 入队远端复制：源会话读取，本面板会话写入，完成后刷新目标面板列表
+    transferQueue.enqueue({
+      direction: 'copy',
+      sessionId: payload.sessionId,
+      remotePath: payload.path,
+      targetSessionId: sessionId,
+      targetRemotePath: targetPath,
+      fileName: payload.name,
+      onFinished: () => void loadDirectory(currentPath),
+    });
+  };
+
   const allTasks = useTransferTasks();
-  const transfersList = allTasks.filter((task) => task.sessionId === sessionId);
+  // copy 任务双端可见：源端（sessionId）与目标端（targetSessionId）都展示
+  const transfersList = allTasks.filter(
+    (task) => task.sessionId === sessionId || task.targetSessionId === sessionId,
+  );
   const transferSettings = useTransferSettings();
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
+    <div
+      onPointerDownCapture={() => onPaneFocus?.()}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={cn(
+        'relative flex h-full min-h-0 flex-col overflow-hidden bg-background',
+        isDropTarget && 'ring-2 ring-primary/50 ring-inset',
+      )}
+    >
+      {/* 拖拽悬停高亮层：绝对定位 + 不拦截指针，不影响布局与拖放事件 */}
+      {isDropTarget && (
+        <div className="pointer-events-none absolute inset-0 z-20 bg-primary/5" />
+      )}
       {/* 顶部工具栏：返回上级 + 刷新 + 路径输入 + 上传 */}
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/50 px-3 py-2">
         <div className="flex items-center gap-1.5">
@@ -418,6 +504,20 @@ export function SftpSessionView({
                 return (
                   <tr
                     key={item.path}
+                    draggable
+                    onDragStart={(e) => {
+                      // 目录也允许拖起，由放置端校验拒绝并给出明确提示
+                      e.dataTransfer.setData(
+                        SFTP_DRAG_MIME,
+                        JSON.stringify({
+                          sessionId,
+                          path: item.path,
+                          name: item.name,
+                          isDir: item.is_dir,
+                        }),
+                      );
+                      e.dataTransfer.effectAllowed = 'copy';
+                    }}
                     onDoubleClick={() => {
                       if (item.is_dir) {
                         handleNavigate(item.path);
@@ -595,7 +695,9 @@ export function SftpSessionView({
               className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/90 px-3 py-1.5 text-ui-xs shadow-xs"
             >
               <div className="flex items-center gap-2 min-w-0">
-                {tItem.direction === 'upload' ? (
+                {tItem.direction === 'copy' ? (
+                  <ArrowLeftRight className="size-3.5 text-primary shrink-0" />
+                ) : tItem.direction === 'upload' ? (
                   <Upload className="size-3.5 text-primary shrink-0" />
                 ) : (
                   <Download className="size-3.5 text-success shrink-0" />
