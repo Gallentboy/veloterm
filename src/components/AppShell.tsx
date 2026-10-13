@@ -15,7 +15,7 @@ import { HostsScreen } from '@/components/hosts/HostsScreen';
 import { SettingsScreen } from '@/components/SettingsScreen';
 import { TerminalScreen } from '@/components/terminal';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
-import { AiChatDialog } from '@/components/ai/AiChatDialog';
+import { AiChatPanel } from '@/components/ai/AiChatPanel';
 import { WorkspaceHeader } from '@/components/WorkspaceHeader';
 import { WorkspaceSidebar, type Page } from '@/components/WorkspaceSidebar';
 import { useAppPanels } from '@/hooks/useAppPanels';
@@ -330,6 +330,7 @@ export function AppShell() {
           {/* 内容列内缩与 ZCode 一致：右/下 4px、左 0，顶部经 4px 拖拽条让面板上缘留出等宽间隙 */}
           <div className="flex min-w-[320px] flex-1 flex-col p-1 pl-0 pt-0">
             <div className="h-1 w-full shrink-0" data-tauri-drag-region />
+            <div className="flex min-h-0 flex-1 gap-1">
             <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-(--workspace-panel-radius) border border-border bg-background">
               <WorkspaceHeader
                 page={page}
@@ -380,19 +381,21 @@ export function AppShell() {
                 )}
               </main>
             </section>
+
+            {/* AI 右侧面板（ZCode 布局范式：常驻侧栏、跨页面保活、不遮挡主内容） */}
+            <AiChatPanel
+              open={isAiChatOpen}
+              onClose={() => setAiChatOpen(false)}
+              initialPrompt={aiInitialPrompt}
+              onOpenSettings={() => {
+                setAiChatOpen(false);
+                setPage('settings');
+              }}
+            />
+            </div>
           </div>
 
           <DesktopTopOverlay isSidebarVisible={isSidebarVisible} onToggleSidebar={toggleSidebar} />
-
-          <AiChatDialog
-            open={isAiChatOpen}
-            onClose={() => setAiChatOpen(false)}
-            initialPrompt={aiInitialPrompt}
-            onOpenSettings={() => {
-              setAiChatOpen(false);
-              setPage('settings');
-            }}
-          />
         </div>
       </div>
   );
