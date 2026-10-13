@@ -10,6 +10,8 @@ export interface RemoteFileItem {
   permissions: number;
   owner?: string;
   group?: string;
+  /** 是否可编辑（后端 text_detect 判定：文本扩展名 + ≤5MB） */
+  editable?: boolean;
 }
 
 export interface TransferProgress {

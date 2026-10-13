@@ -1,5 +1,6 @@
 import { LucideProvider } from 'lucide-react';
 import { AppShell } from '@/components/AppShell';
+import { EditorProvider } from '@/editor/EditorProvider';
 import { HostsProvider } from '@/hosts/HostsProvider';
 import { SftpProvider } from '@/services/SftpProvider';
 import { TerminalProvider } from '@/terminal/TerminalProvider';
@@ -15,7 +16,9 @@ const App = () => {
         <HostsProvider>
           <TerminalProvider>
             <SftpProvider>
-              <AppShell />
+              <EditorProvider>
+                <AppShell />
+              </EditorProvider>
             </SftpProvider>
           </TerminalProvider>
         </HostsProvider>

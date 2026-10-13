@@ -17,9 +17,11 @@ import { useSftpStore } from '@/services/SftpProvider';
 export interface FilesScreenProps {
   isVisible?: boolean;
   onNavigateHosts?: () => void;
+  /** 打开可编辑文件到编辑器页（由 AppShell 注入：openFile + 切页） */
+  onOpenEditor?: (file: { hostId: number; remotePath: string }) => void;
 }
 
-export function FilesScreen({ isVisible = true, onNavigateHosts }: FilesScreenProps) {
+export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }: FilesScreenProps) {
   const { t } = useTranslation();
   const selectId = useId();
   const { hosts } = useHostsStore();
@@ -211,6 +213,7 @@ export function FilesScreen({ isVisible = true, onNavigateHosts }: FilesScreenPr
                   initialPath={session.currentPath}
                   isVisible={Boolean(isVisible && isTabActive)}
                   onPathChange={(path) => updateSessionPath(session.id, path)}
+                  onOpenEditor={onOpenEditor}
                 />
               </div>
             );

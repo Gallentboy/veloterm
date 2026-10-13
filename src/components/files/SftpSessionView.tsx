@@ -3,6 +3,7 @@ import {
   ArrowUp,
   Download,
   File,
+  FileCode,
   Folder,
   FolderOpen,
   Loader2,
@@ -154,14 +155,17 @@ export interface SftpSessionViewProps {
   initialPath: string;
   isVisible: boolean;
   onPathChange?: (path: string) => void;
+  /** 打开可编辑文件到编辑器页 */
+  onOpenEditor?: (file: { hostId: number; remotePath: string }) => void;
 }
 
 export function SftpSessionView({
   sessionId,
-  hostId: _hostId,
+  hostId,
   initialPath,
   isVisible,
   onPathChange,
+  onOpenEditor,
 }: SftpSessionViewProps) {
   const { t } = useTranslation();
   const [currentPath, setCurrentPath] = useState<string>(initialPath || '/');
@@ -548,7 +552,13 @@ export function SftpSessionView({
                 return (
                   <tr
                     key={item.path}
-                    onDoubleClick={() => item.is_dir && handleNavigate(item.path)}
+                    onDoubleClick={() => {
+                      if (item.is_dir) {
+                        handleNavigate(item.path);
+                      } else if (item.editable && onOpenEditor) {
+                        onOpenEditor({ hostId, remotePath: item.path });
+                      }
+                    }}
                     className="hover:bg-surface/40 transition-colors cursor-pointer group"
                   >
                     <td className="py-1.5 pl-4 pr-2 font-medium">
@@ -597,7 +607,25 @@ export function SftpSessionView({
                             </Button>
                           </Tooltip>
                         ) : (
-                          <Tooltip content={t('files.tooltips.download')} side="left">
+                          <>
+                            {item.editable && onOpenEditor ? (
+                              <Tooltip content={t('files.tooltips.edit')} side="left">
+                                <Button
+                                  type="button"
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onOpenEditor({ hostId, remotePath: item.path });
+                                  }}
+                                  className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
+                                  aria-label={t('files.edit')}
+                                >
+                                  <FileCode className="size-3.5" />
+                                </Button>
+                              </Tooltip>
+                            ) : null}
+                            <Tooltip content={t('files.tooltips.download')} side="left">
                             <Button
                               type="button"
                               size="icon-xs"
@@ -612,6 +640,7 @@ export function SftpSessionView({
                               <Download className="size-3.5" />
                             </Button>
                           </Tooltip>
+                          </>
                         )}
                         <Tooltip content={t('files.tooltips.delete')} side="left">
                           <Button
