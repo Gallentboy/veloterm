@@ -17,6 +17,7 @@ export default {
       dismiss: 'Dismiss',
     },
     panel: {
+      toggle: 'Toggle AI panel',
       resize: 'Resize AI panel',
     },
     chat: {

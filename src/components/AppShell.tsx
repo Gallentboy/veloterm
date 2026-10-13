@@ -450,6 +450,8 @@ export function AppShell() {
                 page={page}
                 isSidebarVisible={isSidebarVisible}
                 onOpenAiChat={() => openAiChat()}
+                isAiPanelOpen={isAiChatOpen}
+                onToggleAiPanel={() => setAiChatOpen((current) => !current)}
               />
               <main className="min-h-0 flex-1 overflow-y-auto relative">
                 {/* SFTP 文件视图持久挂载，切换页面保持后台状态、文件路径与传输任务 */}
