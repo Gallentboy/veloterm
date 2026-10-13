@@ -99,11 +99,25 @@ pub async fn get_or_connect_sftp(
     }
   }
 
-  // 尝试将 session_id 解析为 host_id 进行动态连接
+  // 尝试将 session_id 解析为 host_id 进行动态连接。
+  // connect_lock 串行化建连：并发请求（如 StrictMode 双执行）共享一次握手，
+  // 二次检查缓存避免重复建 SSH 连接。
   if let Ok(host_id) = session_id.parse::<usize>() {
+    let _connect_guard = state.connect_lock.lock().await;
+    {
+      let clients = state.clients.lock().await;
+      if let Some(client) = clients.get(session_id) {
+        return Ok(Arc::clone(client));
+      }
+    }
     log::info!("[SFTP] Connecting on-demand for host_id={host_id} (session_id={session_id})");
+    let started = std::time::Instant::now();
     let chain = resolve_host_chain(host_id)?;
     let client = connect_sftp(chain).await?;
+    log::info!(
+      "[SFTP] Connected on-demand for host_id={host_id} in {}ms",
+      started.elapsed().as_millis()
+    );
     let mut clients = state.clients.lock().await;
     clients.insert(session_id.to_string(), Arc::clone(&client));
     return Ok(client);
