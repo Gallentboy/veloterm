@@ -10,6 +10,7 @@ import {
 } from '@/services/aiService';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { ToolCallCard } from '@/components/ai/ToolCallCard';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
 import {
   executeAgentTool,
@@ -142,11 +143,9 @@ ${output}`);
 
     setInput('');
     setIsStreaming(true);
-    setItems((prev) => [
-      ...prev,
-      { role: 'user', content },
-      { role: 'assistant', content: '', streaming: true },
-    ]);
+    // 只 push user 气泡；assistant 文本气泡由 updateAssistant 在首个 delta 到达时自动创建，
+    // 避免预建的空气泡在工具调用场景下无人写入而永远转圈。
+    setItems((prev) => [...prev, { role: 'user', content }]);
 
     const updateAssistant = (fn: (current: ChatItem) => ChatItem) => {
       setItems((prev) => {
@@ -244,7 +243,14 @@ ${output}`);
         streaming: false,
       }));
     } finally {
-      updateAssistant((current) => ({ ...current, streaming: false }));
+      // 兜底清掉所有残留的 streaming 标记（工具卡片 running + 文本气泡 streaming）
+      setItems((prev) =>
+        prev.map((item) =>
+          item.toolCall
+            ? { ...item, toolCall: { ...item.toolCall, running: false } }
+            : { ...item, streaming: false },
+        ),
+      );
       setIsStreaming(false);
     }
   }
@@ -372,29 +378,7 @@ ${output}`);
         ) : (
           items.map((item, index) =>
             item.toolCall ? (
-              <div
-                key={index}
-                className="self-start w-[92%] rounded-lg border border-border/70 bg-surface/40 px-2.5 py-1.5 select-none"
-              >
-                <div className="flex items-center gap-1.5 text-ui-xs text-foreground-subtle">
-                  {item.toolCall.running ? (
-                    <Loader2 className="size-3 animate-spin text-primary" />
-                  ) : (
-                    <Play className="size-3 text-success" />
-                  )}
-                  <span className="font-mono font-medium">{item.toolCall.name}</span>
-                </div>
-                {item.toolCall.arguments && item.toolCall.arguments !== '{}' && (
-                  <pre className="mt-1 max-h-16 overflow-auto font-mono text-ui-xs text-foreground-subtlest whitespace-pre-wrap">
-                    {item.toolCall.arguments}
-                  </pre>
-                )}
-                {item.toolCall.result && (
-                  <pre className="mt-1 max-h-32 overflow-auto rounded border border-border/50 bg-background px-1.5 py-1 font-mono text-ui-xs text-foreground-subtle whitespace-pre-wrap">
-                    {item.toolCall.result}
-                  </pre>
-                )}
-              </div>
+              <ToolCallCard key={index} toolCall={item.toolCall} />
             ) : (
             <div
               key={index}
