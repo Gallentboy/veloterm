@@ -91,6 +91,59 @@ export async function broadcastToSessions(
 }
 
 /**
+ * 并发扇出向指定的终端会话列表广播原始控制字符（如 Ctrl+C = 0x03 SIGINT, Ctrl+D = 0x04 EOF）：
+ * 用于在多终端群发执行长时间命令（如 top / ping / tail -f）时，一键协同中断所有终端。
+ */
+export async function broadcastSignalToSessions(
+  transport: ITerminalTransport,
+  sessionIds: number[],
+  signalByte: number = 0x03,
+): Promise<BroadcastResult> {
+  const bytes = new Uint8Array([signalByte]);
+  const targets: { sessionId: number; terminalId: number }[] = [];
+  const failedSessionIds: number[] = [];
+
+  for (const sid of sessionIds) {
+    const tid = terminalSessionRegistry.getTerminalId(sid);
+    if (tid !== null) {
+      targets.push({ sessionId: sid, terminalId: tid });
+    } else {
+      failedSessionIds.push(sid);
+    }
+  }
+
+  const writePromises = targets.map((target) =>
+    transport
+      .write({ id: target.terminalId, data: bytes })
+      .then(() => true)
+      .catch((err) => {
+        console.warn(`[broadcastSignalToSessions] write to session ${target.sessionId} failed:`, err);
+        return false;
+      }),
+  );
+
+  const results = await Promise.allSettled(writePromises);
+  let successCount = 0;
+
+  results.forEach((res, idx) => {
+    if (res.status === 'fulfilled' && res.value === true) {
+      successCount += 1;
+    } else {
+      const target = targets[idx];
+      if (target && !failedSessionIds.includes(target.sessionId)) {
+        failedSessionIds.push(target.sessionId);
+      }
+    }
+  });
+
+  return {
+    sessionCount: sessionIds.length,
+    successCount,
+    failedSessionIds,
+  };
+}
+
+/**
  * 读取历史广播命令列表
  */
 export function getBroadcastHistory(): string[] {

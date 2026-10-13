@@ -207,8 +207,15 @@ export const terminalSessionRegistry = {
   attachDom(key: number, host: HTMLElement): void {
     const entry = sessions.get(key);
     if (!entry) return;
-    if (entry.hostEl.parentElement === host) return;
-    host.appendChild(entry.hostEl);
+    if (entry.hostEl.parentElement !== host) {
+      host.appendChild(entry.hostEl);
+    }
+    try {
+      const core = (entry.term as unknown as { _core?: { _charSizeService?: { measure?: () => void } } })._core;
+      core?._charSizeService?.measure?.();
+    } catch {
+      // 忽略测量异常
+    }
   },
 
   /** 组件卸载（如切换侧边栏导航页面或 StrictMode 探测卸载）时将 `entry.hostEl` 移入隐藏暂存区，保持 xterm 与会话存活 */

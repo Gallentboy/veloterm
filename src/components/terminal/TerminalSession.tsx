@@ -28,8 +28,12 @@ const DEFAULT_TERMINAL_FONT_FAMILY =
   'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace';
 
 const TERMINAL_RESIZE_DRAG_THROTTLE_MS = 300;
+/** WebGL 上下文创建/重建开销较大，延迟到 fit 与首次重绘之后再到闲时挂载 */
+const WEBGL_ENSURE_DEFER_MS = 100;
 /** 进程启动后若在极短时间内立即异常退出，保留终端回显错误信息而不触发自动关 Tab 重建循环 */
 const MIN_UPTIME_FOR_AUTO_CLOSE_MS = 600;
+/** xterm 的 resize 会对整个 scrollback 同步重排（reflow），行数直接决定布局切换时的卡顿成本，控制在一个够用的档位 */
+const TERMINAL_SCROLLBACK_LINES = 2000;
 
 type TerminalResizeReason = 'drag' | 'final' | 'visible' | 'init' | 'observer';
 
@@ -59,7 +63,10 @@ export interface TerminalSessionProps {
  * - 兼容 React 19 `<StrictMode>` 双重挂载：卸载时仅 detach DOM、不中断进行中的异步 PTY 创建；
  * - 当前可见会话自动激活 `@xterm/addon-webgl`（含 LRU 上下文池管理与 `onContextLoss` 自动恢复）；
  * - 主题切换时同步更新配色并调用 `clearWebglTextureAtlas` 刷新 WebGL 字形纹理图集；
- * - 拖拽侧边栏时按 300ms 节流 `fit()` 与后端 `resize`，松手后立即 flush 最终尺寸。
+ * - 拖拽侧边栏时按 300ms 节流 `fit()` 与后端 `resize`，松手后立即 flush 最终尺寸；
+ * - 所有 fit 触发源（ResizeObserver / 可见性 / 拖拽结束）统一合并到同一帧 RAF 执行一次，
+ *   布局切换不再依赖多轮延时补偿重试；WebGL 渲染器延迟到空闲时机惰性挂载，
+ *   避免上下文创建阻塞 fit 与首帧重绘。
  */
 export function TerminalSession({
   sessionId,
@@ -82,6 +89,7 @@ export function TerminalSession({
   const isPanelResizingRef = useRef(isPanelResizing);
   const resizeRAFRef = useRef(0);
   const resizeThrottleTimerRef = useRef<number | null>(null);
+  const webglDeferTimerRef = useRef<number | null>(null);
   const lastSentTerminalSizeRef = useRef<TerminalSize | null>(null);
   const pendingTerminalSizeRef = useRef<TerminalSize | null>(null);
   const resizeInFlightRef = useRef(false);
@@ -165,52 +173,73 @@ export function TerminalSession({
     }
   }, []);
 
-  const requestFitAndResize = useCallback(
-    (reason: TerminalResizeReason = 'observer') => {
-      if (resizeRAFRef.current) {
-        cancelAnimationFrame(resizeRAFRef.current);
+  const executeFitNow = useCallback(
+    (_reason: TerminalResizeReason = 'observer') => {
+      const el = containerRef.current;
+      const term = termRef.current;
+      const fitAddon = fitAddonRef.current;
+      if (
+        !isVisibleRef.current ||
+        !el ||
+        !term ||
+        !fitAddon ||
+        el.clientWidth <= 0 ||
+        el.clientHeight <= 0
+      ) {
+        return false;
       }
 
-      resizeRAFRef.current = requestAnimationFrame(() => {
-        resizeRAFRef.current = 0;
-        const el = containerRef.current;
-        const term = termRef.current;
-        const fitAddon = fitAddonRef.current;
-        if (
-          !isVisibleRef.current ||
-          !el ||
-          !term ||
-          !fitAddon ||
-          el.clientWidth <= 0 ||
-          el.clientHeight <= 0
-        ) {
-          return;
-        }
+      try {
+        // 关键：若元素曾被移入 display: none 暂存区或刚完成 DOM 挂载，xterm 的字符尺寸测量可能为 0 或失效。
+        // 在 fit 之前显式调用 measure() 强制重新测量单字符宽与高，确保 proposeDimensions 计算出正确的 cols/rows。
+        const core = (term as unknown as { _core?: { _charSizeService?: { measure?: () => void } } })._core;
+        core?._charSizeService?.measure?.();
+        fitAddon.fit();
+      } catch (error) {
+        console.warn('[TerminalSession] fit failed:', error);
+        return false;
+      }
 
-        const prevCols = term.cols;
-        const prevRows = term.rows;
-        try {
-          fitAddon.fit();
-        } catch (error) {
-          console.warn('[TerminalSession] fit failed:', error);
-          return;
-        }
-
-        // 当从其他 Tab 切回当前 Tab（reason === 'visible' | 'init'）且窗口尺寸未变时，
-        // fitAddon.fit() 因行列数不变会直接跳过内部 resize，需显式同步 WebGL RenderModel 与顶点 UV 缓存。
-        if (
-          (reason === 'visible' || reason === 'init') &&
-          term.cols === prevCols &&
-          term.rows === prevRows
-        ) {
-          terminalSessionRegistry.refreshWebglViewport(sessionId);
-        }
-
-        queueTerminalResize({ cols: term.cols, rows: term.rows });
-      });
+      // 同步 WebGL 视口与渲染模型
+      terminalSessionRegistry.refreshWebglViewport(sessionId);
+      queueTerminalResize({ cols: term.cols, rows: term.rows });
+      return true;
     },
     [queueTerminalResize, sessionId],
   );
+
+  const requestFitAndResize = useCallback(
+    (_reason: TerminalResizeReason = 'observer') => {
+      // 单一 fit 通道：所有触发源统一合并到下一帧执行一次，同帧内的多次触发自动去重；
+      // 布局尺寸在 ResizeObserver 回调触发时已结算完毕，无需再多轮延时补偿复核。
+      if (resizeRAFRef.current) {
+        cancelAnimationFrame(resizeRAFRef.current);
+      }
+      resizeRAFRef.current = requestAnimationFrame(() => {
+        resizeRAFRef.current = 0;
+        executeFitNow();
+      });
+    },
+    [executeFitNow],
+  );
+
+  const clearWebglDeferTimer = useCallback(() => {
+    if (webglDeferTimerRef.current !== null) {
+      window.clearTimeout(webglDeferTimerRef.current);
+      webglDeferTimerRef.current = null;
+    }
+  }, []);
+
+  // WebGL 上下文（含 LRU 淘汰后重建）创建开销大且非首帧必需：延迟挂载，
+  // 确保 fit/resize 与终端重绘先落地，不让上下文初始化阻塞布局切换与 Tab 激活。
+  const scheduleWebglEnsure = useCallback(() => {
+    clearWebglDeferTimer();
+    webglDeferTimerRef.current = window.setTimeout(() => {
+      webglDeferTimerRef.current = null;
+      if (!isVisibleRef.current) return;
+      terminalSessionRegistry.ensureWebgl(sessionId, notifyWebglStatus);
+    }, WEBGL_ENSURE_DEFER_MS);
+  }, [clearWebglDeferTimer, notifyWebglStatus, sessionId]);
 
   const scheduleFitAndResize = useCallback(
     (reason: TerminalResizeReason = 'observer') => {
@@ -250,14 +279,14 @@ export function TerminalSession({
   useEffect(() => {
     isVisibleRef.current = isVisible;
     if (isVisible) {
-      // Tab 切为可见时确保挂载/恢复 WebGL2 硬件加速渲染器
-      terminalSessionRegistry.ensureWebgl(sessionId, notifyWebglStatus);
+      // Tab 切为可见时先 fit 与聚焦，WebGL 渲染器延迟到空闲时机再挂载/恢复
       scheduleFitAndResize('visible');
       requestFocus();
+      scheduleWebglEnsure();
     } else {
       setContextMenu(null);
     }
-  }, [isVisible, notifyWebglStatus, requestFocus, scheduleFitAndResize, sessionId]);
+  }, [isVisible, requestFocus, scheduleFitAndResize, scheduleWebglEnsure, sessionId]);
 
   useEffect(() => {
     const wasResizing = isPanelResizingRef.current;
@@ -300,29 +329,16 @@ export function TerminalSession({
         attributeFilter: ['class'],
       });
 
-      let reuseResizeRAF = 0;
       const reuseResizeObserver = new ResizeObserver(() => {
         if (!isVisibleRef.current) return;
-        if (reuseResizeRAF) cancelAnimationFrame(reuseResizeRAF);
-        reuseResizeRAF = requestAnimationFrame(() => scheduleFitAndResize('observer'));
+        scheduleFitAndResize('observer');
       });
       reuseResizeObserver.observe(el);
 
       if (isVisibleRef.current) {
-        terminalSessionRegistry.ensureWebgl(sessionId, notifyWebglStatus);
-        if (el.clientWidth > 0 && el.clientHeight > 0) {
-          try {
-            existingEntry.fitAddon.fit();
-            terminalSessionRegistry.refreshWebglViewport(sessionId);
-            queueTerminalResize({
-              cols: existingEntry.term.cols,
-              rows: existingEntry.term.rows,
-            });
-          } catch (error) {
-            console.warn('[TerminalSession] reuse fit failed:', error);
-          }
-        }
+        requestFitAndResize('visible');
         requestFocus();
+        scheduleWebglEnsure();
       } else {
         notifyWebglStatus(terminalSessionRegistry.isWebglActive(sessionId));
       }
@@ -334,7 +350,7 @@ export function TerminalSession({
         reuseThemeObserver.disconnect();
         reuseResizeObserver.disconnect();
         clearResizeThrottleTimer();
-        if (reuseResizeRAF) cancelAnimationFrame(reuseResizeRAF);
+        clearWebglDeferTimer();
         if (resizeRAFRef.current) cancelAnimationFrame(resizeRAFRef.current);
         if (focusRAFRef.current) cancelAnimationFrame(focusRAFRef.current);
         terminalSessionRegistry.detachDom(sessionId);
@@ -357,7 +373,7 @@ export function TerminalSession({
       fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
       cursorBlink: true,
       allowProposedApi: true,
-      scrollback: 5000,
+      scrollback: TERMINAL_SCROLLBACK_LINES,
       theme: mergeTerminalTheme(),
     });
     termRef.current = term;
@@ -408,9 +424,9 @@ export function TerminalSession({
 
     terminalSessionRegistry.register(sessionId, entry);
 
-    // 挂载 WebGL2 硬件加速渲染插件（当前可见 Tab 立即启用）
+    // 挂载 WebGL2 硬件加速渲染插件（当前可见 Tab 延迟到空闲时机惰性启用）
     if (isVisibleRef.current) {
-      terminalSessionRegistry.ensureWebgl(sessionId, notifyWebglStatus);
+      scheduleWebglEnsure();
     }
 
     let initialTerminalSize: TerminalSize | null = null;
@@ -428,28 +444,84 @@ export function TerminalSession({
       requestFocus();
     }
 
-    // 拦截 Ctrl/Cmd+C（有选区时复制，无选区透传 SIGINT）与 Ctrl/Cmd+V（防止浏览器原生 paste 重复粘贴）
+    // 拦截与适配终端专属快捷键：
+    // 1. Ctrl+C: 在终端中是标准的 SIGINT 中断信号（如终止 top / 终止当前进程）
+    //    无论是否有文本选区，均直接向 PTY 写入 0x03 (ETX)，绝不能被复制逻辑拦截！
+    // 2. 复制快捷键：
+    //    - macOS 下为 Cmd+C (⌘C)
+    //    - Windows 下为 Win+C (⊞C)
+    //    - 兼顾跨平台通用 Ctrl+Shift+C
+    //    有选区时复制选中文本到剪贴板，无选区时不执行操作。
+    // 3. 粘贴快捷键：
+    //    - macOS 下为 Cmd+V (⌘V)
+    //    - Windows 下为 Win+V (⊞V)
+    //    - 兼顾跨平台通用 Ctrl+Shift+V
+    //    从剪贴板读取文本并通过 term.paste() 写入终端，阻止原生浏览器粘贴防止重复。
+    // 4. 全选快捷键：
+    //    - macOS 下为 Cmd+A (⌘A)
+    //    - Windows 下为 Win+A (⊞A)
+    //    - 兼顾跨平台通用 Ctrl+Shift+A
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
-      if (!(e.metaKey || e.ctrlKey)) return true;
       const key = e.key.toLowerCase();
-      if (key === 'c' && term.hasSelection()) {
-        void navigator.clipboard.writeText(term.getSelection()).catch((err) => {
-          console.warn('[TerminalSession] copy via shortcut failed:', err);
-        });
+
+      // 1. Ctrl+C: 中断/终止进程（SIGINT）
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && key === 'c') {
+        e.preventDefault();
+        e.stopPropagation();
+        term.clearSelection();
+        const tid = entry.terminalId ?? terminalSessionRegistry.getTerminalId(sessionId);
+        if (tid !== null) {
+          void transport.write({ id: tid, data: new Uint8Array([3]) });
+        }
         return false;
       }
-      if (key === 'v') {
+
+      // 2. 复制快捷键：Cmd+C (macOS) / Win+C (Windows) / Ctrl+Shift+C
+      const isCopy =
+        (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && key === 'c') ||
+        (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && key === 'c');
+      if (isCopy) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (term.hasSelection()) {
+          const selectedText = term.getSelection();
+          void navigator.clipboard.writeText(selectedText).catch((err) => {
+            console.warn('[TerminalSession] copy via shortcut failed:', err);
+          });
+        }
+        return false;
+      }
+
+      // 3. 粘贴快捷键：Cmd+V (macOS) / Win+V (Windows) / Ctrl+Shift+V
+      const isPaste =
+        (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && key === 'v') ||
+        (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && key === 'v');
+      if (isPaste) {
         e.preventDefault();
         e.stopPropagation();
         navigator.clipboard
           .readText()
           .then((text) => {
-            if (text) term.paste(text);
+            if (text) {
+              term.paste(text);
+            }
           })
           .catch((err) => console.warn('[TerminalSession] paste via shortcut failed:', err));
         return false;
       }
+
+      // 4. 全选快捷键：Cmd+A (macOS) / Win+A (Windows) / Ctrl+Shift+A
+      const isSelectAll =
+        (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && key === 'a') ||
+        (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && key === 'a');
+      if (isSelectAll) {
+        e.preventDefault();
+        e.stopPropagation();
+        term.selectAll();
+        return false;
+      }
+
       return true;
     });
 
@@ -561,11 +633,9 @@ export function TerminalSession({
         term.write(`\r\n[Terminal failed to start]\r\n${message}\r\n`);
       });
 
-    let resizeRAF = 0;
     const resizeObserver = new ResizeObserver(() => {
       if (!isVisibleRef.current) return;
-      if (resizeRAF) cancelAnimationFrame(resizeRAF);
-      resizeRAF = requestAnimationFrame(() => scheduleFitAndResize('observer'));
+      scheduleFitAndResize('observer');
     });
     resizeObserver.observe(el);
 
@@ -574,7 +644,7 @@ export function TerminalSession({
       themeObserver.disconnect();
       resizeObserver.disconnect();
       clearResizeThrottleTimer();
-      if (resizeRAF) cancelAnimationFrame(resizeRAF);
+      clearWebglDeferTimer();
       if (resizeRAFRef.current) cancelAnimationFrame(resizeRAFRef.current);
       if (focusRAFRef.current) cancelAnimationFrame(focusRAFRef.current);
       // 仅将 DOM 移入暂存区，不中断异步创建中的 PTY（真正销毁仅在 closeSession -> registry.release 时发生）
@@ -584,6 +654,7 @@ export function TerminalSession({
     };
   }, [
     clearResizeThrottleTimer,
+    clearWebglDeferTimer,
     cwd,
     flushTerminalResize,
     hostId,
@@ -591,6 +662,7 @@ export function TerminalSession({
     queueTerminalResize,
     requestFocus,
     scheduleFitAndResize,
+    scheduleWebglEnsure,
     sessionId,
     transport,
   ]);

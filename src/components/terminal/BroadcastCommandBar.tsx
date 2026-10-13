@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  Ban,
   Check,
   Radio,
   Send,
@@ -17,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   appendBroadcastHistory,
+  broadcastSignalToSessions,
   broadcastToSessions,
   getBroadcastHistory,
   isDangerousCommand,
@@ -99,10 +101,36 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
     }
   }, [command, isExecuting, selectedSessionIds, transport]);
 
+  const executeSendSignal = useCallback(
+    async (signalByte: number = 0x03, label: string = 'Ctrl+C (SIGINT)') => {
+      if (selectedSessionIds.length === 0 || isExecuting) return;
+
+      setIsExecuting(true);
+      try {
+        const result = await broadcastSignalToSessions(transport, selectedSessionIds, signalByte);
+        setFeedback(`已向 ${result.successCount}/${result.sessionCount} 个终端广播发送 ${label}`);
+        setTimeout(() => setFeedback(null), 3000);
+      } catch (err) {
+        setFeedback(`发送信号失败: ${String(err)}`);
+      } finally {
+        setIsExecuting(false);
+        inputRef.current?.focus();
+      }
+    },
+    [isExecuting, selectedSessionIds, transport],
+  );
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     const trimmed = command.trim();
     if (!trimmed || selectedSessionIds.length === 0) return;
+
+    // 若用户输入 ^C 或 ctrl+c，直接触发广播中断信号
+    if (trimmed.toLowerCase() === '^c' || trimmed.toLowerCase() === 'ctrl+c') {
+      setCommand('');
+      void executeSendSignal(0x03, 'Ctrl+C (SIGINT)');
+      return;
+    }
 
     if (isDangerousCommand(trimmed)) {
       setDangerousModalOpen(true);
@@ -115,6 +143,22 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
+      return;
+    }
+
+    // 广播输入框支持 Ctrl+C：一键向所有选中的目标终端广播发送 SIGINT 中断信号（如停止 top）
+    if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'c') {
+      e.preventDefault();
+      e.stopPropagation();
+      void executeSendSignal(0x03, 'Ctrl+C (SIGINT)');
+      return;
+    }
+
+    // 广播输入框支持 Ctrl+D：向所有选中的目标终端广播发送 EOF
+    if (e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'd') {
+      e.preventDefault();
+      e.stopPropagation();
+      void executeSendSignal(0x04, 'Ctrl+D (EOF)');
       return;
     }
 
@@ -216,7 +260,7 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
             placeholder={
               selectedSessionIds.length === 0
                 ? '请先勾选至少一个广播目标终端...'
-                : '输入要向选定终端广播执行的命令 (按 Enter 发送，↑/↓ 调阅历史，Esc 关闭)...'
+                : '输入广播命令 (Enter 发送，按 ⌃C 或点击「⌃C 中断」发送中断信号，↑/↓ 调阅历史)...'
             }
             className="w-full rounded-lg border border-border/80 bg-surface/30 py-1.5 pl-7 pr-3 font-mono text-ui-sm text-foreground outline-none transition-colors focus:border-primary/70 focus:bg-background"
           />
@@ -231,6 +275,20 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
         >
           <Send className="size-3.5" />
           <span>发送广播</span>
+        </Button>
+
+        {/* 广播发送 Ctrl+C 中断信号按钮 */}
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => void executeSendSignal(0x03, 'Ctrl+C (SIGINT)')}
+          disabled={selectedSessionIds.length === 0 || isExecuting}
+          className="h-8 gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive px-2.5 text-ui-xs font-medium shrink-0 shadow-xs transition-colors"
+          title="向勾选的所有目标终端广播发送中断信号 (Ctrl+C)"
+        >
+          <Ban className="size-3.5" />
+          <span>⌃C 中断</span>
         </Button>
 
         <Button
