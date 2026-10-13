@@ -35,6 +35,7 @@ export default {
       type: '供应商类型',
       model: '模型',
       baseUrl: '接口地址',
+      baseUrlHint: '留空使用官方地址 {{url}}；OpenAI 兼容端点（DeepSeek/GLM 等）填其 /v1 地址',
       keys: 'API Key（多 Key 轮询）',
       keyN: 'Key {{index}}',
       addKey: '添加 Key',

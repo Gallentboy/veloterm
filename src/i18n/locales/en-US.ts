@@ -35,6 +35,7 @@ export default {
       type: 'Provider type',
       model: 'Model',
       baseUrl: 'Base URL',
+      baseUrlHint: 'Leave empty to use {{url}}; for OpenAI-compatible endpoints fill their /v1 URL',
       keys: 'API Keys (rotation)',
       keyN: 'Key {{index}}',
       addKey: 'Add key',
