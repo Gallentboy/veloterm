@@ -227,3 +227,43 @@ body {
   width: 0;
   height: 0;
 }
+
+/*
+ * 走马灯文本（MarqueeText）：平时省略号截断，悬停溢出时滚动展示全文。
+ * 滚动距离/时长由组件悬停时测量后写入 CSS 变量；起止各留 12% 停顿便于阅读。
+ */
+.marquee-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.marquee-text-inner {
+  will-change: transform;
+}
+
+.marquee-text.marquee-active {
+  text-overflow: clip;
+}
+
+.marquee-text.marquee-active .marquee-text-inner {
+  animation: veloterm-marquee var(--marquee-duration, 6s) linear infinite;
+}
+
+@keyframes veloterm-marquee {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+
+  88%,
+  100% {
+    transform: translateX(var(--marquee-distance, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-text.marquee-active .marquee-text-inner {
+    animation: none;
+  }
+}

@@ -2,8 +2,9 @@ import { Loader2, Play, Send, Settings, Sparkles, SquareTerminal, TriangleAlert,
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  aiChat,
+  aiAgentChat,
   listAiProviders,
+  reportAiToolResult,
   type AiChatMessage,
   type AiProvider,
 } from '@/services/aiService';
@@ -11,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
 import {
+  executeAgentTool,
   getActiveTerminalText,
   readTerminalOutput,
   sendToTerminal,
@@ -21,6 +23,8 @@ interface ChatItem {
   content: string;
   streaming?: boolean;
   error?: boolean;
+  /** AI 正在执行终端工具（显示为工具调用卡片） */
+  toolCall?: { name: string; arguments: string; result?: string; running?: boolean };
 }
 
 interface AiChatPanelProps {
@@ -76,7 +80,8 @@ export function AiChatPanel({ open, width, isResizing = false, isTerminalPage = 
     if (!command || activeTerminalKey == null) return;
     setIsToolRunning('runCommand');
     try {
-      const result = await sendToTerminal(activeTerminalKey, `${command}`);
+      const result = await sendToTerminal(activeTerminalKey, `${command}
+`);
       if (result.ok) {
         setInput('');
         setToolResult(`[已发送命令: ${command}]
@@ -155,13 +160,15 @@ ${output}`);
     };
 
     try {
-      await aiChat(
+      // 智能体模式：AI 可自主调用终端工具（读屏/执行命令/读输出），
+      // 工具调用经 Channel 推到前端执行，结果回传后 AI 继续推理，直到给出纯文本。
+      await aiAgentChat(
         {
           providerId,
           history,
           preamble: buildSystemPreamble(isTerminalPage, activeTerminalKey),
         },
-        (chunk) => {
+        async (chunk) => {
           if (chunk.keyIndex !== null && chunk.keyIndex !== undefined) {
             setLastKeyIndex(chunk.keyIndex);
           }
@@ -170,6 +177,43 @@ ${output}`);
               ...current,
               content: current.content + chunk.delta,
             }));
+          }
+          if (chunk.toolCall && activeTerminalKey != null) {
+            const { callId, name, arguments: args } = chunk.toolCall;
+            // 追加工具调用卡片（running 态）
+            setItems((prev) => [
+              ...prev,
+              {
+                role: 'assistant' as const,
+                content: '',
+                toolCall: {
+                  name,
+                  arguments: JSON.stringify(args, null, 2),
+                  running: true,
+                },
+              },
+            ]);
+            // 前端执行工具并回传结果
+            const result = await executeAgentTool(
+              activeTerminalKey,
+              name,
+              (args ?? {}) as Record<string, unknown>,
+            );
+            setItems((prev) => {
+              const next = [...prev];
+              for (let i = next.length - 1; i >= 0; i--) {
+                const item = next[i];
+                if (item && item.toolCall && item.toolCall.running && item.toolCall.name === name) {
+                  next[i] = {
+                    ...item,
+                    toolCall: { ...item.toolCall, result, running: false },
+                  };
+                  break;
+                }
+              }
+              return next;
+            });
+            void reportAiToolResult(callId, result);
           }
           if (chunk.error) {
             updateAssistant((current) => ({
@@ -316,7 +360,32 @@ ${output}`);
             ) : null}
           </div>
         ) : (
-          items.map((item, index) => (
+          items.map((item, index) =>
+            item.toolCall ? (
+              <div
+                key={index}
+                className="self-start w-[92%] rounded-lg border border-border/70 bg-surface/40 px-2.5 py-1.5 select-none"
+              >
+                <div className="flex items-center gap-1.5 text-ui-xs text-foreground-subtle">
+                  {item.toolCall.running ? (
+                    <Loader2 className="size-3 animate-spin text-primary" />
+                  ) : (
+                    <Play className="size-3 text-success" />
+                  )}
+                  <span className="font-mono font-medium">{item.toolCall.name}</span>
+                </div>
+                {item.toolCall.arguments && item.toolCall.arguments !== '{}' && (
+                  <pre className="mt-1 max-h-16 overflow-auto font-mono text-ui-xs text-foreground-subtlest whitespace-pre-wrap">
+                    {item.toolCall.arguments}
+                  </pre>
+                )}
+                {item.toolCall.result && (
+                  <pre className="mt-1 max-h-32 overflow-auto rounded border border-border/50 bg-background px-1.5 py-1 font-mono text-ui-xs text-foreground-subtle whitespace-pre-wrap">
+                    {item.toolCall.result}
+                  </pre>
+                )}
+              </div>
+            ) : (
             <div
               key={index}
               className={
@@ -344,7 +413,8 @@ ${output}`);
                   </span>
                 )}
             </div>
-          ))
+            ),
+          )
         )}
       </div>
 
@@ -408,9 +478,12 @@ function buildSystemPreamble(isTerminalPage: boolean, activeTerminalKey: number 
   return [
     base,
     '',
-    '## 可用终端工具（用户会通过面板按钮代你执行，你应建议用户使用）',
-    '- **获取终端屏幕**: 抓取当前终端最近 120 行内容（含 scrollback），分析问题时请让用户先点「屏幕」按钮',
-    '- **执行命令**: 把你建议的命令发送到终端执行并自动捕获输出，用户点「运行」即执行输入框中的命令',
-    '给出排查建议时：先让用户「获取终端屏幕」看现场，再给命令让用户「运行」，根据输出继续分析。',
+    '## 可用终端工具（你可自主调用，多轮执行直到解决问题）',
+    '- `terminal_get_screen(lines?, visible_only?)`: 读取当前终端屏幕与滚动缓冲',
+    '- `terminal_send(input, press_enter?)`: 向终端发送输入并执行命令',
+    '- `terminal_read_new(wait_ms?)`: 等待并读取终端新输出',
+    '',
+    '排查流程：先 get_screen 看现场 → 需要验证时 send 执行诊断命令 → read_new 或再次 get_screen 读结果 → 继续分析，直到定位问题给出结论。',
+    '安全注意：不要主动执行 rm -rf、dd、mkfs、shutdown 等破坏性命令；重启服务等敏感操作先说明影响再执行。',
   ].join('\n');
 }

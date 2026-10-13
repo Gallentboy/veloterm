@@ -1,4 +1,5 @@
 pub mod ai;
+pub mod ai_agent;
 pub mod commands;
 pub mod common;
 pub mod db;
@@ -47,6 +48,8 @@ pub fn run() {
       ai::ai_chat,
       ai::ai_provider_test,
       ai::ai_list_models,
+      ai_agent::ai_agent_chat,
+      ai_agent::ai_tool_result,
       sftp::commands::sftp_next_task_id,
       sftp::commands::sftp_cancel_transfer,
       sftp::commands::sftp_connect,

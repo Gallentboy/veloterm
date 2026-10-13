@@ -76,3 +76,37 @@ export function testAiProvider(
 export function listAiModels(record: AiProvider): Promise<string[]> {
   return invoke<string[]>('ai_list_models', { record });
 }
+
+/** 智能体模式 Channel 事件（与 Rust AgentChunk 对齐） */
+export interface AgentChunk {
+  delta: string | null;
+  keyIndex: number | null;
+  error: string | null;
+  done: boolean;
+  /** 非空 = AI 请求执行终端工具，前端执行后须回传 ai_tool_result */
+  toolCall: { callId: string; name: string; arguments: unknown } | null;
+}
+
+/** 智能体模式对话：AI 自主调用终端工具（读屏/执行/读输出），多轮循环 */
+export function aiAgentChat(
+  options: {
+    providerId?: number | null;
+    history: AiChatMessage[];
+    preamble?: string | null;
+  },
+  onChunk: (chunk: AgentChunk) => void,
+): Promise<void> {
+  const channel = new Channel<AgentChunk>();
+  channel.onmessage = onChunk;
+  return invoke<void>('ai_agent_chat', {
+    providerId: options.providerId ?? null,
+    history: options.history,
+    preamble: options.preamble ?? null,
+    onChunk: channel,
+  });
+}
+
+/** 工具执行结果回传（唤醒 Rust 侧挂起的 oneshot） */
+export function reportAiToolResult(callId: string, result: string): Promise<boolean> {
+  return invoke<boolean>('ai_tool_result', { callId, result });
+}
