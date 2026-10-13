@@ -16,6 +16,9 @@ export default {
       ask: '问 AI',
       dismiss: '忽略',
     },
+    panel: {
+      resize: '调整 AI 面板宽度',
+    },
     chat: {
       title: '问 AI',
       placeholder: '描述问题，如：SSH 连接超时怎么排查',

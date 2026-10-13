@@ -16,6 +16,9 @@ export default {
       ask: 'Ask AI',
       dismiss: 'Dismiss',
     },
+    panel: {
+      resize: 'Resize AI panel',
+    },
     chat: {
       title: 'Ask AI',
       placeholder: 'Describe your problem, e.g. SSH connection timeout',

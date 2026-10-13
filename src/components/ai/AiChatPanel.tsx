@@ -19,6 +19,10 @@ interface ChatItem {
 
 interface AiChatPanelProps {
   open: boolean;
+  /** 面板宽度（px，由 AppShell 拖拽管理） */
+  width: number;
+  /** 拖拽中禁用宽度过渡 */
+  isResizing?: boolean;
   onClose: () => void;
   /** 外部注入的初始提问（如 SSH 错误上下文） */
   initialPrompt?: string | null;
@@ -31,7 +35,7 @@ interface AiChatPanelProps {
  * 流式渲染助手回复、供应商切换、多 Key 轮询状态。
  * 面板跨页面导航保持挂载，对话上下文不丢。
  */
-export function AiChatPanel({ open, onClose, initialPrompt, onOpenSettings }: AiChatPanelProps) {
+export function AiChatPanel({ open, width, isResizing = false, onClose, initialPrompt, onOpenSettings }: AiChatPanelProps) {
   const { t } = useTranslation();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
@@ -147,9 +151,11 @@ export function AiChatPanel({ open, onClose, initialPrompt, onOpenSettings }: Ai
   return (
     <aside
       aria-label={t('ai.chat.title')}
+      style={{ width: open ? `${width}px` : '0px' }}
       className={cn(
-        'flex h-full w-[360px] shrink-0 flex-col overflow-hidden rounded-(--workspace-panel-radius) border border-border bg-background transition-[width,opacity] duration-200 ease-out',
-        !open && 'pointer-events-none w-0 border-transparent opacity-0',
+        'flex h-full shrink-0 flex-col overflow-hidden rounded-(--workspace-panel-radius) border border-border bg-background transition-[width,opacity] duration-200 ease-out',
+        !open && 'pointer-events-none border-transparent opacity-0',
+        isResizing && 'transition-opacity',
       )}
     >
       {/* 头部：标题 + 供应商 + 设置/关闭 */}
