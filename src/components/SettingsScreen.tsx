@@ -6,6 +6,8 @@ import { Select } from '@/components/hosts/formFields';
 import { SettingOptionGroup, SettingsSection, SettingRow } from '@/components/settings';
 import { Button } from '@/components/ui/button';
 import { useAppVersion } from '@/hooks/useAppVersion';
+import { AiProviderDialog } from '@/components/ai/AiProviderDialog';
+import { deleteAiProvider, listAiProviders, type AiProvider } from '@/services/aiService';
 import { SUPPORTED_LOCALES, type Locale } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useThemeContext, type Theme } from '@/theme/ThemeProvider';
@@ -46,6 +48,12 @@ export function SettingsScreen() {
   const { t, i18n } = useTranslation();
   const { theme, setTheme } = useThemeContext();
   const { version } = useAppVersion();
+  const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
+  const [aiDialog, setAiDialog] = useState<{ mode: 'create' } | { mode: 'edit'; node: AiProvider } | null>(null);
+
+  useEffect(() => {
+    void listAiProviders().then(setAiProviders).catch(() => setAiProviders([]));
+  }, []);
   const currentLocale: Locale = i18n.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
   const [logLevel, setLogLevelState] = useState<LogLevel>('info');
   const [logFilePath, setLogFilePath] = useState<string | null>(null);
@@ -228,11 +236,70 @@ export function SettingsScreen() {
         </SettingsSection>
 
         <SettingsSection>
+          <SettingRow title={t('ai.provider.title')} desc={t('settings.aiDesc')}>
+            <div className="flex items-center gap-1.5">
+              {aiProviders.length > 0 && (
+                <span className="text-ui-xs text-foreground-subtlest select-none">
+                  {aiProviders.map((p) => p.name).slice(0, 2).join(' · ')}
+                  {aiProviders.length > 2 ? ` +${aiProviders.length - 2}` : ''}
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setAiDialog({ mode: 'create' })}
+              >
+                {t('ai.provider.add')}
+              </Button>
+            </div>
+          </SettingRow>
+          {aiProviders.map((p) => (
+            <SettingRow
+              key={p.id}
+              title={`${p.name}${p.isDefault ? ' · 默认' : ''}`}
+              desc={`${p.providerType} · ${p.model} · ${t('ai.provider.keysCount', { count: p.apiKeys.length })}`}
+            >
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setAiDialog({ mode: 'edit', node: p })}
+                >
+                  {t('common.edit')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    void deleteAiProvider(p.id).then(() =>
+                      listAiProviders().then(setAiProviders).catch(() => {}),
+                    );
+                  }}
+                >
+                  <Trash2 className="size-3.5 text-destructive" />
+                </Button>
+              </div>
+            </SettingRow>
+          ))}
+        </SettingsSection>
+
+        <SettingsSection>
           <SettingRow title={t('settings.about')} desc="VeloTerm">
             <span className="shrink-0 font-mono text-ui-base text-foreground-subtle">{version}</span>
           </SettingRow>
         </SettingsSection>
       </div>
+
+      {aiDialog ? (
+        <AiProviderDialog
+          node={aiDialog.mode === 'edit' ? aiDialog.node : null}
+          onClose={() => setAiDialog(null)}
+          onSave={() => {
+            setAiDialog(null);
+            void listAiProviders().then(setAiProviders).catch(() => {});
+          }}
+        />
+      ) : null}
     </div>
   );
 }
