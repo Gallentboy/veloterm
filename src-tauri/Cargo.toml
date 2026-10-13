@@ -52,3 +52,18 @@ tokio = { version = "1", features = [
 ] }
 uuid = { version = "1", features = ["v4", "serde"] }
 window-vibrancy = "0.8.1"
+
+
+[lints.clippy]
+panic = "deny"
+indexing_slicing = "deny"
+
+[build]
+rustflags = ["-C", "target-cpu=native"]
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
