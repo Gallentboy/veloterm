@@ -86,6 +86,16 @@ const MONACO_EDITOR_OPTIONS = {
   smoothScrolling: true,
   fixedOverflowWidgets: true,
   padding: { top: 8, bottom: 8 },
+  // ZCode 风格细胶囊滚动条：8px 槽位、无阴影无箭头、悬停时出现
+  scrollbar: {
+    vertical: 'auto',
+    horizontal: 'auto',
+    verticalScrollbarSize: 8,
+    horizontalScrollbarSize: 8,
+    useShadows: false,
+    verticalHasArrows: false,
+    horizontalHasArrows: false,
+  },
 } as const;
 
 export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
