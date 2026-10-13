@@ -25,6 +25,7 @@ export default {
       provider: '选择供应商',
       noProvider: '未配置供应商',
       goSettings: '请先在设置中配置 AI 供应商',
+      goSettingsButton: '去配置供应商',
     },
     provider: {
       title: 'AI 供应商',
