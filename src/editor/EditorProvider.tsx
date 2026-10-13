@@ -22,7 +22,13 @@ import {
   type EditorPanelState,
 } from '@/editor/editorPanelState';
 import { editorStorage } from '@/services/editorStorage';
+import { info as logInfo } from '@/utils/logger';
 import type { EditorFileDescriptor } from '@/editor/types';
+
+/** 编辑器链路轨迹日志（统一前缀，便于日志侧过滤定位懒加载问题） */
+function logEditorTrace(message: string): void {
+  void logInfo(`[Editor] ${message}`);
+}
 
 /** 草稿落盘防抖（onContentChange 后静默 800ms） */
 const DRAFT_SAVE_DEBOUNCE_MS = 800;
@@ -181,6 +187,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         return;
       }
       fetchInFlightRef.current.add(id);
+      logEditorTrace(`fetch start id=${id} path=${file.remotePath}`);
       applyPanelState((current) => setStatus(current, id, 'loading'));
       try {
         const result = await loadRemoteContent(file.hostId, file.remotePath);
@@ -204,7 +211,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
           updateConflictRemotes((map) => map.delete(id));
           applyPanelState((current) => setStatus(current, id, 'clean', remoteHash));
         }
-      } catch {
+      } catch (error) {
+        logEditorTrace(`fetch failed id=${id}: ${String(error)}`);
         if (!panelStateRef.current.files[id]) {
           return;
         }
@@ -245,6 +253,9 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       const stored = editorStorage.loadViewState(id);
       updateViewStates((map) => map.set(id, stored));
     }
+    logEditorTrace(
+      `activate-effect id=${id} status=${file.status} hasContent=${contentsRef.current.has(id)} inFlight=${fetchInFlightRef.current.has(id)}`,
+    );
     if (file.status === 'loading' && !contentsRef.current.has(id)) {
       void fetchFileContent(id);
     }
@@ -289,6 +300,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
 
   const openFile = useCallback(
     (params: { hostId: number; remotePath: string }): number => {
+      logEditorTrace(`openFile host=${params.hostId} path=${params.remotePath}`);
       const existing = findFileByPath(panelStateRef.current, params.hostId, params.remotePath);
       if (existing) {
         applyPanelState((current) => activateFileState(current, existing.id));
