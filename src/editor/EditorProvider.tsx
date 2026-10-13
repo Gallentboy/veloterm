@@ -184,6 +184,9 @@ export function EditorProvider({ children }: { children: ReactNode }) {
     async (id: number) => {
       const file = panelStateRef.current.files[id];
       if (!file || fetchInFlightRef.current.has(id)) {
+        logEditorTrace(
+          `fetch skipped id=${id} fileMissing=${!file} inFlight=${fetchInFlightRef.current.has(id)} stateIds=${Object.keys(panelStateRef.current.files).join(',')} refActive=${panelStateRef.current.activeFileId}`,
+        );
         return;
       }
       fetchInFlightRef.current.add(id);
@@ -254,7 +257,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       updateViewStates((map) => map.set(id, stored));
     }
     logEditorTrace(
-      `activate-effect id=${id} status=${file.status} hasContent=${contentsRef.current.has(id)} inFlight=${fetchInFlightRef.current.has(id)}`,
+      `activate-effect id=${id} status=${file.status} hasContent=${contentsRef.current.has(id)} inFlight=${fetchInFlightRef.current.has(id)} refHasFile=${panelStateRef.current.files[id] !== undefined}`,
     );
     if (file.status === 'loading' && !contentsRef.current.has(id)) {
       void fetchFileContent(id);
