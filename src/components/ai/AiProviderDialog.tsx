@@ -1,13 +1,15 @@
-import { KeyRound, Loader2, Plus, Trash2 } from 'lucide-react';
+import { KeyRound, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FormField, Select, TextInput } from '@/components/hosts/formFields';
 import {
+  listAiModels,
   saveAiProvider,
   testAiProvider,
   type AiProvider,
 } from '@/services/aiService';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { Modal } from '@/components/ui/modal';
 
 interface AiProviderDialogProps {
@@ -40,6 +42,9 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
   const [isDefault, setIsDefault] = useState(node?.isDefault ?? false);
   const [error, setError] = useState<string | null>(null);
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  const [models, setModels] = useState<string[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
   const [testMessage, setTestMessage] = useState('');
 
   const updateKey = (index: number, value: string) => {
@@ -50,6 +55,23 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
   const removeKey = (index: number) => {
     setApiKeys((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)));
   };
+
+  async function handleLoadModels() {
+    setIsLoadingModels(true);
+    setModelsError(null);
+    try {
+      const list = await listAiModels(buildRecord());
+      setModels(list);
+      if (list.length === 0) {
+        setModelsError(t('ai.provider.noModels'));
+      }
+    } catch (err) {
+      setModels([]);
+      setModelsError(String(err));
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }
 
   async function handleTest() {
     setTestState('testing');
@@ -152,11 +174,46 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
           </div>
           <div className="min-w-0 flex-1">
             <FormField label={t('ai.provider.model')}>
-              <TextInput
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder={TYPE_PLACEHOLDERS[providerType]}
-              />
+              <div className="flex items-center gap-1.5">
+                <TextInput
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder={TYPE_PLACEHOLDERS[providerType]}
+                />
+                <Button
+                  variant="outline"
+                  size="icon-md"
+                  onClick={() => void handleLoadModels()}
+                  disabled={isLoadingModels}
+                  aria-label={t('ai.provider.loadModels')}
+                  title={t('ai.provider.loadModels')}
+                  className="shrink-0"
+                >
+                  <RefreshCw className={cn('size-3.5', isLoadingModels && 'animate-spin')} />
+                </Button>
+              </div>
+              {modelsError ? (
+                <span className="text-ui-xs text-destructive">{modelsError}</span>
+              ) : null}
+              {models.length > 0 ? (
+                <div className="mt-1 flex max-h-24 flex-wrap gap-1 overflow-y-auto rounded-md border border-border bg-surface/50 p-1.5">
+                  {models.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setModel(m)}
+                      className={cn(
+                        'rounded-full px-2 py-0.5 font-mono text-ui-xs transition-colors',
+                        m === model
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-surface text-foreground-subtle hover:bg-surface-hover hover:text-foreground',
+                      )}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </FormField>
           </div>
         </div>

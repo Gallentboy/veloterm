@@ -353,6 +353,49 @@ pub async fn ai_chat(
   run_provider(&record, &api_key, history, preamble, key_index, &on_chunk).await
 }
 
+/// 列出供应商可用模型（OpenAI /v1/models、Anthropic /v1/models、Gemini models.list）
+#[tauri::command]
+pub async fn ai_list_models(record: AiProviderRecord) -> Result<Vec<String>, String> {
+  use rig::client::ModelListingClient;
+
+  let (_key_index, api_key) = pick_key(&record)?;
+  let base_url = record.base_url.as_deref().filter(|u| !u.trim().is_empty());
+
+  match record.provider_type.as_str() {
+    "openai" => {
+      use rig::providers::openai::CompletionsClient;
+      let mut builder = CompletionsClient::builder().api_key(&api_key);
+      if let Some(base_url) = base_url {
+        builder = builder.base_url(base_url);
+      }
+      let client = builder.build().map_err(|e| e.to_string())?;
+      let list = client.list_models().await.map_err(|e| e.to_string())?;
+      Ok(list.data.into_iter().map(|m| m.id).collect())
+    }
+    "anthropic" => {
+      use rig::providers::anthropic;
+      let mut builder = anthropic::Client::builder().api_key(&api_key);
+      if let Some(base_url) = base_url {
+        builder = builder.base_url(base_url);
+      }
+      let client = builder.build().map_err(|e| e.to_string())?;
+      let list = client.list_models().await.map_err(|e| e.to_string())?;
+      Ok(list.data.into_iter().map(|m| m.id).collect())
+    }
+    "gemini" => {
+      use rig::providers::gemini;
+      let mut builder = gemini::Client::builder().api_key(&api_key);
+      if let Some(base_url) = base_url {
+        builder = builder.base_url(base_url);
+      }
+      let client = builder.build().map_err(|e| e.to_string())?;
+      let list = client.list_models().await.map_err(|e| e.to_string())?;
+      Ok(list.data.into_iter().map(|m| m.id).collect())
+    }
+    other => Err(format!("不支持的供应商类型: {other}")),
+  }
+}
+
 /// 连通性测试：发送一个极短 prompt，返回首个增量或错误
 #[tauri::command]
 pub async fn ai_provider_test(
