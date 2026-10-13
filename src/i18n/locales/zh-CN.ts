@@ -20,6 +20,12 @@ export default {
       toggle: '切换 AI 面板',
       resize: '调整 AI 面板宽度',
     },
+    tools: {
+      getScreen: '获取终端屏幕',
+      runCommand: '在终端运行此命令',
+      result: '工具结果',
+      analyze: '带入分析',
+    },
     chat: {
       title: '问 AI',
       placeholder: '描述问题，如：SSH 连接超时怎么排查',

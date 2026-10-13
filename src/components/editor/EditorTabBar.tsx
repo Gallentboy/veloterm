@@ -120,7 +120,7 @@ export function EditorTabBar({ files, activeFileId, onActivate, onClose }: Edito
 
   return (
     <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5">
-      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div role="tablist" aria-label={t('editor.title')} className="flex h-7 w-max items-center gap-1">
           {files.map((file) => (
             <EditorTabTrigger

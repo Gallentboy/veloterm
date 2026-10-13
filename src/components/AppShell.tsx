@@ -116,6 +116,13 @@ export function AppShell() {
     setAiChatOpen(true);
   };
 
+  // AI 问答是终端页专属能力：切到其他页面自动收起面板与入口
+  useEffect(() => {
+    if (page !== 'terminal' && isAiChatOpen) {
+      setAiChatOpen(false);
+    }
+  }, [page]); // eslint-disable-line react-hooks/exhaustive-deps -- 仅依赖页面切换
+
   // 进入文件页 = 用户可能马上要编辑文件，无延迟再触发一次（与上面去重，模块只拉一次）
   const [hasWarmedOnFiles, setHasWarmedOnFiles] = useState(false);
   useEffect(() => {
@@ -449,9 +456,9 @@ export function AppShell() {
               <WorkspaceHeader
                 page={page}
                 isSidebarVisible={isSidebarVisible}
-                onOpenAiChat={() => openAiChat()}
+                onOpenAiChat={page === 'terminal' ? () => openAiChat() : undefined}
                 isAiPanelOpen={isAiChatOpen}
-                onToggleAiPanel={() => setAiChatOpen((current) => !current)}
+                onToggleAiPanel={page === 'terminal' ? () => setAiChatOpen((current) => !current) : undefined}
               />
               <main className="min-h-0 flex-1 overflow-y-auto relative">
                 {/* SFTP 文件视图持久挂载，切换页面保持后台状态、文件路径与传输任务 */}
@@ -523,9 +530,10 @@ export function AppShell() {
 
             {/* AI 右侧面板（ZCode 布局范式：常驻侧栏、跨页面保活、宽度可拖） */}
             <AiChatPanel
-              open={isAiChatOpen}
+              open={isAiChatOpen && page === 'terminal'}
               width={aiPanelWidthPx}
               isResizing={isAiResizing}
+              isTerminalPage={page === 'terminal'}
               onClose={() => setAiChatOpen(false)}
               initialPrompt={aiInitialPrompt}
               onOpenSettings={() => {
