@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod common;
 pub mod db;
+pub mod editor_storage;
 pub mod logging;
 pub mod sftp;
 pub mod terminal;
@@ -49,6 +50,12 @@ pub fn run() {
       sftp::commands::sftp_pick_upload_file,
       sftp::commands::sftp_pick_download_path,
       sftp::commands::sftp_remove,
+      sftp::file_ops::sftp_read_file,
+      sftp::file_ops::sftp_write_file,
+      editor_storage::editor_load_state,
+      editor_storage::editor_save_panel_state,
+      editor_storage::editor_save_draft,
+      editor_storage::editor_delete_draft,
     ])
     .setup(|app| {
       use tauri::Manager;

@@ -4,6 +4,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::manager::{close_sftp, get_or_connect_sftp, resolve_host_chain, connect_sftp};
 use super::types::{RemoteFileItem, SftpState, TransferProgress};
+use crate::text_detect::is_editable_sftp_entry;
 
 #[tauri::command]
 pub async fn sftp_next_task_id(state: State<'_, SftpState>) -> Result<usize, String> {
@@ -93,6 +94,8 @@ pub async fn sftp_list_dir(
       .or_else(|| meta.gid.map(|g| g.to_string()))
       .unwrap_or_else(|| "-".to_string());
 
+    let editable = !is_dir && !is_symlink && is_editable_sftp_entry(&name, meta.len());
+
     items.push(RemoteFileItem {
       name,
       path: full_path,
@@ -103,6 +106,7 @@ pub async fn sftp_list_dir(
       permissions: meta.permissions.unwrap_or(0),
       owner,
       group,
+      editable,
     });
   }
 

@@ -18,6 +18,7 @@ pub struct RemoteFileItem {
   pub permissions: u32,
   pub owner: String,    // 所有者 (如 zhangyue 或 uid)
   pub group: String,    // 所属用户组 (如 staff 或 gid)
+  pub editable: bool,   // 大小/后缀判定为可在线编辑的文本文件（目录与符号链接恒为 false）
 }
 
 #[derive(Debug, Serialize, Clone)]

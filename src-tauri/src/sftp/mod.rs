@@ -1,8 +1,10 @@
 pub mod commands;
+pub mod file_ops;
 pub mod manager;
 pub mod types;
 
 pub use commands::*;
+pub use file_ops::*;
 pub use manager::*;
 pub use types::*;
 
@@ -57,6 +59,7 @@ mod tests {
       permissions: 0o644,
       owner: "zhangyue".to_string(),
       group: "staff".to_string(),
+      editable: false,
     };
 
     let serialized = serde_json::to_string(&item).unwrap();
@@ -64,6 +67,7 @@ mod tests {
     assert!(serialized.contains("\"is_dir\":false"));
     assert!(serialized.contains("\"owner\":\"zhangyue\""));
     assert!(serialized.contains("\"group\":\"staff\""));
+    assert!(serialized.contains("\"editable\":false"));
 
     let deserialized: RemoteFileItem = serde_json::from_str(&serialized).unwrap();
     assert_eq!(deserialized.name, "large_file.iso");
