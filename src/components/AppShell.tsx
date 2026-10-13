@@ -451,7 +451,10 @@ export function AppShell() {
           {/* 内容列内缩与 ZCode 一致：右/下 4px、左 0，顶部经 4px 拖拽条让面板上缘留出等宽间隙 */}
           <div className="flex min-w-[320px] flex-1 flex-col p-1 pl-0 pt-0">
             <div className="h-1 w-full shrink-0" data-tauri-drag-region />
-            <div className="flex min-h-0 flex-1 gap-1">
+            <div
+              className="flex min-h-0 flex-1"
+              data-ai-panel-resizing={isAiResizing ? 'true' : undefined}
+            >
             <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-(--workspace-panel-radius) border border-border bg-background">
               <WorkspaceHeader
                 page={page}
@@ -528,7 +531,8 @@ export function AppShell() {
               />
             ) : null}
 
-            {/* AI 右侧面板（ZCode 布局范式：常驻侧栏、跨页面保活、宽度可拖） */}
+            {/* AI 右侧面板（ZCode 布局范式：常驻侧栏、跨页面保活、宽度可拖）；
+                左缘 4px 间隙由 ml-1 提供（ZCode 用内容列 p-1 的右留白） */}
             <AiChatPanel
               open={isAiChatOpen && page === 'terminal'}
               width={aiPanelWidthPx}
