@@ -12,6 +12,10 @@ export default {
     settings: 'Settings',
   },
   ai: {
+    errorChip: {
+      ask: 'Ask AI',
+      dismiss: 'Dismiss',
+    },
     chat: {
       title: 'Ask AI',
       placeholder: 'Describe your problem, e.g. SSH connection timeout',

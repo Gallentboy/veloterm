@@ -17,6 +17,7 @@ import {
   type TerminalSessionRegistryEntry,
 } from '@/terminal/terminalSessionRegistry';
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
+import { buildSshErrorPrompt, setAiErrorContext } from '@/services/aiContext';
 import {
   createTerminalByteChannel,
   encodeBinaryString,
@@ -631,6 +632,16 @@ export function TerminalSession({
         const message = error instanceof Error ? error.message : String(error);
         console.error('[TerminalSession] failed to create terminal:', error);
         term.write(`\r\n[Terminal failed to start]\r\n${message}\r\n`);
+        // SSH 会话启动失败：暂存错误现场，供终端面板「问 AI」一键带入
+        if (hostId != null) {
+          const hostLabel = resolvedHost
+            ? `${resolvedHost.username || 'root'}@${resolvedHost.host}:${resolvedHost.port}`
+            : `hostId=${hostId}`;
+          setAiErrorContext(
+            'SSH 终端启动失败',
+            buildSshErrorPrompt({ hostLabel, errorMessage: message }),
+          );
+        }
       });
 
     const resizeObserver = new ResizeObserver(() => {

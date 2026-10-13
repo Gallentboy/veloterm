@@ -95,6 +95,12 @@ export function AppShell() {
   const { createSession: createSftpSession } = useSftpStore();
   const [page, setPage] = useState<Page>('home');
   const [isAiChatOpen, setAiChatOpen] = useState(false);
+  const [aiInitialPrompt, setAiInitialPrompt] = useState<string | null>(null);
+
+  const openAiChat = (prompt?: string) => {
+    setAiInitialPrompt(prompt ?? null);
+    setAiChatOpen(true);
+  };
 
   // 进入文件页 = 用户可能马上要编辑文件，无延迟再触发一次（与上面去重，模块只拉一次）
   const [hasWarmedOnFiles, setHasWarmedOnFiles] = useState(false);
@@ -328,7 +334,7 @@ export function AppShell() {
               <WorkspaceHeader
                 page={page}
                 isSidebarVisible={isSidebarVisible}
-                onOpenAiChat={() => setAiChatOpen(true)}
+                onOpenAiChat={() => openAiChat()}
               />
               <main className="min-h-0 flex-1 overflow-y-auto relative">
                 {/* SFTP 文件视图持久挂载，切换页面保持后台状态、文件路径与传输任务 */}
@@ -352,6 +358,7 @@ export function AppShell() {
                     isVisible={page === 'terminal'}
                     isPanelResizing={isResizing}
                     onNavigateHosts={() => setPage('hosts')}
+                    onOpenAiChat={openAiChat}
                   />
                 ) : page === 'editor' ? (
                   <EditorScreen />
@@ -377,7 +384,11 @@ export function AppShell() {
 
           <DesktopTopOverlay isSidebarVisible={isSidebarVisible} onToggleSidebar={toggleSidebar} />
 
-          <AiChatDialog open={isAiChatOpen} onClose={() => setAiChatOpen(false)} />
+          <AiChatDialog
+            open={isAiChatOpen}
+            onClose={() => setAiChatOpen(false)}
+            initialPrompt={aiInitialPrompt}
+          />
         </div>
       </div>
   );
