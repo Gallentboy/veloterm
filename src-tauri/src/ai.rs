@@ -241,6 +241,68 @@ where
   Ok(())
 }
 
+/// 分页拉取模型列表的通用 HTTP 循环：page_param 拼 query，next_page 从响应提取下一页游标，
+/// None 即停。容忍缺失游标（非标端点常见）。
+async fn fetch_models_paginated(
+  url: &str,
+  headers: Vec<(String, String)>,
+  page_param: &str,
+  extract_next: fn(&serde_json::Value) -> Option<String>,
+  strip_prefix: Option<&str>,
+) -> Result<Vec<String>, String> {
+  use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+  let client = reqwest::Client::new();
+  let mut header_map = HeaderMap::new();
+  for (name, value) in headers {
+    if let (Ok(n), Ok(v)) = (
+      HeaderName::from_bytes(name.as_bytes()),
+      HeaderValue::from_str(&value),
+    ) {
+      header_map.insert(n, v);
+    }
+  }
+
+  let mut all: Vec<String> = Vec::new();
+  let mut cursor: Option<String> = None;
+  // 分页保险：最多 20 页
+  for _ in 0..20 {
+    let mut request = client.get(url).headers(header_map.clone());
+    if let Some(cursor) = &cursor {
+      request = request.query(&[(page_param, cursor)]);
+    }
+    let response = request
+      .send()
+      .await
+      .map_err(|e| format!("请求模型列表失败: {e}"))?;
+    let status = response.status();
+    let text = response
+      .text()
+      .await
+      .map_err(|e| format!("读取模型列表失败: {e}"))?;
+    if !status.is_success() {
+      return Err(format!("模型列表接口返回 {status}: {}", truncate_str(&text, 200)));
+    }
+    let value: serde_json::Value = serde_json::from_str(&text)
+      .map_err(|e| format!("模型列表响应不是合法 JSON: {e}"))?;
+    let mut page = parse_openai_models_json(&value);
+    if let Some(prefix) = strip_prefix {
+      for id in page.iter_mut() {
+        if let Some(stripped) = id.strip_prefix(prefix) {
+          *id = stripped.to_string();
+        }
+      }
+    }
+    all.append(&mut page);
+    match extract_next(&value) {
+      Some(next) if !next.is_empty() => cursor = Some(next),
+      _ => break,
+    }
+  }
+  all.sort();
+  all.dedup();
+  Ok(all)
+}
+
 fn truncate_str(s: &str, max: usize) -> String {
   if s.chars().count() <= max {
     s.to_string()
@@ -395,56 +457,54 @@ pub async fn ai_chat(
 /// 列出供应商可用模型（OpenAI /v1/models、Anthropic /v1/models、Gemini models.list）
 #[tauri::command]
 pub async fn ai_list_models(record: AiProviderRecord) -> Result<Vec<String>, String> {
-  use rig::client::ModelListingClient;
-
   let (_key_index, api_key) = pick_key(&record)?;
   let base_url = record.base_url.as_deref().filter(|u| !u.trim().is_empty());
 
+  let base = |default: &str| -> String {
+    base_url
+      .map(|u| u.trim_end_matches('/').to_string())
+      .unwrap_or_else(|| default.to_string())
+  };
+
   match record.provider_type.as_str() {
+    // OpenAI 兼容：Bearer 鉴权；游标在 last_id（OpenAI 规范无分页，网关可能自定）
     "openai" => {
-      // 手写 GET + 宽容解析：兼容端点（DeepSeek/GLM/vLLM/one-api…）的 /models
-      // 响应结构不规范，rig 强类型解析经常失败。
-      use reqwest::header::AUTHORIZATION;
-      let base = base_url
-        .map(|u| u.trim_end_matches('/').to_string())
-        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-      let response = reqwest::Client::new()
-        .get(format!("{base}/models"))
-        .header(AUTHORIZATION, format!("Bearer {api_key}"))
-        .send()
-        .await
-        .map_err(|e| format!("请求模型列表失败: {e}"))?;
-      let status = response.status();
-      let text = response
-        .text()
-        .await
-        .map_err(|e| format!("读取模型列表失败: {e}"))?;
-      if !status.is_success() {
-        return Err(format!("模型列表接口返回 {status}: {}", truncate_str(&text, 200)));
-      }
-      let value: serde_json::Value =
-        serde_json::from_str(&text).map_err(|e| format!("模型列表响应不是合法 JSON: {e}"))?;
-      Ok(parse_openai_models_json(&value))
+      fetch_models_paginated(
+        &format!("{}/models", base("https://api.openai.com/v1")),
+        vec![("Authorization".to_string(), format!("Bearer {api_key}"))],
+        "after",
+        |v| v.get("last_id").and_then(|x| x.as_str()).map(String::from),
+        None,
+      )
+      .await
     }
+    // Anthropic：x-api-key + anthropic-version 头（官方硬性要求），has_more/last_id 分页
     "anthropic" => {
-      use rig::providers::anthropic;
-      let mut builder = anthropic::Client::builder().api_key(&api_key);
-      if let Some(base_url) = base_url {
-        builder = builder.base_url(base_url);
-      }
-      let client = builder.build().map_err(|e| e.to_string())?;
-      let list = client.list_models().await.map_err(|e| e.to_string())?;
-      Ok(list.data.into_iter().map(|m| m.id).collect())
+      fetch_models_paginated(
+        &format!("{}/v1/models", base("https://api.anthropic.com")),
+        vec![
+          ("x-api-key".to_string(), api_key.clone()),
+          ("anthropic-version".to_string(), "2023-06-01".to_string()),
+        ],
+        "after",
+        |v| v.get("last_id").and_then(|x| x.as_str()).map(String::from),
+        None,
+      )
+      .await
     }
+    // Gemini：key 作 query 参数；nextPageToken 分页；name 带 "models/" 前缀需剥掉
     "gemini" => {
-      use rig::providers::gemini;
-      let mut builder = gemini::Client::builder().api_key(&api_key);
-      if let Some(base_url) = base_url {
-        builder = builder.base_url(base_url);
-      }
-      let client = builder.build().map_err(|e| e.to_string())?;
-      let list = client.list_models().await.map_err(|e| e.to_string())?;
-      Ok(list.data.into_iter().map(|m| m.id).collect())
+      fetch_models_paginated(
+        &format!(
+          "{}/v1beta/models?key={api_key}",
+          base("https://generativelanguage.googleapis.com")
+        ),
+        vec![],
+        "pageToken",
+        |v| v.get("nextPageToken").and_then(|x| x.as_str()).map(String::from),
+        Some("models/"),
+      )
+      .await
     }
     other => Err(format!("不支持的供应商类型: {other}")),
   }
