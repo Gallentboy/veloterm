@@ -124,6 +124,43 @@ export async function uploadLocalFile(
 }
 
 /**
+ * 远端到远端流式复制（同会话 = 同主机复制；不同会话 = 跨主机经本机内存管道中转，不落盘）
+ * - Rust 后端 reader→writer 直连两条 SFTP 会话，64KB 流式转发
+ * - 进度通过 Tauri 2.0 Channel 以 100ms 间隔节流上报
+ */
+export async function copyRemoteFile(
+  sourceSessionId: string,
+  sourceRemotePath: string,
+  targetSessionId: string,
+  targetRemotePath: string,
+  onUpdate: (progress: TransferProgress) => void,
+  speedLimitBps = 0,
+): Promise<TransferHandle> {
+  const taskId = await invoke<number>('sftp_next_task_id');
+  const onProgress = new Channel<TransferProgress>();
+
+  onProgress.onmessage = (progress) => {
+    onUpdate(progress);
+  };
+
+  const cancel = () => {
+    void invoke('sftp_cancel_transfer', { taskId });
+  };
+
+  const done = invoke<void>('sftp_copy_file', {
+    taskId,
+    sourceSessionId,
+    sourcePath: sourceRemotePath,
+    targetSessionId,
+    targetPath: targetRemotePath,
+    speedLimitBps: speedLimitBps > 0 ? speedLimitBps : null,
+    onProgress,
+  });
+
+  return { taskId, cancel, done };
+}
+
+/**
  * 弹出原生文件选择器选择要上传的本地文件
  */
 export async function pickUploadFile(): Promise<string | null> {

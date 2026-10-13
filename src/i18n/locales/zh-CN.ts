@@ -129,6 +129,16 @@ export default {
       clearFinished: '清除已完成',
       queued: '排队中',
       retry: '重试',
+      copy: '远端复制',
+    },
+    pane: {
+      emptyTitle: '此侧未打开会话',
+      emptyDesc: '点击上方主机 Tab 或新建连接；两侧打开主机后，左右拖拽文件即可互拷',
+      emptyAction: '连接主机',
+    },
+    drag: {
+      unsupportedDir: '暂不支持拖拽复制文件夹，请先压缩或逐个拖拽文件',
+      sameTarget: '源与目标路径相同，无需复制',
     },
     transferCompleted: '传输完成',
     transferCancelled: '已取消',
