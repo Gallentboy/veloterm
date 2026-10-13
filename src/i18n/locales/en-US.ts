@@ -137,6 +137,7 @@ export default {
     optional: 'optional',
     cancel: 'Cancel',
     save: 'Save',
+    close: 'Close',
     edit: 'Edit',
     delete: 'Delete',
     showPassword: 'Show password',
