@@ -1,7 +1,17 @@
-import { Eraser, Plus, Server, SquareTerminal } from 'lucide-react';
+import {
+  Eraser,
+  Grid2X2,
+  LayoutGrid,
+  Plus,
+  Radio,
+  Server,
+  SquareTerminal,
+} from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
+import { BroadcastCommandBar } from '@/components/terminal/BroadcastCommandBar';
+import { TerminalGridContainer } from '@/components/terminal/TerminalGridContainer';
 import { TerminalSession } from '@/components/terminal/TerminalSession';
 import { TerminalTabTrigger } from '@/components/terminal/TerminalTabTrigger';
 import { Button } from '@/components/ui/button';
@@ -35,6 +45,12 @@ export function TerminalScreen({
     transport,
     sessions,
     activeSession,
+    layoutMode,
+    toggleLayoutMode,
+    maximizedSessionId,
+    setMaximizedSessionId,
+    isBroadcastActive,
+    toggleBroadcast,
     createSession,
     closeSession,
     activateSession,
@@ -75,12 +91,22 @@ export function TerminalScreen({
     [closeSession],
   );
 
-  // 终端页快捷键：⌘T 新建 Tab、⌘W 关闭当前 Tab、⌘⇧[ / ⌘⇧] 切换前后 Tab
+  // 终端页快捷键：
+  // ⌘T 新建 Tab、⌘W 关闭当前 Tab、⌘⇧[ / ⌘⇧] 切换前后 Tab
+  // ⌘⇧G 切换标签/九宫格、⌘⇧B 切换协同广播、Esc 退出最大化或广播
   useEffect(() => {
     if (!isVisible) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
+
+      if (!event.altKey && !event.shiftKey && !mod && event.key === 'Escape') {
+        if (maximizedSessionId !== null) {
+          setMaximizedSessionId(null);
+          return;
+        }
+      }
+
       if (!mod) return;
       const key = event.key.toLowerCase();
 
@@ -95,6 +121,18 @@ export function TerminalScreen({
           event.preventDefault();
           closeSession(activeSession.id);
         }
+        return;
+      }
+
+      if (event.shiftKey && key === 'g') {
+        event.preventDefault();
+        toggleLayoutMode();
+        return;
+      }
+
+      if (event.shiftKey && key === 'b') {
+        event.preventDefault();
+        toggleBroadcast();
         return;
       }
 
@@ -122,7 +160,18 @@ export function TerminalScreen({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activateSession, activeSession, closeSession, createSession, isVisible, sessions]);
+  }, [
+    activateSession,
+    activeSession,
+    closeSession,
+    createSession,
+    isVisible,
+    maximizedSessionId,
+    sessions,
+    setMaximizedSessionId,
+    toggleBroadcast,
+    toggleLayoutMode,
+  ]);
 
   const activeSize = activeSession ? sizesBySession[activeSession.id] : undefined;
   const isActiveWebgl = activeSession ? Boolean(webglBySession[activeSession.id]) : false;
@@ -161,7 +210,7 @@ export function TerminalScreen({
         </div>
 
         {/* 右侧状态与辅助动作 */}
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5">
           {isActiveWebgl ? (
             <span className="rounded bg-surface px-1.5 py-0.5 font-mono text-ui-xs text-success select-none">
               WebGL2
@@ -177,6 +226,51 @@ export function TerminalScreen({
               {activeSize.cols}×{activeSize.rows}
             </span>
           ) : null}
+
+          {/* 协同广播开关按钮 */}
+          {sessions.length > 1 && (
+            <ControlHintTooltip
+              title={isBroadcastActive ? '关闭协同广播 (⌘⇧B)' : '开启多终端协同广播 (⌘⇧B)'}
+              side="bottom"
+              align="end"
+            >
+              <Button
+                type="button"
+                size="icon-md"
+                variant={isBroadcastActive ? 'secondary' : 'ghost'}
+                onClick={toggleBroadcast}
+                className={cn('size-7 rounded-lg relative', isBroadcastActive && 'bg-primary/10 text-primary')}
+                aria-label="协同广播"
+              >
+                <Radio className={cn('size-3.5', isBroadcastActive && 'text-primary animate-pulse')} />
+              </Button>
+            </ControlHintTooltip>
+          )}
+
+          {/* 网格视图 / 标签视图切换按钮 */}
+          {sessions.length > 1 && (
+            <ControlHintTooltip
+              title={layoutMode === 'grid' ? '切换为标签页视图 (⌘⇧G)' : '切换为九宫格平铺视图 (⌘⇧G)'}
+              side="bottom"
+              align="end"
+            >
+              <Button
+                type="button"
+                size="icon-md"
+                variant={layoutMode === 'grid' ? 'secondary' : 'ghost'}
+                onClick={toggleLayoutMode}
+                className={cn('size-7 rounded-lg', layoutMode === 'grid' && 'bg-primary/10 text-primary')}
+                aria-label="切换网格视图"
+              >
+                {layoutMode === 'grid' ? (
+                  <LayoutGrid className="size-3.5" />
+                ) : (
+                  <Grid2X2 className="size-3.5" />
+                )}
+              </Button>
+            </ControlHintTooltip>
+          )}
+
           {activeSession ? (
             <ControlHintTooltip title={t('terminal.clear')} side="bottom" align="end">
               <Button
@@ -193,7 +287,7 @@ export function TerminalScreen({
         </div>
       </div>
 
-      {/* 终端会话容器：无会话时显示空白引导，有会话时非激活 Tab 用 hidden 隐藏保活 */}
+      {/* 终端会话容器：无会话时显示空白引导，有会话时根据布局模式呈现 */}
       {sessions.length === 0 ? (
         <EmptyState
           icon={SquareTerminal}
@@ -215,7 +309,27 @@ export function TerminalScreen({
               : undefined
           }
         />
+      ) : layoutMode === 'grid' ? (
+        /* 九宫格 / 平铺网格矩阵模式 */
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <TerminalGridContainer
+            sessions={sessions}
+            activeSessionId={activeSession?.id ?? 0}
+            maximizedSessionId={maximizedSessionId}
+            transport={transport}
+            isPanelResizing={isPanelResizing}
+            isVisible={isVisible}
+            onActivateSession={activateSession}
+            onMaximizeSession={setMaximizedSessionId}
+            onCloseSession={closeSession}
+            onShellLabelChange={updateShellLabel}
+            onSizeChange={handleSizeChange}
+            onWebglStatusChange={handleWebglStatusChange}
+            onExit={handleSessionExit}
+          />
+        </div>
       ) : (
+        /* 标准单 Tab 标签模式（非激活 Tab hidden 保活） */
         <div className="min-h-0 flex-1 overflow-hidden p-3 pt-2">
           {sessions.map((session) => {
             const isTabActive = session.id === activeSession?.id;
@@ -243,6 +357,11 @@ export function TerminalScreen({
             );
           })}
         </div>
+      )}
+
+      {/* 协同广播命令输入栏（吸附于底部） */}
+      {isBroadcastActive && sessions.length > 0 && (
+        <BroadcastCommandBar sessions={sessions} onClose={toggleBroadcast} />
       )}
     </section>
   );
