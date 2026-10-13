@@ -133,6 +133,11 @@ function buildVeloTermThemeData(): monaco.editor.IStandaloneThemeData {
       'editorCursor.foreground': token('--color-terminal-cursor', dark ? '#f8f8f8' : '#0d0d0d'),
       'editor.selectionBackground': selection,
       // 滚动条滑块：与 xterm/全局滚动条同一套令牌（细胶囊、随主题深浅）
+      /* 查找替换（⌘F）高亮：当前命中用选区蓝，其余命中低透明度 */
+      'editor.findMatchBackground': selection,
+      'editor.findMatchHighlightBackground': token('--color-terminal-selection-inactive', dark ? '#ffffff1a' : '#0d0d0d1a'),
+      'editor.findRangeHighlightBackground': token('--color-terminal-selection-inactive', dark ? '#ffffff1a' : '#0d0d0d1a'),
+      'editorWidget.border': border,
       'scrollbarSlider.background': token('--color-terminal-scrollbar', dark ? '#ffffff29' : '#0d0d0d2e'),
       'scrollbarSlider.hoverBackground': token('--color-terminal-scrollbar-hover', dark ? '#ffffff42' : '#0d0d0d47'),
       'scrollbarSlider.activeBackground': token('--color-terminal-scrollbar-active', dark ? '#ffffff57' : '#0d0d0d5c'),
@@ -142,7 +147,6 @@ function buildVeloTermThemeData(): monaco.editor.IStandaloneThemeData {
       'editorBracketMatch.background': selection,
       'editorBracketMatch.border': border,
       'editorWidget.background': popover,
-      'editorWidget.border': border,
       'editorHoverWidget.background': popover,
       'editorOverviewRuler.border': background,
       /* Diff 模式（冲突对比）配色：终端 16 色的绿/红叠加低透明度 */
