@@ -152,8 +152,19 @@ ${output}`);
       setItems((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
-        if (last?.role === 'assistant') {
+        // 最后一条是纯文本 assistant（无 toolCall）才更新；
+        // 工具卡片后到达的文本 delta 需要新开一条文本气泡
+        if (last?.role === 'assistant' && !last.toolCall) {
           next[next.length - 1] = fn(last);
+        } else {
+          next.push({
+            role: 'assistant',
+            content: '',
+            streaming: true,
+          });
+          // 建新条后再应用 fn（把 delta 写入新条）
+          const created = next[next.length - 1];
+          next[next.length - 1] = fn(created);
         }
         return next;
       });
