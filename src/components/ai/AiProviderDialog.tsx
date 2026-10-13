@@ -31,6 +31,13 @@ const TYPE_PLACEHOLDERS: Record<string, string> = {
   gemini: 'gemini-2.5-flash',
 };
 
+/** 各供应商官方默认接口地址（留空即用默认）：placeholder 展示 + 切换类型时清空提示 */
+const TYPE_DEFAULT_BASE_URLS: Record<string, string> = {
+  openai: 'https://api.openai.com/v1',
+  anthropic: 'https://api.anthropic.com',
+  gemini: 'https://generativelanguage.googleapis.com',
+};
+
 /** AI 供应商新建/编辑：名称/类型/端点/模型 + 多 Key 轮询池编辑 + 连通性测试 */
 export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProps) {
   const { t } = useTranslation();
@@ -162,7 +169,13 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
             <FormField label={t('ai.provider.type')}>
               <Select
                 value={providerType}
-                onChange={(e) => setProviderType(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (next !== providerType) {
+                    setProviderType(next);
+                    setBaseUrl('');
+                  }
+                }}
               >
                 {PROVIDER_TYPES.map((type) => (
                   <option key={type.value} value={type.value}>
@@ -222,8 +235,11 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
           <TextInput
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://api.deepseek.com/v1"
+            placeholder={TYPE_DEFAULT_BASE_URLS[providerType]}
           />
+          <span className="text-ui-xs text-foreground-subtlest">
+            {t('ai.provider.baseUrlHint', { url: TYPE_DEFAULT_BASE_URLS[providerType] })}
+          </span>
         </FormField>
 
         <FormField label={t('ai.provider.keys')}>
