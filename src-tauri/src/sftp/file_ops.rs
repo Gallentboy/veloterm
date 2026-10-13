@@ -79,8 +79,11 @@ pub async fn sftp_read_file(
   let mut probe = vec![0u8; SNIFF_PROBE_BYTES.min(size as usize)];
   let mut probed = 0usize;
   while probed < probe.len() {
+    let Some(chunk) = probe.get_mut(probed..) else {
+      break;
+    };
     let n = remote_file
-      .read(&mut probe[probed..])
+      .read(chunk)
       .await
       .map_err(|e| format!("Failed to read remote file probe: {e}"))?;
     if n == 0 {
@@ -107,7 +110,9 @@ pub async fn sftp_read_file(
     if n == 0 {
       break;
     }
-    data.extend_from_slice(&buffer[..n]);
+    if let Some(written) = buffer.get(..n) {
+      data.extend_from_slice(written);
+    }
     if data.len() as u64 > MAX_EDITABLE_FILE_SIZE_BYTES {
       return Err("文件超过 5MB，不可编辑".to_string());
     }

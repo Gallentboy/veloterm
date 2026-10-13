@@ -175,8 +175,11 @@ pub async fn sftp_download_file(
         if n == 0 {
           break; // EOF
         }
+        let Some(chunk) = buffer.get(..n) else {
+          break;
+        };
         local_file
-          .write_all(&buffer[..n])
+          .write_all(chunk)
           .await
           .map_err(|e| format!("Failed to write to local file: {e}"))?;
 
@@ -278,8 +281,11 @@ pub async fn sftp_upload_file(
         if n == 0 {
           break; // EOF
         }
+        let Some(chunk) = buffer.get(..n) else {
+          break;
+        };
         remote_file
-          .write_all(&buffer[..n])
+          .write_all(chunk)
           .await
           .map_err(|e| format!("Failed to write to remote file: {e}"))?;
 

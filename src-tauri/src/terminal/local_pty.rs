@@ -336,7 +336,8 @@ impl LocalPtySession {
           match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
-              if on_output.send(buf[..n].to_vec()).is_err() {
+              let chunk = buf.get(..n).map(|slice| slice.to_vec());
+              if chunk.is_none_or(|data| on_output.send(data).is_err()) {
                 break;
               }
             }
