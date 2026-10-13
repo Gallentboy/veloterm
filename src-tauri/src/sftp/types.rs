@@ -35,6 +35,8 @@ pub struct SftpState {
   pub clients: Arc<Mutex<HashMap<String, SftpClient>>>,
   pub cancel_tokens: Arc<Mutex<HashMap<usize, oneshot::Sender<()>>>>,
   pub next_task_id: AtomicUsize,
+  /// 串行化动态建连：并发请求共享一次握手，避免重复建 SSH 连接
+  pub connect_lock: Arc<Mutex<()>>,
 }
 
 impl Default for SftpState {
@@ -49,6 +51,7 @@ impl SftpState {
       clients: Arc::new(Mutex::new(HashMap::new())),
       cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
       next_task_id: AtomicUsize::new(1),
+      connect_lock: Arc::new(Mutex::new(())),
     }
   }
 

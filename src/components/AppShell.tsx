@@ -79,6 +79,14 @@ export function AppShell() {
   const { t } = useTranslation();
   // 编辑器会话（Provider 挂在 App 层，这里拿 openFile 供文件页入口调用）
   const { openFile: openEditorFile } = useEditorStore();
+
+  // 后台预热 Monaco 异步模块块：首屏渲染后空闲时拉取，首次打开编辑页不再等大模块加载
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void import('@/components/editor/MonacoDocumentCard');
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, []);
   const { isSidebarVisible, toggleSidebar } = useAppPanels();
   const { createSession } = useTerminalStore();
   const { createSession: createSftpSession } = useSftpStore();
