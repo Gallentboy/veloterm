@@ -1,11 +1,11 @@
-import { FolderSync, FolderTree, House, Server, Settings, Terminal } from 'lucide-react';
+import { FileCode, FolderSync, FolderTree, House, Server, Settings, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { SidebarMenuButton } from '@/components/SidebarMenuButton';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-export type Page = 'home' | 'terminal' | 'files' | 'hosts' | 'groups' | 'settings';
+export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'settings';
 
 interface WorkspaceSidebarProps {
   activePage: Page;
@@ -35,6 +35,12 @@ export function WorkspaceSidebar({ activePage, onPageChange, className }: Worksp
           label={t('nav.terminal')}
           active={activePage === 'terminal'}
           onClick={() => onPageChange('terminal')}
+        />
+        <SidebarMenuButton
+          icon={FileCode}
+          label={t('nav.editor')}
+          active={activePage === 'editor'}
+          onClick={() => onPageChange('editor')}
         />
         <SidebarMenuButton
           icon={FolderSync}

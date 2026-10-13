@@ -18,7 +18,9 @@ export function WorkspaceHeader({ page, isSidebarVisible }: WorkspaceHeaderProps
   const title =
     page === 'terminal'
       ? t('terminal.title')
-      : page === 'files'
+      : page === 'editor'
+        ? t('editor.title')
+        : page === 'files'
         ? t('files.title')
         : page === 'hosts'
           ? t('hosts.title')
