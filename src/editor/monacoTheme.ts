@@ -132,6 +132,10 @@ function buildVeloTermThemeData(): monaco.editor.IStandaloneThemeData {
       'editorLineNumber.activeForeground': foreground,
       'editorCursor.foreground': token('--color-terminal-cursor', dark ? '#f8f8f8' : '#0d0d0d'),
       'editor.selectionBackground': selection,
+      // 滚动条滑块：与 xterm/全局滚动条同一套令牌（细胶囊、随主题深浅）
+      'scrollbarSlider.background': token('--color-terminal-scrollbar', dark ? '#ffffff29' : '#0d0d0d2e'),
+      'scrollbarSlider.hoverBackground': token('--color-terminal-scrollbar-hover', dark ? '#ffffff42' : '#0d0d0d47'),
+      'scrollbarSlider.activeBackground': token('--color-terminal-scrollbar-active', dark ? '#ffffff57' : '#0d0d0d5c'),
       'editor.lineHighlightBackground': surface,
       'editorIndentGuide.background1': border,
       'editorIndentGuide.activeBackground1': token('--color-border-hover', dark ? '#ffffff26' : '#0d0d0d26'),
@@ -141,9 +145,6 @@ function buildVeloTermThemeData(): monaco.editor.IStandaloneThemeData {
       'editorWidget.border': border,
       'editorHoverWidget.background': popover,
       'editorOverviewRuler.border': background,
-      'scrollbarSlider.background': token('--color-terminal-scrollbar', dark ? '#ffffff29' : '#0d0d0d2e'),
-      'scrollbarSlider.hoverBackground': token('--color-terminal-scrollbar-hover', dark ? '#ffffff42' : '#0d0d0d47'),
-      'scrollbarSlider.activeBackground': token('--color-terminal-scrollbar-active', dark ? '#ffffff57' : '#0d0d0d5c'),
       /* Diff 模式（冲突对比）配色：终端 16 色的绿/红叠加低透明度 */
       'diffEditor.border': border,
       'diffEditor.insertedTextBackground': withAlpha(green, 0.14),
