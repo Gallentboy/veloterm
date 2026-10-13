@@ -228,6 +228,15 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL,
           updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS editor_drafts (
+          file_id INTEGER PRIMARY KEY,
+          host_id INTEGER NOT NULL,
+          remote_path TEXT NOT NULL,
+          base_hash TEXT NOT NULL,
+          content TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
       );",
     )
     .map_err(|e| format!("failed to initialize schema in SQLCipher database: {e}"))?;
@@ -318,6 +327,95 @@ pub fn delete_kv(pool: &DbPool, key: &str) -> Result<(), String> {
   conn
     .execute("DELETE FROM app_kv WHERE key = ?1", params![key])
     .map_err(|e| format!("failed to delete app_kv key={key}: {e}"))?;
+  Ok(())
+}
+
+// ===== `groups` / `hosts` / `host_groups` / `sessions` 持久化操作 =====
+
+/// 远程文件编辑器草稿行（对应 `editor_drafts` 表，与前端 `DraftRow` 对齐）。
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorDraftRecord {
+  pub file_id: i64,
+  pub host_id: i64,
+  pub remote_path: String,
+  pub base_hash: String,
+  pub content: String,
+  pub updated_at: i64,
+}
+
+/// 加载全部编辑器草稿（按 `file_id` 升序）。
+pub fn load_editor_drafts(pool: &DbPool) -> Result<Vec<EditorDraftRecord>, String> {
+  let conn = pool
+    .get()
+    .map_err(|e| format!("failed to get db connection: {e}"))?;
+  let mut stmt = conn
+    .prepare(
+      "SELECT file_id, host_id, remote_path, base_hash, content, updated_at
+       FROM editor_drafts
+       ORDER BY file_id ASC",
+    )
+    .map_err(|e| format!("failed to prepare editor_drafts query: {e}"))?;
+  let rows = stmt
+    .query_map([], |row| {
+      Ok(EditorDraftRecord {
+        file_id: row.get(0)?,
+        host_id: row.get(1)?,
+        remote_path: row.get(2)?,
+        base_hash: row.get(3)?,
+        content: row.get(4)?,
+        updated_at: row.get(5)?,
+      })
+    })
+    .map_err(|e| format!("failed to query editor_drafts: {e}"))?;
+
+  let mut drafts = Vec::new();
+  for row in rows {
+    drafts.push(row.map_err(|e| format!("failed to decode editor_drafts row: {e}"))?);
+  }
+  Ok(drafts)
+}
+
+/// 新增或更新（upsert by `file_id`）一条编辑器草稿。
+pub fn save_editor_draft(pool: &DbPool, draft: &EditorDraftRecord) -> Result<(), String> {
+  let conn = pool
+    .get()
+    .map_err(|e| format!("failed to get db connection: {e}"))?;
+  let now = now_timestamp_ms();
+  conn
+    .execute(
+      "INSERT INTO editor_drafts (file_id, host_id, remote_path, base_hash, content, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+       ON CONFLICT(file_id) DO UPDATE SET
+         host_id = excluded.host_id,
+         remote_path = excluded.remote_path,
+         base_hash = excluded.base_hash,
+         content = excluded.content,
+         updated_at = excluded.updated_at",
+      params![
+        draft.file_id,
+        draft.host_id,
+        &draft.remote_path,
+        &draft.base_hash,
+        &draft.content,
+        now
+      ],
+    )
+    .map_err(|e| format!("failed to save editor draft file_id={}: {e}", draft.file_id))?;
+  Ok(())
+}
+
+/// 按 `file_id` 删除一条编辑器草稿（不存在时静默成功）。
+pub fn delete_editor_draft(pool: &DbPool, file_id: i64) -> Result<(), String> {
+  let conn = pool
+    .get()
+    .map_err(|e| format!("failed to get db connection: {e}"))?;
+  conn
+    .execute(
+      "DELETE FROM editor_drafts WHERE file_id = ?1",
+      params![file_id],
+    )
+    .map_err(|e| format!("failed to delete editor draft file_id={file_id}: {e}"))?;
   Ok(())
 }
 
@@ -722,6 +820,42 @@ mod tests {
     save_host_store(&pool, &payload).expect("save_host_store should succeed");
     let loaded = load_host_store(&pool).expect("load_host_store should succeed");
     assert_eq!(loaded, payload);
+
+    let _ = fs::remove_dir_all(&temp_dir);
+  }
+
+  #[test]
+  fn editor_draft_roundtrip() {
+    let temp_dir = std::env::temp_dir().join(format!("veloterm-draft-test-{}", Uuid::new_v4()));
+    let db_path = temp_dir.join("veloterm.db");
+    let pool = init_db_at_path(&db_path, "draft-key").expect("init_db_at_path should succeed");
+
+    assert!(load_editor_drafts(&pool).expect("load should succeed").is_empty());
+
+    let draft = EditorDraftRecord {
+      file_id: 7,
+      host_id: 3,
+      remote_path: "/etc/nginx/nginx.conf".to_string(),
+      base_hash: "sha256:abc".to_string(),
+      content: "worker_processes 1;\n".to_string(),
+      updated_at: 0,
+    };
+    save_editor_draft(&pool, &draft).expect("save draft should succeed");
+
+    let mut updated = draft.clone();
+    updated.content = "worker_processes 2;\n".to_string();
+    save_editor_draft(&pool, &updated).expect("upsert draft should succeed");
+
+    let all = load_editor_drafts(&pool).expect("load should succeed");
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].content, "worker_processes 2;\n");
+    assert_eq!(all[0].file_id, 7);
+    assert!(all[0].updated_at > 0);
+
+    delete_editor_draft(&pool, 7).expect("delete should succeed");
+    assert!(load_editor_drafts(&pool).expect("load should succeed").is_empty());
+    // 删除不存在的草稿不应报错
+    delete_editor_draft(&pool, 404).expect("delete missing draft should be a no-op");
 
     let _ = fs::remove_dir_all(&temp_dir);
   }

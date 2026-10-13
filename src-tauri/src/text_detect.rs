@@ -14,6 +14,9 @@
 
 use std::path::Path;
 
+/// SFTP 在线编辑允许的最大文件大小（5 MiB）：列表条目与读取入口共用同一上限。
+pub const MAX_EDITABLE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
+
 /// 无后缀的常见文本配置文件名（全小写比较）。
 const EXACT_TEXT_FILES: &[&str] = &[
   "dockerfile",
@@ -99,6 +102,14 @@ pub fn is_editable_text(filename: Option<&str>, bytes: &[u8]) -> bool {
   is_text_buffer(bytes)
 }
 
+/// SFTP 列表条目级判定：大小不超上限且文件名命中已知文本后缀（白名单）才可编辑。
+///
+/// 未知后缀（`None`）在列表阶段保守判不可编辑，避免为嗅探逐个读文件；
+/// 打开文件时由 [`is_editable_text`] 结合内容探针做二次判定。
+pub fn is_editable_sftp_entry(name: &str, size: u64) -> bool {
+  size <= MAX_EDITABLE_FILE_SIZE_BYTES && is_text_file_by_name(name) == Some(true)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -147,6 +158,26 @@ mod tests {
       *byte = 0x01;
     }
     assert!(!is_text_buffer(&noisy)); // 5% 控制字符 > 1.5%
+  }
+
+  #[test]
+  fn editable_sftp_entry_respects_size_limit() {
+    assert!(is_editable_sftp_entry("notes.txt", 1024));
+    assert!(is_editable_sftp_entry("notes.txt", MAX_EDITABLE_FILE_SIZE_BYTES));
+    // 超限的 .txt → false
+    assert!(!is_editable_sftp_entry(
+      "huge.txt",
+      MAX_EDITABLE_FILE_SIZE_BYTES + 1
+    ));
+  }
+
+  #[test]
+  fn editable_sftp_entry_rejects_unknown_extension() {
+    // 限内未知后缀 → false（列表阶段不嗅探，保守不可编辑）
+    assert!(!is_editable_sftp_entry("runbook", 100));
+    assert!(!is_editable_sftp_entry(".gitignore", 100));
+    // 命中二进制黑名单同样不可编辑
+    assert!(!is_editable_sftp_entry("logo.png", 100));
   }
 
   #[test]
