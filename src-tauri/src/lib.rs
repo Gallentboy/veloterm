@@ -57,6 +57,7 @@ pub fn run() {
       sftp::commands::sftp_pick_upload_file,
       sftp::commands::sftp_pick_download_path,
       sftp::commands::sftp_remove,
+      sftp::commands::sftp_copy_file,
       sftp::file_ops::sftp_read_file,
       sftp::file_ops::sftp_write_file,
       editor_storage::editor_load_state,

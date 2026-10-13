@@ -13,7 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
 use super::manager::get_or_connect_sftp;
-use super::types::SftpState;
+use super::types::{SftpClient, SftpState};
 use crate::text_detect::{MAX_EDITABLE_FILE_SIZE_BYTES, is_editable_text};
 
 /// 文本嗅探探针长度（与 `is_text_buffer` 约定一致）。
@@ -33,7 +33,7 @@ fn file_name_of(remote_path: &str) -> &str {
 }
 
 /// 生成与目标文件同目录的临时文件路径：`<dir>/.veloterm.tmp.<uuid>`。
-fn sibling_temp_path(remote_path: &str) -> String {
+pub(crate) fn sibling_temp_path(remote_path: &str) -> String {
   let temp_name = format!(".veloterm.tmp.{}", Uuid::new_v4());
   match remote_path.rsplit_once('/') {
     // "/a.txt" → "/.veloterm.tmp.<uuid>"（根目录）
@@ -42,6 +42,26 @@ fn sibling_temp_path(remote_path: &str) -> String {
     // 相对路径（无 '/'）→ 临时文件落在 SFTP 工作目录
     None => temp_name,
   }
+}
+
+/// 将临时文件 rename 覆盖目标：SFTP v3 rename 在目标已存在时会被部分服务器
+/// （如 OpenSSH sftp-server）拒绝，此时回退为「删除目标后再 rename」；
+/// 二次 rename 仍失败则删除临时文件并返回错误。
+pub(crate) async fn commit_temp_file(
+  client: &SftpClient,
+  temp: &str,
+  target: &str,
+) -> Result<(), String> {
+  if let Err(first_err) = client.rename(temp, target).await {
+    let _ = client.remove_file(target).await;
+    if let Err(retry_err) = client.rename(temp, target).await {
+      let _ = client.remove_file(temp).await;
+      return Err(format!(
+        "Failed to rename temp file onto '{target}': {first_err}; retry after remove: {retry_err}"
+      ));
+    }
+  }
+  Ok(())
 }
 
 /// 读取远端文本文件内容（大小上限 + 文本嗅探校验）。
@@ -171,17 +191,8 @@ pub async fn sftp_write_file(
     let _ = client.set_metadata(&temp_path, attrs).await;
   }
 
-  // 3. rename 覆盖目标；SFTP v3 rename 在目标已存在时会被部分服务器
-  //    （如 OpenSSH sftp-server）拒绝，此时回退为「删除目标后再 rename」。
-  if let Err(first_err) = client.rename(&temp_path, &remote_path).await {
-    let _ = client.remove_file(&remote_path).await;
-    if let Err(retry_err) = client.rename(&temp_path, &remote_path).await {
-      let _ = client.remove_file(&temp_path).await;
-      return Err(format!(
-        "Failed to rename temp file onto '{remote_path}': {first_err}; retry after remove: {retry_err}"
-      ));
-    }
-  }
+  // 3. rename 覆盖目标（目标已存在时回退为「删除目标后再 rename」）
+  commit_temp_file(&client, &temp_path, &remote_path).await?;
 
   log::info!(
     "[SFTP] Atomically wrote {} bytes to '{remote_path}'",
