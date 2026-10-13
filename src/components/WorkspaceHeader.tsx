@@ -1,6 +1,7 @@
-import { Sparkles } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
 import { AboutDialog } from '@/components/AboutDialog';
 import { WorkspaceHelpMenuButton } from '@/components/WorkspaceHelpMenuButton';
@@ -12,10 +13,14 @@ interface WorkspaceHeaderProps {
   page: Page;
   isSidebarVisible: boolean;
   onOpenAiChat?: () => void;
+  /** AI 右侧面板当前是否展开（镜像左侧栏开关） */
+  isAiPanelOpen?: boolean;
+  /** 切换 AI 右侧面板展开/收起 */
+  onToggleAiPanel?: () => void;
 }
 
 /** 主面板头部（移植自 ZCode WorkspaceHeader）：h-12、整条可拖拽移动窗口，右侧帮助菜单。 */
-export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat }: WorkspaceHeaderProps) {
+export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat, isAiPanelOpen, onToggleAiPanel }: WorkspaceHeaderProps) {
   const { t } = useTranslation();
   const [isAboutOpen, setAboutOpen] = useState(false);
   const title =
@@ -50,6 +55,28 @@ export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat }: Worksp
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5">
+        {onToggleAiPanel ? (
+          <ControlHintTooltip
+            title={t('ai.panel.toggle')}
+            shortcut={isMacOS ? '⌘I' : 'Ctrl+I'}
+            side="bottom"
+          >
+            <Button
+              variant="ghost"
+              size="icon-md"
+              aria-label={t('ai.panel.toggle')}
+              aria-pressed={isAiPanelOpen ?? false}
+              onClick={onToggleAiPanel}
+              className={cn(isAiPanelOpen && 'bg-hover')}
+            >
+              {isAiPanelOpen ? (
+                <PanelRightClose className="size-4" />
+              ) : (
+                <PanelRightOpen className="size-4" />
+              )}
+            </Button>
+          </ControlHintTooltip>
+        ) : null}
         {onOpenAiChat ? (
           <Button
             variant="ghost"

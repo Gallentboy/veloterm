@@ -17,6 +17,7 @@ export default {
       dismiss: '忽略',
     },
     panel: {
+      toggle: '切换 AI 面板',
       resize: '调整 AI 面板宽度',
     },
     chat: {
