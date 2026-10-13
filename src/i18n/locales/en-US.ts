@@ -25,6 +25,7 @@ export default {
       provider: 'Select provider',
       noProvider: 'No provider',
       goSettings: 'Configure an AI provider in Settings first',
+      goSettingsButton: 'Configure provider',
     },
     provider: {
       title: 'AI Providers',

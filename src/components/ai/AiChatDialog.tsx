@@ -1,4 +1,4 @@
-import { Loader2, Plus, Send, Sparkles, TriangleAlert } from 'lucide-react';
+import { Loader2, Plus, Send, Settings, Sparkles, TriangleAlert } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -22,13 +22,15 @@ interface AiChatDialogProps {
   onClose: () => void;
   /** 外部注入的初始提问（如 SSH 错误上下文） */
   initialPrompt?: string | null;
+  /** 跳转 AI 供应商设置页 */
+  onOpenSettings?: () => void;
 }
 
 /**
  * AI 问答回话弹窗：流式渲染助手回复，多 Key 轮询状态显示在回复角落。
  * 后端走 rig 统一接口（openai 兼容/anthropic/gemini），供应商在设置页配置。
  */
-export function AiChatDialog({ open, onClose, initialPrompt }: AiChatDialogProps) {
+export function AiChatDialog({ open, onClose, initialPrompt, onOpenSettings }: AiChatDialogProps) {
   const { t } = useTranslation();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
@@ -155,22 +157,41 @@ export function AiChatDialog({ open, onClose, initialPrompt }: AiChatDialogProps
       className="w-[560px]"
       footer={
         <div className="flex w-full items-center gap-2">
-          <select
-            value={providerId ?? ''}
-            onChange={(e) => setProviderId(e.target.value ? Number(e.target.value) : null)}
-            className="h-8 shrink-0 max-w-36 rounded-md border border-border bg-input px-2 text-ui-sm text-foreground outline-none cursor-pointer"
-            aria-label={t('ai.chat.provider')}
-          >
-            {providers.length === 0 ? (
-              <option value="">{t('ai.chat.noProvider')}</option>
-            ) : (
-              providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} · {p.model}
-                </option>
-              ))
-            )}
-          </select>
+          {providers.length === 0 ? (
+            onOpenSettings ? (
+              <Button variant="outline" onClick={onOpenSettings} className="shrink-0">
+                <Settings className="size-3.5" />
+                {t('ai.chat.goSettingsButton')}
+              </Button>
+            ) : null
+          ) : (
+            <>
+              <select
+                value={providerId ?? ''}
+                onChange={(e) => setProviderId(e.target.value ? Number(e.target.value) : null)}
+                className="h-8 shrink-0 max-w-36 rounded-md border border-border bg-input px-2 text-ui-sm text-foreground outline-none cursor-pointer"
+                aria-label={t('ai.chat.provider')}
+              >
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · {p.model}
+                  </option>
+                ))}
+              </select>
+              {onOpenSettings ? (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={onOpenSettings}
+                  aria-label={t('ai.provider.title')}
+                  title={t('ai.provider.title')}
+                  className="shrink-0"
+                >
+                  <Settings className="size-3.5" />
+                </Button>
+              ) : null}
+            </>
+          )}
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}

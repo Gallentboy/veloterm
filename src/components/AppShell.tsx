@@ -388,6 +388,10 @@ export function AppShell() {
             open={isAiChatOpen}
             onClose={() => setAiChatOpen(false)}
             initialPrompt={aiInitialPrompt}
+            onOpenSettings={() => {
+              setAiChatOpen(false);
+              setPage('settings');
+            }}
           />
         </div>
       </div>
