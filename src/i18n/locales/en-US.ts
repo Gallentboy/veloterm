@@ -20,6 +20,12 @@ export default {
       toggle: 'Toggle AI panel',
       resize: 'Resize AI panel',
     },
+    tools: {
+      getScreen: 'Capture terminal screen',
+      runCommand: 'Run in terminal',
+      result: 'Tool result',
+      analyze: 'Analyze',
+    },
     chat: {
       title: 'Ask AI',
       placeholder: 'Describe your problem, e.g. SSH connection timeout',

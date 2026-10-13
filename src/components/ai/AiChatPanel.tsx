@@ -1,4 +1,4 @@
-import { Loader2, Send, Settings, Sparkles, TriangleAlert, X } from 'lucide-react';
+import { Loader2, Play, Send, Settings, Sparkles, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -9,6 +9,12 @@ import {
 } from '@/services/aiService';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useTerminalStore } from '@/terminal/TerminalProvider';
+import {
+  getActiveTerminalText,
+  readTerminalOutput,
+  sendToTerminal,
+} from '@/services/aiTerminalTools';
 
 interface ChatItem {
   role: 'user' | 'assistant';
@@ -19,6 +25,8 @@ interface ChatItem {
 
 interface AiChatPanelProps {
   open: boolean;
+  /** 当前是否在终端页：AI 问答入口仅在终端页展示 */
+  isTerminalPage?: boolean;
   /** 面板宽度（px，由 AppShell 拖拽管理） */
   width: number;
   /** 拖拽中禁用宽度过渡 */
@@ -35,7 +43,7 @@ interface AiChatPanelProps {
  * 流式渲染助手回复、供应商切换、多 Key 轮询状态。
  * 面板跨页面导航保持挂载，对话上下文不丢。
  */
-export function AiChatPanel({ open, width, isResizing = false, onClose, initialPrompt, onOpenSettings }: AiChatPanelProps) {
+export function AiChatPanel({ open, width, isResizing = false, isTerminalPage = false, onClose, initialPrompt, onOpenSettings }: AiChatPanelProps) {
   const { t } = useTranslation();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
@@ -44,6 +52,47 @@ export function AiChatPanel({ open, width, isResizing = false, onClose, initialP
   const [providerId, setProviderId] = useState<number | null>(null);
   const [lastKeyIndex, setLastKeyIndex] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const terminalStore = useTerminalStore();
+  const [toolResult, setToolResult] = useState<string | null>(null);
+  const [isToolRunning, setIsToolRunning] = useState<string | null>(null);
+
+  const activeTerminalKey = terminalStore.activeSessionId;
+
+  // ── AI 终端工具（系统提示词描述的能力，由面板上的快捷按钮触发）──
+
+  async function runToolGetScreen() {
+    if (activeTerminalKey == null) return;
+    setIsToolRunning('getScreen');
+    try {
+      const text = await getActiveTerminalText(activeTerminalKey, { lines: 120 });
+      setToolResult(text);
+    } finally {
+      setIsToolRunning(null);
+    }
+  }
+
+  async function runToolRunCommand() {
+    const command = input.trim();
+    if (!command || activeTerminalKey == null) return;
+    setIsToolRunning('runCommand');
+    try {
+      const result = await sendToTerminal(activeTerminalKey, `${command}`);
+      if (result.ok) {
+        setInput('');
+        setToolResult(`[已发送命令: ${command}]
+
+等待输出中…`);
+        const output = await readTerminalOutput(activeTerminalKey, { waitForMs: 2500 });
+        setToolResult(`[已发送命令: ${command}]
+
+${output}`);
+      } else {
+        setToolResult(`[发送失败: ${result.error}]`);
+      }
+    } finally {
+      setIsToolRunning(null);
+    }
+  }
   const sentInitialRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -110,8 +159,7 @@ export function AiChatPanel({ open, width, isResizing = false, onClose, initialP
         {
           providerId,
           history,
-          preamble:
-            '你是 VeloTerm 桌面终端应用的 AI 助手，擅长 Linux/SSH/运维问题排查。回答简洁、直接给可执行的命令或步骤。',
+          preamble: buildSystemPreamble(isTerminalPage, activeTerminalKey),
         },
         (chunk) => {
           if (chunk.keyIndex !== null && chunk.keyIndex !== undefined) {
@@ -167,6 +215,18 @@ export function AiChatPanel({ open, width, isResizing = false, onClose, initialP
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
+          {isTerminalPage ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void runToolGetScreen()}
+              disabled={activeTerminalKey == null || isToolRunning !== null}
+              aria-label={t('ai.tools.getScreen')}
+              title={t('ai.tools.getScreen')}
+            >
+              <SquareTerminal className={cn('size-3.5', isToolRunning === 'getScreen' && 'animate-pulse')} />
+            </Button>
+          ) : null}
           <select
             value={providerId ?? ''}
             onChange={(e) => setProviderId(e.target.value ? Number(e.target.value) : null)}
@@ -204,6 +264,40 @@ export function AiChatPanel({ open, width, isResizing = false, onClose, initialP
           </Button>
         </div>
       </div>
+
+      {/* 工具执行结果（最近一次，可带入对话） */}
+      {toolResult ? (
+        <div className="mx-2 mt-2 shrink-0 rounded-md border border-border bg-surface/60">
+          <div className="flex items-center justify-between border-b border-border/50 px-2 py-1">
+            <span className="text-ui-xs font-medium text-foreground-subtle select-none">
+              {t('ai.tools.result')}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setToolResult(null);
+                  setInput(`分析这段终端输出：\n\n\${toolResult.slice(0, 2000)}`);
+                }}
+                className="text-ui-xs text-foreground-subtle hover:text-foreground"
+              >
+                {t('ai.tools.analyze')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setToolResult(null)}
+                aria-label={t('common.close')}
+                className="text-foreground-subtlest hover:text-foreground"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          </div>
+          <pre className="max-h-32 overflow-auto px-2 py-1 font-mono text-ui-xs text-foreground-subtle whitespace-pre-wrap break-all">
+            {toolResult}
+          </pre>
+        </div>
+      ) : null}
 
       {/* 消息列表 */}
       <div
@@ -272,6 +366,19 @@ export function AiChatPanel({ open, width, isResizing = false, onClose, initialP
           disabled={providers.length === 0}
           className="max-h-24 min-w-0 flex-1 resize-none rounded-md border border-border bg-input px-2 py-1.5 text-ui-sm text-foreground outline-none placeholder:text-foreground-subtlest focus:border-border-hover"
         />
+        {isTerminalPage ? (
+          <Button
+            variant="outline"
+            size="icon-md"
+            disabled={isToolRunning !== null || !input.trim() || activeTerminalKey == null}
+            onClick={() => void runToolRunCommand()}
+            aria-label={t('ai.tools.runCommand')}
+            title={t('ai.tools.runCommand')}
+            className="shrink-0"
+          >
+            <Play className={cn('size-3.5', isToolRunning === 'runCommand' && 'animate-pulse')} />
+          </Button>
+        ) : null}
         <Button
           size="icon-md"
           disabled={isStreaming || !input.trim() || providers.length === 0}
@@ -288,4 +395,22 @@ export function AiChatPanel({ open, width, isResizing = false, onClose, initialP
       </div>
     </aside>
   );
+}
+
+
+/** 系统提示词：声明 AI 可用的终端工具能力，用户可通过面板快捷按钮代为执行 */
+function buildSystemPreamble(isTerminalPage: boolean, activeTerminalKey: number | null): string {
+  const base =
+    '你是 VeloTerm 桌面终端应用的 AI 助手，擅长 Linux/SSH/运维问题排查。回答简洁、直接给可执行的命令或步骤。';
+  if (!isTerminalPage || activeTerminalKey == null) {
+    return base;
+  }
+  return [
+    base,
+    '',
+    '## 可用终端工具（用户会通过面板按钮代你执行，你应建议用户使用）',
+    '- **获取终端屏幕**: 抓取当前终端最近 120 行内容（含 scrollback），分析问题时请让用户先点「屏幕」按钮',
+    '- **执行命令**: 把你建议的命令发送到终端执行并自动捕获输出，用户点「运行」即执行输入框中的命令',
+    '给出排查建议时：先让用户「获取终端屏幕」看现场，再给命令让用户「运行」，根据输出继续分析。',
+  ].join('\n');
 }
