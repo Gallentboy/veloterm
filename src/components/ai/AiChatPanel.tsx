@@ -47,7 +47,7 @@ interface AiChatPanelProps {
  * 流式渲染助手回复、供应商切换、多 Key 轮询状态。
  * 面板跨页面导航保持挂载，对话上下文不丢。
  */
-export function AiChatPanel({ open, width, isResizing = false, isTerminalPage = false, onClose, initialPrompt, onOpenSettings }: AiChatPanelProps) {
+export function AiChatPanel({ open, width: _width, isResizing = false, isTerminalPage = false, onClose, initialPrompt, onOpenSettings }: AiChatPanelProps) {
   const { t } = useTranslation();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
@@ -243,9 +243,8 @@ ${output}`);
   return (
     <aside
       aria-label={t('ai.chat.title')}
-      style={{ width: open ? `${width}px` : '0px' }}
       className={cn(
-        'flex h-full shrink-0 flex-col overflow-hidden rounded-(--workspace-panel-radius) border border-border bg-background transition-[width,opacity] duration-200 ease-out',
+        'ml-1 flex h-full w-(--ai-panel-width) shrink-0 flex-col overflow-hidden rounded-(--workspace-panel-radius) border border-border bg-background transition-[width,opacity] duration-200 ease-out',
         !open && 'pointer-events-none border-transparent opacity-0',
         isResizing && 'transition-opacity',
       )}
