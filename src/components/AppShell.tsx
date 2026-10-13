@@ -80,13 +80,23 @@ export function AppShell() {
   // 编辑器会话（Provider 挂在 App 层，这里拿 openFile 供文件页入口调用）
   const { openFile: openEditorFile } = useEditorStore();
 
-  // 后台预热 Monaco 异步模块块：首屏渲染后空闲时拉取，首次打开编辑页不再等大模块加载
+  // 后台预热 Monaco 异步模块块：首屏后立即排队，进入文件页（编辑意图信号）再确保一次。
+  // dev 模式 Monaco 依赖图是几千个模块请求，越早开始拉取，首次点「编辑」等待越短。
   useEffect(() => {
     const timer = setTimeout(() => {
       void import('@/components/editor/MonacoDocumentCard');
-    }, 1500);
+    }, 300);
     return () => clearTimeout(timer);
   }, []);
+
+  // 进入文件页 = 用户可能马上要编辑文件，无延迟再触发一次（与上面去重，模块只拉一次）
+  const [hasWarmedOnFiles, setHasWarmedOnFiles] = useState(false);
+  useEffect(() => {
+    if (page === 'files' && !hasWarmedOnFiles) {
+      setHasWarmedOnFiles(true);
+      void import('@/components/editor/MonacoDocumentCard');
+    }
+  }, [page, hasWarmedOnFiles]);
   const { isSidebarVisible, toggleSidebar } = useAppPanels();
   const { createSession } = useTerminalStore();
   const { createSession: createSftpSession } = useSftpStore();
