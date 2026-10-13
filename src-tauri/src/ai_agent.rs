@@ -31,10 +31,8 @@ fn register_pending(id: String) -> oneshot::Receiver<String> {
 
 fn resolve_pending(id: &str, result: String) -> bool {
   let mut guard = PENDING_TOOL_CALLS.lock().unwrap();
-  if let Some(map) = guard.as_mut() {
-    if let Some(tx) = map.remove(id) {
-      return tx.send(result).is_ok();
-    }
+  if let Some(tx) = guard.as_mut().and_then(|map| map.remove(id)) {
+    return tx.send(result).is_ok();
   }
   false
 }
@@ -120,16 +118,21 @@ where
   M: rig::completion::CompletionModel + Clone,
 {
   use futures::StreamExt;
-  use rig::completion::CompletionModel;
   use rig::message::{AssistantContent, Message};
 
   let tools = terminal_tool_definitions();
 
   for _turn in 0..max_turns {
-    // rig 无公开的 request 构造器带 tools 的简写：用 builder 链
-    // （completion_request 的 prompt 会追加到末尾；这里 prompt 就是 history 最后一条）
+    // rig 的 completion_request(prompt) 只设最后一条消息，
+    // 完整对话历史必须通过 .messages() 传入（与 ai.rs 的 stream_model 同模式）。
+    let prompt = history
+      .last()
+      .cloned()
+      .unwrap_or_else(|| rig::message::Message::user(""));
+    let chat_history = history.get(..history.len().saturating_sub(1)).map(|s| s.to_vec()).unwrap_or_default();
     let mut builder = model
-      .completion_request(history.clone().pop().unwrap_or_else(|| rig::message::Message::user("")))
+      .completion_request(prompt)
+      .messages(chat_history)
       .tools(tools.clone())
       .max_tokens(4096);
     if let Some(p) = &preamble {
