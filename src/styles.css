@@ -1,0 +1,229 @@
+/*
+ * VeloTerm 主题令牌 —— 移植自 ZCode packages/ui/src/styles.css 的 Zai 光谱。
+ * 浅色为 @theme 根默认值，深色由 .dark / .theme-dark 整组覆盖，
+ * 主题切换只换 class，不换变量名（与 ZCode 机制一致）。
+ */
+@import "tailwindcss" source(".");
+@import "@xterm/xterm/css/xterm.css";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --ui-font-size: 14px;
+}
+
+@theme {
+  /* ZCode 桌面端不设自定义 sans 栈，走 Tailwind 默认 --font-sans（system-ui），
+   * 界面字体与系统一致；仅等宽栈需要 CJK 回退（终端输出含中文时必需）。 */
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace;
+  --text-ui-xl: calc(var(--ui-font-size) + 4px);
+  --text-ui-lg: calc(var(--ui-font-size) + 2px);
+  --text-ui-base: var(--ui-font-size);
+  --text-ui-caption: calc(var(--ui-font-size) - 1px);
+  --text-ui-sm: calc(var(--ui-font-size) - 2px);
+  --text-ui-xs: calc(var(--ui-font-size) - 4px);
+
+  /* ===== 浅色（Zai Light 光谱）===== */
+  --color-background: #f8f8f8;
+  --color-background-alt: color-mix(in oklab, var(--color-background) 70%, transparent);
+  --color-header: #ffffff;
+  --color-panel: #ffffff;
+  --color-sidebar: #f0f0f0;
+  --color-surface: rgba(13, 13, 13, 0.03);
+  --color-surface-hover: rgba(13, 13, 13, 0.05);
+  --color-hover: rgba(13, 13, 13, 0.05);
+  --color-selected: rgba(13, 13, 13, 0.05);
+  --color-border: rgba(13, 13, 13, 0.1);
+  --color-border-hover: rgba(13, 13, 13, 0.15);
+  --color-card: #ffffff;
+  --color-popover: #ffffff;
+  --color-popover-foreground: var(--color-foreground);
+  --color-input: #ffffff;
+  --color-menu: #ffffff;
+  --color-menu-hover: #f0f0f0;
+  --color-primary: #000000;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #e6e6e6;
+  --color-accent: #ebf4ff;
+  --color-foreground: #262626;
+  --color-foreground-subtle: color-mix(in oklab, var(--color-foreground) 60%, transparent);
+  --color-foreground-subtlest: color-mix(in oklab, var(--color-foreground) 40%, transparent);
+  --color-foreground-inverse: #ffffff;
+  --color-success: #1e8a3e;
+  --color-success-foreground: #ffffff;
+  --color-warning: #e07b00;
+  --color-warning-foreground: #ffffff;
+  --color-destructive: #e03131;
+  --color-destructive-foreground: #ffffff;
+  --color-tooltip: #f0f0f0;
+  --color-tooltip-foreground: #0d0d0d;
+
+  /* ===== 终端 16 色（浅色）===== */
+  --color-terminal-bg: var(--color-background);
+  --color-terminal-fg: var(--color-foreground);
+  /* xterm 6 自绘滚动条（对齐 ZCode 细胶囊质感，略强于 border 以保证可见性） */
+  --color-terminal-scrollbar: rgba(13, 13, 13, 0.18);
+  --color-terminal-scrollbar-hover: rgba(13, 13, 13, 0.28);
+  --color-terminal-scrollbar-active: rgba(13, 13, 13, 0.36);
+  --color-terminal-cursor: #0d0d0d;
+  --color-terminal-cursor-accent: var(--color-background);
+  --color-terminal-selection: rgba(11, 127, 255, 0.22);
+  --color-terminal-selection-inactive: rgba(13, 13, 13, 0.1);
+  --color-terminal-black: #5c5c5c;
+  --color-terminal-red: #e03131;
+  --color-terminal-green: #1e8a3e;
+  --color-terminal-yellow: #e07b00;
+  --color-terminal-blue: #0b7fff;
+  --color-terminal-magenta: #9e77ed;
+  --color-terminal-cyan: #0aa7a7;
+  --color-terminal-white: #adadad;
+  --color-terminal-bright-black: #888888;
+  --color-terminal-bright-red: #e03131;
+  --color-terminal-bright-green: #1e8a3e;
+  --color-terminal-bright-yellow: #e07b00;
+  --color-terminal-bright-blue: #0066dd;
+  --color-terminal-bright-magenta: #9e77ed;
+  --color-terminal-bright-cyan: #0aa7a7;
+  --color-terminal-bright-white: #0d0d0d;
+}
+
+/* ===== 深色（Zai Dark 光谱）===== */
+.dark,
+.theme-dark {
+  --color-background: #161616;
+  --color-background-alt: color-mix(in oklab, #2b2b2b 60%, transparent);
+  --color-header: #202020;
+  --color-panel: #202020;
+  --color-sidebar: #161616;
+  --color-surface: rgba(255, 255, 255, 0.05);
+  --color-surface-hover: rgba(255, 255, 255, 0.1);
+  --color-hover: rgba(255, 255, 255, 0.05);
+  --color-selected: rgba(255, 255, 255, 0.1);
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-hover: rgba(255, 255, 255, 0.15);
+  --color-card: #2b2b2b;
+  --color-popover: #2b2b2b;
+  --color-popover-foreground: var(--color-foreground);
+  --color-input: #2b2b2b;
+  --color-menu: #2b2b2b;
+  --color-menu-hover: #363636;
+  --color-primary: #ffffff;
+  --color-primary-foreground: #000000;
+  --color-secondary: #363636;
+  --color-accent: #001d3d;
+  --color-foreground: #bdbdbd;
+  --color-foreground-subtle: color-mix(in oklab, var(--color-foreground) 60%, transparent);
+  --color-foreground-subtlest: color-mix(in oklab, var(--color-foreground) 30%, transparent);
+  --color-foreground-inverse: #000000;
+  --color-success: #46bf72;
+  --color-success-foreground: #000000;
+  --color-warning: #ff8a30;
+  --color-warning-foreground: #000000;
+  --color-destructive: #ff5c5c;
+  --color-destructive-foreground: #ffffff;
+  --color-tooltip: #2b2b2b;
+  --color-tooltip-foreground: #f8f8f8;
+
+  --color-terminal-bg: var(--color-background);
+  --color-terminal-fg: var(--color-foreground);
+  --color-terminal-scrollbar: rgba(255, 255, 255, 0.16);
+  --color-terminal-scrollbar-hover: rgba(255, 255, 255, 0.26);
+  --color-terminal-scrollbar-active: rgba(255, 255, 255, 0.34);
+  --color-terminal-cursor: #f8f8f8;
+  --color-terminal-cursor-accent: #161616;
+  --color-terminal-selection: rgba(64, 153, 255, 0.28);
+  --color-terminal-selection-inactive: rgba(255, 255, 255, 0.1);
+  --color-terminal-black: #363636;
+  --color-terminal-red: #ff5c5c;
+  --color-terminal-green: #46bf72;
+  --color-terminal-yellow: #ff8a30;
+  --color-terminal-blue: #4099ff;
+  --color-terminal-magenta: #7b5ce5;
+  --color-terminal-cyan: #42c8c8;
+  --color-terminal-white: #adadad;
+  --color-terminal-bright-black: #747474;
+  --color-terminal-bright-red: #ff9999;
+  --color-terminal-bright-green: #87d9a4;
+  --color-terminal-bright-yellow: #ffb26b;
+  --color-terminal-bright-blue: #80beff;
+  --color-terminal-bright-magenta: #a888f2;
+  --color-terminal-bright-cyan: #8ee5e5;
+  --color-terminal-bright-white: #f8f8f8;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  /* 背景保持透明：macOS vibrancy 底座经窗口底座 bg-background-alt 半透出（与 ZCode 一致） */
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  font-size: var(--text-ui-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * 全局滚动条（移植自 ZCode，通用于所有滚动区域）：细胶囊悬浮样式——
+ * 透明轨道、圆角 thumb 随主题边框色、四周 3px 透明边距形成内缩胶囊（视觉宽约 8px）。
+ * Firefox 走 scrollbar-color，WebKit 走 ::-webkit-scrollbar。
+ */
+* {
+  scrollbar-width: auto;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  min-width: 32px;
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background: var(--color-border);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/*
+ * xterm 6 的自绘滚动条（VS Code 风格 .xterm-scrollable-element > .scrollbar）：
+ * 颜色走主题钩子（terminalTheme 的 scrollbarSlider* 字段），
+ * 形状用 CSS 覆写成 ZCode 同款细胶囊——默认 10px 全宽条又粗又显眼。
+ */
+.terminal-xterm-shell .xterm-scrollable-element > .scrollbar {
+  width: 8px !important;
+}
+
+.terminal-xterm-shell .xterm-scrollable-element > .scrollbar > .slider {
+  width: 4px !important;
+  margin-left: 2px;
+  border-radius: 9999px;
+}
+
+/*
+ * 旧版 xterm 视口的原生滚动条隐藏（xterm 5 及部分回退路径，ZCode 同款处理）。
+ */
+.terminal-xterm-shell .xterm-viewport {
+  scrollbar-width: none;
+}
+
+.terminal-xterm-shell .xterm-viewport::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
