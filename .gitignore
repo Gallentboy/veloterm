@@ -1,0 +1,39 @@
+# Local
+.DS_Store
+*.local
+*.log*
+
+# Type check
+*.tsbuildinfo
+
+# Dist
+node_modules
+dist/
+
+# Profile
+.rspack-profile-*/
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea
+# AI coding 工具目录（自动添加）
+.zcode/
+.agents/
+.claude/
+.workbuddy/
+.cursor/
+.kilo/
+.codex/
+.aider/
+.continue/
+.windsurf/
+.copilot/
+.zed/
+.gemini/
+.droid/
+.factory/
+.goose/
+.roo/
+.cline/
+.trae/
