@@ -5,6 +5,7 @@ export default {
   nav: {
     home: '主页',
     terminal: '终端',
+    editor: '编辑',
     files: '文件',
     hosts: '主机',
     groups: '分组',
@@ -86,6 +87,25 @@ export default {
     delete: '删除',
     showPassword: '显示密码',
     hidePassword: '隐藏密码',
+  },
+  editor: {
+    title: '编辑器',
+    empty: '还没有打开的文件，前往文件页选择文件进行编辑',
+    closeTab: '关闭 {{title}}',
+    status: {
+      loading: '加载中',
+      clean: '已保存',
+      dirty: '已修改',
+      saving: '保存中',
+      offline: '连接已断开',
+      conflict: '远端已变更',
+      orphaned: '主机不可达',
+    },
+    saveFailed: '保存失败',
+    conflict: {
+      overwrite: '用本地覆盖远端',
+      takeRemote: '取远端，丢弃本地',
+    },
   },
   hosts: {
     title: '主机管理',

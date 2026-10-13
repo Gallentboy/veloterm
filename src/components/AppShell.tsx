@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { DesktopTopOverlay } from '@/components/DesktopTopOverlay';
+import { EditorScreen } from '@/components/editor/EditorScreen';
 import { FilesScreen } from '@/components/files/FilesScreen';
 import { GroupsScreen } from '@/components/hosts/GroupsScreen';
 import { HostsScreen } from '@/components/hosts/HostsScreen';
@@ -22,6 +23,7 @@ import { isMacOS } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { getDbKv, setDbKv } from '@/services/dbStorage';
 import { useSftpStore } from '@/services/SftpProvider';
+import { EditorProvider } from '@/editor/EditorProvider';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
 
 /** 主面板圆角（ZCode workspaceShellWindowChrome 规则）：macOS Tahoe 26+ 为 12px。 */
@@ -240,108 +242,112 @@ export function AppShell() {
   // 窗口底座（ZCode DesktopWindowFrame 同款）：mac 走半透明 alt 叠 vibrancy，
   // 无 vibrancy 的平台用不透明 win-alt 兜底，避免半透明混出异常灰块。
   return (
-    <div
-      className={cn(
-        'flex h-dvh flex-col overflow-hidden',
-        isMacOS ? 'bg-background-alt' : 'bg-background-win-alt',
-      )}
-    >
+    <EditorProvider>
       <div
-        ref={shellRef}
-        style={
-          {
-            '--sidebar-panel-width': `${isSidebarVisible ? sidebarWidthPx : SIDEBAR_COLLAPSED_WIDTH_PX}px`,
-            '--workspace-panel-radius': `${WORKSPACE_PANEL_RADIUS_PX}px`,
-          } as CSSProperties
-        }
-        className="relative flex h-full w-full overflow-hidden"
+        className={cn(
+          'flex h-dvh flex-col overflow-hidden',
+          isMacOS ? 'bg-background-alt' : 'bg-background-win-alt',
+        )}
       >
         <div
-          ref={sidebarPanelRef}
-          className={cn(
-            'w-(--sidebar-panel-width) max-w-[50%] flex-none overflow-hidden transition-[width,opacity] duration-200 ease-out',
-            !isSidebarVisible && 'pointer-events-none opacity-0',
-            // 拖拽中禁用宽度过渡，跟随指针不滞后
-            isResizing && 'transition-opacity',
-          )}
+          ref={shellRef}
+          style={
+            {
+              '--sidebar-panel-width': `${isSidebarVisible ? sidebarWidthPx : SIDEBAR_COLLAPSED_WIDTH_PX}px`,
+              '--workspace-panel-radius': `${WORKSPACE_PANEL_RADIUS_PX}px`,
+            } as CSSProperties
+          }
+          className="relative flex h-full w-full overflow-hidden"
         >
-          <WorkspaceSidebar
-            activePage={page}
-            onPageChange={setPage}
-            className="w-(--sidebar-panel-width)"
-          />
-        </div>
-
-        {isSidebarVisible ? (
           <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={t('sidebar.resize')}
-            aria-valuemin={SIDEBAR_MIN_WIDTH_PX}
-            aria-valuemax={Math.round(window.innerWidth * SIDEBAR_MAX_WIDTH_RATIO)}
-            aria-valuenow={sidebarWidthPx}
-            tabIndex={0}
-            onPointerDown={handleResizePointerDown}
-            onPointerMove={handleResizePointerMove}
-            onPointerUp={finishResize}
-            onPointerCancel={finishResize}
-            onKeyDown={handleResizeKeyDown}
+            ref={sidebarPanelRef}
             className={cn(
-              'group/handle relative z-10 flex h-full w-1 shrink-0 cursor-ew-resize touch-none items-center justify-center bg-transparent outline-none focus:outline-none focus-visible:ring-0',
-              // 悬停/聚焦/拖拽时显示 2px 圆角指示线，上下按面板圆角内缩
-              "after:pointer-events-none after:absolute after:w-0.5 after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-[''] after:inset-y-[var(--workspace-panel-radius)]",
-              'hover:after:opacity-100 focus-visible:after:opacity-100',
-              isResizing && 'after:opacity-100',
+              'w-(--sidebar-panel-width) max-w-[50%] flex-none overflow-hidden transition-[width,opacity] duration-200 ease-out',
+              !isSidebarVisible && 'pointer-events-none opacity-0',
+              // 拖拽中禁用宽度过渡，跟随指针不滞后
+              isResizing && 'transition-opacity',
             )}
-          />
-        ) : null}
+          >
+            <WorkspaceSidebar
+              activePage={page}
+              onPageChange={setPage}
+              className="w-(--sidebar-panel-width)"
+            />
+          </div>
 
-        {/* 内容列内缩与 ZCode 一致：右/下 4px、左 0，顶部经 4px 拖拽条让面板上缘留出等宽间隙 */}
-        <div className="flex min-w-[320px] flex-1 flex-col p-1 pl-0 pt-0">
-          <div className="h-1 w-full shrink-0" data-tauri-drag-region />
-          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-(--workspace-panel-radius) border border-border bg-background">
-            <WorkspaceHeader page={page} isSidebarVisible={isSidebarVisible} />
-            <main className="min-h-0 flex-1 overflow-y-auto relative">
-              {/* SFTP 文件视图持久挂载，切换页面保持后台状态、文件路径与传输任务 */}
-              <div className={cn('h-full min-h-0 w-full', page !== 'files' && 'hidden')}>
-                <FilesScreen
-                  isVisible={page === 'files'}
-                  onNavigateHosts={() => setPage('hosts')}
-                />
-              </div>
-              {page === 'home' ? (
-                <WelcomeScreen
-                  onNewTerminal={handleOpenNewTerminal}
-                  onOpenSettings={() => setPage('settings')}
-                />
-              ) : page === 'terminal' ? (
-                <TerminalScreen
-                  isVisible={page === 'terminal'}
-                  isPanelResizing={isResizing}
-                  onNavigateHosts={() => setPage('hosts')}
-                />
-              ) : page === 'files' ? null : page === 'hosts' ? (
-                <HostsScreen
-                  onConnectHost={(host) => {
-                    createSession({ hostId: host.id, customTitle: host.name });
-                    setPage('terminal');
-                  }}
-                  onOpenSftp={(host) => {
-                    createSftpSession({ hostId: host.id, hostName: host.name });
-                    setPage('files');
-                  }}
-                />
-              ) : page === 'groups' ? (
-                <GroupsScreen />
-              ) : (
-                <SettingsScreen />
+          {isSidebarVisible ? (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('sidebar.resize')}
+              aria-valuemin={SIDEBAR_MIN_WIDTH_PX}
+              aria-valuemax={Math.round(window.innerWidth * SIDEBAR_MAX_WIDTH_RATIO)}
+              aria-valuenow={sidebarWidthPx}
+              tabIndex={0}
+              onPointerDown={handleResizePointerDown}
+              onPointerMove={handleResizePointerMove}
+              onPointerUp={finishResize}
+              onPointerCancel={finishResize}
+              onKeyDown={handleResizeKeyDown}
+              className={cn(
+                'group/handle relative z-10 flex h-full w-1 shrink-0 cursor-ew-resize touch-none items-center justify-center bg-transparent outline-none focus:outline-none focus-visible:ring-0',
+                // 悬停/聚焦/拖拽时显示 2px 圆角指示线，上下按面板圆角内缩
+                "after:pointer-events-none after:absolute after:w-0.5 after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-[''] after:inset-y-[var(--workspace-panel-radius)]",
+                'hover:after:opacity-100 focus-visible:after:opacity-100',
+                isResizing && 'after:opacity-100',
               )}
-            </main>
-          </section>
-        </div>
+            />
+          ) : null}
 
-        <DesktopTopOverlay isSidebarVisible={isSidebarVisible} onToggleSidebar={toggleSidebar} />
+          {/* 内容列内缩与 ZCode 一致：右/下 4px、左 0，顶部经 4px 拖拽条让面板上缘留出等宽间隙 */}
+          <div className="flex min-w-[320px] flex-1 flex-col p-1 pl-0 pt-0">
+            <div className="h-1 w-full shrink-0" data-tauri-drag-region />
+            <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-(--workspace-panel-radius) border border-border bg-background">
+              <WorkspaceHeader page={page} isSidebarVisible={isSidebarVisible} />
+              <main className="min-h-0 flex-1 overflow-y-auto relative">
+                {/* SFTP 文件视图持久挂载，切换页面保持后台状态、文件路径与传输任务 */}
+                <div className={cn('h-full min-h-0 w-full', page !== 'files' && 'hidden')}>
+                  <FilesScreen
+                    isVisible={page === 'files'}
+                    onNavigateHosts={() => setPage('hosts')}
+                  />
+                </div>
+                {page === 'home' ? (
+                  <WelcomeScreen
+                    onNewTerminal={handleOpenNewTerminal}
+                    onOpenSettings={() => setPage('settings')}
+                  />
+                ) : page === 'terminal' ? (
+                  <TerminalScreen
+                    isVisible={page === 'terminal'}
+                    isPanelResizing={isResizing}
+                    onNavigateHosts={() => setPage('hosts')}
+                  />
+                ) : page === 'editor' ? (
+                  <EditorScreen />
+                ) : page === 'files' ? null : page === 'hosts' ? (
+                  <HostsScreen
+                    onConnectHost={(host) => {
+                      createSession({ hostId: host.id, customTitle: host.name });
+                      setPage('terminal');
+                    }}
+                    onOpenSftp={(host) => {
+                      createSftpSession({ hostId: host.id, hostName: host.name });
+                      setPage('files');
+                    }}
+                  />
+                ) : page === 'groups' ? (
+                  <GroupsScreen />
+                ) : (
+                  <SettingsScreen />
+                )}
+              </main>
+            </section>
+          </div>
+
+          <DesktopTopOverlay isSidebarVisible={isSidebarVisible} onToggleSidebar={toggleSidebar} />
+        </div>
       </div>
-    </div>
+    </EditorProvider>
   );
 }

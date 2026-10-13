@@ -5,6 +5,7 @@ export default {
   nav: {
     home: 'Home',
     terminal: 'Terminal',
+    editor: 'Edit',
     files: 'Files',
     hosts: 'Hosts',
     groups: 'Groups',
@@ -86,6 +87,25 @@ export default {
     delete: 'Delete',
     showPassword: 'Show password',
     hidePassword: 'Hide password',
+  },
+  editor: {
+    title: 'Editor',
+    empty: 'No files open yet — open one from the Files page to edit it',
+    closeTab: 'Close {{title}}',
+    status: {
+      loading: 'Loading',
+      clean: 'Saved',
+      dirty: 'Modified',
+      saving: 'Saving',
+      offline: 'Connection lost',
+      conflict: 'Remote changed',
+      orphaned: 'Host unreachable',
+    },
+    saveFailed: 'Save failed',
+    conflict: {
+      overwrite: 'Overwrite remote with local',
+      takeRemote: 'Take remote, discard local',
+    },
   },
   hosts: {
     title: 'Hosts',
