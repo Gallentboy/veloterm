@@ -6,6 +6,40 @@ use super::manager::{close_sftp, get_or_connect_sftp, resolve_host_chain, connec
 use super::types::{RemoteFileItem, SftpState, TransferProgress};
 use crate::text_detect::is_editable_sftp_entry;
 
+/// 简单令牌桶限速器：按累计字节与预期耗时对比，超前则睡眠补齐。
+/// speed_limit_bps 为 0/None 表示不限速；允许 1 秒级别的突发。
+struct SpeedLimiter {
+  limit_bps: u64,
+  window_start: tokio::time::Instant,
+  window_bytes: u64,
+}
+
+impl SpeedLimiter {
+  fn new(limit_bps: Option<u64>) -> Option<Self> {
+    let limit_bps = limit_bps.filter(|v| *v > 0)?;
+    Some(Self {
+      limit_bps,
+      window_start: tokio::time::Instant::now(),
+      window_bytes: 0,
+    })
+  }
+
+  async fn throttle(&mut self, chunk_bytes: u64) {
+    self.window_bytes += chunk_bytes;
+    let expected = tokio::time::Duration::from_secs_f64(
+      self.window_bytes as f64 / self.limit_bps as f64,
+    );
+    let elapsed = self.window_start.elapsed();
+    if expected > elapsed {
+      tokio::time::sleep(expected - elapsed).await;
+    } else if elapsed > expected + tokio::time::Duration::from_secs(1) {
+      // 窗口内已落后于配额（低速读源），重置窗口避免长期欠账后限死
+      self.window_start = tokio::time::Instant::now();
+      self.window_bytes = 0;
+    }
+  }
+}
+
 #[tauri::command]
 pub async fn sftp_next_task_id(state: State<'_, SftpState>) -> Result<usize, String> {
   Ok(state.allocate_task_id())
@@ -126,6 +160,7 @@ pub async fn sftp_download_file(
   task_id: usize,
   remote_path: String,
   local_path: String,
+  speed_limit_bps: Option<u64>,
   on_progress: Channel<TransferProgress>,
   state: State<'_, SftpState>,
 ) -> Result<(), String> {
@@ -162,6 +197,7 @@ pub async fn sftp_download_file(
   let mut transferred: u64 = 0;
   let mut last_tick = tokio::time::Instant::now();
   let mut bytes_since_last_tick: u64 = 0;
+  let mut limiter = SpeedLimiter::new(speed_limit_bps);
 
   loop {
     tokio::select! {
@@ -183,6 +219,9 @@ pub async fn sftp_download_file(
           .await
           .map_err(|e| format!("Failed to write to local file: {e}"))?;
 
+        if let Some(ref mut limiter) = limiter {
+          limiter.throttle(n as u64).await;
+        }
         transferred += n as u64;
         bytes_since_last_tick += n as u64;
 
@@ -238,6 +277,7 @@ pub async fn sftp_upload_file(
   task_id: usize,
   local_path: String,
   remote_path: String,
+  speed_limit_bps: Option<u64>,
   on_progress: Channel<TransferProgress>,
   state: State<'_, SftpState>,
 ) -> Result<(), String> {
@@ -268,6 +308,7 @@ pub async fn sftp_upload_file(
   let mut transferred: u64 = 0;
   let mut last_tick = tokio::time::Instant::now();
   let mut bytes_since_last_tick: u64 = 0;
+  let mut limiter = SpeedLimiter::new(speed_limit_bps);
 
   loop {
     tokio::select! {
@@ -288,6 +329,9 @@ pub async fn sftp_upload_file(
           .write_all(chunk)
           .await
           .map_err(|e| format!("Failed to write to remote file: {e}"))?;
+        if let Some(ref mut limiter) = limiter {
+          limiter.throttle(n as u64).await;
+        }
 
         transferred += n as u64;
         bytes_since_last_tick += n as u64;

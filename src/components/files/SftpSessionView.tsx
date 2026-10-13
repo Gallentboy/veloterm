@@ -8,48 +8,35 @@ import {
   FolderOpen,
   Loader2,
   RefreshCw,
+  RotateCw,
   Trash2,
   Upload,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { Button } from '@/components/ui/button';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
-  downloadRemoteFile,
   listRemoteDirectory,
   pickDownloadPath,
   pickUploadFile,
   removeRemoteItem,
-  uploadLocalFile,
   type RemoteFileItem,
-  type TransferProgress,
 } from '@/services/sftpService';
+import {
+  transferQueue,
+  useTransferSettings,
+  useTransferTasks,
+} from '@/services/transferQueue';
 
-interface ActiveTransfer {
-  taskId: number;
-  type: 'upload' | 'download';
-  name: string;
-  transferred: string;
-  total: string;
-  percent: number;
-  speedBps: number;
-  isFinished: boolean;
-  cancel: () => void;
-}
-
-function formatBytes(bytesStr: string): string {
-  const bytes = Number(bytesStr);
-  if (!Number.isFinite(bytes) || bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  const val = bytes / Math.pow(k, i);
-  return `${val.toFixed(i === 0 ? 0 : 1)} ${sizes[i]}`;
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
 function formatSpeed(speedBps: number): string {
@@ -163,7 +150,7 @@ export function SftpSessionView({
   sessionId,
   hostId,
   initialPath,
-  isVisible,
+  isVisible: _isVisible,
   onPathChange,
   onOpenEditor,
 }: SftpSessionViewProps) {
@@ -173,7 +160,6 @@ export function SftpSessionView({
   const [items, setItems] = useState<RemoteFileItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTransfers, setActiveTransfers] = useState<Record<number, ActiveTransfer>>({});
   const [itemToDelete, setItemToDelete] = useState<RemoteFileItem | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
@@ -243,55 +229,13 @@ export function SftpSessionView({
     try {
       const localPath = await pickDownloadPath(item.name);
       if (!localPath) return;
-
-      let taskId = 0;
-      const handle = await downloadRemoteFile(
+      transferQueue.enqueue({
+        direction: 'download',
         sessionId,
-        item.path,
+        remotePath: item.path,
         localPath,
-        (progress: TransferProgress) => {
-          setActiveTransfers((prev) => {
-            const current = prev[progress.task_id];
-            if (!current) return prev;
-            return {
-              ...prev,
-              [progress.task_id]: {
-                ...current,
-                transferred: progress.transferred,
-                total: progress.total,
-                percent: progress.percent,
-                speedBps: progress.speed_bps,
-                isFinished: progress.is_finished,
-              },
-            };
-          });
-
-          if (progress.is_finished) {
-            setTimeout(() => {
-              setActiveTransfers((prev) => {
-                const { [progress.task_id]: _done, ...rest } = prev;
-                return rest;
-              });
-            }, 3000);
-          }
-        },
-      );
-
-      taskId = handle.taskId;
-      setActiveTransfers((prev) => ({
-        ...prev,
-        [taskId]: {
-          taskId,
-          type: 'download',
-          name: item.name,
-          transferred: '0',
-          total: item.size,
-          percent: 0,
-          speedBps: 0,
-          isFinished: false,
-          cancel: handle.cancel,
-        },
-      }));
+        fileName: item.name,
+      });
     } catch (err) {
       setError(`下载失败: ${err}`);
     }
@@ -312,7 +256,7 @@ export function SftpSessionView({
     }
   };
 
-  // 批量上传文件
+  // 批量上传：全部入全局队列，由队列按并发数并行调度（支持失败重试）
   const handleUploadFiles = useCallback(
     async (localPaths: string[], targetDir = currentPath) => {
       if (!sessionId || localPaths.length === 0) return;
@@ -320,99 +264,19 @@ export function SftpSessionView({
         const filename = localPath.split(/[/\\]/).pop() || 'file';
         const remoteTarget =
           targetDir === '/' ? `/${filename}` : `${targetDir}/${filename}`;
-
-        try {
-          const handle = await uploadLocalFile(
-            sessionId,
-            localPath,
-            remoteTarget,
-            (progress: TransferProgress) => {
-              setActiveTransfers((prev) => {
-                const current = prev[progress.task_id];
-                if (!current) return prev;
-                return {
-                  ...prev,
-                  [progress.task_id]: {
-                    ...current,
-                    transferred: progress.transferred,
-                    total: progress.total,
-                    percent: progress.percent,
-                    speedBps: progress.speed_bps,
-                    isFinished: progress.is_finished,
-                  },
-                };
-              });
-
-              if (progress.is_finished) {
-                void loadDirectory(targetDir);
-                setTimeout(() => {
-                  setActiveTransfers((prev) => {
-                    const { [progress.task_id]: _done, ...rest } = prev;
-                    return rest;
-                  });
-                }, 3000);
-              }
-            },
-          );
-
-          const taskId = handle.taskId;
-          setActiveTransfers((prev) => ({
-            ...prev,
-            [taskId]: {
-              taskId,
-              type: 'upload',
-              name: filename,
-              transferred: '0',
-              total: '0',
-              percent: 0,
-              speedBps: 0,
-              isFinished: false,
-              cancel: handle.cancel,
-            },
-          }));
-        } catch (err) {
-          setError(`上传 ${filename} 失败: ${err}`);
-        }
+        transferQueue.enqueue({
+          direction: 'upload',
+          sessionId,
+          remotePath: remoteTarget,
+          localPath,
+          fileName: filename,
+          onFinished: () => void loadDirectory(targetDir),
+        });
       }
     },
     [currentPath, loadDirectory, sessionId],
   );
 
-  // 监听 Tauri 窗口原生拖拽事件（仅当当前会话激活时承接上传）
-  useEffect(() => {
-    if (!isVisible) return;
-    let unlisten: (() => void) | undefined;
-    let isSubscribed = true;
-
-    void (async () => {
-      try {
-        const appWindow = getCurrentWebviewWindow();
-        const unlistenFn = await appWindow.onDragDropEvent((event) => {
-          if (!isSubscribed) return;
-          if (event.payload.type === 'drop') {
-            const droppedPaths = event.payload.paths;
-            if (droppedPaths && droppedPaths.length > 0) {
-              void handleUploadFiles(droppedPaths);
-            }
-          }
-        });
-        if (isSubscribed) {
-          unlisten = unlistenFn;
-        } else {
-          unlistenFn();
-        }
-      } catch (err) {
-        console.warn('Failed to register drag-drop event listener:', err);
-      }
-    })();
-
-    return () => {
-      isSubscribed = false;
-      unlisten?.();
-    };
-  }, [handleUploadFiles, isVisible]);
-
-  // 工具栏点击上传文件
   const handleUpload = async () => {
     if (!sessionId) return;
     try {
@@ -424,7 +288,9 @@ export function SftpSessionView({
     }
   };
 
-  const transfersList = Object.values(activeTransfers);
+  const allTasks = useTransferTasks();
+  const transfersList = allTasks.filter((task) => task.sessionId === sessionId);
+  const transferSettings = useTransferSettings();
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-background">
@@ -574,7 +440,7 @@ export function SftpSessionView({
                       </div>
                     </td>
                     <td className="py-1.5 px-2 font-mono text-foreground-subtle">
-                      {item.is_dir ? '-' : formatBytes(item.size)}
+                      {item.is_dir ? '-' : formatBytes(Number(item.size))}
                     </td>
                     <td className="py-1.5 px-2 font-mono text-foreground-subtle">
                       {formatPermissions(item.permissions, item.is_dir, item.is_symlink)}
@@ -667,29 +533,97 @@ export function SftpSessionView({
         )}
       </div>
 
-      {/* 底部传输任务进度卡片 */}
+      {/* 底部传输任务进度卡片：全局队列（并行/重试/限速设置） */}
       {transfersList.length > 0 && (
         <div className="shrink-0 border-t border-border/60 bg-surface/30 p-2.5 space-y-2">
+          {/* 队列工具栏：统计 + 设置 + 清除 */}
+          <div className="flex items-center justify-between gap-2 text-ui-xs text-foreground-subtle select-none">
+            <span>
+              {t('files.transfer.queue', {
+                active: transfersList.filter((task) => task.status === 'active').length,
+                queued: transfersList.filter((task) => task.status === 'queued').length,
+                maxConcurrent: transferSettings.maxConcurrent,
+              })}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <label className="flex items-center gap-1">
+                <span>{t('files.transfer.concurrency')}</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={8}
+                  value={transferSettings.maxConcurrent}
+                  onChange={(e) =>
+                    transferQueue.updateSettings({
+                      maxConcurrent: Math.max(1, Math.min(8, Number(e.target.value) || 3)),
+                    })
+                  }
+                  className="h-5 w-10 rounded border border-border bg-input px-1 text-center font-mono text-ui-xs outline-none focus:border-border-hover"
+                />
+              </label>
+              <label className="flex items-center gap-1">
+                <span>{t('files.transfer.speedLimit')}</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={512}
+                  value={transferSettings.speedLimitBps ? transferSettings.speedLimitBps / 1024 : 0}
+                  onChange={(e) =>
+                    transferQueue.updateSettings({
+                      speedLimitBps: Math.max(0, Number(e.target.value) || 0) * 1024,
+                    })
+                  }
+                  className="h-5 w-16 rounded border border-border bg-input px-1 text-center font-mono text-ui-xs outline-none focus:border-border-hover"
+                />
+                <span>KB/s</span>
+              </label>
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                onClick={() => transferQueue.clearFinished()}
+                aria-label={t('files.transfer.clearFinished')}
+              >
+                {t('files.transfer.clearFinished')}
+              </Button>
+            </div>
+          </div>
+
           {transfersList.map((tItem) => (
             <div
-              key={tItem.taskId}
+              key={tItem.id}
               className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/90 px-3 py-1.5 text-ui-xs shadow-xs"
             >
               <div className="flex items-center gap-2 min-w-0">
-                {tItem.type === 'upload' ? (
+                {tItem.direction === 'upload' ? (
                   <Upload className="size-3.5 text-primary shrink-0" />
                 ) : (
                   <Download className="size-3.5 text-success shrink-0" />
                 )}
                 <span className="font-medium truncate max-w-[140px] md:max-w-[200px]">
-                  {tItem.name}
+                  {tItem.fileName}
                 </span>
                 <span className="text-foreground-subtle font-mono text-[11px]">
-                  {formatBytes(tItem.transferred)} / {formatBytes(tItem.total)}
+                  {formatBytes(tItem.transferred)} / {formatBytes(tItem.totalBytes)}
                 </span>
-                {tItem.speedBps > 0 && (
+                {tItem.speedBps > 0 && tItem.status === 'active' && (
                   <span className="text-foreground-subtlest font-mono text-[10px]">
                     {formatSpeed(tItem.speedBps)}
+                  </span>
+                )}
+                {tItem.attempt > 1 && (
+                  <span className="text-foreground-subtlest font-mono text-[10px]">
+                    #{tItem.attempt}
+                  </span>
+                )}
+                {tItem.status === 'queued' && (
+                  <span className="text-foreground-subtlest text-[10px]">
+                    {t('files.transfer.queued')}
+                  </span>
+                )}
+                {tItem.status === 'error' && (
+                  <span className="text-destructive truncate max-w-[160px]" title={tItem.error ?? undefined}>
+                    {tItem.error}
                   </span>
                 )}
               </div>
@@ -699,7 +633,13 @@ export function SftpSessionView({
                   <div
                     className={cn(
                       'h-full transition-all duration-150',
-                      tItem.isFinished ? 'bg-success' : 'bg-primary',
+                      tItem.status === 'done'
+                        ? 'bg-success'
+                        : tItem.status === 'error'
+                          ? 'bg-destructive'
+                          : tItem.status === 'canceled'
+                            ? 'bg-foreground-subtlest'
+                            : 'bg-primary',
                     )}
                     style={{ width: `${tItem.percent}%` }}
                   />
@@ -707,15 +647,26 @@ export function SftpSessionView({
                 <span className="w-10 text-right font-mono text-[11px] font-medium">
                   {tItem.percent.toFixed(0)}%
                 </span>
-                {!tItem.isFinished ? (
+                {tItem.status === 'active' || tItem.status === 'queued' ? (
                   <Button
                     type="button"
                     size="icon-xs"
                     variant="ghost"
-                    onClick={tItem.cancel}
+                    onClick={() => transferQueue.cancelTask(tItem.id)}
                     aria-label={t('files.cancelTransfer')}
                   >
                     <X className="size-3 text-destructive" />
+                  </Button>
+                ) : tItem.status === 'error' || tItem.status === 'canceled' ? (
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={() => transferQueue.retryTask(tItem.id)}
+                    aria-label={t('files.transfer.retry')}
+                    title={t('files.transfer.retry')}
+                  >
+                    <RotateCw className="size-3 text-primary" />
                   </Button>
                 ) : (
                   <span className="text-success text-[10px]">✓</span>

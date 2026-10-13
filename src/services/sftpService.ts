@@ -63,6 +63,7 @@ export async function downloadRemoteFile(
   remotePath: string,
   localPath: string,
   onUpdate: (progress: TransferProgress) => void,
+  speedLimitBps = 0,
 ): Promise<TransferHandle> {
   const taskId = await invoke<number>('sftp_next_task_id');
   const onProgress = new Channel<TransferProgress>();
@@ -80,6 +81,7 @@ export async function downloadRemoteFile(
     taskId,
     remotePath,
     localPath,
+    speedLimitBps: speedLimitBps > 0 ? speedLimitBps : null,
     onProgress,
   });
 
@@ -96,6 +98,7 @@ export async function uploadLocalFile(
   localPath: string,
   remotePath: string,
   onUpdate: (progress: TransferProgress) => void,
+  speedLimitBps = 0,
 ): Promise<TransferHandle> {
   const taskId = await invoke<number>('sftp_next_task_id');
   const onProgress = new Channel<TransferProgress>();
@@ -113,6 +116,7 @@ export async function uploadLocalFile(
     taskId,
     localPath,
     remotePath,
+    speedLimitBps: speedLimitBps > 0 ? speedLimitBps : null,
     onProgress,
   });
 
