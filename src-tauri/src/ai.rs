@@ -241,6 +241,45 @@ where
   Ok(())
 }
 
+fn truncate_str(s: &str, max: usize) -> String {
+  if s.chars().count() <= max {
+    s.to_string()
+  } else {
+    let cut: String = s.chars().take(max).collect();
+    format!("{cut}…")
+  }
+}
+
+/// 宽容解析 OpenAI 兼容端点的 /models 响应：
+/// 兼容 `data`/`models` 键或裸数组；条目可为字符串或对象（取 id/name/model 字段）；
+/// 结果去重排序、滤空。rig 的强类型解析在非标端点上会直接失败。
+fn parse_openai_models_json(value: &serde_json::Value) -> Vec<String> {
+  let mut ids: Vec<String> = Vec::new();
+  let items = value
+    .get("data")
+    .and_then(|d| d.as_array())
+    .or_else(|| value.get("models").and_then(|m| m.as_array()))
+    .or_else(|| value.as_array());
+  if let Some(items) = items {
+    for item in items {
+      let id = item
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| {
+          ["id", "name", "model"]
+            .iter()
+            .find_map(|key| item.get(*key).and_then(|v| v.as_str()).map(|s| s.to_string()))
+        });
+      if let Some(id) = id.filter(|id| !id.trim().is_empty()) {
+        ids.push(id);
+      }
+    }
+  }
+  ids.sort();
+  ids.dedup();
+  ids
+}
+
 fn pick_key(record: &AiProviderRecord) -> Result<(usize, String), String> {
   if record.api_keys.is_empty() {
     return Err("该供应商未配置任何 API Key".to_string());
@@ -363,14 +402,29 @@ pub async fn ai_list_models(record: AiProviderRecord) -> Result<Vec<String>, Str
 
   match record.provider_type.as_str() {
     "openai" => {
-      use rig::providers::openai::CompletionsClient;
-      let mut builder = CompletionsClient::builder().api_key(&api_key);
-      if let Some(base_url) = base_url {
-        builder = builder.base_url(base_url);
+      // 手写 GET + 宽容解析：兼容端点（DeepSeek/GLM/vLLM/one-api…）的 /models
+      // 响应结构不规范，rig 强类型解析经常失败。
+      use reqwest::header::AUTHORIZATION;
+      let base = base_url
+        .map(|u| u.trim_end_matches('/').to_string())
+        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+      let response = reqwest::Client::new()
+        .get(format!("{base}/models"))
+        .header(AUTHORIZATION, format!("Bearer {api_key}"))
+        .send()
+        .await
+        .map_err(|e| format!("请求模型列表失败: {e}"))?;
+      let status = response.status();
+      let text = response
+        .text()
+        .await
+        .map_err(|e| format!("读取模型列表失败: {e}"))?;
+      if !status.is_success() {
+        return Err(format!("模型列表接口返回 {status}: {}", truncate_str(&text, 200)));
       }
-      let client = builder.build().map_err(|e| e.to_string())?;
-      let list = client.list_models().await.map_err(|e| e.to_string())?;
-      Ok(list.data.into_iter().map(|m| m.id).collect())
+      let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("模型列表响应不是合法 JSON: {e}"))?;
+      Ok(parse_openai_models_json(&value))
     }
     "anthropic" => {
       use rig::providers::anthropic;
