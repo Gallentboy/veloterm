@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
+import { MarqueeText } from '@/components/ui/MarqueeText';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
@@ -31,6 +32,7 @@ import {
   transferQueue,
   useTransferSettings,
   useTransferTasks,
+  type TransferTask,
 } from '@/services/transferQueue';
 
 function formatBytes(bytes: number): string {
@@ -40,13 +42,22 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+/** 传输行紧凑字节格式：无空格（"1.2MB"），窄面板下保证不折行 */
+function formatBytesCompact(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** i).toFixed(i === 0 ? 0 : 1)}${units[i]}`;
+}
+
+/** 传输行速度格式：紧凑无空格（"2.1MB/s"），配合固定宽度槽位消除数字变化引起的宽度跳动 */
 function formatSpeed(speedBps: number): string {
-  if (speedBps <= 0) return '0 B/s';
+  if (speedBps <= 0) return '0B/s';
   const k = 1024;
   const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
   const i = Math.floor(Math.log(speedBps) / Math.log(k));
   const val = speedBps / Math.pow(k, i);
-  return `${val.toFixed(1)} ${sizes[i]}`;
+  return `${val.toFixed(1)}${sizes[i]}`;
 }
 
 function formatPermissions(mode: number, isDir?: boolean, isSymlink?: boolean): string {
@@ -146,6 +157,106 @@ interface SftpDragPayload {
   path: string;
   name: string;
   isDir: boolean;
+}
+
+/**
+ * 传输任务行（固定行高单行布局，永不折行）：
+ * - 文件名为唯一弹性元素（吸收宽度变化），其余元素全部 shrink-0 + nowrap，消除逐帧 reflow；
+ * - 容器查询按卡片实际宽度分级隐藏次要信息：速度（<30rem）→ 已传/总量（<24rem），进度条同步收窄；
+ * - 状态互斥占位：「排队中」占速度槽、错误文本占尺寸+速度槽，避免元素出现/消失引起跳动；
+ * - 文件名超出截断，悬停走马灯滚动展示全文（MarqueeText），重试次数折叠进 title 提示。
+ */
+function TransferTaskRow({ task }: { task: TransferTask }) {
+  const { t } = useTranslation();
+
+  return (
+    <div className="@container flex h-8 items-center gap-3 rounded-md border border-border/50 bg-background/90 px-3 text-ui-xs shadow-xs">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        {task.direction === 'copy' ? (
+          <ArrowLeftRight className="size-3.5 shrink-0 text-primary" />
+        ) : task.direction === 'upload' ? (
+          <Upload className="size-3.5 shrink-0 text-primary" />
+        ) : (
+          <Download className="size-3.5 shrink-0 text-success" />
+        )}
+
+        <MarqueeText
+          text={task.fileName}
+          titleSuffix={task.attempt > 1 ? `#${task.attempt}` : undefined}
+          className="min-w-0 max-w-[240px] flex-1 font-medium text-foreground"
+        />
+
+        {task.status === 'error' ? (
+          <span
+            className="min-w-0 flex-1 truncate text-destructive"
+            title={task.error ?? undefined}
+          >
+            {task.error}
+          </span>
+        ) : (
+          <span className="hidden shrink-0 whitespace-nowrap font-mono text-[11px] text-foreground-subtle @min-[24rem]:inline">
+            {formatBytesCompact(task.transferred)}/{formatBytesCompact(task.totalBytes)}
+          </span>
+        )}
+
+        {task.status === 'active' && task.speedBps > 0 && (
+          <span className="hidden w-14 shrink-0 whitespace-nowrap text-right font-mono text-[10px] text-foreground-subtlest @min-[30rem]:inline">
+            {formatSpeed(task.speedBps)}
+          </span>
+        )}
+        {task.status === 'queued' && (
+          <span className="hidden w-14 shrink-0 whitespace-nowrap text-right text-[10px] text-foreground-subtlest @min-[30rem]:inline">
+            {t('files.transfer.queued')}
+          </span>
+        )}
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2.5">
+        <div className="h-1.5 w-14 overflow-hidden rounded-full bg-surface @min-[24rem]:w-20">
+          <div
+            className={cn(
+              'h-full transition-all duration-150',
+              task.status === 'done'
+                ? 'bg-success'
+                : task.status === 'error'
+                  ? 'bg-destructive'
+                  : task.status === 'canceled'
+                    ? 'bg-foreground-subtlest'
+                    : 'bg-primary',
+            )}
+            style={{ width: `${task.percent}%` }}
+          />
+        </div>
+        <span className="w-10 text-right font-mono text-[11px] font-medium">
+          {task.percent.toFixed(0)}%
+        </span>
+        {task.status === 'active' || task.status === 'queued' ? (
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => transferQueue.cancelTask(task.id)}
+            aria-label={t('files.cancelTransfer')}
+          >
+            <X className="size-3 text-destructive" />
+          </Button>
+        ) : task.status === 'error' || task.status === 'canceled' ? (
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => transferQueue.retryTask(task.id)}
+            aria-label={t('files.transfer.retry')}
+            title={t('files.transfer.retry')}
+          >
+            <RotateCw className="size-3 text-primary" />
+          </Button>
+        ) : (
+          <span className="text-[10px] text-success">✓</span>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export interface SftpSessionViewProps {
@@ -690,91 +801,7 @@ export function SftpSessionView({
           </div>
 
           {transfersList.map((tItem) => (
-            <div
-              key={tItem.id}
-              className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-background/90 px-3 py-1.5 text-ui-xs shadow-xs"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                {tItem.direction === 'copy' ? (
-                  <ArrowLeftRight className="size-3.5 text-primary shrink-0" />
-                ) : tItem.direction === 'upload' ? (
-                  <Upload className="size-3.5 text-primary shrink-0" />
-                ) : (
-                  <Download className="size-3.5 text-success shrink-0" />
-                )}
-                <span className="font-medium truncate max-w-[140px] md:max-w-[200px]">
-                  {tItem.fileName}
-                </span>
-                <span className="text-foreground-subtle font-mono text-[11px]">
-                  {formatBytes(tItem.transferred)} / {formatBytes(tItem.totalBytes)}
-                </span>
-                {tItem.speedBps > 0 && tItem.status === 'active' && (
-                  <span className="text-foreground-subtlest font-mono text-[10px]">
-                    {formatSpeed(tItem.speedBps)}
-                  </span>
-                )}
-                {tItem.attempt > 1 && (
-                  <span className="text-foreground-subtlest font-mono text-[10px]">
-                    #{tItem.attempt}
-                  </span>
-                )}
-                {tItem.status === 'queued' && (
-                  <span className="text-foreground-subtlest text-[10px]">
-                    {t('files.transfer.queued')}
-                  </span>
-                )}
-                {tItem.status === 'error' && (
-                  <span className="text-destructive truncate max-w-[160px]" title={tItem.error ?? undefined}>
-                    {tItem.error}
-                  </span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-3 shrink-0">
-                <div className="w-24 bg-surface rounded-full h-1.5 overflow-hidden">
-                  <div
-                    className={cn(
-                      'h-full transition-all duration-150',
-                      tItem.status === 'done'
-                        ? 'bg-success'
-                        : tItem.status === 'error'
-                          ? 'bg-destructive'
-                          : tItem.status === 'canceled'
-                            ? 'bg-foreground-subtlest'
-                            : 'bg-primary',
-                    )}
-                    style={{ width: `${tItem.percent}%` }}
-                  />
-                </div>
-                <span className="w-10 text-right font-mono text-[11px] font-medium">
-                  {tItem.percent.toFixed(0)}%
-                </span>
-                {tItem.status === 'active' || tItem.status === 'queued' ? (
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    onClick={() => transferQueue.cancelTask(tItem.id)}
-                    aria-label={t('files.cancelTransfer')}
-                  >
-                    <X className="size-3 text-destructive" />
-                  </Button>
-                ) : tItem.status === 'error' || tItem.status === 'canceled' ? (
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    onClick={() => transferQueue.retryTask(tItem.id)}
-                    aria-label={t('files.transfer.retry')}
-                    title={t('files.transfer.retry')}
-                  >
-                    <RotateCw className="size-3 text-primary" />
-                  </Button>
-                ) : (
-                  <span className="text-success text-[10px]">✓</span>
-                )}
-              </div>
-            </div>
+            <TransferTaskRow key={tItem.id} task={tItem} />
           ))}
         </div>
       )}

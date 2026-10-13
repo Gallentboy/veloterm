@@ -342,7 +342,7 @@ fn parse_openai_models_json(value: &serde_json::Value) -> Vec<String> {
   ids
 }
 
-fn pick_key(record: &AiProviderRecord) -> Result<(usize, String), String> {
+pub fn pick_key(record: &AiProviderRecord) -> Result<(usize, String), String> {
   if record.api_keys.is_empty() {
     return Err("该供应商未配置任何 API Key".to_string());
   }

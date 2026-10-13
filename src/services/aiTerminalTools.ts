@@ -123,3 +123,37 @@ export function describeActiveSession(sessionKey: number): string {
   return `当前激活终端（cwd: ${entry.cwd || '未知'}）`;
 }
 
+
+/**
+ * 智能体工具执行入口：按 Rust 推来的工具名分发执行，返回文本结果。
+ * 工具 schema 与 Rust 侧 terminal_tool_definitions 一一对应。
+ */
+export async function executeAgentTool(
+  sessionKey: number,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  switch (name) {
+    case 'terminal_get_screen': {
+      const lines = typeof args.lines === 'number' ? args.lines : 120;
+      const visibleOnly = args.visibleOnly === true;
+      return getActiveTerminalText(sessionKey, { lines, visibleOnly });
+    }
+    case 'terminal_send': {
+      const input = typeof args.input === 'string' ? args.input : '';
+      const pressEnter = args.pressEnter !== false;
+      if (!input) {
+        return '[input 参数为空]';
+      }
+      const result = await sendToTerminal(sessionKey, pressEnter ? `${input}\r` : input);
+      return result.ok ? `[已发送 ${input.length} 字节]` : `[发送失败: ${result.error}]`;
+    }
+    case 'terminal_read_new': {
+      const raw = (args.wait_ms ?? args.waitMs) as number | undefined;
+      const waitMs = typeof raw === 'number' ? raw : 2000;
+      return readTerminalOutput(sessionKey, { waitForMs: waitMs });
+    }
+    default:
+      return `[未知工具: ${name}]`;
+  }
+}
