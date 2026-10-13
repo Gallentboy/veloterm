@@ -1,5 +1,7 @@
+import { Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@/components/ui/button';
 import { AboutDialog } from '@/components/AboutDialog';
 import { WorkspaceHelpMenuButton } from '@/components/WorkspaceHelpMenuButton';
 import type { Page } from '@/components/WorkspaceSidebar';
@@ -9,10 +11,11 @@ import { cn } from '@/lib/utils';
 interface WorkspaceHeaderProps {
   page: Page;
   isSidebarVisible: boolean;
+  onOpenAiChat?: () => void;
 }
 
 /** 主面板头部（移植自 ZCode WorkspaceHeader）：h-12、整条可拖拽移动窗口，右侧帮助菜单。 */
-export function WorkspaceHeader({ page, isSidebarVisible }: WorkspaceHeaderProps) {
+export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat }: WorkspaceHeaderProps) {
   const { t } = useTranslation();
   const [isAboutOpen, setAboutOpen] = useState(false);
   const title =
@@ -47,6 +50,17 @@ export function WorkspaceHeader({ page, isSidebarVisible }: WorkspaceHeaderProps
       </div>
 
       <div className="flex shrink-0 items-center gap-0.5">
+        {onOpenAiChat ? (
+          <Button
+            variant="ghost"
+            size="icon-md"
+            aria-label={t('ai.chat.title')}
+            title={t('ai.chat.title')}
+            onClick={onOpenAiChat}
+          >
+            <Sparkles className="size-4" />
+          </Button>
+        ) : null}
         <WorkspaceHelpMenuButton onShowAbout={() => setAboutOpen(true)} />
       </div>
 

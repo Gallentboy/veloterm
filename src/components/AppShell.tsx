@@ -15,6 +15,7 @@ import { HostsScreen } from '@/components/hosts/HostsScreen';
 import { SettingsScreen } from '@/components/SettingsScreen';
 import { TerminalScreen } from '@/components/terminal';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
+import { AiChatDialog } from '@/components/ai/AiChatDialog';
 import { WorkspaceHeader } from '@/components/WorkspaceHeader';
 import { WorkspaceSidebar, type Page } from '@/components/WorkspaceSidebar';
 import { useAppPanels } from '@/hooks/useAppPanels';
@@ -93,6 +94,7 @@ export function AppShell() {
   const { createSession } = useTerminalStore();
   const { createSession: createSftpSession } = useSftpStore();
   const [page, setPage] = useState<Page>('home');
+  const [isAiChatOpen, setAiChatOpen] = useState(false);
 
   // 进入文件页 = 用户可能马上要编辑文件，无延迟再触发一次（与上面去重，模块只拉一次）
   const [hasWarmedOnFiles, setHasWarmedOnFiles] = useState(false);
@@ -323,7 +325,11 @@ export function AppShell() {
           <div className="flex min-w-[320px] flex-1 flex-col p-1 pl-0 pt-0">
             <div className="h-1 w-full shrink-0" data-tauri-drag-region />
             <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-(--workspace-panel-radius) border border-border bg-background">
-              <WorkspaceHeader page={page} isSidebarVisible={isSidebarVisible} />
+              <WorkspaceHeader
+                page={page}
+                isSidebarVisible={isSidebarVisible}
+                onOpenAiChat={() => setAiChatOpen(true)}
+              />
               <main className="min-h-0 flex-1 overflow-y-auto relative">
                 {/* SFTP 文件视图持久挂载，切换页面保持后台状态、文件路径与传输任务 */}
                 <div className={cn('h-full min-h-0 w-full', page !== 'files' && 'hidden')}>
@@ -370,6 +376,8 @@ export function AppShell() {
           </div>
 
           <DesktopTopOverlay isSidebarVisible={isSidebarVisible} onToggleSidebar={toggleSidebar} />
+
+          <AiChatDialog open={isAiChatOpen} onClose={() => setAiChatOpen(false)} />
         </div>
       </div>
   );

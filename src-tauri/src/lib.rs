@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod commands;
 pub mod common;
 pub mod db;
@@ -40,6 +41,11 @@ pub fn run() {
       terminal::commands::ssh_list_known_hosts,
       terminal::commands::ssh_remove_known_host,
       terminal::commands::ssh_clear_known_hosts,
+      ai::ai_provider_list,
+      ai::ai_provider_save,
+      ai::ai_provider_delete,
+      ai::ai_chat,
+      ai::ai_provider_test,
       sftp::commands::sftp_next_task_id,
       sftp::commands::sftp_cancel_transfer,
       sftp::commands::sftp_connect,
