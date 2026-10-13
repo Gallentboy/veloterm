@@ -92,20 +92,20 @@ const CODE_CONFIG_EXTS = new Set([
 function getFileItemVisuals(item: RemoteFileItem) {
   if (item.is_dir) {
     return {
-      colorClass: 'text-blue-500 dark:text-blue-400 font-semibold',
-      iconClass: 'text-blue-500 dark:text-blue-400',
+      colorClass: 'text-terminal-blue font-semibold',
+      iconClass: 'text-terminal-blue',
     };
   }
   if (item.is_symlink) {
     return {
-      colorClass: 'text-cyan-500 dark:text-cyan-400 font-normal',
-      iconClass: 'text-cyan-500 dark:text-cyan-400',
+      colorClass: 'text-terminal-cyan font-normal',
+      iconClass: 'text-terminal-cyan',
     };
   }
   if ((item.permissions & 0o111) !== 0) {
     return {
-      colorClass: 'text-emerald-500 dark:text-emerald-400 font-medium',
-      iconClass: 'text-emerald-500 dark:text-emerald-400',
+      colorClass: 'text-terminal-green font-medium',
+      iconClass: 'text-terminal-green',
     };
   }
 
@@ -114,20 +114,20 @@ function getFileItemVisuals(item: RemoteFileItem) {
 
   if (ARCHIVE_EXTS.has(ext)) {
     return {
-      colorClass: 'text-red-500 dark:text-red-400 font-normal',
-      iconClass: 'text-red-500 dark:text-red-400',
+      colorClass: 'text-terminal-red font-normal',
+      iconClass: 'text-terminal-red',
     };
   }
   if (MEDIA_EXTS.has(ext)) {
     return {
-      colorClass: 'text-purple-500 dark:text-purple-400 font-normal',
-      iconClass: 'text-purple-500 dark:text-purple-400',
+      colorClass: 'text-terminal-magenta font-normal',
+      iconClass: 'text-terminal-magenta',
     };
   }
   if (CODE_CONFIG_EXTS.has(ext)) {
     return {
-      colorClass: 'text-amber-500 dark:text-amber-400 font-normal',
-      iconClass: 'text-amber-500 dark:text-amber-400',
+      colorClass: 'text-terminal-yellow font-normal',
+      iconClass: 'text-terminal-yellow',
     };
   }
 
