@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useHostsStore } from '@/hosts/HostsProvider';
 import { cn } from '@/lib/utils';
+import { terminalSessionRegistry } from '@/terminal/terminalSessionRegistry';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
 import type { TerminalSize } from '@/terminal/types';
 
@@ -97,7 +98,7 @@ export function TerminalScreen({
   );
 
   // 终端页快捷键：
-  // ⌘T 新建 Tab、⌘W 关闭当前 Tab、⌘⇧[ / ⌘⇧] 切换前后 Tab
+  // ⌘T 新建 Tab、⌘W 关闭当前 Tab、⌘⇧[ / ⌘⇧] 切换前后 Tab、⌘F 终端搜索
   // ⌘⇧G 切换标签/九宫格、⌘⇧B 切换协同广播、Esc 退出最大化或广播
   useEffect(() => {
     if (!isVisible) return;
@@ -106,6 +107,11 @@ export function TerminalScreen({
       const mod = event.metaKey || event.ctrlKey;
 
       if (!event.altKey && !event.shiftKey && !mod && event.key === 'Escape') {
+        // 搜索栏聚焦（自绘终端搜索栏的输入框）时 Esc 只关搜索栏，由其内部处理，
+        // 这里不触发「退出最大化」等其他全局 Esc 语义
+        if (document.activeElement?.closest('[data-terminal-search-bar]')) {
+          return;
+        }
         if (maximizedSessionId !== null) {
           setMaximizedSessionId(null);
           return;
@@ -114,6 +120,16 @@ export function TerminalScreen({
 
       if (!mod) return;
       const key = event.key.toLowerCase();
+
+      // ⌘F/Ctrl+F：打开激活会话的终端搜索栏（终端已聚焦时由 xterm 键处理分支处理，
+      // 这里覆盖焦点在终端之外——如侧栏/顶栏——时的兜底，同时拦截浏览器 find-in-page）
+      if (!event.altKey && !event.shiftKey && key === 'f') {
+        if (activeSession) {
+          event.preventDefault();
+          terminalSessionRegistry.showSearch(activeSession.id);
+        }
+        return;
+      }
 
       if (!event.altKey && !event.shiftKey && key === 't') {
         event.preventDefault();

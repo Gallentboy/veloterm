@@ -80,6 +80,12 @@ export default {
       clear: '清屏',
       resetZoom: '重置缩放',
     },
+    search: {
+      placeholder: '查找',
+      caseSensitive: '区分大小写',
+      previous: '上一个匹配 (Shift+Enter)',
+      next: '下一个匹配 (Enter)',
+    },
   },
   files: {
     title: '文件管理',
