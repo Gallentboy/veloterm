@@ -25,7 +25,6 @@ jobs:
       - name: setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          # 与本地生成 pnpm-lock.yaml 的版本保持一致，避免 --frozen-lockfile 跨大版本兼容问题
           version: 11
 
       - name: setup node
@@ -36,45 +35,49 @@ jobs:
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
 
-      # SQLCipher（加密 SQLite）的 libsqlite3-sys build.rs 在 Windows 上需要 OpenSSL 做加密后端，
-      # macOS 有系统 OpenSSL 而 CI 无；用 vcpkg 预装的静态 triplet（/MT + 静态 openssl），
-      # 与 .cargo/config.toml 的 +crt-static 完全自洽，产物保持零运行时依赖
-      - name: Cache vcpkg OpenSSL
+      # 1. 导出 GitHub Actions Cache 凭据给 vcpkg 的 x-gha 二进制缓存提供程序
+      - name: Export GitHub Actions Cache env for vcpkg
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/github-script@v7
         with:
-          path: C:\vcpkg\installed\x64-windows-static
-          # workflow 变更即刷新（OpenSSL 版本随 vcpkg port 演进）；前缀兜底保证旧缓存仍可复用
-          key: vcpkg-openssl-x64-windows-static-${{ hashFiles('.github/workflows/publish.yml') }}
-          restore-keys: vcpkg-openssl-x64-windows-static-
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+            core.exportVariable('VCPKG_BINARY_SOURCES', 'clear;x-gha,readwrite');
 
+      # 2. 安装 OpenSSL（首次运行会编译并自动写入 GitHub Cache，后续运行直接秒级下载二进制恢复）
       - name: Install OpenSSL for SQLCipher (Windows)
         if: runner.os == 'Windows'
         run: vcpkg install openssl:x64-windows-static
 
+      # 3. 设置 Rust 静态链接 OpenSSL 所需的环境变量
       - name: Set OpenSSL env (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          echo "OPENSSL_DIR=C:\vcpkg\installed\x64-windows-static" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=C:\vcpkg\installed\x64-windows-static\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=C:\vcpkg\installed\x64-windows-static\include" >> $env:GITHUB_ENV
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
       - name: install frontend dependencies
-        # beforeBuildCommand in src-tauri/tauri.conf.json runs `pnpm build`.
         run: pnpm install --frozen-lockfile
 
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: app-v__VERSION__ # the action automatically replaces __VERSION__ with the app version.
+          tagName: app-v__VERSION__
           releaseName: 'App v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
