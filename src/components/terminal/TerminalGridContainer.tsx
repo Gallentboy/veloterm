@@ -19,7 +19,7 @@ export interface TerminalGridContainerProps {
   onCloseSession: (sessionId: number) => void;
   onShellLabelChange: (sessionId: number, shellLabel: string | null) => void;
   onSizeChange: (sessionId: number, size: TerminalSize) => void;
-  onWebglStatusChange: (sessionId: number, active: boolean) => void;
+  onRendererStatusChange: (sessionId: number, kind: 'webgl' | 'canvas2d' | 'dom') => void;
   onExit: (sessionId: number, exitCode: number) => void;
 }
 
@@ -53,7 +53,7 @@ export function TerminalGridContainer({
   onCloseSession,
   onShellLabelChange,
   onSizeChange,
-  onWebglStatusChange,
+  onRendererStatusChange,
   onExit,
 }: TerminalGridContainerProps) {
   const isGrid = layoutMode === 'grid';
@@ -199,7 +199,7 @@ export function TerminalGridContainer({
                 fontScaleEnabled={!isGrid}
                 onShellLabelChange={onShellLabelChange}
                 onSizeChange={onSizeChange}
-                onWebglStatusChange={onWebglStatusChange}
+                onRendererStatusChange={onRendererStatusChange}
                 onExit={onExit}
               />
             </div>

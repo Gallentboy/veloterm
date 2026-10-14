@@ -1,5 +1,6 @@
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
 import { terminalSessionRegistry } from './terminalSessionRegistry';
+import { checkHardwareAcceleration } from './webglSupport';
 import type {
   ITerminalByteChannel,
   ITerminalTransport,
@@ -393,14 +394,22 @@ export class MockEchoTerminalTransport implements ITerminalTransport {
 
       case 'webgl': {
         const isActive = terminalSessionRegistry.isWebglActive(session.sessionId);
-        this.emitText(
-          session,
+        const caps = checkHardwareAcceleration();
+        const yes = '\x1b[32myes\x1b[0m';
+        const no = '\x1b[31mno\x1b[0m';
+        const lines = [
           `\x1b[36mRenderer:\x1b[0m ${
             isActive
               ? '\x1b[32m@xterm/addon-webgl (WebGL2 Hardware Accelerated)\x1b[0m'
               : '\x1b[33mDOM Fallback\x1b[0m'
-          }\r\n`,
-        );
+          }`,
+          `\x1b[36mGPU:\x1b[0m ${caps.renderer}`,
+          `\x1b[36mVendor:\x1b[0m ${caps.vendor}`,
+          `\x1b[36mHardware accel:\x1b[0m WebGL2=${caps.hasWebGL2Hardware ? yes : no}  WebGL1=${
+            caps.hasWebGL1Hardware ? yes : no
+          }`,
+        ];
+        this.emitText(session, `${lines.join('\r\n')}\r\n`);
         this.emitPrompt(session);
         return;
       }

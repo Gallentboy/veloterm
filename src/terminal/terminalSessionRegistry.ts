@@ -1,7 +1,13 @@
 import { WebglAddon } from '@xterm/addon-webgl';
+import { CanvasAddon } from '@xterm/addon-canvas';
 import type { FitAddon } from '@xterm/addon-fit';
 import type { SearchAddon } from '@xterm/addon-search';
 import type { ITheme, Terminal as XTerm } from '@xterm/xterm';
+import {
+  degradeFromWebgl,
+  selectRenderer,
+  type TerminalRendererKind,
+} from './rendererSelector';
 
 /**
  * 浏览器 / WebView（尤其 macOS WKWebView 与 Chromium）对单页面并发活跃的 WebGL 上下文数量有硬上限（通常 8~16 个）。
@@ -10,6 +16,10 @@ import type { ITheme, Terminal as XTerm } from '@xterm/xterm';
  * - 超出上限的最久未访问后台 Tab 自动卸载 `WebglAddon`（保留 xterm 实例与 scrollback 历史），
  *   避免触发浏览器强制驱逐当前正在使用的前台 WebGL 上下文；
  * - 当被驱逐的 Tab 再次切回前台时，`ensureWebgl` 自动为其重新挂载 `WebglAddon`。
+ *
+ * 另外，**只有探测到 WebGL2 硬件加速时才会启用 `WebglAddon`**（见 `webglSupport`）：
+ * addon 自身仅检查 `getContext('webgl2')` 是否非空，软件光栅化环境下会「成功」挂载却由 CPU 绘制，
+ * 反而比 xterm 自带的 DOM renderer 更慢。
  */
 const MAX_ACTIVE_WEBGL_CONTEXTS = 6;
 
@@ -18,6 +28,10 @@ export interface TerminalSessionRegistryEntry {
   term: XTerm;
   fitAddon: FitAddon;
   webglAddon: WebglAddon | null;
+  /** Canvas 2D 渲染 addon（WebGL 不可用/降级后的中间层） */
+  canvasAddon: CanvasAddon | null;
+  /** 当前实际使用的渲染器类型（供状态栏展示与调试） */
+  rendererKind: TerminalRendererKind;
   terminalId: number | null;
   cwd: string;
   hostEl: HTMLDivElement;
@@ -76,58 +90,131 @@ function disposeEntryWebgl(entry: TerminalSessionRegistryEntry): void {
   }
 }
 
-function ensureEntryWebgl(
-  entry: TerminalSessionRegistryEntry,
-  onStatusChange?: (enabled: boolean) => void,
-): boolean {
-  if (entry.webglAddon) {
-    touchWebglLru(entry.key);
-    onStatusChange?.(true);
+function disposeEntryCanvas(entry: TerminalSessionRegistryEntry): void {
+  const addon = entry.canvasAddon;
+  if (!addon) return;
+  entry.canvasAddon = null;
+  entry.rendererKind = 'dom';
+  try {
+    addon.dispose();
+  } catch {
+    // 忽略 Canvas 2D 上下文释放异常
+  }
+}
+
+/**
+ * 挂载 Canvas 2D 渲染 addon（WebGL 不可用或降级后的中间层）。
+ * Canvas 2D 无上下文丢失事件，无需 LRU 管理（上下文成本远低于 WebGL）。
+ */
+function ensureEntryCanvas(entry: TerminalSessionRegistryEntry): boolean {
+  if (entry.canvasAddon) {
     return true;
   }
+  try {
+    const canvasAddon = new CanvasAddon();
+    entry.term.loadAddon(canvasAddon);
+    entry.canvasAddon = canvasAddon;
+    entry.rendererKind = 'canvas2d';
+    return true;
+  } catch (error) {
+    console.warn('[terminalSessionRegistry] Canvas 2D addon activation failed, fallback to DOM:', error);
+    entry.canvasAddon = null;
+    entry.rendererKind = 'dom';
+    return false;
+  }
+}
 
-  // 若活跃 WebGL 上下文数已达上限，淘汰最久未使用的后台 Tab 的 WebglAddon
-  while (webglLruKeys.length >= MAX_ACTIVE_WEBGL_CONTEXTS) {
-    const oldestKey = webglLruKeys.shift();
-    if (oldestKey === undefined) break;
-    const oldestEntry = sessions.get(oldestKey);
-    if (oldestEntry) {
-      disposeEntryWebgl(oldestEntry);
+/**
+ * 渲染器三级降级挂载：WebGL2 → Canvas 2D → DOM（xterm 内置默认）。
+ * - WebGL 探测由 rendererSelector.selectRenderer() 一次性决策（缓存）
+ * - WebGL 挂载失败或运行中上下文丢失 → degradeFromWebgl() → 尝试 Canvas 2D
+ * - Canvas 2D 也失败 → DOM renderer（xterm 自带，无需额外 addon）
+ */
+function ensureEntryRenderer(
+  entry: TerminalSessionRegistryEntry,
+  onStatusChange?: (kind: TerminalRendererKind) => void,
+): TerminalRendererKind {
+  const selection = selectRenderer();
+
+  if (selection.kind === 'webgl') {
+    if (entry.webglAddon) {
+      touchWebglLru(entry.key);
+      onStatusChange?.('webgl');
+      return 'webgl';
+    }
+
+    // 若活跃 WebGL 上下文数已达上限，淘汰最久未使用的后台 Tab 的 WebglAddon
+    while (webglLruKeys.length >= MAX_ACTIVE_WEBGL_CONTEXTS) {
+      const oldestKey = webglLruKeys.shift();
+      if (oldestKey === undefined) break;
+      const oldestEntry = sessions.get(oldestKey);
+      if (oldestEntry) {
+        disposeEntryWebgl(oldestEntry);
+      }
+    }
+
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        if (entry.webglAddon === webglAddon) {
+          entry.webglAddon = null;
+          removeFromWebglLru(entry.key);
+        }
+        try {
+          webglAddon.dispose();
+        } catch {
+          // 忽略上下文丢失时的销毁异常
+        }
+        // 运行时降级：写回缓存使后续新 Tab 也走降级后的渲染器
+        const degraded = degradeFromWebgl();
+        if (degraded.kind === 'canvas2d') {
+          ensureEntryCanvas(entry);
+          syncEntryRendererModel(entry);
+        } else {
+          entry.rendererKind = 'dom';
+        }
+        onStatusChange?.(entry.rendererKind);
+      });
+
+      entry.term.loadAddon(webglAddon);
+      entry.webglAddon = webglAddon;
+      entry.rendererKind = 'webgl';
+      touchWebglLru(entry.key);
+      onStatusChange?.('webgl');
+      return 'webgl';
+    } catch (error) {
+      console.warn('[terminalSessionRegistry] WebGL2 addon activation failed:', error);
+      entry.webglAddon = null;
+      const degraded = degradeFromWebgl();
+      if (degraded.kind === 'canvas2d' && ensureEntryCanvas(entry)) {
+        syncEntryRendererModel(entry);
+        onStatusChange?.('canvas2d');
+        return 'canvas2d';
+      }
+      entry.rendererKind = 'dom';
+      onStatusChange?.('dom');
+      return 'dom';
     }
   }
 
-  try {
-    const webglAddon = new WebglAddon();
-    webglAddon.onContextLoss(() => {
-      if (entry.webglAddon === webglAddon) {
-        entry.webglAddon = null;
-        removeFromWebglLru(entry.key);
-      }
-      try {
-        webglAddon.dispose();
-      } catch {
-        // 忽略上下文丢失时的销毁异常
-      }
-      onStatusChange?.(false);
-    });
-
-    entry.term.loadAddon(webglAddon);
-    entry.webglAddon = webglAddon;
-    touchWebglLru(entry.key);
-    onStatusChange?.(true);
-    return true;
-  } catch (error) {
-    console.warn('[terminalSessionRegistry] WebGL2 addon activation failed, fallback to DOM:', error);
-    entry.webglAddon = null;
-    onStatusChange?.(false);
-    return false;
+  if (selection.kind === 'canvas2d') {
+    if (ensureEntryCanvas(entry)) {
+      syncEntryRendererModel(entry);
+      onStatusChange?.('canvas2d');
+      return 'canvas2d';
+    }
   }
+
+  entry.rendererKind = 'dom';
+  onStatusChange?.('dom');
+  return 'dom';
 }
 
 function releaseEntry(key: number): void {
   const entry = sessions.get(key);
   if (!entry) return;
   disposeEntryWebgl(entry);
+  disposeEntryCanvas(entry);
   sessions.delete(key);
   try {
     entry.dispose();
@@ -171,12 +258,16 @@ export const terminalSessionRegistry = {
   },
 
   /**
-   * 确保指定会话已挂载 WebGL2 硬件加速渲染器（含 LRU 上下文池管理与上下文丢失恢复）。
+   * 确保指定会话已挂载最优渲染器（WebGL2 → Canvas 2D → DOM 三级降级）。
+   * 返回当前实际使用的渲染器类型。
    */
-  ensureWebgl(key: number, onStatusChange?: (enabled: boolean) => void): boolean {
+  ensureRenderer(
+    key: number,
+    onStatusChange?: (kind: TerminalRendererKind) => void,
+  ): TerminalRendererKind | null {
     const entry = sessions.get(key);
-    if (!entry) return false;
-    return ensureEntryWebgl(entry, onStatusChange);
+    if (!entry) return null;
+    return ensureEntryRenderer(entry, onStatusChange);
   },
 
   /**
@@ -210,6 +301,11 @@ export const terminalSessionRegistry = {
 
   isWebglActive(key: number): boolean {
     return Boolean(sessions.get(key)?.webglAddon);
+  },
+
+  /** 获取指定会话当前使用的渲染器类型（webgl / canvas2d / dom） */
+  getRendererKind(key: number): TerminalRendererKind {
+    return sessions.get(key)?.rendererKind ?? 'dom';
   },
 
   /** 将 `entry.hostEl` 物理挂载到当前可见的容器元素 */
