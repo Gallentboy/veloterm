@@ -1,7 +1,12 @@
 import { FolderSync, X } from 'lucide-react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { Button } from '@/components/ui/button';
+import { MarqueeText } from '@/components/ui/MarqueeText';
 import { cn } from '@/lib/utils';
 import type { SftpSessionDescriptor } from '@/services/sftpPanelState';
+
+/** Tab 拖拽分栏的自定义 MIME（与文件拖拽互拷的 MIME 区分） */
+export const SFTP_TAB_DRAG_MIME = 'application/x-veloterm-sftp-tab';
 
 export interface SftpTabTriggerProps {
   session: SftpSessionDescriptor;
@@ -10,12 +15,19 @@ export interface SftpTabTriggerProps {
   isActive: boolean;
   onActivate: (sessionId: number) => void;
   onClose: (sessionId: number) => void;
+  /** 拖拽开始/结束时上报（父组件用于已分栏 NOOP 判定与落点高亮） */
+  onDragStateChange?: (dragging: boolean) => void;
+  /** 右键菜单（父组件展示「退出分栏」等操作） */
+  onContextMenu?: (event: ReactMouseEvent<HTMLDivElement>) => void;
+  /** 双击重命名提交（null = 清空回退默认名） */
+  onRename?: (title: string | null) => void;
 }
 
 /**
  * SFTP 顶部单个 Tab 触发器（完全对齐 TerminalTabTrigger 与 ZCode 风格）：
  * - 激活态 `bg-selected text-foreground`，非激活态悬停 `hover:bg-hover`；
- * - 标题超长时右侧渐隐遮罩；
+ * - 标题超长时截断省略号，悬停走马灯滚动展示全文（MarqueeText）；
+ * - 双击标题行内重命名（Enter/失焦提交，Esc 取消，空值回退默认名；编辑中禁用拖拽）；
  * - 关闭按钮在激活态常显，非激活态仅 hover/focus 时浮现；支持鼠标中键快速关闭。
  */
 export function SftpTabTrigger({
@@ -25,7 +37,42 @@ export function SftpTabTrigger({
   isActive,
   onActivate,
   onClose,
+  onDragStateChange,
+  onContextMenu,
+  onRename,
 }: SftpTabTriggerProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Esc 取消标记：取消后紧随的失焦不应再提交（每次进入编辑时复位）
+  const cancelledRef = useRef(false);
+
+  useEffect(() => {
+    if (isEditing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [isEditing]);
+
+  const beginRename = () => {
+    cancelledRef.current = false;
+    setDraft(title);
+    setIsEditing(true);
+  };
+
+  const commitRename = () => {
+    if (!isEditing) return;
+    setIsEditing(false);
+    if (cancelledRef.current) return;
+    const next = draft.trim();
+    onRename?.(next.length > 0 ? next : null);
+  };
+
+  const cancelRename = () => {
+    cancelledRef.current = true;
+    setIsEditing(false);
+  };
+
   return (
     <div
       role="tab"
@@ -33,7 +80,29 @@ export function SftpTabTrigger({
       aria-selected={isActive}
       data-active={isActive ? '' : undefined}
       data-state={isActive ? 'active' : 'inactive'}
-      onClick={() => onActivate(session.id)}
+      // 重命名编辑中禁用拖拽，避免选中文本与拖拽手势冲突
+      draggable={!isEditing}
+      onDragStart={(event) => {
+        event.dataTransfer.setData(
+          SFTP_TAB_DRAG_MIME,
+          JSON.stringify({ sessionId: session.id }),
+        );
+        event.dataTransfer.effectAllowed = 'move';
+        onDragStateChange?.(true);
+      }}
+      onDragEnd={() => onDragStateChange?.(false)}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onContextMenu?.(event);
+      }}
+      onDoubleClick={(event) => {
+        // 关闭按钮上的双击不触发重命名
+        if ((event.target as HTMLElement).closest('button')) return;
+        beginRename();
+      }}
+      onClick={() => {
+        if (!isEditing) onActivate(session.id);
+      }}
       onAuxClick={(event) => {
         // 鼠标中键关闭 Tab
         if (event.button === 1) {
@@ -43,25 +112,45 @@ export function SftpTabTrigger({
         }
       }}
       onKeyDown={(event) => {
+        if (isEditing) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           onActivate(session.id);
         }
       }}
       className={cn(
-        'group relative inline-flex h-7 w-auto max-w-44 min-w-0 flex-none shrink-0 cursor-default items-center justify-start gap-1.5 overflow-hidden whitespace-nowrap rounded-lg border border-transparent bg-transparent pl-2 pr-1 text-ui-base font-medium text-foreground-subtle transition-all select-none outline-none',
+        'group relative inline-flex h-7 w-auto max-w-88 min-w-0 flex-none shrink-0 cursor-default items-center justify-start gap-1.5 overflow-hidden whitespace-nowrap rounded-lg border border-transparent bg-transparent pl-2 pr-1 text-ui-base font-medium text-foreground-subtle transition-all select-none outline-none',
         'hover:text-foreground',
         !isActive && 'hover:bg-hover',
         isActive && 'bg-selected text-foreground',
       )}
     >
       <FolderSync className="size-3.5 shrink-0 text-foreground-subtle" />
-      <span
-        data-sftp-tab-content=""
-        className="flex min-w-0 flex-1 overflow-hidden whitespace-nowrap [mask-image:linear-gradient(to_right,black_calc(100%-0.5rem),transparent)]"
-      >
-        <span className="shrink-0 whitespace-nowrap">{title}</span>
-      </span>
+      {isEditing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              commitRename();
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              cancelRename();
+            }
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          aria-label={title}
+          className="h-5 min-w-0 flex-1 rounded border border-border bg-input px-1 text-ui-base font-medium text-foreground outline-none"
+        />
+      ) : (
+        <MarqueeText text={title} className="min-w-0 flex-1" />
+      )}
       <Button
         type="button"
         variant="ghost"

@@ -5,12 +5,14 @@ import {
   useId,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SftpSessionView } from '@/components/files/SftpSessionView';
-import { SftpTabTrigger } from '@/components/files/SftpTabTrigger';
+import { SftpTabTrigger, SFTP_TAB_DRAG_MIME } from '@/components/files/SftpTabTrigger';
 import { Button } from '@/components/ui/button';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -28,7 +30,7 @@ import {
 import { useSftpStore } from '@/services/SftpProvider';
 
 /** 中缝分隔条列宽（4px 命中区，与侧边栏拖宽条一致）。 */
-const FILES_PANE_DIVIDER_WIDTH_CSS = '0.25rem';
+const FILES_PANE_DIVIDER_WIDTH_CSS = '0.75rem';
 /** 键盘微调左栏宽度的步长（对齐 AppShell 侧边栏 SIDEBAR_KEYBOARD_STEP_PX）。 */
 const FILES_PANE_KEYBOARD_STEP_PX = 16;
 
@@ -47,17 +49,6 @@ function clampLeftPaneWidth(widthPx: number, containerWidthPx?: number): number 
       ? Math.max(FILES_PANE_MIN_WIDTH_PX, containerWidthPx - FILES_PANE_MIN_WIDTH_PX)
       : Number.POSITIVE_INFINITY;
   return Math.round(Math.max(FILES_PANE_MIN_WIDTH_PX, Math.min(widthPx, maxWidthPx)));
-}
-
-/** 把会话分配到指定窗格槽位（显式分支，避免联合类型动态 key 破坏类型收窄）。 */
-function assignSessionToPane(
-  state: FilesPaneState,
-  side: FilesPaneSide,
-  sessionId: number,
-): FilesPaneState {
-  return side === 'left'
-    ? { ...state, leftSessionId: sessionId }
-    : { ...state, rightSessionId: sessionId };
 }
 
 export interface FilesScreenProps {
@@ -90,6 +81,7 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
     closeSession,
     activateSession,
     updateSessionPath,
+    renameSession,
   } = useSftpStore();
 
   // 双栏窗格分配与聚焦侧（Tab 池模型：激活的会话落在聚焦窗格）
@@ -101,6 +93,13 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
   const [isDividerActive, setIsDividerActive] = useState(false);
   // 主区实际宽度（ResizeObserver 跟踪）：用于分隔条 aria 上限与容器变窄时的防御性收缩
   const [mainAreaWidthPx, setMainAreaWidthPx] = useState(0);
+  // Tab 拖入分栏：当前被拖 Tab 的会话 id 与悬停落点侧（null = 无拖拽/无悬停）
+  const [draggingTabId, setDraggingTabId] = useState<number | null>(null);
+  const [tabDropSide, setTabDropSide] = useState<FilesPaneSide | null>(null);
+  // Tab 右键菜单（ZCode 风格，提供「退出分栏」；池中 Tab 置灰）
+  const [paneMenu, setPaneMenu] = useState<{ x: number; y: number; sessionId: number } | null>(
+    null,
+  );
 
   const mainAreaRef = useRef<HTMLDivElement>(null);
   // 左栏宽度探针：占据第 1 列的 0 高度元素，用于读取当前实际列宽（拖拽起点/键盘步进）
@@ -122,8 +121,10 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
     );
   }, []);
 
-  // Tab 点击/会话激活的统一入口：
-  // 已在某窗格 → 聚焦该窗格；仍在池中 → 换入当前聚焦窗格（原会话退回池中）
+
+  // Tab 点击/会话激活的统一入口（焦点面板 + Tab 模型）：
+  // 已在某窗格 → 聚焦该窗格；仍在池中 → 换入当前聚焦窗格（显式点击才换，被换会话退回池中）；
+  // 自动分配（新建连接等）不经过这里，避免连接创建时顶替现有窗格
   const handleTabActivate = useCallback(
     (sessionId: number) => {
       setPane((current) => {
@@ -133,7 +134,9 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
         if (current.rightSessionId === sessionId) {
           return current.focusedPane === 'right' ? current : { ...current, focusedPane: 'right' };
         }
-        return assignSessionToPane(current, current.focusedPane, sessionId);
+        return current.focusedPane === 'left'
+          ? { ...current, leftSessionId: sessionId }
+          : { ...current, rightSessionId: sessionId };
       });
       activateSession(sessionId);
     },
@@ -226,8 +229,10 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
     });
   }, [activeSession?.id]);
 
-  // 新会话/外部激活兜底：激活会话不在任何窗格时，落入当前聚焦窗格
-  // （覆盖新建会话自动激活、主机页直接 createSftpSession 等路径；幂等）
+  // 新会话自动展示（仅空窗格兜底，绝不顶替、不新建分栏）：
+  // 两侧窗格都为空时，激活会话落入聚焦窗格（覆盖首次连接、主机页直达等路径，保证连接后立即可见）；
+  // 任一窗格已有会话时保持池中——展示用点击 Tab（换入聚焦侧）或拖拽（分栏/替换），
+  // 自动路径（新建连接等）不动现有窗格，分栏只能通过拖动创建
   useEffect(() => {
     const activeId = activeSession?.id;
     if (activeId == null) return;
@@ -235,7 +240,12 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
       if (current.leftSessionId === activeId || current.rightSessionId === activeId) {
         return current;
       }
-      return assignSessionToPane(current, current.focusedPane, activeId);
+      if (current.leftSessionId != null || current.rightSessionId != null) {
+        return current;
+      }
+      return current.focusedPane === 'left'
+        ? { ...current, leftSessionId: activeId }
+        : { ...current, rightSessionId: activeId };
     });
   }, [activeSession?.id]);
 
@@ -379,19 +389,147 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
   // 仅一侧有会话时退化为单栏铺满：隐藏中缝分隔条，另一侧不再渲染占位
   const bothPanesOccupied = Boolean(leftSession && rightSession);
 
-  // 空窗格占位元格（轻量内联空态，聚焦态同样高亮）
+  // ── Tab 拖入分栏 ──
+  // 已在某窗格的 Tab 拖动为 NOOP（dragover 不放行 → 系统禁止落点光标）；
+  // 双栏已存在：池中 Tab 落到某侧即替换该侧，被替换会话退回池中（仍以 Tab 展示）；
+  // 单栏铺满状态：按落点在主区的左/右半区决定新会话进哪一侧，原主机占另一侧，直接形成双栏。
+  const isPooledTabDragging =
+    draggingTabId != null &&
+    draggingTabId !== pane.leftSessionId &&
+    draggingTabId !== pane.rightSessionId;
+
+  // 落点在主区的左半还是右半（单栏模式据此分栏）
+  const dropSideByPointer = (event: ReactDragEvent<HTMLDivElement>): FilesPaneSide => {
+    const rect = mainAreaRef.current?.getBoundingClientRect();
+    const mid = rect ? rect.left + rect.width / 2 : 0;
+    return event.clientX < mid ? 'left' : 'right';
+  };
+
+  const handlePaneTabDragOver = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>, side: FilesPaneSide) => {
+      if (!event.dataTransfer.types.includes(SFTP_TAB_DRAG_MIME)) return;
+      // 已分栏的 Tab：不 preventDefault → drop 不会触发（NOOP）
+      if (!isPooledTabDragging) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      setTabDropSide(bothPanesOccupied ? side : dropSideByPointer(event));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isPooledTabDragging/dropSideByPointer 每次渲染重建，行为取最新值
+    [isPooledTabDragging, bothPanesOccupied],
+  );
+
+  const handlePaneTabDragLeave = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    // 真正离开窗格（而非在其子元素间移动）才清除；单栏模式半区侧可能与 paneSide 不同，直接清空
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setTabDropSide(null);
+    }
+  }, []);
+
+  const handlePaneTabDrop = useCallback(
+    (event: ReactDragEvent<HTMLDivElement>, side: FilesPaneSide) => {
+      if (!event.dataTransfer.types.includes(SFTP_TAB_DRAG_MIME)) return;
+      event.preventDefault();
+      setTabDropSide(null);
+      let droppedId: number | null = null;
+      try {
+        const raw = event.dataTransfer.getData(SFTP_TAB_DRAG_MIME);
+        const parsed = raw ? (JSON.parse(raw) as { sessionId?: unknown }) : null;
+        if (parsed && typeof parsed.sessionId === 'number' && Number.isFinite(parsed.sessionId)) {
+          droppedId = parsed.sessionId;
+        }
+      } catch {
+        droppedId = null;
+      }
+      if (droppedId == null || !sessions.some((s) => s.id === droppedId)) return;
+
+      setPane((current) => {
+        // NOOP：已在任一窗格的 Tab 落点无效
+        if (droppedId === current.leftSessionId || droppedId === current.rightSessionId) {
+          return current;
+        }
+        const currentlyBoth = current.leftSessionId != null && current.rightSessionId != null;
+        if (!currentlyBoth) {
+          // 单栏铺满：按落点半区分栏，原主机让到/留在另一侧，形成双栏
+          const dropSide = dropSideByPointer(event);
+          const occupiedSide: FilesPaneSide = current.leftSessionId != null ? 'left' : 'right';
+          const displacedId =
+            occupiedSide === 'left' ? current.leftSessionId : current.rightSessionId;
+          if (dropSide === occupiedSide && displacedId != null) {
+            return dropSide === 'left'
+              ? { ...current, leftSessionId: droppedId, rightSessionId: displacedId, focusedPane: 'left' }
+              : { ...current, rightSessionId: droppedId, leftSessionId: displacedId, focusedPane: 'right' };
+          }
+          return dropSide === 'left'
+            ? { ...current, leftSessionId: droppedId, focusedPane: 'left' }
+            : { ...current, rightSessionId: droppedId, focusedPane: 'right' };
+        }
+        // 双栏已存在：替换指定侧，被替换会话退回池中
+        return side === 'left'
+          ? { ...current, leftSessionId: droppedId, focusedPane: 'left' }
+          : { ...current, rightSessionId: droppedId, focusedPane: 'right' };
+      });
+      activateSession(droppedId);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dropSideByPointer 每次渲染重建，行为取最新值
+    [activateSession, sessions],
+  );
+
+  // 右键菜单：退出分栏（清空对应窗格槽位；退出的是激活会话且另一侧仍有会话时，
+  // 激活就近落到另一侧，避免高亮一个不可见会话）
+  const handleExitPane = useCallback(
+    (sessionId: number) => {
+      setPaneMenu(null);
+      setPane((current) => {
+        const exitingLeft = current.leftSessionId === sessionId;
+        const exitingRight = current.rightSessionId === sessionId;
+        if (!exitingLeft && !exitingRight) return current;
+        const next: FilesPaneState = exitingLeft
+          ? { ...current, leftSessionId: null }
+          : { ...current, rightSessionId: null };
+        const survivorId = exitingLeft ? next.rightSessionId : next.leftSessionId;
+        if (survivorId != null && activeSession?.id === sessionId) {
+          activateSession(survivorId);
+        }
+        return next;
+      });
+    },
+    [activateSession, activeSession?.id],
+  );
+
+  const handleTabContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>, sessionId: number) => {
+      // 视口边缘钳制，避免菜单溢出屏幕
+      const x = Math.min(event.clientX, window.innerWidth - 180);
+      const y = Math.min(event.clientY, window.innerHeight - 120);
+      setPaneMenu({ x, y, sessionId });
+    },
+    [],
+  );
+
+  // 右键菜单关闭：点击任意处 / Escape（与终端右键菜单同款交互）
+  useEffect(() => {
+    if (!paneMenu) return;
+    const close = () => setPaneMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [paneMenu]);
+
+  // 空窗格占位元格（轻量内联空态，无描边装饰，配色对齐 ZCode 中性风格）
   const renderEmptyPaneCell = (side: FilesPaneSide) => {
-    const isPaneFocused = pane.focusedPane === side;
     return (
       <div
         key={`pane-empty-${side}`}
         data-pane-empty={side}
         onPointerDown={() => focusPane(side)}
-        style={{ gridColumn: side === 'left' ? '1' : '3', gridRow: '1' }}
-        className={cn(
-          'flex min-h-0 min-w-0 flex-col items-center justify-center overflow-hidden rounded-lg p-6 text-center select-none',
-          isPaneFocused && 'ring-1 ring-primary/40',
-        )}
+        style={{ gridColumn: '1', gridRow: '1' }}
+        className="flex min-h-0 min-w-0 flex-col items-center justify-center overflow-hidden rounded-lg bg-input p-6 text-center select-none"
       >
         <div className="flex size-12 items-center justify-center rounded-2xl border border-border/60 bg-surface/50 shadow-xs">
           <Columns2 className="size-6 text-foreground-subtle" strokeWidth={1.5} />
@@ -440,7 +578,7 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
   return (
     <section
       data-testid="files-screen"
-      className="flex h-full min-h-0 flex-col overflow-hidden bg-background"
+      className="flex h-full min-h-0 flex-col select-none overflow-hidden bg-background"
     >
       {/* 顶部多 Tab 栏（完全对齐 ZCode Terminal 顶栏规范） */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5">
@@ -451,17 +589,26 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
               aria-label={t('files.title')}
               className="flex h-7 w-max items-center gap-1"
             >
-              {sessions.map((session) => (
-                <SftpTabTrigger
-                  key={session.id}
-                  session={session}
-                  title={session.hostName}
-                  closeLabel={t('files.closeTab', { title: session.hostName })}
-                  isActive={session.id === activeSession?.id}
-                  onActivate={handleTabActivate}
-                  onClose={closeSession}
-                />
-              ))}
+              {sessions.map((session) => {
+                // 标题不拼序号：customTitle（重命名）优先，其次主机名；key 始终用唯一会话 id
+                const title = session.customTitle || session.hostName;
+                return (
+                  <SftpTabTrigger
+                    key={session.id}
+                    session={session}
+                    title={title}
+                    closeLabel={t('files.closeTab', { title })}
+                    isActive={session.id === activeSession?.id}
+                    onActivate={handleTabActivate}
+                    onClose={closeSession}
+                    onDragStateChange={(dragging) =>
+                      setDraggingTabId(dragging ? session.id : null)
+                    }
+                    onContextMenu={(event) => handleTabContextMenu(event, session.id)}
+                    onRename={(next) => renameSession(session.id, next)}
+                  />
+                );
+              })}
             </div>
           ) : (
             <span className="text-ui-xs text-foreground-subtle select-none pl-1">
@@ -547,7 +694,9 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
       ) : (
         <div
           ref={mainAreaRef}
-          className="grid min-h-0 flex-1 overflow-hidden"
+          // 主区域外圈四角圆角（与工程整体 --workspace-panel-radius 一致），
+          // overflow-hidden 使面板内容在四角被裁成圆角；分栏内侧圆角由面板自身类提供
+          className="relative grid min-h-0 flex-1 overflow-hidden rounded-(--workspace-panel-radius)"
           style={{ gridTemplateColumns, gridTemplateRows: 'minmax(0, 1fr)' }}
         >
           {/* 左栏宽度探针：占据第 1 列的 0 高度元素，拖拽起点/键盘步进时读取实际列宽 */}
@@ -567,7 +716,6 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
                   ? 'right'
                   : null;
             const isTabActive = session.id === activeSession?.id;
-            const isPaneFocused = paneSide != null && paneSide === pane.focusedPane;
             return (
               <div
                 key={session.id}
@@ -575,14 +723,32 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
                 aria-hidden={paneSide == null}
                 data-state={isTabActive ? 'active' : 'inactive'}
                 onPointerDown={paneSide ? () => focusPane(paneSide) : undefined}
+                onDragOver={
+                  paneSide ? (event) => handlePaneTabDragOver(event, paneSide) : undefined
+                }
+                onDragLeave={paneSide ? (event) => handlePaneTabDragLeave(event) : undefined}
+                onDrop={paneSide ? (event) => handlePaneTabDrop(event, paneSide) : undefined}
                 style={{
                   gridColumn: bothPanesOccupied ? (paneSide === 'right' ? '3' : '1') : '1',
                   gridRow: '1',
                 }}
                 className={cn(
-                  'flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg',
+                  // 面板底色 = ZCode 对话输入栏同款 --color-input（浅色 #ffffff / 深色 #2b2b2b），
+                  // 无论单栏铺满还是双栏分列恒为此色；面板间缝隙透出页面底色
+                  'flex min-h-0 min-w-0 flex-col overflow-hidden bg-input',
                   paneSide == null && 'hidden',
-                  isPaneFocused && 'ring-1 ring-primary/40',
+                  // 圆角与工程整体一致（--workspace-panel-radius）：
+                  // 双栏时只圆内侧两角（左栏圆右、右栏圆左），单栏铺满时四角全圆
+                  bothPanesOccupied
+                    ? paneSide === 'left'
+                      ? 'rounded-r-(--workspace-panel-radius)'
+                      : 'rounded-l-(--workspace-panel-radius)'
+                    : 'rounded-(--workspace-panel-radius)',
+                  // 双栏模式：池中 Tab 悬停落点整栏高亮（单栏模式由半区 overlay 呈现）
+                  bothPanesOccupied &&
+                    paneSide != null &&
+                    tabDropSide === paneSide &&
+                    'bg-hover/40',
                 )}
               >
                 <SftpSessionView
@@ -617,16 +783,58 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
             onKeyDown={handleDividerKeyDown}
             style={{ gridColumn: '2', gridRow: '1' }}
             className={cn(
-              'group/handle relative z-10 flex h-full w-1 shrink-0 cursor-ew-resize touch-none items-center justify-center bg-transparent outline-none focus:outline-none focus-visible:ring-0',
-              // 悬停/聚焦/拖拽时显示 2px 圆角指示线
-              "after:pointer-events-none after:absolute after:w-0.5 after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-[''] after:inset-y-2",
-              'hover:after:opacity-100 focus-visible:after:opacity-100',
-              isDividerActive && 'after:opacity-100',
+              'group/handle relative z-10 flex h-full w-full shrink-0 cursor-ew-resize touch-none items-center justify-center bg-transparent outline-none focus:outline-none focus-visible:ring-0',
+              // 分栏时常驻 1px 中性分割线（ZCode 侧栏风格）；悬停/聚焦/拖拽时加深为 2px 圆角指示线
+              "after:pointer-events-none after:absolute after:left-1/2 after:-translate-x-1/2 after:w-px after:bg-foreground-subtlest/60 after:transition-[width,opacity,background-color] after:content-[''] after:inset-y-2",
+              'hover:after:w-0.5 hover:after:rounded-full hover:after:bg-foreground-subtlest focus-visible:after:w-0.5 focus-visible:after:rounded-full focus-visible:after:bg-foreground-subtlest',
+              isDividerActive && 'after:w-0.5 after:rounded-full after:bg-foreground-subtlest',
             )}
           />
           ) : null}
+
+          {/* 单栏铺满状态拖入池中 Tab：按落点半区预览即将形成的左右分栏（中性色，无描边） */}
+          {!bothPanesOccupied && tabDropSide != null ? (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-y-0 z-10 bg-hover/30"
+              style={tabDropSide === 'left' ? { left: 0, width: '50%' } : { right: 0, width: '50%' }}
+            />
+          ) : null}
         </div>
       )}
+
+      {/* Tab 右键菜单（ZCode 风格）：退出分栏；池中 Tab 置灰不可点 */}
+      {paneMenu ? (
+        <div
+          role="menu"
+          style={{ left: paneMenu.x, top: paneMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+          className="fixed z-50 min-w-36 overflow-hidden rounded-lg border border-border bg-menu p-1 text-ui-sm text-foreground shadow-lg"
+        >
+          {(() => {
+            const inPane =
+              paneMenu.sessionId === pane.leftSessionId ||
+              paneMenu.sessionId === pane.rightSessionId;
+            return (
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!inPane}
+                onClick={() => handleExitPane(paneMenu.sessionId)}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors',
+                  inPane
+                    ? 'hover:bg-menu-hover'
+                    : 'cursor-not-allowed opacity-40',
+                )}
+              >
+                <Columns2 className="size-3.5" />
+                <span>{t('files.pane.exitPane')}</span>
+              </button>
+            );
+          })()}
+        </div>
+      ) : null}
     </section>
   );
 }

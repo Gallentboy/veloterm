@@ -13,6 +13,7 @@ import {
   persistSftpPanelState,
   readStoredSftpPanelState,
   removeSftpSession,
+  renameSftpSession,
   updateSftpSessionPath,
   type SftpPanelState,
   type SftpSessionDescriptor,
@@ -26,6 +27,8 @@ export interface SftpContextValue {
   closeSession: (sessionId: number) => void;
   activateSession: (sessionId: number) => void;
   updateSessionPath: (sessionId: number, path: string) => void;
+  /** 双击 Tab 重命名（customTitle 为空回退 hostName） */
+  renameSession: (sessionId: number, customTitle: string | null) => void;
 }
 
 const SftpContext = createContext<SftpContextValue | null>(null);
@@ -67,6 +70,10 @@ export function SftpProvider({ children }: { children: ReactNode }) {
     setPanelState((current) => updateSftpSessionPath(current, sessionId, path));
   }, []);
 
+  const renameSession = useCallback((sessionId: number, customTitle: string | null) => {
+    setPanelState((current) => renameSftpSession(current, sessionId, customTitle));
+  }, []);
+
   const sessions = useMemo(
     () =>
       panelState.sessionIds
@@ -89,12 +96,14 @@ export function SftpProvider({ children }: { children: ReactNode }) {
       closeSession,
       activateSession,
       updateSessionPath,
+      renameSession,
     }),
     [
       activateSession,
       activeSession,
       closeSession,
       createSession,
+      renameSession,
       sessions,
       updateSessionPath,
     ],
