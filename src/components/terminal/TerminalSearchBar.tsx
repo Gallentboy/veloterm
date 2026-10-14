@@ -118,9 +118,9 @@ export function TerminalSearchBar({ searchAddon, visible, onClose }: TerminalSea
         onDoubleClick={(event) => event.stopPropagation()}
         placeholder={t('terminal.search.placeholder')}
         aria-label={t('terminal.search.placeholder')}
-        className="h-6 w-44 rounded border border-border bg-input px-1.5 text-ui-xs text-foreground outline-none placeholder:text-foreground-subtlest select-text focus:border-border-hover"
+        className="h-6.5 w-44 rounded border border-border bg-input px-1.5 text-ui-sm text-foreground outline-none placeholder:text-foreground-subtlest select-text focus:border-border-hover"
       />
-      <span className="w-12 shrink-0 text-center font-mono text-ui-xs text-foreground-subtle select-none">
+      <span className="w-12 shrink-0 text-center font-mono text-ui-sm text-foreground-subtle select-none">
         {resultLabel}
       </span>
 

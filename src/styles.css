@@ -236,6 +236,28 @@ body {
 }
 
 /*
+ * 紧凑滚动条（全局胶囊语言减半，视觉宽约 4px）：用于横向空间紧张的条带区域
+ * （终端/文件 Tab 栏）。Firefox 走 scrollbar-width:thin，WebKit 走 7px 胶囊。
+ */
+.scrollbar-slim {
+  scrollbar-width: thin;
+}
+
+.scrollbar-slim::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.scrollbar-slim::-webkit-scrollbar-thumb {
+  min-height: 16px;
+  min-width: 16px;
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background: var(--color-border);
+  background-clip: padding-box;
+}
+
+/*
  * xterm 6 的自绘滚动条（VS Code 风格 .xterm-scrollable-element > .scrollbar）：
  * 颜色走主题钩子（terminalTheme 的 scrollbarSlider* 字段），
  * 形状用 CSS 覆写成 ZCode 同款细胶囊——默认 10px 全宽条又粗又显眼。

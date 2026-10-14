@@ -119,7 +119,7 @@ export function SftpTabTrigger({
         }
       }}
       className={cn(
-        'group relative inline-flex h-7 w-auto max-w-88 min-w-0 flex-none shrink-0 cursor-default items-center justify-start gap-1.5 overflow-hidden whitespace-nowrap rounded-lg border border-transparent bg-transparent pl-2 pr-1 text-ui-base font-medium text-foreground-subtle transition-all select-none outline-none',
+        'group relative inline-flex h-7 w-auto max-w-132 min-w-0 flex-none shrink-0 cursor-default items-center justify-start gap-1.5 overflow-hidden whitespace-nowrap rounded-lg border border-transparent bg-transparent pl-2 pr-1 text-ui-base font-medium text-foreground-subtle transition-all select-none outline-none',
         'hover:text-foreground',
         !isActive && 'hover:bg-hover',
         isActive && 'bg-selected text-foreground',
