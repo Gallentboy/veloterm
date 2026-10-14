@@ -1,4 +1,5 @@
 import {
+  Command,
   Eraser,
   Grid2X2,
   LayoutGrid,
@@ -29,6 +30,8 @@ export interface TerminalScreenProps {
   onNavigateHosts?: () => void;
   /** 打开 AI 对话（可携带错误现场） */
   onOpenAiChat?: (prompt?: string) => void;
+  /** 打开 ⌘K 命令面板 */
+  onOpenCommandPalette?: () => void;
 }
 
 /**
@@ -43,7 +46,7 @@ export function TerminalScreen({
   isVisible = true,
   isPanelResizing = false,
   onNavigateHosts,
-  onOpenAiChat,
+  onOpenAiChat, onOpenCommandPalette,
 }: TerminalScreenProps) {
   const { t } = useTranslation();
   const { hosts } = useHostsStore();
@@ -392,6 +395,17 @@ export function TerminalScreen({
 
         {/* 右侧状态与辅助动作 */}
         <div className="flex shrink-0 items-center gap-1.5">
+            {onOpenCommandPalette ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onOpenCommandPalette}
+                aria-label={t('commands.palette.title')}
+                title={`${t('commands.palette.title')} · ⌘K`}
+              >
+                <Command className="size-3.5" />
+              </Button>
+            ) : null}
           {activeRenderer !== 'dom' ? (
             <span
               className={cn(
