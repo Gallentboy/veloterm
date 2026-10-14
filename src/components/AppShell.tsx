@@ -16,6 +16,8 @@ import { SettingsScreen } from '@/components/SettingsScreen';
 import { TerminalScreen } from '@/components/terminal';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { AiChatPanel } from '@/components/ai/AiChatPanel';
+import { CommandPalette } from '@/components/commands/CommandPalette';
+import { CommandsScreen } from '@/components/commands/CommandsScreen';
 import { WorkspaceHeader } from '@/components/WorkspaceHeader';
 import { WorkspaceSidebar, type Page } from '@/components/WorkspaceSidebar';
 import { useAppPanels } from '@/hooks/useAppPanels';
@@ -109,6 +111,7 @@ export function AppShell() {
   const { createSession: createSftpSession } = useSftpStore();
   const [page, setPage] = useState<Page>('home');
   const [isAiChatOpen, setAiChatOpen] = useState(false);
+  const [isPaletteOpen, setPaletteOpen] = useState(false);
   const [aiInitialPrompt, setAiInitialPrompt] = useState<string | null>(null);
 
   const openAiChat = (prompt?: string) => {
@@ -166,6 +169,9 @@ export function AppShell() {
       if (key === 'b') {
         event.preventDefault();
         toggleSidebar();
+      } else if (key === 'k') {
+        event.preventDefault();
+        setPaletteOpen((current) => !current);
       } else if (key === 'i') {
         event.preventDefault();
         setAiChatOpen((current) => !current);
@@ -502,6 +508,8 @@ export function AppShell() {
                   />
                 ) : page === 'groups' ? (
                   <GroupsScreen />
+                ) : page === 'commands' ? (
+                  <CommandsScreen />
                 ) : (
                   <SettingsScreen />
                 )}
@@ -549,6 +557,8 @@ export function AppShell() {
           </div>
 
           <DesktopTopOverlay isSidebarVisible={isSidebarVisible} onToggleSidebar={toggleSidebar} />
+
+          <CommandPalette open={isPaletteOpen} onClose={() => setPaletteOpen(false)} />
         </div>
       </div>
   );

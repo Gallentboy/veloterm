@@ -5,7 +5,7 @@ import { SidebarMenuButton } from '@/components/SidebarMenuButton';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
-export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'settings';
+export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'commands' | 'settings';
 
 interface WorkspaceSidebarProps {
   activePage: Page;
