@@ -254,6 +254,7 @@ export default {
     buildTime: '构建时间',
     ok: '确定',
     appleSilicon: '已针对 Apple Silicon 优化。',
+    fontNotice: '内置字体：HarmonyOS Sans SC',
   },
   theme: {
     label: '主题',

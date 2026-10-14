@@ -7,6 +7,19 @@
 @import "@xterm/xterm/css/xterm.css";
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * HarmonyOS Sans SC（可变字体，wght 40–900）：随包分发，作为非 macOS / 非 iOS 平台的首选界面字体。
+ * 授权见 public/fonts/LICENSE-HarmonyOS-Sans.txt，须在软件中显著标注（关于弹窗内展示）。
+ * font-weight 必须写成区间，否则浏览器会对字重做合成加粗（faux bold）导致笔画变形。
+ */
+@font-face {
+  font-family: "HarmonyOS Sans SC";
+  src: url("/fonts/HarmonyOS_Sans_SC.ttf") format("truetype");
+  font-weight: 40 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --ui-font-size: 14px;
 }
@@ -86,6 +99,18 @@
   --color-terminal-bright-magenta: #9e77ed;
   --color-terminal-bright-cyan: #0aa7a7;
   --color-terminal-bright-white: #0d0d0d;
+}
+
+/*
+ * 非 macOS / 非 iOS：以 HarmonyOS Sans SC 作为首选界面字体（macOS / iOS 保持系统默认字体栈）。
+ * 平台标记由 `applyPlatformAttribute()` 写入 `<html data-platform>`，首屏渲染前调用。
+ * 选择器特异度 (0,3,1) 高于 Tailwind 注入的 `:root` 主题变量，故可稳定覆盖。
+ */
+html[data-platform]:not([data-platform="macos"]):not([data-platform="ios"]) {
+  --font-sans:
+    "HarmonyOS Sans SC", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC",
+    Arial, sans-serif;
 }
 
 /* ===== 深色（Zai Dark 光谱）===== */

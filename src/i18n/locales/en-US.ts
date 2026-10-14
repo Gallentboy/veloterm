@@ -254,6 +254,7 @@ export default {
     buildTime: 'Build Time',
     ok: 'OK',
     appleSilicon: 'Optimized for Apple Silicon.',
+    fontNotice: 'Bundled font: HarmonyOS Sans SC',
   },  theme: {
     label: 'Theme',
     system: 'System',

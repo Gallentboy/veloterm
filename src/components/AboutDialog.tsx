@@ -82,6 +82,8 @@ export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => v
               {formatBuildTime(__BUILD_TIME__)}
             </div>
             {isAppleSilicon ? <div>{t('about.appleSilicon')}</div> : null}
+            {/* HarmonyOS Sans 字体授权要求：须在软件内显著标注所用字体 */}
+            <div>{t('about.fontNotice')}</div>
           </div>
         </div>
 
