@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod file_ops;
 pub mod manager;
+pub mod transfer;
 pub mod types;
 
 pub use commands::*;
@@ -74,6 +75,23 @@ mod tests {
     assert_eq!(deserialized.size, "10995116277760");
     assert_eq!(deserialized.owner, "zhangyue");
     assert_eq!(deserialized.group, "staff");
+  }
+
+  #[tokio::test]
+  async fn test_register_temp_dir_accumulates_unique_dirs() {
+    let state = SftpState::new();
+    register_temp_dir(&state, "5", "/data").await;
+    register_temp_dir(&state, "5", "/data").await; // 重复登记幂等去重
+    register_temp_dir(&state, "5", "/tmp").await;
+    register_temp_dir(&state, "7", "/var").await;
+
+    let temp_dirs = state.temp_dirs.lock().await;
+    let set5 = temp_dirs.get("5").expect("session 5 registered");
+    assert_eq!(set5.len(), 2);
+    assert!(set5.contains("/data"));
+    assert!(set5.contains("/tmp"));
+    assert!(temp_dirs.get("7").expect("session 7 registered").contains("/var"));
+    assert!(!temp_dirs.contains_key("9"));
   }
 
   #[test]

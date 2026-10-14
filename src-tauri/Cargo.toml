@@ -55,6 +55,9 @@ tokio = { version = "1", features = [
 uuid = { version = "1", features = ["v4", "serde"] }
 window-vibrancy = "0.8.1"
 
+[dev-dependencies]
+# 传输层单测依赖 tokio paused-clock（start_paused / advance）
+tokio = { version = "1", features = ["test-util"] }
 
 [lints.clippy]
 panic = "deny"

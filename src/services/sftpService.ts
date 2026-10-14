@@ -57,6 +57,7 @@ export async function closeSftp(sessionId: string): Promise<void> {
  * 异步流式下载远程文件到本地磁盘
  * - 二进制数据流在 Rust 后端直接落盘，不经由 IPC 回传前端
  * - 进度通过 Tauri 2.0 Channel 以 100ms 间隔节流上报
+ * - `resumeOffset > 0` 时从断点续传（后端会校验本地现存长度后幂等续写）
  */
 export async function downloadRemoteFile(
   sessionId: string,
@@ -64,6 +65,7 @@ export async function downloadRemoteFile(
   localPath: string,
   onUpdate: (progress: TransferProgress) => void,
   speedLimitBps = 0,
+  resumeOffset = 0,
 ): Promise<TransferHandle> {
   const taskId = await invoke<number>('sftp_next_task_id');
   const onProgress = new Channel<TransferProgress>();
@@ -81,6 +83,7 @@ export async function downloadRemoteFile(
     taskId,
     remotePath,
     localPath,
+    resumeOffset: resumeOffset > 0 ? resumeOffset : null,
     speedLimitBps: speedLimitBps > 0 ? speedLimitBps : null,
     onProgress,
   });
@@ -90,8 +93,8 @@ export async function downloadRemoteFile(
 
 /**
  * 异步流式上传本地文件到远程 SFTP 服务器
- * - 本地磁盘文件在 Rust 后端以 64KB 缓冲区异步推送到远程
- * - 进度通过 Tauri 2.0 Channel 以 100ms 间隔节流上报
+ * - 后端写远端同目录临时文件，成功后 rename 原子覆盖
+ * - `resumeOffset > 0` 时从远端临时断点续传（失败/取消均保留断点）
  */
 export async function uploadLocalFile(
   sessionId: string,
@@ -99,6 +102,7 @@ export async function uploadLocalFile(
   remotePath: string,
   onUpdate: (progress: TransferProgress) => void,
   speedLimitBps = 0,
+  resumeOffset = 0,
 ): Promise<TransferHandle> {
   const taskId = await invoke<number>('sftp_next_task_id');
   const onProgress = new Channel<TransferProgress>();
@@ -116,6 +120,7 @@ export async function uploadLocalFile(
     taskId,
     localPath,
     remotePath,
+    resumeOffset: resumeOffset > 0 ? resumeOffset : null,
     speedLimitBps: speedLimitBps > 0 ? speedLimitBps : null,
     onProgress,
   });
@@ -125,8 +130,8 @@ export async function uploadLocalFile(
 
 /**
  * 远端到远端流式复制（同会话 = 同主机复制；不同会话 = 跨主机经本机内存管道中转，不落盘）
- * - Rust 后端 reader→writer 直连两条 SFTP 会话，64KB 流式转发
- * - 进度通过 Tauri 2.0 Channel 以 100ms 间隔节流上报
+ * - Rust 后端 reader→writer 直连两条 SFTP 会话，512KB 块流水线转发（在途 ~6MB 有界）
+ * - `resumeOffset > 0` 时从目标端临时断点续传（失败/取消均保留断点）
  */
 export async function copyRemoteFile(
   sourceSessionId: string,
@@ -135,6 +140,7 @@ export async function copyRemoteFile(
   targetRemotePath: string,
   onUpdate: (progress: TransferProgress) => void,
   speedLimitBps = 0,
+  resumeOffset = 0,
 ): Promise<TransferHandle> {
   const taskId = await invoke<number>('sftp_next_task_id');
   const onProgress = new Channel<TransferProgress>();
@@ -153,6 +159,7 @@ export async function copyRemoteFile(
     sourcePath: sourceRemotePath,
     targetSessionId,
     targetPath: targetRemotePath,
+    resumeOffset: resumeOffset > 0 ? resumeOffset : null,
     speedLimitBps: speedLimitBps > 0 ? speedLimitBps : null,
     onProgress,
   });

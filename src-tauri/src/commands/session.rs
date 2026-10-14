@@ -243,7 +243,7 @@ mod tests {
     // 2. 查询列表
     let list = list_sessions_with_pool(&pool).expect("list_sessions_with_pool should succeed");
     assert_eq!(list.len(), 1);
-    assert_eq!(list[0], created);
+    assert_eq!(list.first().unwrap(), &created);
 
     // 3. 更新同 ID
     let mut updated_input = created.clone();

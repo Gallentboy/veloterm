@@ -376,6 +376,8 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
     pane.rightSessionId == null
       ? undefined
       : sessions.find((s) => s.id === pane.rightSessionId);
+  // 仅一侧有会话时退化为单栏铺满：隐藏中缝分隔条，另一侧不再渲染占位
+  const bothPanesOccupied = Boolean(leftSession && rightSession);
 
   // 空窗格占位元格（轻量内联空态，聚焦态同样高亮）
   const renderEmptyPaneCell = (side: FilesPaneSide) => {
@@ -419,11 +421,13 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
     );
   };
 
-  // 主区 Grid 模板：左列（定宽或弹性）+ 4px 中缝 + 右列弹性（双侧保底最小宽度）
-  const gridTemplateColumns =
-    leftPaneWidthPx == null
+  // 主区 Grid 模板：双侧均有会话时为「左列定宽/弹性 + 4px 中缝 + 右列弹性」；
+  // 仅一侧有会话时退化为单列铺满（分隔条随之隐藏）
+  const gridTemplateColumns = bothPanesOccupied
+    ? leftPaneWidthPx == null
       ? `minmax(${FILES_PANE_MIN_WIDTH_PX}px, 1fr) ${FILES_PANE_DIVIDER_WIDTH_CSS} minmax(${FILES_PANE_MIN_WIDTH_PX}px, 1fr)`
-      : `${leftPaneWidthPx}px ${FILES_PANE_DIVIDER_WIDTH_CSS} minmax(${FILES_PANE_MIN_WIDTH_PX}px, 1fr)`;
+      : `${leftPaneWidthPx}px ${FILES_PANE_DIVIDER_WIDTH_CSS} minmax(${FILES_PANE_MIN_WIDTH_PX}px, 1fr)`
+    : 'minmax(0, 1fr)';
 
   // 分隔条 aria 数值（无自定义宽度时用主区实测宽度的一半作当前值）
   const maxLeftPaneWidthPx =
@@ -571,7 +575,10 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
                 aria-hidden={paneSide == null}
                 data-state={isTabActive ? 'active' : 'inactive'}
                 onPointerDown={paneSide ? () => focusPane(paneSide) : undefined}
-                style={{ gridColumn: paneSide === 'right' ? '3' : '1', gridRow: '1' }}
+                style={{
+                  gridColumn: bothPanesOccupied ? (paneSide === 'right' ? '3' : '1') : '1',
+                  gridRow: '1',
+                }}
                 className={cn(
                   'flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg',
                   paneSide == null && 'hidden',
@@ -591,11 +598,11 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
             );
           })}
 
-          {/* 空窗格占位（仅对应窗格没有绑定会话时渲染） */}
-          {!leftSession ? renderEmptyPaneCell('left') : null}
-          {!rightSession ? renderEmptyPaneCell('right') : null}
+          {/* 空窗格占位：仅双侧都无会话的极端瞬态作兑底（单侧模式由另一侧铺满，不再占位） */}
+          {!leftSession && !rightSession ? renderEmptyPaneCell(pane.focusedPane) : null}
 
-          {/* 中缝分隔条：悬停/聚焦/拖拽显示指示线，左右键盘微调 */}
+          {/* 中缝分隔条：仅双侧均有会话时渲染，悬停/聚焦/拖拽显示指示线，左右键盘微调 */}
+          {bothPanesOccupied ? (
           <div
             role="separator"
             aria-orientation="vertical"
@@ -617,6 +624,7 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
               isDividerActive && 'after:opacity-100',
             )}
           />
+          ) : null}
         </div>
       )}
     </section>

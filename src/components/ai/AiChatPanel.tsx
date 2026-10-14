@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ToolCallCard } from '@/components/ai/ToolCallCard';
+import { MarkdownContent } from '@/components/ai/MarkdownContent';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
 import {
   executeAgentTool,
@@ -385,13 +386,17 @@ ${output}`);
               className={
                 item.role === 'user'
                   ? 'self-end max-w-[88%] rounded-xl rounded-br-sm bg-primary px-2.5 py-1.5 text-ui-sm text-primary-foreground whitespace-pre-wrap break-words'
-                  : 'self-start max-w-[95%] rounded-xl rounded-bl-sm border border-border bg-surface px-2.5 py-1.5 text-ui-sm text-foreground whitespace-pre-wrap break-words'
+                  : 'self-start max-w-full rounded-xl rounded-bl-sm border border-border bg-surface px-3 py-2 text-ui-sm'
               }
             >
-              {item.content ||
+              {item.role === 'assistant' && item.content ? (
+                <MarkdownContent content={item.content} />
+              ) : (
+                item.content ||
                 (item.streaming ? (
                   <Loader2 className="size-4 animate-spin text-foreground-subtlest" />
-                ) : null)}
+                ) : null)
+              )}
               {item.error && (
                 <TriangleAlert className="mr-1 inline size-3.5 text-destructive align-[-2px]" />
               )}

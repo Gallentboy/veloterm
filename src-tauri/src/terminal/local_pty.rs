@@ -79,10 +79,10 @@ fn get_user_login_shell() -> Option<String> {
 ///   不可用时按 `/bin/zsh` -> `/bin/bash` -> `/bin/sh` 回退；
 /// - Windows 优先 `pwsh.exe` -> `powershell.exe` -> `%COMSPEC%` -> `cmd.exe`。
 fn resolve_local_shell(preferred: Option<&str>) -> String {
-  if let Some(custom) = preferred.map(str::trim).filter(|s| !s.is_empty()) {
-    if is_command_available(custom) {
-      return custom.to_string();
-    }
+  if let Some(custom) = preferred.map(str::trim).filter(|s| !s.is_empty())
+    && is_command_available(custom)
+  {
+    return custom.to_string();
   }
 
   #[cfg(target_os = "windows")]
@@ -186,14 +186,15 @@ fn configure_command_env(cmd: &mut CommandBuilder, resolved_shell: &str) {
       unsafe {
         let uid = libc::getuid();
         let pw = libc::getpwuid(uid);
-        if !pw.is_null() && !(*pw).pw_name.is_null() {
-          if let Ok(name) = std::ffi::CStr::from_ptr((*pw).pw_name).to_str() {
-            if env::var("USER").is_err() {
-              cmd.env("USER", name);
-            }
-            if env::var("LOGNAME").is_err() {
-              cmd.env("LOGNAME", name);
-            }
+        if !pw.is_null()
+          && !(*pw).pw_name.is_null()
+          && let Ok(name) = std::ffi::CStr::from_ptr((*pw).pw_name).to_str()
+        {
+          if env::var("USER").is_err() {
+            cmd.env("USER", name);
+          }
+          if env::var("LOGNAME").is_err() {
+            cmd.env("LOGNAME", name);
           }
         }
       }
@@ -430,11 +431,11 @@ impl TerminalBackendSession for LocalPtySession {
     if let Ok(mut master_guard) = self.master.lock() {
       master_guard.take();
     }
-    if let Ok(mut child_guard) = self.child.lock() {
-      if let Some(mut child) = child_guard.take() {
-        let _ = child.kill();
-        let _ = child.wait();
-      }
+    if let Ok(mut child_guard) = self.child.lock()
+      && let Some(mut child) = child_guard.take()
+    {
+      let _ = child.kill();
+      let _ = child.wait();
     }
     Ok(())
   }

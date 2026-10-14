@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
@@ -37,6 +37,9 @@ pub struct SftpState {
   pub next_task_id: AtomicUsize,
   /// 串行化动态建连：并发请求共享一次握手，避免重复建 SSH 连接
   pub connect_lock: Arc<Mutex<()>>,
+  /// 会话写过的临时断点文件目录（session_id → 目录集合）：
+  /// 重连时用于扫描并清理超过 1 天的 `.veloterm.tmp.*` 遗留孤儿断点
+  pub temp_dirs: Arc<Mutex<HashMap<String, HashSet<String>>>>,
 }
 
 impl Default for SftpState {
@@ -52,6 +55,7 @@ impl SftpState {
       cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
       next_task_id: AtomicUsize::new(1),
       connect_lock: Arc::new(Mutex::new(())),
+      temp_dirs: Arc::new(Mutex::new(HashMap::new())),
     }
   }
 
