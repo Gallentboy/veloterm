@@ -140,6 +140,7 @@ export function HostsScreen({
         <div className="flex items-center gap-1.5">
           <Button
             variant="outline"
+            size="lg"
             onClick={() => {
               setPendingDeleteId(null);
               setGroupDialog({ mode: 'create', parentId: null });
@@ -148,6 +149,7 @@ export function HostsScreen({
             {t('groups.newGroup')}
           </Button>
           <Button
+            size="lg"
             onClick={() => {
               setPendingDeleteId(null);
               setHostDialog({ mode: 'create' });
@@ -187,7 +189,7 @@ export function HostsScreen({
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 select-none">
             <span className="text-ui-sm text-foreground-subtlest">{t('hosts.empty')}</span>
-            <Button variant="outline" onClick={() => setHostDialog({ mode: 'create' })}>
+            <Button variant="outline" size="lg" onClick={() => setHostDialog({ mode: 'create' })}>
               {t('hosts.newHost')}
             </Button>
           </div>

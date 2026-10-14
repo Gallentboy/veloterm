@@ -72,6 +72,7 @@ export function GroupsScreen() {
         </span>
         <Button
           variant="outline"
+          size="lg"
           onClick={() => {
             setPendingDeleteId(null);
             setGroupDialog({ mode: 'create', parentId: null });
@@ -87,7 +88,7 @@ export function GroupsScreen() {
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 select-none">
             <span className="text-ui-sm text-foreground-subtlest">{t('groups.empty')}</span>
-            <Button variant="outline" onClick={() => setGroupDialog({ mode: 'create', parentId: null })}>
+            <Button variant="outline" size="lg" onClick={() => setGroupDialog({ mode: 'create', parentId: null })}>
               {t('groups.newGroup')}
             </Button>
           </div>

@@ -39,10 +39,12 @@ export function GroupFormDialog({ node, defaultParentId, groups, onSave, onClose
       onClose={onClose}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" size="lg" className="h-8 px-3 text-ui-base" onClick={onClose}>
             {t('hosts.form.cancel')}
           </Button>
-          <Button onClick={handleSave}>{t('hosts.form.save')}</Button>
+          <Button size="lg" className="h-8 px-3 text-ui-base" onClick={handleSave}>
+            {t('hosts.form.save')}
+          </Button>
         </>
       }
     >
