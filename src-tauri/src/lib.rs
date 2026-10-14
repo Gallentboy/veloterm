@@ -8,6 +8,7 @@ pub mod logging;
 pub mod sftp;
 pub mod terminal;
 pub mod text_detect;
+pub mod window_state;
 
 #[tauri::command]
 fn is_apple_silicon() -> bool {
@@ -16,7 +17,7 @@ fn is_apple_silicon() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let app = tauri::Builder::default()
     .plugin(logging::build_log_plugin())
     // 原生剪贴板插件：终端 Cmd+C/V 经由 Rust 侧读写系统剪贴板，
     // 绕开 WKWebView navigator.clipboard 的粘贴授权弹层（原生「粘贴」按钮）
@@ -71,6 +72,18 @@ pub fn run() {
       editor_storage::editor_save_draft,
       editor_storage::editor_delete_draft,
     ])
+    .on_window_event(|window, event| {
+      if !window_state::is_main_window(window.label()) {
+        return;
+      }
+      match event {
+        // 仅更新内存缓存，不写库：拖拽改尺寸时 Resized 会高频触发
+        tauri::WindowEvent::Resized(_) => window_state::observe(window),
+        // 窗口关闭前落库（此时窗口仍存活，缓存值即最后一次观察到的尺寸）
+        tauri::WindowEvent::CloseRequested { .. } => window_state::persist(),
+        _ => {}
+      }
+    })
     .setup(|app| {
       use tauri::Manager;
 
@@ -88,6 +101,14 @@ pub fn run() {
       }
 
       app.manage(db_pool);
+
+      // 恢复上次关闭时的窗口大小。配置里的窗口在本函数（Tauri 内部 setup）中先于用户 setup
+      // 闭包创建，且两者处于同一个事件循环迭代内，因此这里改尺寸发生在首帧绘制之前，不会跳变。
+      // 注：`Manager::get_window` 需要 `unstable` feature，故经 `WebviewWindow` 取底层 `Window`。
+      if let Some(webview_window) = app.get_webview_window("main") {
+        let webview: &tauri::Webview<_> = webview_window.as_ref();
+        window_state::restore(&webview.window());
+      }
 
       log::info!("[VeloTerm] application initialized");
 
@@ -107,6 +128,13 @@ pub fn run() {
 
       Ok(())
     })
-    .run(tauri::generate_context!())
+    .build(tauri::generate_context!())
     .expect("error while building tauri application");
+
+  app.run(|_app_handle, event| {
+    // 兜底落库：macOS ⌘Q / 应用菜单退出等路径不经过窗口 CloseRequested
+    if let tauri::RunEvent::ExitRequested { .. } = event {
+      window_state::persist();
+    }
+  });
 }
