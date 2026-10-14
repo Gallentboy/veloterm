@@ -165,7 +165,8 @@ body {
   color: var(--color-foreground);
   font-family: var(--font-sans);
   font-size: var(--text-ui-base);
-  -webkit-font-smoothing: antialiased;
+  /* 不设 -webkit-font-smoothing：ZCode 未设置该属性，macOS 默认次像素抗锯齿
+   * （antialiased 会让全局字形细一档，与 ZCode 并排对比时观感差异明显） */
 }
 
 /*
