@@ -301,7 +301,7 @@ export function TerminalScreen({
                   'h-7 px-2 text-xs font-medium gap-1.5 rounded-lg border transition-all',
                   isBroadcastActive
                     ? 'border-primary/50 bg-primary/10 text-primary shadow-xs ring-1 ring-primary/20'
-                    : 'border-border/60 text-foreground-muted hover:text-foreground hover:bg-hover'
+                    : 'border-border/60 text-foreground-subtle hover:text-foreground hover:bg-hover'
                 )}
                 aria-label="协同广播"
               >
@@ -327,7 +327,7 @@ export function TerminalScreen({
                   'h-7 px-2 text-xs font-medium gap-1.5 rounded-lg border transition-all',
                   layoutMode === 'grid'
                     ? 'border-primary/50 bg-primary/10 text-primary shadow-xs ring-1 ring-primary/20'
-                    : 'border-border/60 text-foreground-muted hover:text-foreground hover:bg-hover'
+                    : 'border-border/60 text-foreground-subtle hover:text-foreground hover:bg-hover'
                 )}
                 aria-label="切换网格视图"
               >
