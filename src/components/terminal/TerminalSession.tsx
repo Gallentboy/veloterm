@@ -11,6 +11,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { readClipboardText, writeClipboardText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
+import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { loadHostStore, resolveJumpHostChain } from '@/hosts/storage';
 import { formatShellShortLabel } from '@/terminal/terminalPanelState';
 import {
@@ -135,6 +136,9 @@ export function TerminalSession({
     y: number;
     hasSelection: boolean;
   } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  /** 打开菜单的锚点元素：再次右键同一锚点时视为「关闭」而非原地重开 */
+  const contextMenuAnchorRef = useRef<Element | null>(null);
 
   const notifyWebglStatus = useCallback(
     (active: boolean) => {
@@ -386,6 +390,7 @@ export function TerminalSession({
       requestFocus();
       scheduleWebglEnsure();
     } else {
+      contextMenuAnchorRef.current = null;
       setContextMenu(null);
     }
   }, [isVisible, requestFocus, scheduleFitAndResize, scheduleWebglEnsure, sessionId]);
@@ -474,6 +479,12 @@ export function TerminalSession({
       fontSize: 13,
       fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
       cursorBlink: true,
+      // 细竖线光标：方块光标的宽度恒等于字符单元格宽度，xterm 无法做「半宽方块」，
+      // 只能改用 bar 形态；cursorWidth 仅在 bar 下生效。
+      // 非聚焦态同样用 bar，避免失焦后回退成默认的 outline 描边方块（又变宽）。
+      cursorStyle: 'bar',
+      cursorWidth: 2,
+      cursorInactiveStyle: 'bar',
       allowProposedApi: true,
       scrollback: TERMINAL_SCROLLBACK_LINES,
       theme: mergeTerminalTheme(),
@@ -787,22 +798,23 @@ export function TerminalSession({
   ]);
 
   // 右键菜单关闭监听
-  useEffect(() => {
-    if (!contextMenu) return;
-    const close = () => setContextMenu(null);
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    window.addEventListener('pointerdown', close);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('pointerdown', close);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [contextMenu]);
+  const closeContextMenu = useCallback(() => {
+    contextMenuAnchorRef.current = null;
+    setContextMenu(null);
+  }, []);
+
+  // 点击外部 / Escape 关闭（document 捕获阶段，不受子树 stopPropagation 影响）
+  useDismissOnOutsidePointer(Boolean(contextMenu), contextMenuRef, closeContextMenu);
 
   const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
+    // 菜单已打开时再次右键同一锚点 → 直接关闭。否则 pointerdown 先关、contextmenu 又
+    // 在原地重开，视觉上等于「第一次点了没反应」。
+    if (contextMenu && contextMenuAnchorRef.current === event.currentTarget) {
+      closeContextMenu();
+      return;
+    }
+    contextMenuAnchorRef.current = event.currentTarget;
     const term = termRef.current;
     setContextMenu({
       x: event.clientX,
@@ -813,7 +825,7 @@ export function TerminalSession({
 
   const handleCopy = () => {
     const term = termRef.current;
-    setContextMenu(null);
+    closeContextMenu();
     if (!term?.hasSelection()) return;
     void writeClipboardText(term.getSelection()).catch((err) => {
       console.warn('[TerminalSession] copy via context menu failed:', err);
@@ -823,7 +835,7 @@ export function TerminalSession({
 
   const handlePaste = () => {
     const term = termRef.current;
-    setContextMenu(null);
+    closeContextMenu();
     if (!term) return;
     readClipboardText()
       .then((text) => {
@@ -835,7 +847,7 @@ export function TerminalSession({
 
   const handleClear = () => {
     const term = termRef.current;
-    setContextMenu(null);
+    closeContextMenu();
     term?.clear();
     requestFocus();
   };
@@ -853,6 +865,7 @@ export function TerminalSession({
 
       {contextMenu ? (
         <div
+          ref={contextMenuRef}
           role="menu"
           style={{
             left: Math.min(contextMenu.x, window.innerWidth - 160),
@@ -901,7 +914,7 @@ export function TerminalSession({
             role="menuitem"
             disabled={fontScale === 1}
             onClick={() => {
-              setContextMenu(null);
+              closeContextMenu();
               applyTerminalFontScale(1);
             }}
             className={cn(

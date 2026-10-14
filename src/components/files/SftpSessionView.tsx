@@ -21,6 +21,7 @@ import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { MarqueeText } from '@/components/ui/MarqueeText';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import {
   listRemoteDirectory,
   pickDownloadPath,
@@ -315,6 +316,9 @@ export function SftpSessionView({
   const fontBadgeTimerRef = useRef<number | null>(null);
   // 右键菜单：提供「重置缩放」（与 Tab 右键菜单同款 ZCode 风格）
   const [paneMenu, setPaneMenu] = useState<{ x: number; y: number } | null>(null);
+  const paneMenuRef = useRef<HTMLDivElement | null>(null);
+  /** 打开菜单的锚点元素：再次右键同一锚点时视为「关闭」而非原地重开 */
+  const paneMenuAnchorRef = useRef<Element | null>(null);
 
   const applyFontScale = useCallback((nextScale: number) => {
     const clamped = Math.min(SFTP_FONT_SCALE_MAX, Math.max(SFTP_FONT_SCALE_MIN, nextScale));
@@ -359,20 +363,14 @@ export function SftpSessionView({
     };
   }, [applyFontScale]);
 
-  // 右键菜单关闭：点击任意处 / Escape（与终端右键菜单同款交互）
-  useEffect(() => {
-    if (!paneMenu) return;
-    const close = () => setPaneMenu(null);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
-    };
-    window.addEventListener('pointerdown', close);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('pointerdown', close);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [paneMenu]);
+  // 右键菜单关闭：点击外部 / Escape
+  const closePaneMenu = useCallback(() => {
+    paneMenuAnchorRef.current = null;
+    setPaneMenu(null);
+  }, []);
+
+  // document 捕获阶段监听，不受子树 stopPropagation / drag-region 影响
+  useDismissOnOutsidePointer(Boolean(paneMenu), paneMenuRef, closePaneMenu);
 
   // onPathChange 经 ref 稳定引用：父组件（FilesScreen）每次重渲染传入的都是新的内联回调，
   // 若进入 loadDirectory 依赖数组，拖分栏/聚焦切换/任何重渲染都会重建 loadDirectory，
@@ -589,6 +587,13 @@ export function SftpSessionView({
       onDrop={handleDrop}
       onContextMenu={(event) => {
         event.preventDefault();
+        // 菜单已打开时再次右键同一锚点 → 直接关闭（否则 pointerdown 先关、contextmenu
+        // 又原地重开，视觉上等于「第一次点了没反应」）
+        if (paneMenu && paneMenuAnchorRef.current === event.currentTarget) {
+          closePaneMenu();
+          return;
+        }
+        paneMenuAnchorRef.current = event.currentTarget;
         // 视口边缘锥制，避免菜单溢出屏幕
         setPaneMenu({
           x: Math.min(event.clientX, window.innerWidth - 180),
@@ -983,6 +988,7 @@ export function SftpSessionView({
       {/* 文件面板右键菜单（ZCode 风格）：重置缩放 */}
       {paneMenu ? (
         <div
+          ref={paneMenuRef}
           role="menu"
           style={{ left: paneMenu.x, top: paneMenu.y }}
           onPointerDown={(event) => event.stopPropagation()}
@@ -993,7 +999,7 @@ export function SftpSessionView({
             role="menuitem"
             disabled={fontScale === 1}
             onClick={() => {
-              setPaneMenu(null);
+              closePaneMenu();
               applyFontScale(1);
             }}
             className={cn(

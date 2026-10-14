@@ -18,6 +18,7 @@ import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useHostsStore } from '@/hosts/HostsProvider';
 import { cn } from '@/lib/utils';
+import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import {
   FILES_PANE_MIN_WIDTH_PX,
   persistFilesPaneState,
@@ -100,6 +101,14 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
   const [paneMenu, setPaneMenu] = useState<{ x: number; y: number; sessionId: number } | null>(
     null,
   );
+  const paneMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const closePaneMenu = useCallback(() => {
+    setPaneMenu(null);
+  }, []);
+
+  // 点击外部 / Escape 关闭：document 捕获阶段监听，不受子树 stopPropagation 影响
+  useDismissOnOutsidePointer(Boolean(paneMenu), paneMenuRef, closePaneMenu);
 
   const mainAreaRef = useRef<HTMLDivElement>(null);
   // 左栏宽度探针：占据第 1 列的 0 高度元素，用于读取当前实际列宽（拖拽起点/键盘步进）
@@ -478,7 +487,7 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
   // 激活就近落到另一侧，避免高亮一个不可见会话）
   const handleExitPane = useCallback(
     (sessionId: number) => {
-      setPaneMenu(null);
+      closePaneMenu();
       setPane((current) => {
         const exitingLeft = current.leftSessionId === sessionId;
         const exitingRight = current.rightSessionId === sessionId;
@@ -498,28 +507,20 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
 
   const handleTabContextMenu = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>, sessionId: number) => {
+      event.preventDefault();
+      // 菜单已打开时再次右键同一 Tab → 直接关闭（否则 pointerdown 先关、contextmenu
+      // 又原地重开，视觉上等于「第一次点了没反应」）
+      if (paneMenu?.sessionId === sessionId) {
+        closePaneMenu();
+        return;
+      }
       // 视口边缘钳制，避免菜单溢出屏幕
       const x = Math.min(event.clientX, window.innerWidth - 180);
       const y = Math.min(event.clientY, window.innerHeight - 120);
       setPaneMenu({ x, y, sessionId });
     },
-    [],
+    [closePaneMenu, paneMenu?.sessionId],
   );
-
-  // 右键菜单关闭：点击任意处 / Escape（与终端右键菜单同款交互）
-  useEffect(() => {
-    if (!paneMenu) return;
-    const close = () => setPaneMenu(null);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
-    };
-    window.addEventListener('pointerdown', close);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('pointerdown', close);
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [paneMenu]);
 
   // 空窗格占位元格（轻量内联空态，无描边装饰，配色对齐 ZCode 中性风格）
   const renderEmptyPaneCell = (side: FilesPaneSide) => {
@@ -806,6 +807,7 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
       {/* Tab 右键菜单（ZCode 风格）：退出分栏；池中 Tab 置灰不可点 */}
       {paneMenu ? (
         <div
+          ref={paneMenuRef}
           role="menu"
           style={{ left: paneMenu.x, top: paneMenu.y }}
           onPointerDown={(event) => event.stopPropagation()}
