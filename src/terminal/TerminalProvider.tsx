@@ -39,6 +39,8 @@ export interface TerminalContextValue {
   closeSession: (sessionId: number) => void;
   activateSession: (sessionId: number) => void;
   updateShellLabel: (sessionId: number, shellLabel: string | null) => void;
+  /** 双击 Tab 重命名（customTitle 为空回退 shellLabel / 默认名） */
+  renameSession: (sessionId: number, customTitle: string | null) => void;
   clearSession: (sessionId: number) => void;
 }
 
@@ -139,6 +141,27 @@ export function TerminalProvider({
     });
   }, []);
 
+  // 双击 Tab 重命名：写入 customTitle（null 清除，回退 shellLabel / 默认名）
+  const renameSession = useCallback((sessionId: number, customTitle: string | null) => {
+    setPanelState((current) => {
+      const session = current.sessions[sessionId];
+      const nextTitle = customTitle ?? undefined;
+      if (!session || session.customTitle === nextTitle) {
+        return current;
+      }
+      return {
+        ...current,
+        sessions: {
+          ...current.sessions,
+          [sessionId]: {
+            ...session,
+            customTitle: nextTitle,
+          },
+        },
+      };
+    });
+  }, []);
+
   const clearSession = useCallback((sessionId: number) => {
     terminalSessionRegistry.clear(sessionId);
   }, []);
@@ -175,6 +198,7 @@ export function TerminalProvider({
       activateSession,
       updateShellLabel,
       clearSession,
+      renameSession,
     }),
     [
       activateSession,
@@ -191,6 +215,7 @@ export function TerminalProvider({
       toggleLayoutMode,
       transport,
       updateShellLabel,
+      renameSession,
     ],
   );
 

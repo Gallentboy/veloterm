@@ -218,7 +218,7 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
 
         {sessions.map((session) => {
           const isChecked = selectedSessionIds.includes(session.id);
-          const title = session.customTitle || session.shellLabel || `终端 ${session.index}`;
+          const title = session.customTitle || session.shellLabel || '终端';
           return (
             <button
               key={session.id}
@@ -335,7 +335,7 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
                       key={s.id}
                       className="rounded bg-surface px-1.5 py-0.5 font-mono text-[11px] text-foreground"
                     >
-                      {s.customTitle || s.shellLabel || `终端 ${s.index}`}
+                      {s.customTitle || s.shellLabel || '终端'}
                     </span>
                   ))}
               </div>
