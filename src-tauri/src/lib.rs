@@ -18,6 +18,9 @@ fn is_apple_silicon() -> bool {
 pub fn run() {
   tauri::Builder::default()
     .plugin(logging::build_log_plugin())
+    // 原生剪贴板插件：终端 Cmd+C/V 经由 Rust 侧读写系统剪贴板，
+    // 绕开 WKWebView navigator.clipboard 的粘贴授权弹层（原生「粘贴」按钮）
+    .plugin(tauri_plugin_clipboard_manager::init())
     .manage(terminal::manager::TerminalManager::new())
     .manage(sftp::types::SftpState::new())
     .invoke_handler(tauri::generate_handler![
