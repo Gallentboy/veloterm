@@ -144,8 +144,9 @@ mod tests {
     let drafts = load_editor_drafts(&pool).expect("load drafts should succeed");
     assert_eq!(state_json.as_deref(), Some("{\"w\":1}"));
     assert_eq!(drafts.len(), 1);
-    assert_eq!(drafts[0].file_id, 11);
-    assert!(drafts[0].updated_at > 0);
+    let first = drafts.first().unwrap();
+    assert_eq!(first.file_id, 11);
+    assert!(first.updated_at > 0);
 
     delete_editor_draft(&pool, 11).expect("delete draft should succeed");
     assert!(load_editor_drafts(&pool).expect("load drafts should succeed").is_empty());

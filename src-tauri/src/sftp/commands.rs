@@ -1,44 +1,65 @@
+use std::io::SeekFrom;
+
 use tauri::ipc::Channel;
 use tauri::State;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncSeekExt;
 
 use super::file_ops::{commit_temp_file, sibling_temp_path};
-use super::manager::{close_sftp, get_or_connect_sftp, resolve_host_chain, connect_sftp};
+use super::manager::{close_sftp, evict_sftp_session, get_or_connect_sftp, register_temp_dir, resolve_host_chain, connect_sftp};
+use super::transfer::{
+  evict_decision, pump_stream, resolve_resume_offset, ProgressTracker, PumpError, PumpOptions,
+  FailureSide, RemoteEndpoint, TransferKind,
+};
 use super::types::{RemoteFileItem, SftpState, TransferProgress};
 use crate::text_detect::is_editable_sftp_entry;
 
-/// 简单令牌桶限速器：按累计字节与预期耗时对比，超前则睡眠补齐。
-/// speed_limit_bps 为 0/None 表示不限速；允许 1 秒级别的突发。
-struct SpeedLimiter {
-  limit_bps: u64,
-  window_start: tokio::time::Instant,
-  window_bytes: u64,
-}
-
-impl SpeedLimiter {
-  fn new(limit_bps: Option<u64>) -> Option<Self> {
-    let limit_bps = limit_bps.filter(|v| *v > 0)?;
-    Some(Self {
-      limit_bps,
-      window_start: tokio::time::Instant::now(),
-      window_bytes: 0,
-    })
-  }
-
-  async fn throttle(&mut self, chunk_bytes: u64) {
-    self.window_bytes += chunk_bytes;
-    let expected = tokio::time::Duration::from_secs_f64(
-      self.window_bytes as f64 / self.limit_bps as f64,
-    );
-    let elapsed = self.window_start.elapsed();
-    if expected > elapsed {
-      tokio::time::sleep(expected - elapsed).await;
-    } else if elapsed > expected + tokio::time::Duration::from_secs(1) {
-      // 窗口内已落后于配额（低速读源），重置窗口避免长期欠账后限死
-      self.window_start = tokio::time::Instant::now();
-      self.window_bytes = 0;
+/// 构造逐块进度回调：累计绝对字节数（含续传起始偏移），≥100ms 节流发包。
+/// 完成包由调用方用 `offset + pump 返回值` 另发。
+fn make_chunk_reporter(
+  task_id: usize,
+  total_size: u64,
+  start_offset: u64,
+  on_progress: Channel<TransferProgress>,
+) -> impl FnMut(u64) {
+  let tracker = std::cell::RefCell::new(ProgressTracker::new());
+  let transferred = std::cell::Cell::new(start_offset);
+  move |delta: u64| {
+    let abs = transferred.get() + delta;
+    transferred.set(abs);
+    let mut tracker = tracker.borrow_mut();
+    if let Some((speed_bps, percent)) =
+      tracker.on_bytes(tokio::time::Instant::now(), delta, abs, total_size)
+    {
+      let _ = on_progress.send(TransferProgress {
+        task_id,
+        transferred: abs.to_string(),
+        total: total_size.to_string(),
+        speed_bps,
+        percent,
+        is_finished: false,
+      });
     }
   }
+}
+
+/// 按剔除决策把失效会话从缓存移除（尽力关闭），使重试自动重建连接。
+async fn evict_failed_session(
+  state: &SftpState,
+  kind: TransferKind,
+  side: FailureSide,
+  source_session_id: &str,
+  target_session_id: &str,
+) {
+  match evict_decision(kind, side) {
+    Some(RemoteEndpoint::Source) => evict_sftp_session(state, source_session_id).await,
+    Some(RemoteEndpoint::Target) => evict_sftp_session(state, target_session_id).await,
+    None => {}
+  }
+}
+
+/// 回收任务取消令牌（所有出口路径必经）
+async fn remove_cancel_token(state: &SftpState, task_id: usize) {
+  state.cancel_tokens.lock().await.remove(&task_id);
 }
 
 #[tauri::command]
@@ -161,115 +182,150 @@ pub async fn sftp_download_file(
   task_id: usize,
   remote_path: String,
   local_path: String,
+  resume_offset: Option<u64>,
   speed_limit_bps: Option<u64>,
   on_progress: Channel<TransferProgress>,
   state: State<'_, SftpState>,
 ) -> Result<(), String> {
-  let client = get_or_connect_sftp(&state, &session_id).await?;
-
-  let mut remote_file = client
-    .open(&remote_path)
-    .await
-    .map_err(|e| format!("Failed to open remote file '{remote_path}': {e}"))?;
-
-  let total_size = remote_file
-    .metadata()
-    .await
-    .map(|m| m.len())
-    .unwrap_or(0);
-
-  if let Some(parent) = std::path::Path::new(&local_path).parent() {
-    tokio::fs::create_dir_all(parent)
-      .await
-      .map_err(|e| format!("Failed to create local directory: {e}"))?;
-  }
-
-  let mut local_file = tokio::fs::File::create(&local_path)
-    .await
-    .map_err(|e| format!("Failed to create local file '{local_path}': {e}"))?;
-
-  let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+  let kind = TransferKind::Download;
+  let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
   {
     let mut tokens = state.cancel_tokens.lock().await;
     tokens.insert(task_id, cancel_tx);
   }
 
-  let mut buffer = [0u8; 65536];
-  let mut transferred: u64 = 0;
-  let mut last_tick = tokio::time::Instant::now();
-  let mut bytes_since_last_tick: u64 = 0;
-  let mut limiter = SpeedLimiter::new(speed_limit_bps);
-
-  loop {
-    tokio::select! {
-      _ = &mut cancel_rx => {
-        state.cancel_tokens.lock().await.remove(&task_id);
-        log::info!("[SFTP] Download task {task_id} cancelled by user");
-        return Err("Transfer cancelled by user".to_string());
-      }
-      res = remote_file.read(&mut buffer) => {
-        let n = res.map_err(|e| format!("Failed to read from remote file: {e}"))?;
-        if n == 0 {
-          break; // EOF
-        }
-        let Some(chunk) = buffer.get(..n) else {
-          break;
-        };
-        local_file
-          .write_all(chunk)
-          .await
-          .map_err(|e| format!("Failed to write to local file: {e}"))?;
-
-        if let Some(ref mut limiter) = limiter {
-          limiter.throttle(n as u64).await;
-        }
-        transferred += n as u64;
-        bytes_since_last_tick += n as u64;
-
-        let now = tokio::time::Instant::now();
-        let elapsed = now.duration_since(last_tick);
-        if elapsed >= tokio::time::Duration::from_millis(100) {
-          let speed_bps = (bytes_since_last_tick as f64 / elapsed.as_secs_f64()) as u64;
-          let percent = if total_size > 0 {
-            (transferred as f64 / total_size as f64 * 100.0).clamp(0.0, 100.0) as f32
-          } else {
-            0.0
-          };
-
-          let _ = on_progress.send(TransferProgress {
-            task_id,
-            transferred: transferred.to_string(),
-            total: total_size.to_string(),
-            speed_bps,
-            percent,
-            is_finished: false,
-          });
-
-          last_tick = now;
-          bytes_since_last_tick = 0;
-        }
-      }
+  let client = match get_or_connect_sftp(&state, &session_id).await {
+    Ok(client) => client,
+    Err(e) => {
+      remove_cancel_token(&state, task_id).await;
+      return Err(e);
     }
+  };
+
+  let mut remote_file = match client.open(&remote_path).await {
+    Ok(file) => file,
+    Err(e) => {
+      evict_failed_session(&state, kind, FailureSide::Source, &session_id, &session_id).await;
+      remove_cancel_token(&state, task_id).await;
+      return Err(format!("Failed to open remote file '{remote_path}': {e}"));
+    }
+  };
+
+  let total_size = match remote_file.metadata().await {
+    Ok(meta) => meta.len(),
+    Err(e) => {
+      evict_failed_session(&state, kind, FailureSide::Source, &session_id, &session_id).await;
+      remove_cancel_token(&state, task_id).await;
+      return Err(format!("Failed to stat remote file '{remote_path}': {e}"));
+    }
+  };
+
+  if let Some(parent) = std::path::Path::new(&local_path).parent()
+    && let Err(e) = tokio::fs::create_dir_all(parent).await
+  {
+    remove_cancel_token(&state, task_id).await;
+    return Err(format!("Failed to create local directory: {e}"));
   }
 
-  local_file
-    .flush()
-    .await
-    .map_err(|e| format!("Failed to flush local file: {e}"))?;
+  // 断点续传：本地现存长度与上报值取 min，截断到该偏移后续写（幂等覆盖防空洞）
+  let existing_len = tokio::fs::metadata(&local_path).await.map(|m| m.len()).ok();
+  let offset = resolve_resume_offset(resume_offset, existing_len);
+  let local_file = if offset > 0 {
+    let file = match tokio::fs::OpenOptions::new()
+      .write(true)
+      .create(true)
+      .truncate(false)
+      .open(&local_path)
+      .await
+    {
+      Ok(file) => file,
+      Err(e) => {
+        remove_cancel_token(&state, task_id).await;
+        return Err(format!("Failed to open local file '{local_path}': {e}"));
+      }
+    };
+    if let Err(e) = file.set_len(offset).await {
+      remove_cancel_token(&state, task_id).await;
+      return Err(format!("Failed to truncate local file to resume offset: {e}"));
+    }
+    let mut file = file;
+    if let Err(e) = file.seek(SeekFrom::Start(offset)).await {
+      remove_cancel_token(&state, task_id).await;
+      return Err(format!("Failed to seek local file: {e}"));
+    }
+    file
+  } else {
+    match tokio::fs::File::create(&local_path).await {
+      Ok(file) => file,
+      Err(e) => {
+        remove_cancel_token(&state, task_id).await;
+        return Err(format!("Failed to create local file '{local_path}': {e}"));
+      }
+    }
+  };
+  if offset > 0
+    && let Err(e) = remote_file.seek(SeekFrom::Start(offset)).await
+  {
+    evict_failed_session(&state, kind, FailureSide::Source, &session_id, &session_id).await;
+    remove_cancel_token(&state, task_id).await;
+    return Err(format!("Failed to seek remote file: {e}"));
+  }
+  if offset > 0 {
+    log::info!("[SFTP] Download task {task_id} resuming from offset {offset}");
+  }
 
-  // 发送 100% 完成包
-  let _ = on_progress.send(TransferProgress {
-    task_id,
-    transferred: transferred.to_string(),
-    total: total_size.to_string(),
-    speed_bps: 0,
-    percent: 100.0,
-    is_finished: true,
-  });
+  let on_chunk = make_chunk_reporter(task_id, total_size, offset, on_progress.clone());
+  let pump_result = pump_stream(
+    remote_file,
+    local_file,
+    cancel_rx,
+    on_chunk,
+    PumpOptions {
+      limit_bps: speed_limit_bps,
+      ..Default::default()
+    },
+  )
+  .await;
 
-  state.cancel_tokens.lock().await.remove(&task_id);
-  log::info!("[SFTP] Download task {task_id} completed: {transferred} bytes");
-  Ok(())
+  match pump_result {
+    Ok(copied) => {
+      let transferred = offset + copied;
+      if total_size > 0 && transferred != total_size {
+        remove_cancel_token(&state, task_id).await;
+        return Err(format!(
+          "Remote file changed during transfer: expected {total_size} bytes, got {transferred}"
+        ));
+      }
+      let _ = on_progress.send(TransferProgress {
+        task_id,
+        transferred: transferred.to_string(),
+        total: total_size.to_string(),
+        speed_bps: 0,
+        percent: 100.0,
+        is_finished: true,
+      });
+      remove_cancel_token(&state, task_id).await;
+      log::info!("[SFTP] Download task {task_id} completed: {transferred} bytes");
+      Ok(())
+    }
+    Err(PumpError::Cancelled) => {
+      remove_cancel_token(&state, task_id).await;
+      // 保留本地部分文件：重试携带 resume_offset 可续传
+      log::info!("[SFTP] Download task {task_id} cancelled by user");
+      Err("Transfer cancelled by user".to_string())
+    }
+    Err(PumpError::Read(e)) => {
+      // 远端读失败：剔除死连接，保留本地断点
+      evict_failed_session(&state, kind, FailureSide::Source, &session_id, &session_id).await;
+      remove_cancel_token(&state, task_id).await;
+      Err(format!("Failed to read from remote file: {e}"))
+    }
+    Err(PumpError::Write(e)) => {
+      // 本地写失败：无需剔除远端连接，保留远端可重试
+      remove_cancel_token(&state, task_id).await;
+      Err(format!("Failed to write to local file: {e}"))
+    }
+  }
 }
 
 #[tauri::command]
@@ -278,15 +334,25 @@ pub async fn sftp_upload_file(
   task_id: usize,
   local_path: String,
   remote_path: String,
+  resume_offset: Option<u64>,
   speed_limit_bps: Option<u64>,
   on_progress: Channel<TransferProgress>,
   state: State<'_, SftpState>,
 ) -> Result<(), String> {
-  let client = get_or_connect_sftp(&state, &session_id).await?;
+  let kind = TransferKind::Upload;
+  let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+  {
+    let mut tokens = state.cancel_tokens.lock().await;
+    tokens.insert(task_id, cancel_tx);
+  }
 
-  let mut local_file = tokio::fs::File::open(&local_path)
-    .await
-    .map_err(|e| format!("Failed to open local file '{local_path}': {e}"))?;
+  let mut local_file = match tokio::fs::File::open(&local_path).await {
+    Ok(file) => file,
+    Err(e) => {
+      remove_cancel_token(&state, task_id).await;
+      return Err(format!("Failed to open local file '{local_path}': {e}"));
+    }
+  };
 
   let total_size = local_file
     .metadata()
@@ -294,98 +360,135 @@ pub async fn sftp_upload_file(
     .map(|m| m.len())
     .unwrap_or(0);
 
-  let mut remote_file = client
-    .create(&remote_path)
-    .await
-    .map_err(|e| format!("Failed to create remote file '{remote_path}': {e}"))?;
+  let client = match get_or_connect_sftp(&state, &session_id).await {
+    Ok(client) => client,
+    Err(e) => {
+      remove_cancel_token(&state, task_id).await;
+      return Err(e);
+    }
+  };
 
-  let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
-  {
-    let mut tokens = state.cancel_tokens.lock().await;
-    tokens.insert(task_id, cancel_tx);
+  // 写同目录临时文件，成功后 rename 原子覆盖（与 copy/在线编辑一致）；
+  // 失败/取消时保留临时文件作为断点，重试携带 resume_offset 续传
+  let temp_path = sibling_temp_path(&remote_path);
+  // 登记断点所在目录：重连时据此扫描清理超龄孤儿断点（>1 天）
+  if let Some(dir) = std::path::Path::new(&remote_path).parent().and_then(|p| p.to_str()) {
+    register_temp_dir(&state, &session_id, dir).await;
   }
+  let temp_len = client
+    .metadata(&temp_path)
+    .await
+    .map(|m| m.len())
+    .ok();
+  let offset = resolve_resume_offset(resume_offset, temp_len);
 
-  let mut buffer = [0u8; 65536];
-  let mut transferred: u64 = 0;
-  let mut last_tick = tokio::time::Instant::now();
-  let mut bytes_since_last_tick: u64 = 0;
-  let mut limiter = SpeedLimiter::new(speed_limit_bps);
-
-  loop {
-    tokio::select! {
-      _ = &mut cancel_rx => {
-        state.cancel_tokens.lock().await.remove(&task_id);
-        log::info!("[SFTP] Upload task {task_id} cancelled by user");
-        return Err("Transfer cancelled by user".to_string());
+  let temp_file = if offset > 0 {
+    let file = match client
+      .open_with_flags(
+        &temp_path,
+        russh_sftp::protocol::OpenFlags::CREATE | russh_sftp::protocol::OpenFlags::WRITE,
+      )
+      .await
+    {
+      Ok(file) => file,
+      Err(e) => {
+        evict_failed_session(&state, kind, FailureSide::Target, &session_id, &session_id).await;
+        remove_cancel_token(&state, task_id).await;
+        return Err(format!("Failed to open temp file '{temp_path}' for resume: {e}"));
       }
-      res = local_file.read(&mut buffer) => {
-        let n = res.map_err(|e| format!("Failed to read from local file: {e}"))?;
-        if n == 0 {
-          break; // EOF
-        }
-        let Some(chunk) = buffer.get(..n) else {
-          break;
-        };
-        remote_file
-          .write_all(chunk)
-          .await
-          .map_err(|e| format!("Failed to write to remote file: {e}"))?;
-        if let Some(ref mut limiter) = limiter {
-          limiter.throttle(n as u64).await;
-        }
-
-        transferred += n as u64;
-        bytes_since_last_tick += n as u64;
-
-        let now = tokio::time::Instant::now();
-        let elapsed = now.duration_since(last_tick);
-        if elapsed >= tokio::time::Duration::from_millis(100) {
-          let speed_bps = (bytes_since_last_tick as f64 / elapsed.as_secs_f64()) as u64;
-          let percent = if total_size > 0 {
-            (transferred as f64 / total_size as f64 * 100.0).clamp(0.0, 100.0) as f32
-          } else {
-            0.0
-          };
-
-          let _ = on_progress.send(TransferProgress {
-            task_id,
-            transferred: transferred.to_string(),
-            total: total_size.to_string(),
-            speed_bps,
-            percent,
-            is_finished: false,
-          });
-
-          last_tick = now;
-          bytes_since_last_tick = 0;
-        }
+    };
+    let mut file = file;
+    if let Err(e) = file.seek(SeekFrom::Start(offset)).await {
+      evict_failed_session(&state, kind, FailureSide::Target, &session_id, &session_id).await;
+      remove_cancel_token(&state, task_id).await;
+      return Err(format!("Failed to seek temp file to resume offset: {e}"));
+    }
+    file
+  } else {
+    match client.create(&temp_path).await {
+      Ok(file) => file,
+      Err(e) => {
+        evict_failed_session(&state, kind, FailureSide::Target, &session_id, &session_id).await;
+        remove_cancel_token(&state, task_id).await;
+        return Err(format!("Failed to create temp file '{temp_path}': {e}"));
       }
     }
+  };
+  if offset > 0
+    && let Err(e) = local_file.seek(SeekFrom::Start(offset)).await
+  {
+    remove_cancel_token(&state, task_id).await;
+    return Err(format!("Failed to seek local file: {e}"));
+  }
+  if offset > 0 {
+    log::info!("[SFTP] Upload task {task_id} resuming from offset {offset}");
   }
 
-  remote_file
-    .shutdown()
-    .await
-    .map_err(|e| format!("Failed to shutdown remote file write stream: {e}"))?;
+  let on_chunk = make_chunk_reporter(task_id, total_size, offset, on_progress.clone());
+  let pump_result = pump_stream(
+    local_file,
+    temp_file,
+    cancel_rx,
+    on_chunk,
+    PumpOptions {
+      limit_bps: speed_limit_bps,
+      ..Default::default()
+    },
+  )
+  .await;
 
-  // 发送 100% 完成包
-  let _ = on_progress.send(TransferProgress {
-    task_id,
-    transferred: transferred.to_string(),
-    total: total_size.to_string(),
-    speed_bps: 0,
-    percent: 100.0,
-    is_finished: true,
-  });
-
-  state.cancel_tokens.lock().await.remove(&task_id);
-  log::info!("[SFTP] Upload task {task_id} completed: {transferred} bytes");
-  Ok(())
+  match pump_result {
+    Ok(copied) => {
+      let transferred = offset + copied;
+      if total_size > 0 && transferred != total_size {
+        let _ = client.remove_file(&temp_path).await;
+        remove_cancel_token(&state, task_id).await;
+        return Err(format!(
+          "Local file changed during transfer: expected {total_size} bytes, got {transferred}"
+        ));
+      }
+      // rename 原子覆盖目标（失败时 commit_temp_file 内部已清理临时文件）
+      if let Err(e) = commit_temp_file(&client, &temp_path, &remote_path).await {
+        evict_failed_session(&state, kind, FailureSide::Target, &session_id, &session_id).await;
+        remove_cancel_token(&state, task_id).await;
+        return Err(e);
+      }
+      let _ = on_progress.send(TransferProgress {
+        task_id,
+        transferred: transferred.to_string(),
+        total: total_size.to_string(),
+        speed_bps: 0,
+        percent: 100.0,
+        is_finished: true,
+      });
+      remove_cancel_token(&state, task_id).await;
+      log::info!("[SFTP] Upload task {task_id} completed: {transferred} bytes");
+      Ok(())
+    }
+    Err(PumpError::Cancelled) => {
+      remove_cancel_token(&state, task_id).await;
+      // 保留远端临时断点：重试携带 resume_offset 可续传
+      log::info!("[SFTP] Upload task {task_id} cancelled by user");
+      Err("Transfer cancelled by user".to_string())
+    }
+    Err(PumpError::Read(e)) => {
+      // 本地读失败：无需剔除远端连接，保留远端断点
+      remove_cancel_token(&state, task_id).await;
+      Err(format!("Failed to read from local file: {e}"))
+    }
+    Err(PumpError::Write(e)) => {
+      // 远端写失败：剔除死连接，保留临时断点
+      evict_failed_session(&state, kind, FailureSide::Target, &session_id, &session_id).await;
+      remove_cancel_token(&state, task_id).await;
+      Err(format!("Failed to write to remote file: {e}"))
+    }
+  }
 }
 
 /// 远端到远端的流式复制：源会话读、目标会话写，数据全程不落本地磁盘。
 /// 两个 session_id 相同时命中同一缓存连接（同主机复制），不同则为跨主机搬运。
-/// 目标侧写同目录临时文件，成功后 rename 原子覆盖（与在线编辑写入一致）。
+/// 目标侧写同目录临时文件，成功后 rename 原子覆盖；失败/取消保留临时断点，
+/// 重试携带 resume_offset 从断点续传（读写两端 seek 到偏移后续写，幂等覆盖防空洞）。
 #[tauri::command]
 pub async fn sftp_copy_file(
   state: State<'_, SftpState>,
@@ -394,11 +497,13 @@ pub async fn sftp_copy_file(
   source_path: String,
   target_session_id: String,
   target_path: String,
+  resume_offset: Option<u64>,
   speed_limit_bps: Option<u64>,
   on_progress: Channel<TransferProgress>,
 ) -> Result<(), String> {
+  let kind = TransferKind::Copy;
   // 注册取消令牌（与 download/upload 一致，按 task_id 索引）
-  let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+  let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
   {
     let mut tokens = state.cancel_tokens.lock().await;
     tokens.insert(task_id, cancel_tx);
@@ -408,14 +513,14 @@ pub async fn sftp_copy_file(
   let source_client = match get_or_connect_sftp(&state, &source_session_id).await {
     Ok(client) => client,
     Err(e) => {
-      state.cancel_tokens.lock().await.remove(&task_id);
+      remove_cancel_token(&state, task_id).await;
       return Err(e);
     }
   };
   let target_client = match get_or_connect_sftp(&state, &target_session_id).await {
     Ok(client) => client,
     Err(e) => {
-      state.cancel_tokens.lock().await.remove(&task_id);
+      remove_cancel_token(&state, task_id).await;
       return Err(e);
     }
   };
@@ -423,130 +528,215 @@ pub async fn sftp_copy_file(
   let mut source_file = match source_client.open(&source_path).await {
     Ok(file) => file,
     Err(e) => {
-      state.cancel_tokens.lock().await.remove(&task_id);
+      evict_failed_session(
+        &state,
+        kind,
+        FailureSide::Source,
+        &source_session_id,
+        &target_session_id,
+      )
+      .await;
+      remove_cancel_token(&state, task_id).await;
       return Err(format!("Failed to open source file '{source_path}': {e}"));
     }
   };
 
-  // stat 源文件取总大小与权限（失败时容忍：进度无百分比、不保留权限）
-  let meta = source_file.metadata().await.unwrap_or_default();
+  // stat 源文件取总大小与权限（失败视为连接问题：剔除后中断，交给重试重连）
+  let meta = match source_file.metadata().await {
+    Ok(meta) => meta,
+    Err(e) => {
+      evict_failed_session(
+        &state,
+        kind,
+        FailureSide::Source,
+        &source_session_id,
+        &target_session_id,
+      )
+      .await;
+      remove_cancel_token(&state, task_id).await;
+      return Err(format!("Failed to stat source file '{source_path}': {e}"));
+    }
+  };
   let total_size = meta.len();
   let source_perms = meta.permissions;
 
-  // 目标侧写同目录临时文件
+  // 目标侧写同目录临时文件；断点续传取「上报值与现存临时长度」的较小值
   let temp_path = sibling_temp_path(&target_path);
-  let mut temp_file = match target_client.create(&temp_path).await {
-    Ok(file) => file,
-    Err(e) => {
-      state.cancel_tokens.lock().await.remove(&task_id);
-      return Err(format!("Failed to create temp file '{temp_path}': {e}"));
+  // 登记断点所在目录：重连时据此扫描清理超龄孤儿断点（>1 天）
+  if let Some(dir) = std::path::Path::new(&target_path).parent().and_then(|p| p.to_str()) {
+    register_temp_dir(&state, &target_session_id, dir).await;
+  }
+  let temp_len = target_client
+    .metadata(&temp_path)
+    .await
+    .map(|m| m.len())
+    .ok();
+  let offset = resolve_resume_offset(resume_offset, temp_len);
+
+  let temp_file = if offset > 0 {
+    let file = match target_client
+      .open_with_flags(
+        &temp_path,
+        russh_sftp::protocol::OpenFlags::CREATE | russh_sftp::protocol::OpenFlags::WRITE,
+      )
+      .await
+    {
+      Ok(file) => file,
+      Err(e) => {
+        evict_failed_session(
+          &state,
+          kind,
+          FailureSide::Target,
+          &source_session_id,
+          &target_session_id,
+        )
+        .await;
+        remove_cancel_token(&state, task_id).await;
+        return Err(format!("Failed to open temp file '{temp_path}' for resume: {e}"));
+      }
+    };
+    let mut file = file;
+    if let Err(e) = file.seek(SeekFrom::Start(offset)).await {
+      evict_failed_session(
+        &state,
+        kind,
+        FailureSide::Target,
+        &source_session_id,
+        &target_session_id,
+      )
+      .await;
+      remove_cancel_token(&state, task_id).await;
+      return Err(format!("Failed to seek temp file to resume offset: {e}"));
+    }
+    file
+  } else {
+    match target_client.create(&temp_path).await {
+      Ok(file) => file,
+      Err(e) => {
+        evict_failed_session(
+          &state,
+          kind,
+          FailureSide::Target,
+          &source_session_id,
+          &target_session_id,
+        )
+        .await;
+        remove_cancel_token(&state, task_id).await;
+        return Err(format!("Failed to create temp file '{temp_path}': {e}"));
+      }
     }
   };
+  if offset > 0
+    && let Err(e) = source_file.seek(SeekFrom::Start(offset)).await
+  {
+    evict_failed_session(
+      &state,
+      kind,
+      FailureSide::Source,
+      &source_session_id,
+      &target_session_id,
+    )
+    .await;
+    remove_cancel_token(&state, task_id).await;
+    return Err(format!("Failed to seek source file to resume offset: {e}"));
+  }
+  if offset > 0 {
+    log::info!("[SFTP] Copy task {task_id} resuming from offset {offset}");
+  }
 
-  let mut buffer = [0u8; 65536];
-  let mut transferred: u64 = 0;
-  let mut last_tick = tokio::time::Instant::now();
-  let mut bytes_since_last_tick: u64 = 0;
-  let mut limiter = SpeedLimiter::new(speed_limit_bps);
+  let on_chunk = make_chunk_reporter(task_id, total_size, offset, on_progress.clone());
+  let pump_result = pump_stream(
+    source_file,
+    temp_file,
+    cancel_rx,
+    on_chunk,
+    PumpOptions {
+      limit_bps: speed_limit_bps,
+      ..Default::default()
+    },
+  )
+  .await;
 
-  loop {
-    tokio::select! {
-      _ = &mut cancel_rx => {
-        state.cancel_tokens.lock().await.remove(&task_id);
-        // 尽力清理半成品临时文件
+  match pump_result {
+    Ok(copied) => {
+      let transferred = offset + copied;
+      if total_size > 0 && transferred != total_size {
+        // 源在传输中发生变化，断点已无意义：清理临时文件
         let _ = target_client.remove_file(&temp_path).await;
-        log::info!("[SFTP] Copy task {task_id} cancelled by user");
-        return Err("Transfer cancelled by user".to_string());
+        remove_cancel_token(&state, task_id).await;
+        return Err(format!(
+          "Source file changed during transfer: expected {total_size} bytes, got {transferred}"
+        ));
       }
-      res = source_file.read(&mut buffer) => {
-        let n = match res {
-          Ok(n) => n,
-          Err(e) => {
-            // 中途失败：回收取消令牌并清理半成品临时文件
-            state.cancel_tokens.lock().await.remove(&task_id);
-            let _ = target_client.remove_file(&temp_path).await;
-            return Err(format!("Failed to read from source file: {e}"));
-          }
+
+      // 尽力保留源文件权限（源端无权限信息或 setstat 不受支持时忽略）
+      if let Some(perms) = source_perms {
+        let attrs = russh_sftp::protocol::FileAttributes {
+          permissions: Some(perms),
+          ..Default::default()
         };
-        if n == 0 {
-          break; // EOF
-        }
-        let Some(chunk) = buffer.get(..n) else {
-          break;
-        };
-        if let Err(e) = temp_file.write_all(chunk).await {
-          // 中途失败：回收取消令牌并清理半成品临时文件
-          state.cancel_tokens.lock().await.remove(&task_id);
-          let _ = target_client.remove_file(&temp_path).await;
-          return Err(format!("Failed to write to temp file: {e}"));
-        }
-
-        if let Some(ref mut limiter) = limiter {
-          limiter.throttle(n as u64).await;
-        }
-        transferred += n as u64;
-        bytes_since_last_tick += n as u64;
-
-        let now = tokio::time::Instant::now();
-        let elapsed = now.duration_since(last_tick);
-        if elapsed >= tokio::time::Duration::from_millis(100) {
-          let speed_bps = (bytes_since_last_tick as f64 / elapsed.as_secs_f64()) as u64;
-          let percent = if total_size > 0 {
-            (transferred as f64 / total_size as f64 * 100.0).clamp(0.0, 100.0) as f32
-          } else {
-            0.0
-          };
-
-          let _ = on_progress.send(TransferProgress {
-            task_id,
-            transferred: transferred.to_string(),
-            total: total_size.to_string(),
-            speed_bps,
-            percent,
-            is_finished: false,
-          });
-
-          last_tick = now;
-          bytes_since_last_tick = 0;
-        }
+        let _ = target_client.set_metadata(&temp_path, attrs).await;
       }
+
+      // rename 原子覆盖目标（失败时 commit_temp_file 内部已清理临时文件）
+      if let Err(e) = commit_temp_file(&target_client, &temp_path, &target_path).await {
+        evict_failed_session(
+          &state,
+          kind,
+          FailureSide::Target,
+          &source_session_id,
+          &target_session_id,
+        )
+        .await;
+        remove_cancel_token(&state, task_id).await;
+        return Err(e);
+      }
+
+      let _ = on_progress.send(TransferProgress {
+        task_id,
+        transferred: transferred.to_string(),
+        total: total_size.to_string(),
+        speed_bps: 0,
+        percent: 100.0,
+        is_finished: true,
+      });
+      remove_cancel_token(&state, task_id).await;
+      log::info!("[SFTP] Copy task {task_id} completed: {transferred} bytes");
+      Ok(())
+    }
+    Err(PumpError::Cancelled) => {
+      remove_cancel_token(&state, task_id).await;
+      // 保留临时断点：重试携带 resume_offset 可续传（原实现删除断点，已改为保留）
+      log::info!("[SFTP] Copy task {task_id} cancelled by user");
+      Err("Transfer cancelled by user".to_string())
+    }
+    Err(PumpError::Read(e)) => {
+      // 源端读失败：剔除死连接，保留目标断点
+      evict_failed_session(
+        &state,
+        kind,
+        FailureSide::Source,
+        &source_session_id,
+        &target_session_id,
+      )
+      .await;
+      remove_cancel_token(&state, task_id).await;
+      Err(format!("Failed to read from source file: {e}"))
+    }
+    Err(PumpError::Write(e)) => {
+      // 目标端写失败：剔除死连接，保留断点
+      evict_failed_session(
+        &state,
+        kind,
+        FailureSide::Target,
+        &source_session_id,
+        &target_session_id,
+      )
+      .await;
+      remove_cancel_token(&state, task_id).await;
+      Err(format!("Failed to write to temp file: {e}"))
     }
   }
-
-  if let Err(e) = temp_file.shutdown().await {
-    state.cancel_tokens.lock().await.remove(&task_id);
-    let _ = target_client.remove_file(&temp_path).await;
-    return Err(format!("Failed to flush temp file '{temp_path}': {e}"));
-  }
-
-  // 尽力保留源文件权限（源端无权限信息或 setstat 不受支持时忽略）
-  if let Some(perms) = source_perms {
-    let attrs = russh_sftp::protocol::FileAttributes {
-      permissions: Some(perms),
-      ..Default::default()
-    };
-    let _ = target_client.set_metadata(&temp_path, attrs).await;
-  }
-
-  // rename 原子覆盖目标（失败时 commit_temp_file 内部已清理临时文件）
-  if let Err(e) = commit_temp_file(&target_client, &temp_path, &target_path).await {
-    state.cancel_tokens.lock().await.remove(&task_id);
-    return Err(e);
-  }
-
-  // 发送 100% 完成包
-  let _ = on_progress.send(TransferProgress {
-    task_id,
-    transferred: transferred.to_string(),
-    total: total_size.to_string(),
-    speed_bps: 0,
-    percent: 100.0,
-    is_finished: true,
-  });
-
-  state.cancel_tokens.lock().await.remove(&task_id);
-  log::info!("[SFTP] Copy task {task_id} completed: {transferred} bytes");
-  Ok(())
 }
 
 #[tauri::command]

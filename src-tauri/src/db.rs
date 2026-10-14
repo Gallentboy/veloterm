@@ -848,9 +848,10 @@ mod tests {
 
     let all = load_editor_drafts(&pool).expect("load should succeed");
     assert_eq!(all.len(), 1);
-    assert_eq!(all[0].content, "worker_processes 2;\n");
-    assert_eq!(all[0].file_id, 7);
-    assert!(all[0].updated_at > 0);
+    let first = all.first().unwrap();
+    assert_eq!(first.content, "worker_processes 2;\n");
+    assert_eq!(first.file_id, 7);
+    assert!(first.updated_at > 0);
 
     delete_editor_draft(&pool, 7).expect("delete should succeed");
     assert!(load_editor_drafts(&pool).expect("load should succeed").is_empty());

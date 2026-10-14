@@ -5,10 +5,10 @@ use russh::keys::{PrivateKey, decode_secret_key, load_secret_key};
 
 fn expand_tilde_path(raw: &str) -> PathBuf {
   let trimmed = raw.trim();
-  if let Some(stripped) = trimmed.strip_prefix("~/") {
-    if let Some(home) = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")) {
-      return PathBuf::from(home).join(stripped);
-    }
+  if let Some(stripped) = trimmed.strip_prefix("~/")
+    && let Some(home) = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE"))
+  {
+    return PathBuf::from(home).join(stripped);
   }
   PathBuf::from(trimmed)
 }
@@ -45,10 +45,8 @@ pub fn discover_default_local_keys() -> Vec<PrivateKey> {
   let mut keys = Vec::new();
   for name in ["id_ed25519", "id_ecdsa", "id_rsa"] {
     let path = ssh_dir.join(name);
-    if path.is_file() {
-      if let Ok(key) = load_secret_key(&path, None) {
-        keys.push(key);
-      }
+    if path.is_file() && let Ok(key) = load_secret_key(&path, None) {
+      keys.push(key);
     }
   }
   keys

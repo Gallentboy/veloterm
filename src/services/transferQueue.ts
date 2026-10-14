@@ -37,6 +37,8 @@ export interface TransferTask {
   percent: number;
   status: TransferTaskStatus;
   error: string | null;
+  /** 完成 2s 后进入淡出中的标记（UI 据此播放淡出过渡，动画结束才真正移除） */
+  dismissing?: boolean;
   /** 已尝试次数（含首次） */
   attempt: number;
   startedAt: number | null;
@@ -63,6 +65,10 @@ const DEFAULT_SETTINGS: TransferQueueSettings = {
 
 const SETTINGS_KEY = 'veloterm:transfer:settings';
 const AUTO_RETRY_DELAY_MS = 1200;
+/** 传输成功后的任务行自动隐藏延时（错误/取消不隐藏，留供重试） */
+const DONE_AUTO_DISMISS_MS = 2000;
+/** 淡出动画时长，与 UI 侧 duration-300 对齐：动画播完才真正移除 */
+const DONE_DISMISS_FADE_MS = 300;
 
 interface EnqueueParams {
   direction: TransferDirection;
@@ -172,8 +178,8 @@ class TransferQueue {
     }
     task.status = 'queued';
     task.error = null;
-    task.transferred = 0;
-    task.percent = 0;
+    // 保留已传字节数作为断点：start() 会把 transferred 作为 resumeOffset 传给后端续传，
+    // 后端与目标端现存断点长度取 min 校正后从断点继续（断点丢失则自动全量重传）
     task.speedBps = 0;
     this.emit();
     this.schedule();
@@ -228,6 +234,9 @@ class TransferQueue {
     this.emit();
 
     const speedLimit = this.settings.speedLimitBps;
+    // 重试携带断点偏移：后端会与目标端现存断点长度取 min 后幂等续写，
+    // 断点不存在（如已被清理）则自动退化为全量重传
+    const resumeOffset = task.attempt > 1 ? task.transferred : 0;
     try {
       const handle =
         task.direction === 'copy'
@@ -239,6 +248,7 @@ class TransferQueue {
               task.targetRemotePath ?? '',
               (progress: TransferProgress) => this.onProgress(task.id, progress),
               speedLimit,
+              resumeOffset,
             )
           : task.direction === 'upload'
             ? await uploadLocalFile(
@@ -247,6 +257,7 @@ class TransferQueue {
                 task.remotePath,
                 (progress: TransferProgress) => this.onProgress(task.id, progress),
                 speedLimit,
+                resumeOffset,
               )
             : await downloadRemoteFile(
                 task.sessionId,
@@ -254,6 +265,7 @@ class TransferQueue {
                 task.localPath ?? '',
                 (progress: TransferProgress) => this.onProgress(task.id, progress),
                 speedLimit,
+                resumeOffset,
               );
       task.cancel = handle.cancel;
       this.emit();
@@ -264,6 +276,19 @@ class TransferQueue {
       task.cancel = null;
       this.emit();
       task.onFinished?.(task);
+      // 完成 2 秒后淡出隐藏（期间用户手动清除也无冲突：移除带状态守卫）
+      const doneId = task.id;
+      window.setTimeout(() => {
+        const doneTask = this.tasks.get(doneId);
+        if (doneTask?.status !== 'done') return;
+        doneTask.dismissing = true;
+        this.emit();
+        window.setTimeout(() => {
+          if (this.tasks.get(doneId)?.status === 'done') {
+            this.removeTask(doneId);
+          }
+        }, DONE_DISMISS_FADE_MS);
+      }, DONE_AUTO_DISMISS_MS);
     } catch (error) {
       task.cancel = null;
       const message = String(error);
