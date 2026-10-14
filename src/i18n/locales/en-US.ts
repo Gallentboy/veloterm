@@ -80,6 +80,12 @@ export default {
       clear: 'Clear',
       resetZoom: 'Reset zoom',
     },
+    search: {
+      placeholder: 'Find',
+      caseSensitive: 'Match case',
+      previous: 'Previous match (Shift+Enter)',
+      next: 'Next match (Enter)',
+    },
   },
   files: {
     title: 'Files',

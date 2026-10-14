@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
 import { Terminal as XTerm, type IDisposable } from '@xterm/xterm';
 import { ClipboardPaste, Copy, Eraser, Type } from 'lucide-react';
 import {
@@ -12,6 +13,7 @@ import { useTranslation } from 'react-i18next';
 import { readClipboardText, writeClipboardText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
+import { TerminalSearchBar } from '@/components/terminal/TerminalSearchBar';
 import { loadHostStore, resolveJumpHostChain } from '@/hosts/storage';
 import { formatShellShortLabel } from '@/terminal/terminalPanelState';
 import {
@@ -121,6 +123,9 @@ export function TerminalSession({
   const gestureStartScaleRef = useRef(1);
   const [fontBadgeVisible, setFontBadgeVisible] = useState(false);
   const fontBadgeTimerRef = useRef<number | null>(null);
+  // 终端搜索（Ctrl+F）：searchAddon 引用 + 打开态；registry.showSearch 经 openSearch 桥进入
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
 
   const onShellLabelChangeRef = useRef(onShellLabelChange);
   const onSizeChangeRef = useRef(onSizeChange);
@@ -414,6 +419,8 @@ export function TerminalSession({
       termRef.current = existingEntry.term;
       fitAddonRef.current = existingEntry.fitAddon;
       terminalIdRef.current = existingEntry.terminalId;
+      searchAddonRef.current = existingEntry.searchAddon;
+      existingEntry.openSearch = () => setIsSearchOpen(true);
       existingEntry.onTerminalIdReady = (readyId: number) => {
         terminalIdRef.current = readyId;
         flushTerminalResize();
@@ -454,6 +461,7 @@ export function TerminalSession({
         if (existingEntry.onTerminalIdReady) {
           existingEntry.onTerminalIdReady = undefined;
         }
+        existingEntry.openSearch = undefined;
         reuseThemeObserver.disconnect();
         reuseResizeObserver.disconnect();
         clearResizeThrottleTimer();
@@ -463,6 +471,7 @@ export function TerminalSession({
         terminalSessionRegistry.detachDom(sessionId);
         termRef.current = null;
         fitAddonRef.current = null;
+        searchAddonRef.current = null;
       };
     }
 
@@ -494,6 +503,10 @@ export function TerminalSession({
     const fitAddon = new FitAddon();
     fitAddonRef.current = fitAddon;
     term.loadAddon(fitAddon);
+    // 文本搜索：与 xterm 实例同生命周期挂载（纯 CPU，九宫格多会话零成本）
+    const searchAddon = new SearchAddon();
+    searchAddonRef.current = searchAddon;
+    term.loadAddon(searchAddon);
     term.open(hostEl);
 
     const entry: TerminalSessionRegistryEntry = {
@@ -501,6 +514,7 @@ export function TerminalSession({
       term,
       fitAddon,
       webglAddon: null,
+      searchAddon,
       terminalId: null,
       cwd: cwd ?? '~',
       hostEl,
@@ -514,6 +528,7 @@ export function TerminalSession({
           requestFocus();
         }
       },
+      openSearch: () => setIsSearchOpen(true),
       dispose: () => {},
     };
 
@@ -635,6 +650,24 @@ export function TerminalSession({
         e.stopPropagation();
         term.selectAll();
         return false;
+      }
+
+      // 5. Ctrl/⌘+F：打开终端搜索栏（拦截浏览器原生 find-in-page）
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && key === 'f') {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsSearchOpen(true);
+        return false;
+      }
+
+      // 6. Esc：搜索栏打开时优先关闭搜索栏（而非其他全局 Esc 语义）
+      if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === 'Escape') {
+        if (isSearchOpen) {
+          e.preventDefault();
+          e.stopPropagation();
+          setIsSearchOpen(false);
+          return false;
+        }
       }
 
       return true;
@@ -771,6 +804,7 @@ export function TerminalSession({
 
     return () => {
       entry.onTerminalIdReady = undefined;
+      entry.openSearch = undefined;
       themeObserver.disconnect();
       resizeObserver.disconnect();
       clearResizeThrottleTimer();
@@ -781,6 +815,7 @@ export function TerminalSession({
       terminalSessionRegistry.detachDom(sessionId);
       termRef.current = null;
       fitAddonRef.current = null;
+      searchAddonRef.current = null;
     };
   }, [
     clearResizeThrottleTimer,
@@ -929,6 +964,15 @@ export function TerminalSession({
             </span>
           </button>
         </div>
+      ) : null}
+
+      {/* 终端搜索栏（Ctrl+F）：作用于本会话，overlay 不影响 fit 尺寸 */}
+      {searchAddonRef.current ? (
+        <TerminalSearchBar
+          searchAddon={searchAddonRef.current}
+          visible={isSearchOpen}
+          onClose={() => setIsSearchOpen(false)}
+        />
       ) : null}
 
       {/* 字体倍率气泡（Chrome 同款反馈）：捏合/ctrl+滚轮时短暂显示当前百分比 */}

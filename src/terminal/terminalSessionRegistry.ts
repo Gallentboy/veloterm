@@ -1,5 +1,6 @@
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { FitAddon } from '@xterm/addon-fit';
+import type { SearchAddon } from '@xterm/addon-search';
 import type { ITheme, Terminal as XTerm } from '@xterm/xterm';
 
 /**
@@ -25,6 +26,10 @@ export interface TerminalSessionRegistryEntry {
   baseFontSize?: number;
   /** 当前字体缩放倍率（存于注册表以跨组件重挂载/布局切换保持） */
   fontScale?: number;
+  /** 文本搜索 addon（与 xterm 实例同生命周期，Ctrl+F 由组件暴露 openSearch 桥接） */
+  searchAddon: SearchAddon | null;
+  /** 当前挂载组件暴露的搜索栏打开动作（卸载时置空；registry.showSearch 统一调用） */
+  openSearch?: () => void;
   /** 当异步 `transport.create` 完成分配 `terminalId` 时通知当前挂载的组件实例 */
   onTerminalIdReady?: (terminalId: number) => void;
   dispose: () => void;
@@ -240,6 +245,14 @@ export const terminalSessionRegistry = {
   /** 获取指定前端会话对应的后端 terminalId */
   getTerminalId(key: number): number | null {
     return sessions.get(key)?.terminalId ?? null;
+  },
+
+  /** 打开指定会话的终端搜索栏（Ctrl+F 统一入口；组件未挂载时静默忽略） */
+  showSearch(key: number): boolean {
+    const entry = sessions.get(key);
+    if (!entry?.openSearch) return false;
+    entry.openSearch();
+    return true;
   },
 
   /** 清空当前终端屏幕内容 */
