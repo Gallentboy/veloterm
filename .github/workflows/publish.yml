@@ -25,7 +25,8 @@ jobs:
       - name: setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          # 与本地生成 pnpm-lock.yaml 的版本保持一致，避免 --frozen-lockfile 跨大版本兼容问题
+          version: 11
 
       - name: setup node
         uses: actions/setup-node@v4
