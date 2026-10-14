@@ -492,6 +492,7 @@ export function AppShell() {
                     isPanelResizing={isResizing}
                     onNavigateHosts={() => setPage('hosts')}
                     onOpenAiChat={openAiChat}
+                    onOpenCommandPalette={() => setPaletteOpen(true)}
                   />
                 ) : page === 'editor' ? (
                   <EditorScreen />

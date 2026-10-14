@@ -1,4 +1,4 @@
-import { FileCode, FolderSync, FolderTree, House, Server, Settings, Terminal } from 'lucide-react';
+import { Command, FileCode, FolderSync, FolderTree, House, Server, Settings, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { SidebarMenuButton } from '@/components/SidebarMenuButton';
@@ -59,6 +59,12 @@ export function WorkspaceSidebar({ activePage, onPageChange, className }: Worksp
           label={t('nav.groups')}
           active={activePage === 'groups'}
           onClick={() => onPageChange('groups')}
+        />
+        <SidebarMenuButton
+          icon={Command}
+          label={t('nav.commands')}
+          active={activePage === 'commands'}
+          onClick={() => onPageChange('commands')}
         />
       </nav>
 
