@@ -66,7 +66,7 @@ export interface TerminalSessionProps {
   fontScaleEnabled?: boolean;
   onShellLabelChange?: (sessionId: number, shellLabel: string | null) => void;
   onSizeChange?: (sessionId: number, size: TerminalSize) => void;
-  onWebglStatusChange?: (sessionId: number, active: boolean) => void;
+  onRendererStatusChange?: (sessionId: number, kind: 'webgl' | 'canvas2d' | 'dom') => void;
   onExit?: (sessionId: number, exitCode: number) => void;
 }
 
@@ -91,7 +91,7 @@ export function TerminalSession({
   fontScaleEnabled = true,
   onShellLabelChange,
   onSizeChange,
-  onWebglStatusChange,
+  onRendererStatusChange,
   onExit,
 }: TerminalSessionProps) {
   const { t } = useTranslation();
@@ -129,11 +129,11 @@ export function TerminalSession({
 
   const onShellLabelChangeRef = useRef(onShellLabelChange);
   const onSizeChangeRef = useRef(onSizeChange);
-  const onWebglStatusChangeRef = useRef(onWebglStatusChange);
+  const onRendererStatusChangeRef = useRef(onRendererStatusChange);
   const onExitRef = useRef(onExit);
   onShellLabelChangeRef.current = onShellLabelChange;
   onSizeChangeRef.current = onSizeChange;
-  onWebglStatusChangeRef.current = onWebglStatusChange;
+  onRendererStatusChangeRef.current = onRendererStatusChange;
   onExitRef.current = onExit;
 
   const [contextMenu, setContextMenu] = useState<{
@@ -145,9 +145,9 @@ export function TerminalSession({
   /** 打开菜单的锚点元素：再次右键同一锚点时视为「关闭」而非原地重开 */
   const contextMenuAnchorRef = useRef<Element | null>(null);
 
-  const notifyWebglStatus = useCallback(
-    (active: boolean) => {
-      onWebglStatusChangeRef.current?.(sessionId, active);
+  const notifyRendererStatus = useCallback(
+    (kind: 'webgl' | 'canvas2d' | 'dom') => {
+      onRendererStatusChangeRef.current?.(sessionId, kind);
     },
     [sessionId],
   );
@@ -272,9 +272,9 @@ export function TerminalSession({
     webglDeferTimerRef.current = window.setTimeout(() => {
       webglDeferTimerRef.current = null;
       if (!isVisibleRef.current) return;
-      terminalSessionRegistry.ensureWebgl(sessionId, notifyWebglStatus);
+      terminalSessionRegistry.ensureRenderer(sessionId, notifyRendererStatus);
     }, WEBGL_ENSURE_DEFER_MS);
-  }, [clearWebglDeferTimer, notifyWebglStatus, sessionId]);
+  }, [clearWebglDeferTimer, notifyRendererStatus, sessionId]);
 
   const scheduleFitAndResize = useCallback(
     (reason: TerminalResizeReason = 'observer') => {
@@ -454,7 +454,7 @@ export function TerminalSession({
         requestFocus();
         scheduleWebglEnsure();
       } else {
-        notifyWebglStatus(terminalSessionRegistry.isWebglActive(sessionId));
+        notifyRendererStatus(terminalSessionRegistry.getRendererKind(sessionId));
       }
 
       return () => {
@@ -514,6 +514,8 @@ export function TerminalSession({
       term,
       fitAddon,
       webglAddon: null,
+      canvasAddon: null,
+      rendererKind: 'dom',
       searchAddon,
       terminalId: null,
       cwd: cwd ?? '~',
@@ -823,7 +825,7 @@ export function TerminalSession({
     cwd,
     flushTerminalResize,
     hostId,
-    notifyWebglStatus,
+    notifyRendererStatus,
     queueTerminalResize,
     requestFocus,
     scheduleFitAndResize,

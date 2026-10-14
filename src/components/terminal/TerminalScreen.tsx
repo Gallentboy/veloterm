@@ -7,7 +7,7 @@ import {
   Server,
   SquareTerminal,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AskAiErrorChip } from '@/components/ai/AskAiErrorChip';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 import { terminalSessionRegistry } from '@/terminal/terminalSessionRegistry';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
 import type { TerminalSize } from '@/terminal/types';
+import { checkHardwareAcceleration } from '@/terminal/webglSupport';
 
 export interface TerminalScreenProps {
   isVisible?: boolean;
@@ -65,7 +66,7 @@ export function TerminalScreen({
   } = useTerminalStore();
 
   const [sizesBySession, setSizesBySession] = useState<Record<number, TerminalSize>>({});
-  const [webglBySession, setWebglBySession] = useState<Record<number, boolean>>({});
+  const [rendererBySession, setRendererBySession] = useState<Record<number, 'webgl' | 'canvas2d' | 'dom'>>({});
 
   const handleSizeChange = useCallback((sessionId: number, size: TerminalSize) => {
     setSizesBySession((prev) => {
@@ -80,12 +81,12 @@ export function TerminalScreen({
     });
   }, []);
 
-  const handleWebglStatusChange = useCallback((sessionId: number, active: boolean) => {
-    setWebglBySession((prev) => {
-      if (prev[sessionId] === active) return prev;
+  const handleRendererStatusChange = useCallback((sessionId: number, kind: 'webgl' | 'canvas2d' | 'dom') => {
+    setRendererBySession((prev) => {
+      if (prev[sessionId] === kind) return prev;
       return {
         ...prev,
-        [sessionId]: active,
+        [sessionId]: kind,
       };
     });
   }, []);
@@ -195,7 +196,9 @@ export function TerminalScreen({
   ]);
 
   const activeSize = activeSession ? sizesBySession[activeSession.id] : undefined;
-  const isActiveWebgl = activeSession ? Boolean(webglBySession[activeSession.id]) : false;
+  const activeRenderer = activeSession ? (rendererBySession[activeSession.id] ?? 'dom') : 'dom';
+  /** 探测结果带缓存，挂载时读取一次即可；用于 WebGL 徽标 tooltip 展示实际 GPU */
+  const webglRenderer = useMemo(() => checkHardwareAcceleration().renderer, []);
 
   return (
     <section
@@ -285,9 +288,15 @@ export function TerminalScreen({
 
         {/* 右侧状态与辅助动作 */}
         <div className="flex shrink-0 items-center gap-1.5">
-          {isActiveWebgl ? (
-            <span className="rounded bg-surface px-1.5 py-0.5 font-mono text-ui-xs text-success select-none">
-              WebGL2
+          {activeRenderer !== 'dom' ? (
+            <span
+              className={cn(
+                'rounded bg-surface px-1.5 py-0.5 font-mono text-ui-xs select-none',
+                activeRenderer === 'webgl' ? 'text-success' : 'text-foreground-subtle',
+              )}
+              title={activeRenderer === 'webgl' ? `WebGL2 硬件加速 · ${webglRenderer}` : 'Canvas 2D 渲染'}
+            >
+              {activeRenderer === 'webgl' ? 'GPU' : '2D'}
             </span>
           ) : null}
           {activeSession?.shellLabel ? (
@@ -415,7 +424,7 @@ export function TerminalScreen({
           onCloseSession={closeSession}
           onShellLabelChange={updateShellLabel}
           onSizeChange={handleSizeChange}
-          onWebglStatusChange={handleWebglStatusChange}
+          onRendererStatusChange={handleRendererStatusChange}
           onExit={handleSessionExit}
         />
       )}
