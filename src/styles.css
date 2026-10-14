@@ -40,6 +40,10 @@
   /* ===== 浅色（Zai Light 光谱）===== */
   --color-background: #f8f8f8;
   --color-background-alt: color-mix(in oklab, var(--color-background) 70%, transparent);
+  /* 无 vibrancy 平台的窗口底座（**必须不透明**）。对齐 ZCode DesktopWindowFrame：
+   * macOS 用半透明 alt 叠原生 vibrancy；Windows / Linux 没有 vibrancy 兜底，
+   * 半透明底色会直接透出桌面。AppShell 按 isMacOS 在 alt / win-alt 之间二选一。 */
+  --color-background-win-alt: #ececee;
   --color-header: #ffffff;
   --color-panel: #ffffff;
   --color-sidebar: #f0f0f0;
@@ -71,6 +75,8 @@
   --color-destructive-foreground: #ffffff;
   --color-tooltip: #f0f0f0;
   --color-tooltip-foreground: #0d0d0d;
+  --color-tooltip-tag: #e6e6e6;
+  --color-tooltip-tag-foreground: #5c5c5c;
 
   /* ===== 终端 16 色（浅色）===== */
   --color-terminal-bg: var(--color-background);
@@ -118,6 +124,7 @@ html[data-platform]:not([data-platform="macos"]):not([data-platform="ios"]) {
 .theme-dark {
   --color-background: #161616;
   --color-background-alt: color-mix(in oklab, #2b2b2b 60%, transparent);
+  --color-background-win-alt: #2b2b2b;
   --color-header: #202020;
   --color-panel: #202020;
   --color-sidebar: #161616;
@@ -149,6 +156,8 @@ html[data-platform]:not([data-platform="macos"]):not([data-platform="ios"]) {
   --color-destructive-foreground: #ffffff;
   --color-tooltip: #2b2b2b;
   --color-tooltip-foreground: #f8f8f8;
+  --color-tooltip-tag: #363636;
+  --color-tooltip-tag-foreground: #adadad;
 
   --color-terminal-bg: var(--color-background);
   --color-terminal-fg: var(--color-foreground);
