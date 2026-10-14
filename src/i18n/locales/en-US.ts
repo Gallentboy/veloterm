@@ -78,6 +78,7 @@ export default {
       copy: 'Copy',
       paste: 'Paste',
       clear: 'Clear',
+      resetZoom: 'Reset zoom',
     },
   },
   files: {
@@ -139,8 +140,10 @@ export default {
     },
     pane: {
       emptyTitle: 'No session on this side',
-      emptyDesc: 'Pick a host tab above or connect a new one; with hosts on both sides, drag files across panes to copy',
+      emptyDesc: 'Drag a host tab above into this side to open it; with hosts on both sides, drag files across panes to copy',
       emptyAction: 'Connect host',
+      exitPane: 'Exit split pane',
+      resetZoom: 'Reset zoom',
     },
     drag: {
       unsupportedDir: 'Dragging folders is not supported yet — compress first or drag files individually',

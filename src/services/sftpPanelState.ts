@@ -16,6 +16,8 @@ export interface SftpSessionDescriptor {
   id: number;
   hostId: number;
   hostName: string;
+  /** 双击 Tab 重命名后的自定义标题（空则展示 hostName） */
+  customTitle?: string;
   currentPath: string;
   createdAt: number;
 }
@@ -86,6 +88,29 @@ export function updateSftpSessionPath(
       [sessionId]: {
         ...session,
         currentPath: path,
+      },
+    },
+  };
+}
+
+/** 双击 Tab 重命名：写入 customTitle（null 清除，回退展示 hostName） */
+export function renameSftpSession(
+  state: SftpPanelState,
+  sessionId: number,
+  customTitle: string | null,
+): SftpPanelState {
+  const session = state.sessions[sessionId];
+  const nextTitle = customTitle ?? undefined;
+  if (!session || session.customTitle === nextTitle) {
+    return state;
+  }
+  return {
+    ...state,
+    sessions: {
+      ...state.sessions,
+      [sessionId]: {
+        ...session,
+        customTitle: nextTitle,
       },
     },
   };
@@ -191,6 +216,10 @@ export function readStoredSftpPanelState(): SftpPanelState {
         id: numericId,
         hostId: typeof item.hostId === 'number' ? item.hostId : 0,
         hostName: typeof item.hostName === 'string' ? item.hostName : 'SFTP',
+        customTitle:
+          typeof item.customTitle === 'string' && item.customTitle.trim()
+            ? item.customTitle
+            : undefined,
         currentPath: typeof item.currentPath === 'string' ? item.currentPath : '/',
         createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now(),
       };

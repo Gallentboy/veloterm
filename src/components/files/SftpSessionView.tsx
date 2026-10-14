@@ -14,7 +14,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
@@ -151,6 +151,12 @@ function formatModifiedTime(timestampSec: number): string {
 /** 面板间拖拽复制的自定义 MIME 载荷标识 */
 const SFTP_DRAG_MIME = 'application/x-veloterm-sftp';
 
+/** SFTP 字体缩放范围（无级平滑，倍率作用于 --ui-font-size 基准 14px） */
+const SFTP_FONT_SCALE_MIN = 0.5;
+const SFTP_FONT_SCALE_MAX = 1.5;
+/** 与 styles.css :root 的 --ui-font-size 基准一致 */
+const UI_FONT_BASE_PX = 14;
+
 /** 拖拽载荷：源面板会话 + 被拖拽条目信息 */
 interface SftpDragPayload {
   sessionId: string;
@@ -170,7 +176,14 @@ function TransferTaskRow({ task }: { task: TransferTask }) {
   const { t } = useTranslation();
 
   return (
-    <div className="@container flex h-8 items-center gap-3 rounded-md border border-border/50 bg-background/90 px-3 text-ui-xs shadow-xs">
+    <div
+      className={cn(
+        '@container flex h-8 items-center gap-3 rounded-md border border-border/50 bg-background/90 px-3 text-ui-xs shadow-xs',
+        // 完成后 2s 由队列标记 dismissing：淡出 + 轻微缩小，动画播完由队列移除
+        'transition-[opacity,transform] duration-300 ease-out',
+        task.dismissing && 'pointer-events-none scale-[0.98] opacity-0',
+      )}
+    >
       <div className="flex min-w-0 flex-1 items-center gap-2">
         {task.direction === 'copy' ? (
           <ArrowLeftRight className="size-3.5 shrink-0 text-primary" />
@@ -194,18 +207,18 @@ function TransferTaskRow({ task }: { task: TransferTask }) {
             {task.error}
           </span>
         ) : (
-          <span className="hidden shrink-0 whitespace-nowrap font-mono text-[11px] text-foreground-subtle @min-[24rem]:inline">
+          <span className="hidden shrink-0 whitespace-nowrap font-mono text-ui-xs text-foreground-subtle @min-[24rem]:inline">
             {formatBytesCompact(task.transferred)}/{formatBytesCompact(task.totalBytes)}
           </span>
         )}
 
         {task.status === 'active' && task.speedBps > 0 && (
-          <span className="hidden w-14 shrink-0 whitespace-nowrap text-right font-mono text-[10px] text-foreground-subtlest @min-[30rem]:inline">
+          <span className="hidden w-14 shrink-0 whitespace-nowrap text-right font-mono text-ui-xs text-foreground-subtlest @min-[30rem]:inline">
             {formatSpeed(task.speedBps)}
           </span>
         )}
         {task.status === 'queued' && (
-          <span className="hidden w-14 shrink-0 whitespace-nowrap text-right text-[10px] text-foreground-subtlest @min-[30rem]:inline">
+          <span className="hidden w-14 shrink-0 whitespace-nowrap text-right text-ui-xs text-foreground-subtlest @min-[30rem]:inline">
             {t('files.transfer.queued')}
           </span>
         )}
@@ -227,7 +240,7 @@ function TransferTaskRow({ task }: { task: TransferTask }) {
             style={{ width: `${task.percent}%` }}
           />
         </div>
-        <span className="w-10 text-right font-mono text-[11px] font-medium">
+        <span className="w-10 text-right font-mono text-ui-xs font-medium">
           {task.percent.toFixed(0)}%
         </span>
         {task.status === 'active' || task.status === 'queued' ? (
@@ -252,7 +265,7 @@ function TransferTaskRow({ task }: { task: TransferTask }) {
             <RotateCw className="size-3 text-primary" />
           </Button>
         ) : (
-          <span className="text-[10px] text-success">✓</span>
+          <span className="text-ui-xs text-success">✓</span>
         )}
       </div>
     </div>
@@ -291,6 +304,82 @@ export function SftpSessionView({
   // 是否正被拖拽悬停（作为放置目标时的高亮态）
   const [isDropTarget, setIsDropTarget] = useState<boolean>(false);
 
+  // ── 字体大小调节（每个 SFTP 会话独立，关闭 Tab 即复位，不持久化）──
+  // 触发方式借用 Chrome 两指捏合手势：WebKit(WKWebView) 的 gesture 事件 + Chrome 合成的 ctrl+滚轮；
+  // 应用方式为在面板根覆盖 --ui-font-size，面板内全部 text-ui-* 文字随动（图标/间距不变）
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [fontScale, setFontScale] = useState(1);
+  const fontScaleRef = useRef(1);
+  const gestureStartScaleRef = useRef(1);
+  const [fontBadgeVisible, setFontBadgeVisible] = useState(false);
+  const fontBadgeTimerRef = useRef<number | null>(null);
+  // 右键菜单：提供「重置缩放」（与 Tab 右键菜单同款 ZCode 风格）
+  const [paneMenu, setPaneMenu] = useState<{ x: number; y: number } | null>(null);
+
+  const applyFontScale = useCallback((nextScale: number) => {
+    const clamped = Math.min(SFTP_FONT_SCALE_MAX, Math.max(SFTP_FONT_SCALE_MIN, nextScale));
+    fontScaleRef.current = clamped;
+    setFontScale(clamped);
+    setFontBadgeVisible(true);
+    if (fontBadgeTimerRef.current !== null) {
+      window.clearTimeout(fontBadgeTimerRef.current);
+    }
+    fontBadgeTimerRef.current = window.setTimeout(() => setFontBadgeVisible(false), 1000);
+  }, []);
+
+  useEffect(() => {
+    const element = rootRef.current;
+    if (!element) return;
+    // Chrome 两指捏合/外接鼠标 ctrl+滚轮：合成 ctrlKey wheel，指数累积平滑无级
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      applyFontScale(fontScaleRef.current * Math.exp(-event.deltaY * 0.002));
+    };
+    // WebKit(WKWebView) 两指捏合：gesture 事件携带累计 scale，以手势起点为基准缩放
+    const onGestureStart = (event: Event) => {
+      event.preventDefault();
+      gestureStartScaleRef.current = fontScaleRef.current;
+    };
+    const onGestureChange = (event: Event) => {
+      event.preventDefault();
+      const scale = (event as unknown as { scale?: number }).scale ?? 1;
+      applyFontScale(gestureStartScaleRef.current * scale);
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    element.addEventListener('gesturestart', onGestureStart);
+    element.addEventListener('gesturechange', onGestureChange);
+    return () => {
+      element.removeEventListener('wheel', onWheel);
+      element.removeEventListener('gesturestart', onGestureStart);
+      element.removeEventListener('gesturechange', onGestureChange);
+      if (fontBadgeTimerRef.current !== null) {
+        window.clearTimeout(fontBadgeTimerRef.current);
+      }
+    };
+  }, [applyFontScale]);
+
+  // 右键菜单关闭：点击任意处 / Escape（与终端右键菜单同款交互）
+  useEffect(() => {
+    if (!paneMenu) return;
+    const close = () => setPaneMenu(null);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [paneMenu]);
+
+  // onPathChange 经 ref 稳定引用：父组件（FilesScreen）每次重渲染传入的都是新的内联回调，
+  // 若进入 loadDirectory 依赖数组，拖分栏/聚焦切换/任何重渲染都会重建 loadDirectory，
+  // 触发下方加载 effect 重跑并真实刷新远端目录列表（表现为文件列表闪刷）
+  const onPathChangeRef = useRef(onPathChange);
+  onPathChangeRef.current = onPathChange;
+
   // 刷新当前路径目录
   const loadDirectory = useCallback(
     async (path: string) => {
@@ -302,20 +391,22 @@ export function SftpSessionView({
         setItems(files);
         setCurrentPath(path);
         setPathInput(path);
-        onPathChange?.(path);
+        onPathChangeRef.current?.(path);
       } catch (err) {
         setError(String(err));
       } finally {
         setIsLoading(false);
       }
     },
-    [sessionId, onPathChange],
+    [sessionId],
   );
 
-  // 初次加载挂载
+  // 仅挂载（会话实例首次出现）时按初始路径加载一次：
+  // initialPath 的后续变化都是本组件 onPathChange 回写到 store 的回声，不应触发重新拉取
   useEffect(() => {
     void loadDirectory(initialPath || '/');
-  }, [initialPath, loadDirectory]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅按会话挂载加载一次；导航由内部 handleNavigate/refresh 驱动
+  }, [sessionId]);
 
   // 面包屑分段
   const breadcrumbs = useMemo(() => {
@@ -476,14 +567,38 @@ export function SftpSessionView({
   );
   const transferSettings = useTransferSettings();
 
+  // 缩放后的字号 token 覆盖表：--text-ui-* 在 :root(@theme) 已把 calc 解析为定值并按定值继承，
+  // 子树覆盖 --ui-font-size 无效；必须直接覆盖最终 token，面板内全部 text-ui-* 文字才会随倍率变化
+  const scaledFontSize = (deltaPx: number) =>
+    `${(UI_FONT_BASE_PX * fontScale + deltaPx).toFixed(2)}px`;
+  const fontScaleStyle = {
+    '--text-ui-xl': scaledFontSize(4),
+    '--text-ui-lg': scaledFontSize(2),
+    '--text-ui-base': scaledFontSize(0),
+    '--text-ui-caption': scaledFontSize(-1),
+    '--text-ui-sm': scaledFontSize(-2),
+    '--text-ui-xs': scaledFontSize(-4),
+  } as CSSProperties;
+
   return (
     <div
+      ref={rootRef}
       onPointerDownCapture={() => onPaneFocus?.()}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        // 视口边缘锥制，避免菜单溢出屏幕
+        setPaneMenu({
+          x: Math.min(event.clientX, window.innerWidth - 180),
+          y: Math.min(event.clientY, window.innerHeight - 120),
+        });
+      }}
+      style={fontScaleStyle}
       className={cn(
-        'relative flex h-full min-h-0 flex-col overflow-hidden bg-background',
+        // 面板底色 = ZCode 对话输入栏同款 --color-input（浅色 #ffffff / 深色 #2b2b2b，随主题切换）
+        'relative flex h-full min-h-0 flex-col overflow-hidden bg-input',
         isDropTarget && 'ring-2 ring-primary/50 ring-inset',
       )}
     >
@@ -533,7 +648,7 @@ export function SftpSessionView({
               value={pathInput}
               onChange={(e) => setPathInput(e.target.value)}
               placeholder="/"
-              className="w-full rounded-md border border-border/60 bg-surface/30 px-2.5 py-1 font-mono text-ui-xs text-foreground outline-none focus:border-primary/60"
+              className="select-text w-full rounded-md border border-border/60 bg-surface/30 px-2.5 py-1 font-mono text-ui-xs text-foreground outline-none focus:border-primary/60"
             />
           </form>
 
@@ -598,7 +713,7 @@ export function SftpSessionView({
           </div>
         ) : (
           <table className="w-full border-collapse text-left text-ui-xs">
-            <thead className="sticky top-0 bg-background/95 backdrop-blur-xs border-b border-border/50 text-foreground-subtle select-none z-10">
+            <thead className="sticky top-0 bg-input/95 backdrop-blur-xs border-b border-border/50 text-foreground-subtle select-none z-10">
               <tr>
                 <th className="py-2 pl-4 pr-2 font-medium">{t('files.name')}</th>
                 <th className="py-2 px-2 font-medium w-24">{t('files.size')}</th>
@@ -769,7 +884,7 @@ export function SftpSessionView({
                       maxConcurrent: Math.max(1, Math.min(8, Number(e.target.value) || 3)),
                     })
                   }
-                  className="h-5 w-10 rounded border border-border bg-input px-1 text-center font-mono text-ui-xs outline-none focus:border-border-hover"
+                  className="select-text h-5 w-10 rounded border border-border bg-input px-1 text-center font-mono text-ui-xs outline-none focus:border-border-hover"
                 />
               </label>
               <label className="flex items-center gap-1">
@@ -784,7 +899,7 @@ export function SftpSessionView({
                       speedLimitBps: Math.max(0, Number(e.target.value) || 0) * 1024,
                     })
                   }
-                  className="h-5 w-16 rounded border border-border bg-input px-1 text-center font-mono text-ui-xs outline-none focus:border-border-hover"
+                  className="select-text h-5 w-16 rounded border border-border bg-input px-1 text-center font-mono text-ui-xs outline-none focus:border-border-hover"
                 />
                 <span>KB/s</span>
               </label>
@@ -853,6 +968,47 @@ export function SftpSessionView({
           </div>
         </div>
       )}
+
+      {/* 字体倍率气泡（Chrome 同款反馈）：捏合/ctrl+滚轮时短暂显示当前百分比 */}
+      <div
+        aria-hidden={!fontBadgeVisible}
+        className={cn(
+          'pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full border border-border bg-menu px-2.5 py-0.5 font-mono text-ui-xs text-foreground shadow-md transition-opacity duration-200',
+          fontBadgeVisible ? 'opacity-100' : 'opacity-0',
+        )}
+      >
+        {Math.round(fontScale * 100)}%
+      </div>
+
+      {/* 文件面板右键菜单（ZCode 风格）：重置缩放 */}
+      {paneMenu ? (
+        <div
+          role="menu"
+          style={{ left: paneMenu.x, top: paneMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+          className="fixed z-50 min-w-36 overflow-hidden rounded-lg border border-border bg-menu p-1 text-ui-sm text-foreground shadow-lg"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            disabled={fontScale === 1}
+            onClick={() => {
+              setPaneMenu(null);
+              applyFontScale(1);
+            }}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors',
+              fontScale === 1 ? 'cursor-not-allowed opacity-40' : 'hover:bg-menu-hover',
+            )}
+          >
+            <RotateCw className="size-3.5" />
+            <span>{t('files.pane.resetZoom')}</span>
+            <span className="ml-auto font-mono text-ui-xs text-foreground-subtlest">
+              {Math.round(fontScale * 100)}%
+            </span>
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

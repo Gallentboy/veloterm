@@ -78,6 +78,7 @@ export default {
       copy: '复制',
       paste: '粘贴',
       clear: '清屏',
+      resetZoom: '重置缩放',
     },
   },
   files: {
@@ -139,8 +140,10 @@ export default {
     },
     pane: {
       emptyTitle: '此侧未打开会话',
-      emptyDesc: '点击上方主机 Tab 或新建连接；两侧打开主机后，左右拖拽文件即可互拷',
+      emptyDesc: '把上方主机 Tab 拖入本侧即可打开；两侧都有主机后，左右拖拽文件即可互拷',
       emptyAction: '连接主机',
+      exitPane: '退出分栏',
+      resetZoom: '重置缩放',
     },
     drag: {
       unsupportedDir: '暂不支持拖拽复制文件夹，请先压缩或逐个拖拽文件',
