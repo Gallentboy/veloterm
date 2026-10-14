@@ -22,6 +22,7 @@ dist/
 .agents/
 .claude/
 .workbuddy/
+.workbuddy-ai/
 .cursor/
 .kilo/
 .codex/

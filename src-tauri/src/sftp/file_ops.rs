@@ -44,6 +44,21 @@ pub(crate) fn sibling_temp_path(remote_path: &str) -> String {
   }
 }
 
+/// 提取远端 POSIX 路径的所在目录（纯字符串处理）。
+///
+/// SFTP 远端路径恒以 `/` 分隔，**不能**用 `std::path::Path::parent()`——
+/// 那会按**宿主平台**语义解析（Windows 上是 `\`），语义错位。
+/// - `/a.txt` → `Some("/")`
+/// - `/a/b.txt` → `Some("/a")`
+/// - `a.txt`（相对路径，无目录部分）→ `None`
+pub(crate) fn remote_dir_of(remote_path: &str) -> Option<&str> {
+  match remote_path.rsplit_once('/') {
+    Some(("", _)) => Some("/"),
+    Some((dir, _)) => Some(dir),
+    None => None,
+  }
+}
+
 /// 将临时文件 rename 覆盖目标：SFTP v3 rename 在目标已存在时会被部分服务器
 /// （如 OpenSSH sftp-server）拒绝，此时回退为「删除目标后再 rename」；
 /// 二次 rename 仍失败则删除临时文件并返回错误。

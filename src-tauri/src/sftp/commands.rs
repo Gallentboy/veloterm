@@ -4,7 +4,7 @@ use tauri::ipc::Channel;
 use tauri::State;
 use tokio::io::AsyncSeekExt;
 
-use super::file_ops::{commit_temp_file, sibling_temp_path};
+use super::file_ops::{commit_temp_file, remote_dir_of, sibling_temp_path};
 use super::manager::{close_sftp, evict_sftp_session, get_or_connect_sftp, register_temp_dir, resolve_host_chain, connect_sftp};
 use super::transfer::{
   evict_decision, pump_stream, resolve_resume_offset, ProgressTracker, PumpError, PumpOptions,
@@ -372,7 +372,7 @@ pub async fn sftp_upload_file(
   // 失败/取消时保留临时文件作为断点，重试携带 resume_offset 续传
   let temp_path = sibling_temp_path(&remote_path);
   // 登记断点所在目录：重连时据此扫描清理超龄孤儿断点（>1 天）
-  if let Some(dir) = std::path::Path::new(&remote_path).parent().and_then(|p| p.to_str()) {
+  if let Some(dir) = remote_dir_of(&remote_path) {
     register_temp_dir(&state, &session_id, dir).await;
   }
   let temp_len = client
@@ -563,7 +563,7 @@ pub async fn sftp_copy_file(
   // 目标侧写同目录临时文件；断点续传取「上报值与现存临时长度」的较小值
   let temp_path = sibling_temp_path(&target_path);
   // 登记断点所在目录：重连时据此扫描清理超龄孤儿断点（>1 天）
-  if let Some(dir) = std::path::Path::new(&target_path).parent().and_then(|p| p.to_str()) {
+  if let Some(dir) = remote_dir_of(&target_path) {
     register_temp_dir(&state, &target_session_id, dir).await;
   }
   let temp_len = target_client
