@@ -163,13 +163,21 @@ pub async fn get_or_connect_sftp(
       }
     }
     log::info!("[SFTP] Connecting on-demand for host_id={host_id} (session_id={session_id})");
+    state.emit_sftp(crate::lifecycle::LifecycleKind::Connecting, session_id, "", None);
     let started = std::time::Instant::now();
     let chain = resolve_host_chain(host_id)?;
-    let client = connect_sftp(chain).await?;
+    let client = match connect_sftp(chain).await {
+      Ok(c) => c,
+      Err(e) => {
+        state.emit_sftp(crate::lifecycle::LifecycleKind::Failed, session_id, "", Some(&e));
+        return Err(e);
+      }
+    };
     log::info!(
       "[SFTP] Connected on-demand for host_id={host_id} in {}ms",
       started.elapsed().as_millis()
     );
+    state.emit_sftp(crate::lifecycle::LifecycleKind::Connected, session_id, "", None);
     let mut clients = state.clients.lock().await;
     clients.insert(session_id.to_string(), Arc::clone(&client));
     // 新建（含断线重连）成功后，顺带清理该会话超龄的孤儿断点临时文件
@@ -183,10 +191,11 @@ pub async fn get_or_connect_sftp(
 }
 
 pub async fn close_sftp(state: &SftpState, session_id: &str) -> Result<(), String> {
-  let mut clients = state.clients.lock().await;
-  if let Some(client) = clients.remove(session_id) {
+  let client = state.clients.lock().await.remove(session_id);
+  if let Some(client) = client {
     let _ = client.close().await;
     log::info!("[SFTP] Closed session {session_id}");
+    state.emit_sftp(crate::lifecycle::LifecycleKind::Disconnected, session_id, "", None);
   }
   Ok(())
 }

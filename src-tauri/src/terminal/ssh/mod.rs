@@ -7,6 +7,10 @@ pub mod handler;
 pub mod keys;
 pub mod known_hosts;
 
+use crate::lifecycle::{
+  emit_ssh_lifecycle, DisconnectReason, LifecycleEmitter, LifecycleKind,
+};
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -41,6 +45,8 @@ impl SshTerminalSession {
     on_output: Channel<Vec<u8>>,
     on_exit: Channel<i32>,
     on_session_closed: F,
+    lifecycle: Option<std::sync::Arc<dyn LifecycleEmitter>>,
+    lifecycle_host_id: Option<usize>,
   ) -> Result<(Arc<Self>, TerminalCreateResult), String>
   where
     F: FnOnce(usize) + Send + 'static,
@@ -94,13 +100,37 @@ impl SshTerminalSession {
     let relay_command_tx = command_tx;
     let default_verification_mode = target.host_key_verification;
     let display_target = format!("{}@{}:{}", target.username, target.host, target.port);
+    let lifecycle_target_host = target.host.clone();
+    let lifecycle_target_port = target.port;
+    let lifecycle_target_user = target.username.clone();
+    // host_id 由 manager 层解析后传入（TargetSSHOptions 自身无此字段）
+    let lifecycle_host_id = lifecycle_host_id;
 
     tokio::spawn(async move {
       let mut exit_code: i32 = 0;
+      // shell-ready 只发一次：首次收到 Output 时标记
+      let mut shell_ready_emitted = false;
+      // 生命周期便捷发射（emitter 为 None 时静默跳过）
+      let emit = |kind: LifecycleKind, error: Option<&str>, reason: Option<DisconnectReason>| {
+        if let Some(ref emitter) = lifecycle {
+          emit_ssh_lifecycle(
+            emitter.as_ref(),
+            kind,
+            id,
+            lifecycle_host_id,
+            &lifecycle_target_host,
+            lifecycle_target_port,
+            Some(&lifecycle_target_user),
+            error,
+            reason,
+          );
+        }
+      };
 
       while let Some(event) = event_rx.recv().await {
         match event {
           RCEvent::State(RCState::Connecting) => {
+            emit(LifecycleKind::Connecting, None, None);
             let msg = format!(
               "\x1b[90m[SSH] Connecting to {}...\x1b[0m\r\n",
               display_target
@@ -112,6 +142,7 @@ impl SshTerminalSession {
             let _ = on_output.send(msg);
           }
           RCEvent::State(RCState::Connected) => {
+            emit(LifecycleKind::Connected, None, None);
             log::info!(
               "[SshTerminalSession {}] connected to {}",
               id,
@@ -119,6 +150,10 @@ impl SshTerminalSession {
             );
           }
           RCEvent::Output(channel_id, data) if channel_id == shell_channel_id => {
+            if !shell_ready_emitted {
+              shell_ready_emitted = true;
+              emit(LifecycleKind::ShellReady, None, None);
+            }
             if on_output.send(data.to_vec()).is_err() {
               break;
             }
@@ -197,11 +232,13 @@ impl SshTerminalSession {
           }
           RCEvent::ConnectionError(err) => {
             exit_code = 1;
+            emit(LifecycleKind::Failed, Some(&err.to_string()), None);
             let msg = format!("\r\n\x1b[1;31m[SSH Connection Error]\x1b[0m {err}\r\n");
             let _ = on_output.send(msg.into_bytes());
           }
           RCEvent::Error(err) => {
             exit_code = 1;
+            emit(LifecycleKind::Failed, Some(&err.to_string()), None);
             let msg = format!("\r\n\x1b[1;31m[SSH Error]\x1b[0m {err}\r\n");
             let _ = on_output.send(msg.into_bytes());
           }
@@ -211,6 +248,13 @@ impl SshTerminalSession {
       }
 
       on_session_closed(id);
+      // 断开事件：用户主动关闭 → user；其他（网络中断、服务端关闭）→ network
+      let reason = if relay_closed_flag.load(Ordering::SeqCst) {
+        DisconnectReason::User
+      } else {
+        DisconnectReason::Network
+      };
+      emit(LifecycleKind::Disconnected, None, Some(reason));
       if !relay_closed_flag.load(Ordering::SeqCst) {
         let _ = on_exit.send(exit_code);
       }

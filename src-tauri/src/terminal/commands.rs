@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 use tauri::ipc::Channel;
 
 use super::manager::TerminalManager;
@@ -7,12 +7,13 @@ use super::ssh::{KnownHostEntry, KnownHosts};
 
 #[tauri::command]
 pub async fn terminal_create(
+  app: AppHandle,
   manager: State<'_, TerminalManager>,
   request: TerminalCreateRequest,
   on_output: Channel<Vec<u8>>,
   on_exit: Channel<i32>,
 ) -> Result<TerminalCreateResult, String> {
-  manager.create(request, on_output, on_exit)
+  manager.create(request, on_output, on_exit, app)
 }
 
 #[tauri::command]

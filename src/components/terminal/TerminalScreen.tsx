@@ -8,7 +8,7 @@ import {
   Server,
   SquareTerminal,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AskAiErrorChip } from '@/components/ai/AskAiErrorChip';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
@@ -70,92 +70,6 @@ export function TerminalScreen({
 
   const [sizesBySession, setSizesBySession] = useState<Record<number, TerminalSize>>({});
   const [rendererBySession, setRendererBySession] = useState<Record<number, 'webgl' | 'canvas2d' | 'dom'>>({});
-
-  // ── 新建终端下拉菜单（命令面板风格：↑↓ 导航 + Enter 选中 + Esc 关闭）──
-  const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
-  const [newMenuIndex, setNewMenuIndex] = useState(0);
-  const newMenuRef = useRef<HTMLDivElement>(null);
-  const newMenuTriggerRef = useRef<HTMLDivElement>(null);
-  const newMenuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
-
-  // 菜单选项：本地终端 + 远程主机，按顺序展平供键盘导航
-  const newMenuItems = useMemo(() => {
-    const items: Array<{ key: string; label: string; sub?: string; icon: 'local' | 'remote'; hostId?: number }> = [
-      { key: 'local', label: '新建本地终端', sub: '⌘T', icon: 'local' },
-    ];
-    for (const host of hosts) {
-      items.push({
-        key: `host-${host.id}`,
-        label: host.name,
-        sub: `${host.username}@${host.host}`,
-        icon: 'remote',
-        hostId: host.id,
-      });
-    }
-    return items;
-  }, [hosts]);
-
-  const executeNewMenuItem = useCallback(
-    (index: number) => {
-      const item = newMenuItems[index];
-      if (!item) return;
-      setIsNewMenuOpen(false);
-      setNewMenuIndex(0);
-      if (item.hostId != null) {
-        const host = hosts.find((h) => h.id === item.hostId);
-        if (host) {
-          createSession({ hostId: host.id, customTitle: host.name });
-        }
-      } else {
-        createSession();
-      }
-    },
-    [createSession, hosts, newMenuItems],
-  );
-
-  // 菜单打开/索引变化时，把焦点移到当前选中项——键盘事件从菜单项发出而非终端 textarea，
-  // Tab/↑↓ 自然走菜单路径，不被 xterm 或 WKWebView 原生键盘处理截获
-  useEffect(() => {
-    if (!isNewMenuOpen) return;
-    newMenuItemRefs.current[newMenuIndex]?.focus();
-  }, [isNewMenuOpen, newMenuIndex]);
-
-  // 键盘导航兜底（菜单项自身已持有焦点，这里捕获阶段监听处理 ↑↓/Tab/Enter/Esc）
-  useEffect(() => {
-    if (!isNewMenuOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
-        event.preventDefault();
-        setNewMenuIndex((i) => (i + 1) % newMenuItems.length);
-      } else if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
-        event.preventDefault();
-        setNewMenuIndex((i) => (i - 1 + newMenuItems.length) % newMenuItems.length);
-      } else if (event.key === 'Enter' && !(event as KeyboardEvent & { isComposing?: boolean }).isComposing) {
-        event.preventDefault();
-        executeNewMenuItem(newMenuIndex);
-      } else if (event.key === 'Escape') {
-        event.preventDefault();
-        setIsNewMenuOpen(false);
-        setNewMenuIndex(0);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [executeNewMenuItem, isNewMenuOpen, newMenuIndex, newMenuItems.length]);
-
-  // 点击外部关闭
-  useEffect(() => {
-    if (!isNewMenuOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!newMenuRef.current?.contains(target) && !newMenuTriggerRef.current?.contains(target)) {
-        setIsNewMenuOpen(false);
-        setNewMenuIndex(0);
-      }
-    };
-    window.addEventListener('pointerdown', onPointerDown);
-    return () => window.removeEventListener('pointerdown', onPointerDown);
-  }, [isNewMenuOpen]);
 
   const handleSizeChange = useCallback((sessionId: number, size: TerminalSize) => {
     setSizesBySession((prev) => {
@@ -322,73 +236,55 @@ export function TerminalScreen({
             </span>
           )}
 
-          {/* 新建终端 Tab 按钮：命令菜单式下拉（↑↓ 导航 + Enter 选中 + Esc 关闭） */}
+          {/* 新建终端 Tab 按钮（支持本地终端或快捷连接远程主机） */}
           {sessions.length > 0 && (
             <div className="relative inline-flex items-center shrink-0">
-              <ControlHintTooltip
-                title={hosts.length > 0 ? '新建终端 / 连接主机 (⌘T)' : '新建终端 (⌘T)'}
-                side="bottom"
-              >
-                <div ref={newMenuTriggerRef} className="relative flex items-center justify-center">
+              <ControlHintTooltip title="新建终端 (⌘T)" side="bottom">
+                <div className="relative flex items-center justify-center">
                   <Button
                     type="button"
                     size="icon-xs"
                     variant="ghost"
                     className="h-7 w-7 rounded-lg text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
-                    onClick={() => {
-                      if (hosts.length > 0) {
-                        setNewMenuIndex(0);
-                        setIsNewMenuOpen((open) => !open);
-                      } else {
-                        createSession();
-                      }
-                    }}
+                    onClick={() => createSession()}
                     aria-label="新建终端"
-                    aria-expanded={isNewMenuOpen}
                   >
                     <Plus className="size-3.5" />
                   </Button>
+                  {hosts.length > 0 && (
+                    <select
+                      id="new-terminal-session-select"
+                      aria-label="新建终端或连接主机"
+                      value=""
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === 'local') {
+                          createSession();
+                        } else {
+                          const hostId = Number(val);
+                          const host = hosts.find((h) => h.id === hostId);
+                          if (host) {
+                            createSession({ hostId: host.id, customTitle: host.name });
+                          }
+                        }
+                      }}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer text-xs"
+                    >
+                      <option value="" disabled>
+                        新建终端...
+                      </option>
+                      <option value="local">💻 新建本地终端</option>
+                      <optgroup label="远程主机连接">
+                        {hosts.map((host) => (
+                          <option key={host.id} value={host.id}>
+                            🖥️ {host.name} ({host.username}@{host.host})
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  )}
                 </div>
               </ControlHintTooltip>
-
-              {/* 命令菜单弹层 */}
-              {isNewMenuOpen ? (
-                <div
-                  ref={newMenuRef}
-                  role="menu"
-                  aria-label="新建终端或连接主机"
-                  className="absolute top-full left-0 z-50 mt-1 min-w-56 max-h-64 overflow-y-auto rounded-lg border border-border bg-menu p-1 shadow-lg"
-                >
-                  {newMenuItems.map((item, index) => {
-                    const isActive = index === newMenuIndex;
-                    return (
-                      <button
-                        key={item.key}
-                        ref={(el) => { newMenuItemRefs.current[index] = el; }}
-                        type="button"
-                        role="menuitem"
-                        tabIndex={isActive ? 0 : -1}
-                        onClick={() => executeNewMenuItem(index)}
-                        onMouseEnter={() => setNewMenuIndex(index)}
-                        className={cn(
-                          'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left outline-none transition-colors',
-                          isActive ? 'bg-hover text-foreground' : 'text-foreground-subtle hover:text-foreground',
-                        )}
-                      >
-                        {item.icon === 'local' ? (
-                          <SquareTerminal className="size-3.5 shrink-0 text-primary" />
-                        ) : (
-                          <Server className="size-3.5 shrink-0 text-foreground-subtle" />
-                        )}
-                        <span className="min-w-0 flex-1 truncate text-ui-sm font-medium">{item.label}</span>
-                        {item.sub ? (
-                          <span className="shrink-0 font-mono text-ui-xs text-foreground-subtlest">{item.sub}</span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
             </div>
           )}
         </div>

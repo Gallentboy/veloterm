@@ -35,6 +35,7 @@ impl TerminalManager {
     request: TerminalCreateRequest,
     on_output: Channel<Vec<u8>>,
     on_exit: Channel<i32>,
+    app: tauri::AppHandle,
   ) -> Result<TerminalCreateResult, String> {
     let id = self.counter.next();
     let target = request.resolve_target();
@@ -178,6 +179,8 @@ impl TerminalManager {
               map.remove(&closed_id);
             }
           },
+          Some(std::sync::Arc::new(app)),
+          host_id,
         )?;
 
         let mut map = self
