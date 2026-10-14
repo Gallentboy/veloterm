@@ -34,7 +34,22 @@ fn is_executable_file(path: &Path) -> bool {
     }
     false
   }
-  #[cfg(not(unix))]
+  #[cfg(windows)]
+  {
+    // Windows 没有 Unix 的「可执行位」，改按 `PATHEXT` 判定扩展名；
+    // 无扩展名（如 Git for Windows 的 `bash`）保守放行，避免误判为不可用。
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+      return true;
+    };
+    let ext = format!(".{}", ext.to_ascii_lowercase());
+    env::var("PATHEXT")
+      .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+      .split(';')
+      .map(str::trim)
+      .filter(|entry| !entry.is_empty())
+      .any(|entry| entry.eq_ignore_ascii_case(&ext))
+  }
+  #[cfg(not(any(unix, windows)))]
   {
     true
   }

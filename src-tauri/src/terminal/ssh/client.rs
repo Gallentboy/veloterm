@@ -1001,39 +1001,40 @@ impl Connector {
       SSHTargetAuth::Agent => {
         let best_hash = session.best_supported_rsa_hash().await?.flatten();
 
+        // 本地 SSH Agent：Unix 走 SSH_AUTH_SOCK 域套接字，Windows 走 OpenSSH 命名管道。
         #[cfg(unix)]
         {
           if let Ok(sock_path) = std::env::var("SSH_AUTH_SOCK")
             && !sock_path.trim().is_empty()
             && let Ok(stream) = tokio::net::UnixStream::connect(&sock_path).await
           {
-            let mut agent = russh::keys::agent::client::AgentClient::connect(stream);
-            if let Ok(identities) = agent.request_identities().await {
-              for identity in identities {
-                if let Ok(response) = session
-                  .authenticate_publickey_with(
-                    username.to_string(),
-                    identity.public_key().into_owned(),
-                    best_hash,
-                    &mut agent,
-                  )
-                  .await
-                {
-                  auth_result = self
-                    ._handle_auth_result(session, username.to_string(), None, response)
-                    .await
-                    .unwrap_or(false);
-                  if auth_result {
-                    log::info!(
-                      "[SSH {}] Authenticated via local ssh-agent as {}",
-                      self.id,
-                      username
-                    );
-                    break;
-                  }
-                }
-              }
-            }
+            auth_result = self
+              ._authenticate_with_local_agent(
+                session,
+                russh::keys::agent::client::AgentClient::connect(stream),
+                username,
+                best_hash,
+              )
+              .await;
+          }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+          // Windows OpenSSH Agent（ssh-agent 服务）固定监听该命名管道；
+          // 未安装/未启动时 open 失败，静默回退到 ~/.ssh 默认密钥。
+          if !auth_result
+            && let Ok(stream) = tokio::net::windows::named_pipe::ClientOptions::new()
+              .open(r"\\.\pipe\openssh-ssh-agent")
+          {
+            auth_result = self
+              ._authenticate_with_local_agent(
+                session,
+                russh::keys::agent::client::AgentClient::connect(stream),
+                username,
+                best_hash,
+              )
+              .await;
           }
         }
 
@@ -1084,6 +1085,58 @@ impl Connector {
     }
 
     Ok(())
+  }
+
+  /// 用本地 SSH Agent 中的身份列表逐个尝试公钥认证。
+  ///
+  /// 泛型 `S` 让同一段逻辑同时服务两种传输：
+  /// - Unix：`SSH_AUTH_SOCK` 指向的 domain socket（`tokio::net::UnixStream`）；
+  /// - Windows：OpenSSH Agent 的命名管道（`\\.\pipe\openssh-ssh-agent`）。
+  ///
+  /// 命中即返回 `true`；全部失败返回 `false`，由调用方继续回退其它认证方式。
+  #[cfg(any(unix, target_os = "windows"))]
+  async fn _authenticate_with_local_agent<S>(
+    &self,
+    session: &mut Handle<ClientHandler>,
+    mut agent: russh::keys::agent::client::AgentClient<S>,
+    username: &str,
+    best_hash: Option<russh::keys::HashAlg>,
+  ) -> bool
+  where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+  {
+    let Ok(identities) = agent.request_identities().await else {
+      return false;
+    };
+
+    for identity in identities {
+      let Ok(response) = session
+        .authenticate_publickey_with(
+          username.to_string(),
+          identity.public_key().into_owned(),
+          best_hash,
+          &mut agent,
+        )
+        .await
+      else {
+        continue;
+      };
+
+      if self
+        ._handle_auth_result(session, username.to_string(), None, response)
+        .await
+        .unwrap_or(false)
+      {
+        log::info!(
+          "[SSH {}] Authenticated via local ssh-agent as {}",
+          self.id,
+          username
+        );
+        return true;
+      }
+    }
+
+    false
   }
 
   /// 处理认证结果与 `keyboard-interactive` 挑战（迁移自 `warpgate-protocol-ssh/src/client/mod.rs::_handle_auth_result`）：
