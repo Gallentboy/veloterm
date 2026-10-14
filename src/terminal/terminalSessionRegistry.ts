@@ -21,6 +21,10 @@ export interface TerminalSessionRegistryEntry {
   cwd: string;
   hostEl: HTMLDivElement;
   profileTheme?: ITheme;
+  /** 字体缩放基准字号（px，创建时按 Profile 记录；缩放以此计算目标字号） */
+  baseFontSize?: number;
+  /** 当前字体缩放倍率（存于注册表以跨组件重挂载/布局切换保持） */
+  fontScale?: number;
   /** 当异步 `transport.create` 完成分配 `terminalId` 时通知当前挂载的组件实例 */
   onTerminalIdReady?: (terminalId: number) => void;
   dispose: () => void;

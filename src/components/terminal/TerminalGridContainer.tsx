@@ -73,7 +73,7 @@ export function TerminalGridContainer({
       {sessions.map((session) => {
         const isActive = session.id === activeSessionId;
         const isMaximized = session.id === maximizedSessionId;
-        const title = session.customTitle || session.shellLabel || `终端 ${session.index}`;
+        const title = session.customTitle || session.shellLabel || '终端';
         // 会话可见性：宫格模式全部可见（单屏最大化期间仅保留该会话）；标签页模式仅激活 Tab 可见
         const sessionVisible = isGrid ? !hasMaximized || isMaximized : isActive;
 
@@ -195,6 +195,8 @@ export function TerminalGridContainer({
                 hostId={session.hostId}
                 isVisible={isVisible && sessionVisible}
                 isPanelResizing={isPanelResizing}
+                // 字体缩放仅在标签页模式启用；九宫格/单屏最大化期间禁用（字号保持）
+                fontScaleEnabled={!isGrid}
                 onShellLabelChange={onShellLabelChange}
                 onSizeChange={onSizeChange}
                 onWebglStatusChange={onWebglStatusChange}

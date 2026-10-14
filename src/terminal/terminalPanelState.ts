@@ -83,10 +83,6 @@ export function getNextTerminalSessionIndex(state: TerminalPanelState): number {
   }
 }
 
-export function formatTerminalTabTitle(baseName: string, index: number): string {
-  return index === 1 ? baseName : `${baseName} ${index}`;
-}
-
 export function formatShellShortLabel(shell: string | null): string | null {
   if (!shell) return null;
   const cleaned = shell.replace(/\s*\(.*\)$/, '').trim();

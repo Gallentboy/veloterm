@@ -1,6 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal as XTerm, type IDisposable } from '@xterm/xterm';
-import { ClipboardPaste, Copy, Eraser } from 'lucide-react';
+import { ClipboardPaste, Copy, Eraser, Type } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -9,6 +9,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import { readClipboardText, writeClipboardText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
 import { loadHostStore, resolveJumpHostChain } from '@/hosts/storage';
 import { formatShellShortLabel } from '@/terminal/terminalPanelState';
@@ -45,6 +46,12 @@ function normalizeTerminalFontSize(value: number | undefined): number | undefine
   return value;
 }
 
+/** 终端字体缩放范围（与 SFTP 一致：50%–150%，作用于 xterm fontSize，取整像素） */
+const TERMINAL_FONT_SCALE_MIN = 0.5;
+const TERMINAL_FONT_SCALE_MAX = 1.5;
+/** xterm 允许的最小字号下限（防止极小字号渲染异常） */
+const TERMINAL_FONT_MIN_PX = 6;
+
 export interface TerminalSessionProps {
   sessionId: number;
   transport: ITerminalTransport;
@@ -52,6 +59,8 @@ export interface TerminalSessionProps {
   hostId?: number;
   isVisible: boolean;
   isPanelResizing?: boolean;
+  /** 字体缩放是否可用：九宫格模式下禁用（标签页模式启用），字号仍保持 */
+  fontScaleEnabled?: boolean;
   onShellLabelChange?: (sessionId: number, shellLabel: string | null) => void;
   onSizeChange?: (sessionId: number, size: TerminalSize) => void;
   onWebglStatusChange?: (sessionId: number, active: boolean) => void;
@@ -76,6 +85,7 @@ export function TerminalSession({
   hostId,
   isVisible,
   isPanelResizing = false,
+  fontScaleEnabled = true,
   onShellLabelChange,
   onSizeChange,
   onWebglStatusChange,
@@ -95,6 +105,21 @@ export function TerminalSession({
   const pendingTerminalSizeRef = useRef<TerminalSize | null>(null);
   const resizeInFlightRef = useRef(false);
   const focusRAFRef = useRef(0);
+
+  // ── 字体缩放（每会话独立，存于注册表跨布局/页面切换保持；九宫格模式下禁用）──
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [fontScale, setFontScale] = useState(
+    () => terminalSessionRegistry.get(sessionId)?.fontScale ?? 1,
+  );
+  const fontScaleRef = useRef(fontScale);
+  const baseFontSizeRef = useRef(
+    terminalSessionRegistry.get(sessionId)?.baseFontSize ?? 13,
+  );
+  const fontScaleEnabledRef = useRef(fontScaleEnabled);
+  fontScaleEnabledRef.current = fontScaleEnabled;
+  const gestureStartScaleRef = useRef(1);
+  const [fontBadgeVisible, setFontBadgeVisible] = useState(false);
+  const fontBadgeTimerRef = useRef<number | null>(null);
 
   const onShellLabelChangeRef = useRef(onShellLabelChange);
   const onSizeChangeRef = useRef(onSizeChange);
@@ -262,6 +287,82 @@ export function TerminalSession({
     [clearResizeThrottleTimer, requestFitAndResize],
   );
 
+  // 应用字体缩放：钳制倍率 → 取整像素字号写入 xterm → 清 WebGL 字形图集 →
+  // 下一帧重测字符尺寸并 fit + 下发 PTY resize（行列与字号匹配，防止重排乱码）
+  const applyTerminalFontScale = useCallback(
+    (nextScale: number) => {
+      const term = termRef.current;
+      if (!term) return;
+      const clamped = Math.min(
+        TERMINAL_FONT_SCALE_MAX,
+        Math.max(TERMINAL_FONT_SCALE_MIN, nextScale),
+      );
+      const nextFontSize = Math.max(
+        TERMINAL_FONT_MIN_PX,
+        Math.round(baseFontSizeRef.current * clamped),
+      );
+      const effectiveScale = nextFontSize / baseFontSizeRef.current;
+      fontScaleRef.current = effectiveScale;
+      setFontScale(effectiveScale);
+      term.options.fontSize = nextFontSize;
+
+      const entry = terminalSessionRegistry.get(sessionId);
+      if (entry) {
+        entry.fontScale = effectiveScale;
+        entry.baseFontSize = baseFontSizeRef.current;
+      }
+      // 字号变化需重建字形纹理图集（与主题切换同路径，同步所有会话渲染模型）
+      terminalSessionRegistry.clearWebglTextureAtlas(sessionId);
+      // 重测 + fit + PTY resize：保证 cols/rows 与新字号匹配
+      requestFitAndResize('observer');
+
+      setFontBadgeVisible(true);
+      if (fontBadgeTimerRef.current !== null) {
+        window.clearTimeout(fontBadgeTimerRef.current);
+      }
+      fontBadgeTimerRef.current = window.setTimeout(
+        () => setFontBadgeVisible(false),
+        1000,
+      );
+    },
+    [requestFitAndResize, sessionId],
+  );
+
+  // 字体缩放手势（借用 Chrome 两指捏合通道，与 SFTP 同款）：
+  // WebKit(WKWebView) gesture 事件 + Chrome 合成 ctrl+滚轮；九宫格模式下禁用
+  useEffect(() => {
+    const element = rootRef.current;
+    if (!element) return;
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      if (!fontScaleEnabledRef.current) return;
+      event.preventDefault();
+      applyTerminalFontScale(fontScaleRef.current * Math.exp(-event.deltaY * 0.002));
+    };
+    const onGestureStart = (event: Event) => {
+      if (!fontScaleEnabledRef.current) return;
+      event.preventDefault();
+      gestureStartScaleRef.current = fontScaleRef.current;
+    };
+    const onGestureChange = (event: Event) => {
+      if (!fontScaleEnabledRef.current) return;
+      event.preventDefault();
+      const scale = (event as unknown as { scale?: number }).scale ?? 1;
+      applyTerminalFontScale(gestureStartScaleRef.current * scale);
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    element.addEventListener('gesturestart', onGestureStart);
+    element.addEventListener('gesturechange', onGestureChange);
+    return () => {
+      element.removeEventListener('wheel', onWheel);
+      element.removeEventListener('gesturestart', onGestureStart);
+      element.removeEventListener('gesturechange', onGestureChange);
+      if (fontBadgeTimerRef.current !== null) {
+        window.clearTimeout(fontBadgeTimerRef.current);
+      }
+    };
+  }, [applyTerminalFontScale]);
+
   const requestFocus = useCallback(() => {
     if (focusRAFRef.current) {
       cancelAnimationFrame(focusRAFRef.current);
@@ -392,6 +493,8 @@ export function TerminalSession({
       terminalId: null,
       cwd: cwd ?? '~',
       hostEl,
+      baseFontSize: 13,
+      fontScale: 1,
       onTerminalIdReady: (readyId: number) => {
         terminalIdRef.current = readyId;
         flushTerminalResize();
@@ -487,7 +590,7 @@ export function TerminalSession({
         e.stopPropagation();
         if (term.hasSelection()) {
           const selectedText = term.getSelection();
-          void navigator.clipboard.writeText(selectedText).catch((err) => {
+          void writeClipboardText(selectedText).catch((err) => {
             console.warn('[TerminalSession] copy via shortcut failed:', err);
           });
         }
@@ -501,8 +604,8 @@ export function TerminalSession({
       if (isPaste) {
         e.preventDefault();
         e.stopPropagation();
-        navigator.clipboard
-          .readText()
+        // 原生剪贴板读取（Rust 侧）：不再触发 WKWebView 粘贴授权弹层，Cmd+V 一键直达
+        readClipboardText()
           .then((text) => {
             if (text) {
               term.paste(text);
@@ -602,6 +705,11 @@ export function TerminalSession({
         const nextFontSize = normalizeTerminalFontSize(fontSize);
         if (nextFontSize && nextFontSize !== term.options.fontSize) {
           term.options.fontSize = nextFontSize;
+          // Profile 字号作为缩放基准（仅当用户尚未缩放时更新基准，保持当前倍率）
+          if (fontScaleRef.current === 1) {
+            baseFontSizeRef.current = nextFontSize;
+            entry.baseFontSize = nextFontSize;
+          }
         }
         if (theme) {
           entry.profileTheme = theme;
@@ -707,7 +815,7 @@ export function TerminalSession({
     const term = termRef.current;
     setContextMenu(null);
     if (!term?.hasSelection()) return;
-    void navigator.clipboard.writeText(term.getSelection()).catch((err) => {
+    void writeClipboardText(term.getSelection()).catch((err) => {
       console.warn('[TerminalSession] copy via context menu failed:', err);
     });
     requestFocus();
@@ -717,8 +825,7 @@ export function TerminalSession({
     const term = termRef.current;
     setContextMenu(null);
     if (!term) return;
-    navigator.clipboard
-      .readText()
+    readClipboardText()
       .then((text) => {
         if (text) term.paste(text);
         requestFocus();
@@ -735,6 +842,7 @@ export function TerminalSession({
 
   return (
     <div
+      ref={rootRef}
       onContextMenu={handleContextMenu}
       className="relative h-full min-h-0 w-full overflow-hidden"
     >
@@ -787,8 +895,39 @@ export function TerminalSession({
             <Eraser className="size-3.5" />
             <span>{t('terminal.contextMenu.clear')}</span>
           </button>
+          <div className="my-1 h-px bg-border/60" />
+          <button
+            type="button"
+            role="menuitem"
+            disabled={fontScale === 1}
+            onClick={() => {
+              setContextMenu(null);
+              applyTerminalFontScale(1);
+            }}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors',
+              fontScale === 1 ? 'cursor-not-allowed opacity-40' : 'hover:bg-menu-hover',
+            )}
+          >
+            <Type className="size-3.5" />
+            <span>{t('terminal.contextMenu.resetZoom')}</span>
+            <span className="ml-auto font-mono text-ui-xs text-foreground-subtlest">
+              {Math.round(fontScale * 100)}%
+            </span>
+          </button>
         </div>
       ) : null}
+
+      {/* 字体倍率气泡（Chrome 同款反馈）：捏合/ctrl+滚轮时短暂显示当前百分比 */}
+      <div
+        aria-hidden={!fontBadgeVisible}
+        className={cn(
+          'pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full border border-border bg-menu px-2.5 py-0.5 font-mono text-ui-xs text-foreground shadow-md transition-opacity duration-200',
+          fontBadgeVisible ? 'opacity-100' : 'opacity-0',
+        )}
+      >
+        {Math.round(fontScale * 100)}%
+      </div>
     </div>
   );
 }

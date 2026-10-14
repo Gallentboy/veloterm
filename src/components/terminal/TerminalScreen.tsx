@@ -19,7 +19,6 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { useHostsStore } from '@/hosts/HostsProvider';
 import { cn } from '@/lib/utils';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
-import { formatTerminalTabTitle } from '@/terminal/terminalPanelState';
 import type { TerminalSize } from '@/terminal/types';
 
 export interface TerminalScreenProps {
@@ -60,6 +59,7 @@ export function TerminalScreen({
     closeSession,
     activateSession,
     updateShellLabel,
+    renameSession,
     clearSession,
   } = useTerminalStore();
 
@@ -192,8 +192,8 @@ export function TerminalScreen({
           {sessions.length > 0 ? (
             <div role="tablist" aria-label={t('terminal.title')} className="flex h-7 w-max items-center gap-1">
               {sessions.map((session) => {
-                const baseName = session.customTitle || session.shellLabel || t('terminal.defaultTab');
-                const title = formatTerminalTabTitle(baseName, session.index);
+                // 标题不再拼接序号：customTitle（重命名）> shellLabel > 默认名
+                const title = session.customTitle || session.shellLabel || t('terminal.defaultTab');
                 return (
                   <TerminalTabTrigger
                     key={session.id}
@@ -203,6 +203,7 @@ export function TerminalScreen({
                     isActive={session.id === activeSession?.id}
                     onActivate={activateSession}
                     onClose={closeSession}
+                    onRename={(next) => renameSession(session.id, next)}
                   />
                 );
               })}
