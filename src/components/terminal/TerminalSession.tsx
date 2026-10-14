@@ -52,6 +52,8 @@ function normalizeTerminalFontSize(value: number | undefined): number | undefine
 /** 终端字体缩放范围（与 SFTP 一致：50%–150%，作用于 xterm fontSize，取整像素） */
 const TERMINAL_FONT_SCALE_MIN = 0.5;
 const TERMINAL_FONT_SCALE_MAX = 1.5;
+/** 100% 磁吸阈值：捏合/滚轮滑过 1.0 附近时自动吸附，提升回正效率 */
+const FONT_SCALE_SNAP_THRESHOLD = 0.04;
 /** xterm 允许的最小字号下限（防止极小字号渲染异常） */
 const TERMINAL_FONT_MIN_PX = 6;
 
@@ -306,11 +308,19 @@ export function TerminalSession({
         TERMINAL_FONT_SCALE_MAX,
         Math.max(TERMINAL_FONT_SCALE_MIN, nextScale),
       );
+      // 100% 磁吸：滑入 1.0 ± 4% 区间时吸附到精确 1.0，松手即回正
+      const snapped =
+        Math.abs(clamped - 1) < FONT_SCALE_SNAP_THRESHOLD ? 1 : clamped;
       const nextFontSize = Math.max(
         TERMINAL_FONT_MIN_PX,
-        Math.round(baseFontSizeRef.current * clamped),
+        Math.round(baseFontSizeRef.current * snapped),
       );
-      const effectiveScale = nextFontSize / baseFontSizeRef.current;
+      // 取整像素后反算倍率可能超出钳制边界（如 13px × 1.5 = 19.5 → round 20 → 20/13 ≈ 154%），
+      // 对显示倍率再做一次钳制，保证 UI 展示的百分比不越过上下限
+      const effectiveScale = Math.min(
+        TERMINAL_FONT_SCALE_MAX,
+        Math.max(TERMINAL_FONT_SCALE_MIN, nextFontSize / baseFontSizeRef.current),
+      );
       fontScaleRef.current = effectiveScale;
       setFontScale(effectiveScale);
       term.options.fontSize = nextFontSize;

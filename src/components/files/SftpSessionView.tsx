@@ -155,6 +155,8 @@ const SFTP_DRAG_MIME = 'application/x-veloterm-sftp';
 /** SFTP 字体缩放范围（无级平滑，倍率作用于 --ui-font-size 基准 14px） */
 const SFTP_FONT_SCALE_MIN = 0.5;
 const SFTP_FONT_SCALE_MAX = 1.5;
+/** 100% 磁吸阈值：捏合/滚轮滑过 1.0 附近时自动吸附，提升回正效率 */
+const FONT_SCALE_SNAP_THRESHOLD = 0.04;
 /** 与 styles.css :root 的 --ui-font-size 基准一致 */
 const UI_FONT_BASE_PX = 14;
 
@@ -322,8 +324,10 @@ export function SftpSessionView({
 
   const applyFontScale = useCallback((nextScale: number) => {
     const clamped = Math.min(SFTP_FONT_SCALE_MAX, Math.max(SFTP_FONT_SCALE_MIN, nextScale));
-    fontScaleRef.current = clamped;
-    setFontScale(clamped);
+    // 100% 磁吸：滑入 1.0 ± 4% 区间时吸附到精确 1.0，松手即回正
+    const snapped = Math.abs(clamped - 1) < FONT_SCALE_SNAP_THRESHOLD ? 1 : clamped;
+    fontScaleRef.current = snapped;
+    setFontScale(snapped);
     setFontBadgeVisible(true);
     if (fontBadgeTimerRef.current !== null) {
       window.clearTimeout(fontBadgeTimerRef.current);
