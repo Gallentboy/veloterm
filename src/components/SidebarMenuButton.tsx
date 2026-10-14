@@ -22,7 +22,8 @@ export function SidebarMenuButton({ icon: Icon, label, active, onClick }: Sideba
       onClick={onClick}
       className={cn(
         buttonVariants({ variant: 'ghost', size: 'default' }),
-        // 显式声明字号/字重：侧栏菜单项规格固定 14px 常规体，不随 Button 基类默认值漂移
+        // 显式声明字号/字重：与 ZCode 侧栏菜单同款规格（14px 常规体 400，text-foreground），
+        // 不随 Button 基类默认值漂移
         'flex h-8 w-full min-w-0 justify-start gap-2 rounded-lg pl-2.5 pr-1 text-left text-ui-base font-normal text-foreground',
         'hover:bg-surface-hover hover:text-foreground',
         active && 'bg-selected',
