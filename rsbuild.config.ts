@@ -17,6 +17,15 @@ export default defineConfig({
   html: {
     title: 'VeloTerm',
   },
+  tools: {
+    cssLoader: {
+      // CSS 里指向 public/ 静态资源的根相对 url()（如 /fonts/HarmonyOS_Sans_SC.ttf）
+      // 交给运行时按站点根解析，不让 css-loader 当模块请求去解析（否则打包期报 Module not found）。
+      url: {
+        filter: (url: string) => !url.startsWith('/fonts/'),
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
