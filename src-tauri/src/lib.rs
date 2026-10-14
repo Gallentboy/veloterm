@@ -5,6 +5,7 @@ pub mod commands;
 pub mod common;
 pub mod db;
 pub mod editor_storage;
+pub mod lifecycle;
 pub mod logging;
 pub mod sftp;
 pub mod terminal;
@@ -110,6 +111,11 @@ pub fn run() {
       }
 
       app.manage(db_pool);
+
+      // 注入 AppHandle 到 SftpState，供 SFTP 生命周期事件发射
+      if let Some(sftp_state) = app.try_state::<sftp::types::SftpState>() {
+        sftp_state.set_app(app.handle().clone());
+      }
 
       // 恢复上次关闭时的窗口大小与位置。配置里的窗口在本函数（Tauri 内部 setup）中先于用户
       // setup 闭包创建，且两者处于同一个事件循环迭代内，因此这里改几何发生在首帧绘制之前，

@@ -40,6 +40,8 @@ pub struct SftpState {
   /// 会话写过的临时断点文件目录（session_id → 目录集合）：
   /// 重连时用于扫描并清理超过 1 天的 `.veloterm.tmp.*` 遗留孤儿断点
   pub temp_dirs: Arc<Mutex<HashMap<String, HashSet<String>>>>,
+  /// AppHandle（setup 后注入）：SFTP 生命周期事件发射用
+  pub app: std::sync::Mutex<Option<tauri::AppHandle>>,
 }
 
 impl Default for SftpState {
@@ -56,6 +58,23 @@ impl SftpState {
       next_task_id: AtomicUsize::new(1),
       connect_lock: Arc::new(Mutex::new(())),
       temp_dirs: Arc::new(Mutex::new(HashMap::new())),
+      app: std::sync::Mutex::new(None),
+    }
+  }
+
+  /// setup 后注入 AppHandle，供 SFTP 生命周期事件发射
+  pub fn set_app(&self, app: tauri::AppHandle) {
+    if let Ok(mut slot) = self.app.lock() {
+      *slot = Some(app);
+    }
+  }
+
+  /// 便捷发射 SFTP 生命周期事件（AppHandle 未注入时静默跳过）
+  pub fn emit_sftp(&self, kind: crate::lifecycle::LifecycleKind, session_id: &str, host: &str, error: Option<&str>) {
+    let app = self.app.lock().ok().and_then(|slot| slot.clone());
+    if let Some(app) = app {
+      let host_id = session_id.parse::<usize>().ok();
+      crate::lifecycle::emit_sftp_lifecycle(&app, kind, host_id.unwrap_or(0), host_id, host, 22, error);
     }
   }
 
