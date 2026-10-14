@@ -77,10 +77,12 @@ pub fn run() {
         return;
       }
       match event {
-        // 仅更新内存缓存，不写库：拖拽改尺寸时 Resized 会高频触发
-        tauri::WindowEvent::Resized(_) => window_state::observe(window),
-        // 窗口关闭前落库（此时窗口仍存活，缓存值即最后一次观察到的尺寸）
-        tauri::WindowEvent::CloseRequested { .. } => window_state::persist(),
+        // Resized / Moved 随拖拽高频触发，observe 内部按 800ms 节流落库（缓存每次都会更新）
+        tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => {
+          window_state::observe(window)
+        }
+        // 关闭时实时读窗口几何落库，保证「刚拖完就退出」也不会丢
+        tauri::WindowEvent::CloseRequested { .. } => window_state::persist(window),
         _ => {}
       }
     })
@@ -102,9 +104,9 @@ pub fn run() {
 
       app.manage(db_pool);
 
-      // 恢复上次关闭时的窗口大小。配置里的窗口在本函数（Tauri 内部 setup）中先于用户 setup
-      // 闭包创建，且两者处于同一个事件循环迭代内，因此这里改尺寸发生在首帧绘制之前，不会跳变。
-      // 注：`Manager::get_window` 需要 `unstable` feature，故经 `WebviewWindow` 取底层 `Window`。
+      // 恢复上次关闭时的窗口大小与位置。配置里的窗口在本函数（Tauri 内部 setup）中先于用户
+      // setup 闭包创建，且两者处于同一个事件循环迭代内，因此这里改几何发生在首帧绘制之前，
+      // 不会跳变。注：`Manager::get_window` 需要 `unstable` feature，故经 `WebviewWindow` 取底层 `Window`。
       if let Some(webview_window) = app.get_webview_window("main") {
         let webview: &tauri::Webview<_> = webview_window.as_ref();
         window_state::restore(&webview.window());
@@ -131,10 +133,10 @@ pub fn run() {
     .build(tauri::generate_context!())
     .expect("error while building tauri application");
 
-  app.run(|_app_handle, event| {
+  app.run(|app_handle, event| {
     // 兜底落库：macOS ⌘Q / 应用菜单退出等路径不经过窗口 CloseRequested
     if let tauri::RunEvent::ExitRequested { .. } = event {
-      window_state::persist();
+      window_state::persist_from_handle(app_handle);
     }
   });
 }
