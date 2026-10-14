@@ -1,2 +1,7 @@
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "target-cpu=native"]
+
+# Windows MSVC：静态链接 C 运行时（/MT），产物不依赖目标机的 VC++ Redistributable
+# （vcruntime140.dll），干净系统可直接运行；代价是每个 exe 增大约 100-200KB
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
