@@ -10,7 +10,9 @@
 //! 见 `src-tauri/vendor/coreutils`），分组与 uutils 官方 feature 对齐；
 //! 家族补充：grep/sed（uutils/grep、uutils/sed）、find/xargs（uutils/findutils）、
 //! diff/cmp/sdiff（uutils/diffutils）；现代替代品：rg（ripgrep）、fd（fd-find）、
-//! sd（chmln/sd）、awk（frawk，Cranelift JIT）；which 为 unix_extras.rs 自研。
+//! sd（chmln/sd）、awk（frawk，Cranelift JIT）、tree/eza（eza）、wget（wget-rs，
+//! rustls）；tar 由 tar-rs 库 + 自研 CLI 壳（tar_impl.rs）实现；
+//! which 为 unix_extras.rs 自研。
 //! chcon/runcon 依赖 SELinux，不集成。
 
 use std::ffi::OsString;
@@ -49,6 +51,7 @@ const CROSS_PLATFORM_COMMANDS: &[&str] = &[
     "du",
     "echo",
     "env",
+    "eza",
     "expand",
     "expr",
     "factor",
@@ -104,12 +107,14 @@ const CROSS_PLATFORM_COMMANDS: &[&str] = &[
     "sum",
     "sync",
     "tac",
+    "tar",
     "tail",
     "tee",
     "test",
     "timeout",
     "touch",
     "tr",
+    "tree",
     "true",
     "truncate",
     "tsort",
@@ -121,6 +126,7 @@ const CROSS_PLATFORM_COMMANDS: &[&str] = &[
     "uptime",
     "vdir",
     "wc",
+    "wget",
     "whoami",
     "xargs",
     "yes",
@@ -205,6 +211,7 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         "du" => uu_du::uumain(it),
         "echo" => uu_echo::uumain(it),
         "env" => uu_env::uumain(it),
+        "eza" => eza::eza_main_from(it),
         "expand" => uu_expand::uumain(it),
         "expr" => uu_expr::uumain(it),
         "factor" => uu_factor::uumain(it),
@@ -259,12 +266,21 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         "sum" => uu_sum::uumain(it),
         "sync" => uu_sync::uumain(it),
         "tac" => uu_tac::uumain(it),
+        "tar" => super::tar_impl::tar_main(it),
         "tail" => uu_tail::uumain(it),
         "tee" => uu_tee::uumain(it),
         "test" => uu_test::uumain(it),
         "timeout" => uu_timeout::uumain(it),
         "touch" => uu_touch::uumain(it),
         "tr" => uu_tr::uumain(it),
+        // tree = eza --tree：在 bin name 后注入 --tree
+        "tree" => {
+            let mut full: Vec<OsString> = Vec::with_capacity(args.len() + 2);
+            full.push(OsString::from("tree"));
+            full.push(OsString::from("--tree"));
+            full.extend_from_slice(args);
+            eza::eza_main_from(full)
+        }
         "true" => uu_true::uumain(it),
         "truncate" => uu_truncate::uumain(it),
         "tsort" => uu_tsort::uumain(it),
@@ -276,6 +292,7 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         "uptime" => uu_uptime::uumain(it),
         "vdir" => uu_vdir::uumain(it),
         "wc" => uu_wc::uumain(it),
+        "wget" => wget_rs::wget_main_from(it),
         "whoami" => uu_whoami::uumain(it),
         "xargs" => {
             let argv = argv0_strs(name, args);
@@ -470,6 +487,7 @@ mod tests {
     /// - `false`：GNU 语义恒返回 1（连 --version 也不打印）；
     /// - `test`：无 --version（跑空参数 = false，退出 1）；
     /// - which（自研）：不支持 --version，按 Usage 退出 1。
+    ///
     /// 跳过（真实行为由 new_families_smoke / release 冒烟覆盖）：
     /// - OWN_ARGV 家族（rg/fd/awk）读自身进程 argv，单测无法注入；
     /// - diff/cmp：上游 uutils/diffutils 未实现 --version——cmp 返回 2，
@@ -554,6 +572,25 @@ mod tests {
             0
         );
         assert_eq!(fs::read_to_string(&sd_f).unwrap(), "xyz xyz");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn eza_tree_smoke() {
+        let dir = tempdir("eza");
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub").join("x.txt"), "x").unwrap();
+        let dir_p = dir.to_string_lossy().into_owned();
+        let s = |v: &[&str]| -> Vec<OsString> { v.iter().map(OsString::from).collect() };
+
+        // eza 普通列表与 tree（= eza --tree）均应正常退出
+        assert_eq!(run_command("eza", &s(&[dir_p.as_str()])).unwrap(), 0);
+        assert_eq!(run_command("tree", &s(&[dir_p.as_str()])).unwrap(), 0);
+        assert_eq!(
+            run_command("tree", &s(&["--level", "1", dir_p.as_str()])).unwrap(),
+            0
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

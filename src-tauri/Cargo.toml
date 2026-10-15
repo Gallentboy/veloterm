@@ -93,6 +93,19 @@ sed = { path = "vendor/sed" }
 # sd：chmln/sd v1.1.0 源码 vendor（MIT），入口 sd_cli::sd_main_from
 # （可注入迭代器，首元素为程序名）。
 sd-cli = { path = "vendor/sd/sd-cli" }
+# tar：tar-rs 0.4.46 源码 vendor（MIT/Unlicense，纯库）。CLI 壳（-c/-x/-t/-f/-z/-v/-C）
+# 在 src/tools/tar_impl.rs 自研；-z 压缩经 flate2 纯 Rust 后端（miniz_oxide，无 zlib C 依赖）。
+tar = { path = "vendor/tar-rs" }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# eza / tree：eza v0.23.5 源码 vendor（MIT），入口 eza::eza_main_from（可注入；
+# tree 命令 = eza --tree）。git 集成经 git2 vendored libgit2（cc 现场编译，需 C 编译器）。
+eza = { path = "vendor/eza" }
+# palette 0.7.5 的源码与新版 palette_derive 宏不兼容（eza 上游因此钉 =0.7.5；
+# 本工程的 lockfile 需同步钉住 derive 版本，否则 cargo 会解析到更新的 0.7.x）
+palette_derive = "=0.7.5"
+# wget：wget-rs 0.1.0 源码 vendor，入口 wget_rs::wget_main_from（可注入）。
+# reqwest 已在 vendor 内改为 rustls-tls 纯 Rust（无 OpenSSL 系统依赖）。
+wget-rs = { path = "vendor/wget-rs" }
 uucore = { path = "vendor/coreutils/src/uucore" }
 uu_arch = { path = "vendor/coreutils/src/uu/arch" }
 uu_b2sum = { path = "vendor/coreutils/src/uu/b2sum" }

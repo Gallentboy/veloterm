@@ -1,0 +1,26 @@
+[package]
+name = "wget-rs"
+version = "0.1.0"
+edition = "2024"
+
+# VeloTerm vendor 修改：新增 [lib]，把原 main.rs 的主逻辑 librarify 到
+# src/lib.rs（wget_rs::wget_main / wget_rs::wget_main_from），以便 wget
+# 命令内嵌进 coreutils 多呼叫二进制；main.rs 保留为独立二进制的薄壳。
+[lib]
+name = "wget_rs"
+path = "src/lib.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+regex = "1.11.1"
+# VeloTerm vendor 修改：reqwest 关闭默认 features 以剔除 default-tls
+# （native-tls → Linux/macOS 上引入 OpenSSL 等 C 库系统依赖）；仅保留
+# rustls-tls（纯 Rust TLS，与主工程 rustls 生态一致）。reqwest 0.11 的
+# HTTP/2 与字符集解码为无条件编译，功能无损失。
+reqwest = { version = "0.11", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] } # 如需异步下载
+indicatif = "0.17"
+sha2 = "0.10"
+sha1 = "0.10"
+md-5 = "0.10"
+crc32fast = "1.3"
