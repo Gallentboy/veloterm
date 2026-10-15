@@ -112,6 +112,7 @@ export default {
     emptyTitle: '暂无打开的终端',
     emptyDesc: '本地终端继承系统终端 Profile，自动加载环境变量与配置文件',
     connectHost: '从主机列表连接',
+    remoteHosts: '远程主机',
     contextMenu: {
       copy: '复制',
       paste: '粘贴',
@@ -124,11 +125,8 @@ export default {
       previous: '上一个匹配 (Shift+Enter)',
       next: '下一个匹配 (Enter)',
     },
-    disconnected: {
-      title: '连接已断开',
-      reconnect: '重新连接',
-      closeTab: '关闭标签页',
-    },
+    // 断开态不再有 DOM 横幅：断开信息与重连快捷键提示由 TerminalSession 直接写进
+    // xterm 终端缓冲（文案硬编码在组件内，与终端输出同生命周周期）
   },
   files: {
     title: '文件管理',
@@ -136,6 +134,7 @@ export default {
     defaultTab: 'SFTP',
     closeTab: '关闭 {{title}}',
     newTab: '新建 SFTP 会话',
+    remoteHosts: '远程主机',
     emptyTitle: '暂无打开的 SFTP 会话',
     emptyDesc: '选择一台远程主机建立 SFTP 会话，随时浏览、上传和下载远程文件',
     openSftp: '连接主机打开 SFTP',
@@ -264,6 +263,17 @@ export default {
       hostKeyIgnore: '忽略校验（不验证主机公钥）',
       allowInsecureAlgos: '兼容老旧设备加密算法',
       allowInsecureAlgosHint: '启用 ssh-rsa、diffie-hellman-group1/14-sha1、3des-cbc、hmac-sha1',
+      readyHook: '终端就绪钩子',
+      readyHookNone: '不启用',
+      readyHookHint: '连接建立后自动在终端执行该命令（目前仅支持一条）',
+      readyHookMissing: '命令已被删除，保存后将清除引用',
+      readyHookCreateNew: '新建命令',
+      readyHookNewTitle: '命令标题',
+      readyHookNewCommand: '要执行的命令',
+      readyHookSearch: '搜索命令…',
+      readyHookNoMatch: '没有匹配的命令',
+      readyHookRequired: '标题与命令均不能为空',
+      readyHookSaveAndUse: '保存并使用',
       viaJump: '跳板: {{name}}',
       groups: '所属分组（可多选）',
       noGroups: '还没有分组，可在分组管理页创建',
