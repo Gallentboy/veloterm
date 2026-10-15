@@ -139,9 +139,9 @@ const PLATFORM_COMMANDS: &[&str] = &[
     "stat", "stty", "pinky", "users", "who", "stdbuf",
 ];
 
-/// Windows 专属命令（uutils feat_os_windows 额外项）
+/// Windows 专属命令（uutils feat_os_windows 额外项 + vcpkg 静态链接的 openssl CLI）
 #[cfg(target_os = "windows")]
-const PLATFORM_COMMANDS: &[&str] = &["stdbuf"];
+const PLATFORM_COMMANDS: &[&str] = &["openssl", "stdbuf"];
 
 /// 其余平台（本项目不存在，仅保证常量无条件可用）
 #[cfg(not(any(unix, target_os = "windows")))]
@@ -334,6 +334,9 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // unix + windows 均可用
         #[cfg(any(unix, target_os = "windows"))]
         "stdbuf" => uu_stdbuf::uumain(it),
+        // 仅 Windows：vcpkg 静态库 + 现场编译的 OpenSSL CLI（FFI argc/argv）
+        #[cfg(target_os = "windows")]
+        "openssl" => openssl_app::openssl_cmd_main(it),
         // 不可达：run_command 已按 all_commands 白名单拦截
         _ => {
             eprintln!("coreutils: unimplemented command '{name}'");

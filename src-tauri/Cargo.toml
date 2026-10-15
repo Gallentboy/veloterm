@@ -223,6 +223,14 @@ uu_who = { path = "vendor/coreutils/src/uu/who" }
 [target.'cfg(any(unix, windows))'.dependencies]
 uu_stdbuf = { path = "vendor/coreutils/src/uu/stdbuf" }
 
+# openssl CLI（仅 Windows）：vcpkg x64-windows-static 静态库（与 SQLCipher 共用同一份）
+# + 现场编译的 apps/openssl.c（-Dmain 改名 FFI）。入口 openssl_app::openssl_cmd_main，
+# 迭代器首元素为程序名 "openssl"。源码为工程内锁版本 vendor/openssl-src（3.6.4，
+# 与 vcpkg 实装 openssl:x64-windows-static@3.6.4#1 严格一致，CI 校验防漂移）；
+# vcpkg 端口默认 no-apps，progs.c 由 build.rs 以 shim + progs.pl 生成。
+[target.'cfg(windows)'.dependencies]
+openssl-app = { path = "vendor/openssl-app" }
+
 [dev-dependencies]
 # 传输层单测依赖 tokio paused-clock（start_paused / advance）
 tokio = { version = "1", features = ["test-util"] }
