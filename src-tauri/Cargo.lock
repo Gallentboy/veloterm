@@ -216,6 +216,7 @@ dependencies = [
  "openssl-app",
  "palette_derive",
  "portable-pty",
+ "putty-telnet",
  "r2d2",
  "r2d2_sqlite",
  "regex",
@@ -6656,6 +6657,13 @@ dependencies = [
  "bitflags 2.13.2",
  "chrono",
  "hex",
+]
+
+[[package]]
+name = "putty-telnet"
+version = "0.1.0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
