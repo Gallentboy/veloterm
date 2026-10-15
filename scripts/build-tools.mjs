@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-// 构建 coreutils 多呼叫二进制并复制到 Tauri externalBin 目录。
+// 构建 coreutils 多呼叫二进制并复制到 Tauri externalBin 目录（仅 Windows 需要）。
 // Tauri v2 的 externalBin 要求文件名带 target triple 后缀：
 //   src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe
 // 安装后 Tauri 会去掉 triple 后缀放到主程序同级目录（coreutils.exe），
 // 短名命令入口（ls.exe/grep.exe/…）由应用启动钩子以 NTFS 硬链接创建。
-// macOS（通用开发/打包）同样按本机 triple 复制，保持配置跨平台一致。
+// macOS 打包不消费该产物（externalBin 只在 tauri.windows.conf.json 声明，
+// 硬链接安装钩子也是 cfg(windows)），故非 Windows target 直接跳过，
+// 避免在 mac 上无谓编译整套 vendor 工具链依赖。
 //
 // 用法：node scripts/build-tools.mjs [--target <triple>]
 // 未指定 target 时取 rustc 默认 host triple。
@@ -40,6 +42,24 @@ if (!target) {
 }
 
 console.log(`[build-tools] target: ${target}`);
+
+// 工具集仅随 Windows 安装包分发：macOS/Linux 打包链路无 externalBin 消费方，
+// 跳过以免在 mac 上整套编译 uutils/ripgrep/eza 等 vendor 依赖（本地跑工具
+// 集测试用 cargo test -p coreutils，与本打包脚本无关）
+if (!target.includes('windows')) {
+  console.log(`[build-tools] ${target} 非 Windows 目标，无需 coreutils，跳过`);
+  process.exit(0);
+}
+
+// 工程约定：Windows 包只能由 Windows 主机/runner 出，禁止在 mac 上交叉编译
+// Windows 目标（既慢且从未验证过，openssl-app/putty-telnet 的 vcpkg 与 MSVC
+// 工具链在 mac 上也不可用）
+if (target.includes('windows') && process.platform !== 'win32') {
+  console.error(
+    '[build-tools] 严禁在非 Windows 主机上编译 Windows 目标，请交给 Windows runner（CI）或 Windows 机器',
+  );
+  process.exit(1);
+}
 
 const exeExt = target.includes('windows') ? '.exe' : '';
 
