@@ -1,0 +1,1128 @@
+[
+  {
+    "id": 0,
+    "title": "apt / apt-get 包管理（Debian/Ubuntu）",
+    "command": "sudo apt {{options}} {{subcommand}} {{package}}",
+    "description": "Debian/Ubuntu 的包管理前端。`apt` 是面向终端用户的**高层**工具（彩色输出、进度条，**输出格式随版本变化，不适合脚本**）；`apt-get` 是**低层**、输出稳定的老牌工具，**脚本里请用 apt-get**。二者共享同一套包数据库与 sources.list。\n\n【基本语法】apt [-h] [-o=config] [-c=config] [-t=release] [-a=arch] {command} ...（apt-get 同）。\n\n【子命令】update 刷新包索引(**不升级任何包**)｜upgrade 升级已装包(**不删除**包，需删包的会跳过)｜full-upgrade(= apt-get dist-upgrade) 升级并**可移除**阻碍升级的包｜install 安装/升级｜reinstall 重装｜remove 卸载(**保留**用户改过的配置)｜purge 卸载并**连配置一起删**｜autoremove 删除不再被依赖的自动安装包｜satisfy 满足依赖表达式｜why / why-not 解释某包为何被装/为何装不上｜search 按正则搜索｜show 包详情｜list 列包(--installed/--upgradable/--all-versions)｜edit-sources 改 sources.list｜source 下载源码包｜build-dep 装构建依赖｜download 只下载 .deb 不安装｜changelog 变更日志｜clean 清空 /var/cache/apt/archives｜autoclean 只清过期的 .deb｜check 检查依赖完整性｜indextargets｜dselect-upgrade｜showsrc/depends/rdepends/policy(见 apt-cache)。\n\n【常用选项】-y/--assume-yes 全部自动答 yes(**脚本必用**)｜--assume-no 自动答 no｜-d/--download-only 只下载｜-f/--fix-broken 修复依赖损坏｜-m/--ignore-missing 忽略取不到的包｜--no-download 禁下载｜-q/-qq 安静｜-s/--simulate/--dry-run/--no-act **演练**，不做实际改动｜-V 显示完整版本号｜-t/--target-release 指定发行版｜-a/--host-architecture 指定架构｜-U/--update 先跑一次 update｜--no-install-recommends 不把推荐包当依赖｜--install-suggests｜--no-show-upgraded｜--ignore-hold｜--with-new-pkgs｜--no-upgrade｜--only-upgrade 只升级已装的｜--allow-downgrades **危险**｜--allow-remove-essential **危险**｜--allow-change-held-packages **危险**｜--force-yes **危险且已废弃**｜--print-uris 只打印 URI｜--purge｜--reinstall｜--trivial-only｜--mark-auto｜--no-remove 若有包将被移除则立即中止｜--auto-remove｜--only-source｜--allow-unauthenticated **危险**｜--allow-insecure-repositories｜--allow-releaseinfo-change｜--show-progress｜--with-source=FILE｜-eany/--error-on=any｜-o/--option 设任意配置项｜-c/--config-file 指定配置文件｜--no-color/--color｜--audit｜-h/--help｜-v/--version。\n\n【版本/发行版选择】apt install nginx=1.24.0-1 指定版本(=/+/-)｜apt install nginx/stable 指定发行版/代号｜apt install ./local.deb 安装本地 deb(**必须带 ./**)。\n\n【易踩坑】**apt 的输出格式不保证稳定，脚本请用 apt-get**；apt upgrade **不会删包**，要完整升级用 full-upgrade(**可能移除包，跑之前先 -s 演练**)；update 只刷新索引、**不升级任何包**；remove 保留配置、purge 才删干净；autoremove 可能删掉「曾被当依赖装上、现在没人依赖」的包(用 `apt-mark manual <pkg>` 保命)；`apt install foo.deb` 不带 `./` 会被当包名去仓库找；--force-yes 已废弃，改用三个更细的 --allow-* 开关(都危险)；包锁冲突(Could not get lock /var/lib/dpkg/lock-frontend)说明有另一个 apt/dpkg 在跑或上次中断，**不要暴力删锁文件**，先确认进程。\n\n【macOS】没有 apt/apt-get，对应工具是 Homebrew(`brew install/upgrade/uninstall`)或 MacPorts。",
+    "purpose": "安装/卸载/升级软件包；搜索与查看包信息；刷新包索引；清理缓存与无用依赖；修复依赖损坏；演练升级方案",
+    "category": "package",
+    "tags": [
+      "apt",
+      "apt-get",
+      "包管理",
+      "Debian",
+      "Ubuntu",
+      "deb",
+      "安装",
+      "卸载"
+    ],
+    "params": [
+      {
+        "name": "subcommand",
+        "label": "子命令",
+        "description": "update 刷新索引｜upgrade 升级｜full-upgrade 完整升级｜install 安装｜remove 卸载｜purge 连配置删｜autoremove｜search｜show｜list",
+        "required": true,
+        "default": "",
+        "example": "install"
+      },
+      {
+        "name": "package",
+        "label": "包名",
+        "description": "一个或多个包名；安装本地包要写成 ./xxx.deb",
+        "required": false,
+        "default": "",
+        "example": "nginx curl"
+      },
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-y 自动确认｜--no-install-recommends 不装推荐包｜-s 演练｜--only-upgrade 只升级",
+        "required": false,
+        "default": "",
+        "example": "-y --no-install-recommends"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ sudo apt update && sudo apt install -y nginx\nHit:1 http://archive.ubuntu.com/ubuntu noble InRelease\nReading package lists... Done\nBuilding dependency tree... Done\nSetting up nginx (1.24.0-2ubuntu7.1) ...\n$ apt list --upgradable\nnginx/noble-updates 1.24.0-2ubuntu7.1 amd64 [upgradable from: 1.24.0-2ubuntu7]\n$ apt-get -s full-upgrade\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "yum / dnf 包管理（RHEL/CentOS/Fedora）",
+    "command": "sudo dnf {{options}} {{subcommand}} {{package}}",
+    "description": "`dnf` 是 `yum` 的下一代实现，**RHEL 8+ / Fedora 里 `yum` 就是 `dnf` 的软链接**（man7.org 上 yum(8) 的内容已变成「redirecting to DNF Command Reference」），二者 CLI 高度兼容。\n\n【基本语法】dnf [options] <command> [<args>...]。\n\n【子命令，共 30 个】install 安装｜reinstall 重装｜remove 卸载｜upgrade 升级(**可删包以完成升级**)｜upgrade-minimal 只升到最小必要版本｜update(=upgrade)｜downgrade 降级｜distro-sync 把已装包同步到仓库版本｜swap 用一个包换掉另一个｜autoremove 删除不再需要的依赖｜check-update 检查更新(退出码 100 表示有)｜check 检查依赖问题｜info 包信息｜list 列包｜search 搜索｜provides 查哪个包提供某文件/能力｜deplist 列依赖｜repoquery 高级查询｜repolist 列出仓库｜repoinfo 仓库详情｜repository-packages 按仓库操作｜group 包组管理｜module 模块流管理｜history 事务历史(可 undo/rollback)｜mark 标记包｜clean 清理缓存｜makecache 预生成缓存｜updateinfo 安全/缺陷公告｜alias 命令别名｜shell 交互 shell｜help 帮助。\n\n【常用选项】-y/--assumeyes 全自动 yes｜--assumeno 全自动 no｜-q/--quiet｜-v/--verbose｜-C/--cacheonly 只用缓存｜--refresh 先过期缓存再操作｜--nogpgcheck 跳过 GPG 校验(**降低安全性**)｜--skip-broken 跳过依赖坏掉的包｜--allowerasing 允许删已装包以解依赖｜-b/--best 与 --nobest｜--downloadonly｜--downloaddir=PATH｜--setopt=OPT=VALUE 覆盖任意配置｜--enablerepo/--disablerepo=REPOID｜--enableplugin/--disableplugin｜-x/--exclude=SPEC 排除包｜--disableexcludes=[all|main|REPOID]｜--installroot=PATH(做 chroot 镜像)｜--releasever=RELEASE｜--showduplicates｜--security/--bugfix/--enhancement/--newpackage｜--advisory=ID｜--cve=CVES｜--sec-severity=SEV｜--bz=BUGZILLA｜--obsoletes｜--nodocs 不装文档｜--noautoremove｜-4/-6 只用 IPv4/IPv6｜--forcearch=ARCH｜--comment=COMMENT｜-c/--config=FILE｜-d/--debuglevel=N 与 -e/--errorlevel=N｜--debugsolver｜--noplugins｜--repofrompath=REPO,PATH｜--repo/--repoid=REPOID｜--rpmverbosity=NAME｜-R/--randomwait=MIN｜--disable/--enable(持久启停仓库)｜--version｜-h/--help。\n\n【易踩坑】**RHEL 8+ 上 `yum` 就是 `dnf`**，新脚本建议直接写 dnf；**`dnf upgrade` 与 `apt upgrade` 语义不同**——dnf 的 upgrade **允许移除阻碍升级的包**(类似 apt 的 full-upgrade)，而 apt upgrade 不删包；--skip-broken 会让升级「部分成功」，容易留下不一致状态；--nogpgcheck **不要在生产用**；`dnf history undo` 只对能安全回滚的事务有效；--refresh 每次都重拉元数据，CI 里高频调用会拖慢并加重镜像源负担；缓存问题先 `dnf clean all && dnf makecache`。\n\n【macOS】没有 yum/dnf，用 Homebrew 或 MacPorts。",
+    "purpose": "在 RHEL/CentOS/Fedora 上安装/卸载/升级软件包；查询包信息与依赖；管理仓库与包组；查看与回滚事务历史",
+    "category": "package",
+    "tags": [
+      "dnf",
+      "yum",
+      "包管理",
+      "RHEL",
+      "CentOS",
+      "Fedora",
+      "rpm",
+      "事务回滚"
+    ],
+    "params": [
+      {
+        "name": "subcommand",
+        "label": "子命令",
+        "description": "install 安装｜remove 卸载｜upgrade 升级｜distro-sync 同步｜search｜info｜provides｜history｜group｜repoquery",
+        "required": true,
+        "default": "",
+        "example": "install"
+      },
+      {
+        "name": "package",
+        "label": "包名",
+        "description": "包名、文件路径(用 provides 查)或包组名",
+        "required": false,
+        "default": "",
+        "example": "nginx"
+      },
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-y 自动确认｜--refresh 先刷缓存｜--nogpgcheck(慎用)｜--downloadonly",
+        "required": false,
+        "default": "",
+        "example": "-y"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ sudo dnf install -y nginx\nLast metadata expiration check: 0:12:31 ago on Wed 14 Oct 2026.\nDependencies resolved.\nInstalling:\n nginx        x86_64    1:1.24.0-1.el9    appstream    1.7 M\nComplete!\n$ sudo dnf history\nID     | Command line        | Date                 | Action   | Altered\n    12 | install -y nginx    | 2026-10-14 22:20:11  | Install  |       3\n$ sudo dnf history undo last\nUndoing transaction 12, from Wed Oct 14 22:20:11 2026",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "rpm RPM 包（底层查询/安装）",
+    "command": "rpm {{mode}} {{query-options}} {{package}}",
+    "description": "RPM 的**底层**包工具，**不做依赖求解**（依赖要自己装）。手册共 **112 项**。日常最常用的是查询模式。\n\n【基本语法】rpm [OPTION...] PACKAGE_FILE ... ｜ rpm [OPTION...] -q [select-options] [query-options]。\n\n【主要模式】-i/--install 安装新包(**不处理升级场景**)｜-U/--upgrade 安装或升级(旧的/被废弃的会被移除)｜-F/--freshen 只升级已装过旧版本的包｜--reinstall 重装｜-e/--erase 卸载｜-q/--query 查询｜-V/--verify 校验已装文件与包元数据是否一致｜-K/--checksig/--import 校验/导入签名(见 rpmkeys)｜--restore 恢复已装包的文件元数据(时间戳/属主/权限/能力)｜--querytags 列出可用 querytag｜--initdb/--rebuilddb/--verifydb 数据库初始化/重建/校验(见 rpmdb)｜--addsign/--delsign/--resign 签名操作｜--specfile。\n\n【查询选择器(-q 配合)】-a/--all 所有已装包｜-f/--file FILE 某文件属于哪个包｜-p/--package PKG 查询未安装的包文件｜-g/--group GROUP 按组查询｜--path PATH 拥有该路径的包｜--whatprovides CAP 哪个包提供该能力｜--whatrequires CAP 哪个包依赖该能力｜--whatconflicts/--whatobsoletes/--whatrecommends/--whatsuggests/--whatsupplements/--whatenhances｜--triggeredby PKG｜--tid TID 按事务 ID｜--querybynumber HDRNUM(调试)｜--dupes 列出重复安装的包｜--nomanifest/--noglob。\n\n【查询输出选项】-i/--info 包信息｜-l/--list 列出包内文件｜-R/--requires 列出依赖｜--provides｜--obsoletes｜--conflicts｜--recommends｜--suggests｜--supplements｜--enhances｜--scripts 安装/卸载脚本｜--triggers/--triggerscripts｜--filetriggers｜--changelog/--changes(后者带完整时间戳)｜-s/--state 文件状态。\n\n【常用组合】rpm -qa 列出所有已装包｜rpm -qa | grep nginx 过滤｜rpm -qi nginx 看包信息｜rpm -ql nginx 看装到哪些文件｜rpm -qf /usr/sbin/nginx 反查文件属于哪个包｜rpm -qpR pkg.rpm 查未安装包的依赖｜rpm -ivh pkg.rpm 安装(带进度)｜rpm -Uvh pkg.rpm 升级｜rpm -e nginx 卸载｜rpm -Va 校验所有已装文件(找被篡改/损坏的文件)｜rpm --import KEY。\n\n【易踩坑】rpm **不解决依赖**，`rpm -i` 报依赖错误时用 `dnf install ./pkg.rpm` 或 `yum localinstall` 补依赖；`-i` 与 `-U` 区别：`-i` 对已装包会失败或产生重复安装(需 `--replacepkgs`)，`-U` 才是升级；`rpm -e` 若被别的包依赖会拒绝，需先删依赖方或 `--nodeps`(**危险，会留下坏依赖**)；`rpm -Va` 输出很长，可用 `| grep -v '^..5'` 之类过滤；数据库损坏(如 `rpmdb: BDB0113`)需 `rpm --rebuilddb`。\n\n【macOS】没有 rpm。",
+    "purpose": "查询 RPM 包的元信息/文件清单/依赖/脚本；反查文件属于哪个包；校验已装文件完整性；安装/升级/卸载单个 rpm 文件",
+    "category": "package",
+    "tags": [
+      "rpm",
+      "包管理",
+      "RHEL",
+      "查询",
+      "依赖",
+      "校验",
+      "rpmdb"
+    ],
+    "params": [
+      {
+        "name": "mode",
+        "label": "模式",
+        "description": "-q 查询｜-i 安装｜-U 升级｜-e 卸载｜-V 校验｜-K 校验签名｜-qa 列出全部已装包(等价 -q -a)",
+        "required": true,
+        "default": "",
+        "example": "-q"
+      },
+      {
+        "name": "package",
+        "label": "包名/文件",
+        "description": "已装包名、或 .rpm 文件路径、或要反查的文件路径",
+        "required": false,
+        "default": "",
+        "example": "nginx"
+      },
+      {
+        "name": "query-options",
+        "label": "查询选项",
+        "description": "-i 详情｜-l 文件列表｜-R 依赖｜-f 反查所属包｜--scripts 安装脚本",
+        "required": false,
+        "default": "",
+        "example": "-i"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ rpm -qa | grep -c '^' \n412\n$ rpm -qf /usr/sbin/nginx\nnginx-1.24.0-1.el9.x86_64\n$ rpm -qi nginx | head -4\nName        : nginx\nVersion     : 1.24.0\nRelease     : 1.el9\nArchitecture: x86_64\n$ rpm -Va | head -3\nS.5....T.  c /etc/nginx/nginx.conf\nmissing     /var/log/nginx/access.log",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "dpkg Debian 包（底层查询/安装）",
+    "command": "dpkg {{options}} {{mode}} {{package}}",
+    "description": "Debian 的**底层**包工具（同 rpm 之于 RPM），**不做依赖求解**。手册共 **58 项**。日常最常用的是查询模式。\n\n【基本语法】dpkg [option...] command。\n\n【主要操作】-i/--install PKG.deb 安装(配 `-R` 时参数应为目录)｜--unpack PKG.deb 只解包不配置｜--configure PKG|-a|--pending 配置已解包未配置的包(`-a` 全部)｜--triggers-only 只处理触发器｜-r/--remove PKG 卸载(**保留 conffiles**)｜-P/--purge PKG 彻底清除(**含 conffiles**)｜-V/--verify [PKG] 校验已装文件完整性｜-C/--audit [PKG] 数据库一致性检查｜--get-selections [PATTERN] 导出选择状态｜--set-selections 从 stdin 设选择状态｜--clear-selections 把所有非必要包标为 deinstall｜--update-avail/--merge-avail 更新可用包信息｜-A/--record-avail PKG.deb｜--forget-old-unavail(已废弃)｜--clear-avail｜--yet-to-unpack 找出选了但没装的包｜--predep-package｜--add-architecture ARCH / --remove-architecture ARCH 增删可安装架构｜--print-architecture 打印本机架构(如 amd64)｜--print-foreign-architectures｜--assert-feature｜--validate-thing STRING｜--compare-versions v1 op v2 比较版本号｜--version｜-?/--help｜--force-help｜-Dh/--debug=help。\n\n【通用修饰符】--force-things / --no-force-things, --refuse-things 强制/拒绝某些行为｜--ignore-depends=PKG,...｜--no-act/--dry-run/--simulate **演练**不写改动｜-R/--recursive 递归处理目录下所有 *.deb｜-G 已装更新版本时不装(=--refuse-downgrade)｜-B/--auto-deconfigure 删包时自动反配置依赖它的包｜--abort-after=N｜-Doctal/--debug=octal｜--admindir=DIR｜--instdir=DIR｜--root=DIR｜-O/--selected-only｜-E/--skip-same-version｜--pre-invoke=CMD/--post-invoke=CMD｜--path-exclude=GLOB/--path-include=GLOB｜--verify-format=FMT。\n\n【配套命令】dpkg -l(= dpkg-query -l) 列出已装包｜dpkg -L nginx 列出包内文件｜dpkg -S /usr/sbin/nginx 查文件属于哪个包｜dpkg -s nginx 包状态详情｜dpkg-deb -c/-I/-x pkg.deb 查看/解包 deb｜dpkg --configure -a 修复中断安装。\n\n【易踩坑】**dpkg 不做依赖求解**，`dpkg -i` 报依赖错误时用 `sudo apt-get -f install` 补依赖；`dpkg -l` 首两列是状态：`ii`=已装且已配置、`rc`=已删但**残留配置**、`un`=未装，**`rc` 状态要用 `dpkg -P` 清掉**；`dpkg --configure -a` 是修复「装到一半中断」的标准手段；`-P`(purge) 会**删掉配置文件**，误用会丢配置；`dpkg -S` 只查已装包，查未装文件用 `apt-file search`；架构不匹配需先 `dpkg --add-architecture`。\n\n【macOS】没有 dpkg，包管理用 Homebrew/MacPorts，系统级 .pkg 用 installer/pkgutil。",
+    "purpose": "查询 deb 包的安装状态/文件清单/所属包；安装/卸载/彻底清除本地 .deb；校验已装文件；修复中断的安装；导出导入包选择状态",
+    "category": "package",
+    "tags": [
+      "dpkg",
+      "包管理",
+      "Debian",
+      "Ubuntu",
+      "deb",
+      "查询",
+      "dpkg-query"
+    ],
+    "params": [
+      {
+        "name": "mode",
+        "label": "模式",
+        "description": "-l 列出已装｜-L 列包内文件｜-S 反查所属包｜-s 包状态｜-i 安装 deb｜-r 卸载｜-P 彻底清除｜-V 校验",
+        "required": true,
+        "default": "",
+        "example": "-l"
+      },
+      {
+        "name": "package",
+        "label": "包名/文件",
+        "description": "已装包名，或 .deb 文件路径，或要反查的文件路径",
+        "required": false,
+        "default": "",
+        "example": "nginx"
+      },
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "--configure -a 配置所有未配置｜--get-selections 导出｜--compare-versions 比较版本",
+        "required": false,
+        "default": "",
+        "example": ""
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ dpkg -l | grep -E '^(ii|rc)' | head -3\nii  nginx-common   1.24.0-2ubuntu7.1  all   small, powerful, scalable web/proxy server\nii  nginx          1.24.0-2ubuntu7.1  amd64 small, powerful, scalable web/proxy server\nrc  apache2        2.4.58-1ubuntu8    amd64 Apache HTTP Server\n$ dpkg -S /usr/sbin/nginx\nnginx: /usr/sbin/nginx\n$ sudo dpkg -i ./app_1.0_amd64.deb\ndpkg: dependency problems prevent configuration of app\n$ sudo apt-get -f install   # 补依赖",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "chmod 修改权限位",
+    "command": "chmod {{options}} {{mode}} {{file}}",
+    "description": "修改文件/目录的权限位（mode）。权限分三组：**属主(u)**、**属组(g)**、**其他人(o)**，每组有 **读(r=4)**、**写(w=2)**、**执行(x=1)**。\n\n【基本语法】chmod [OPTION]... MODE[,MODE]... FILE... ｜ chmod [OPTION]... OCTAL-MODE FILE... ｜ chmod [OPTION]... --reference=RFILE FILE...。\n\n【数字(八进制)模式】4=读r｜2=写w｜1=执行x｜0=无。三组叠加：`755`=rwxr-xr-x、`644`=rw-r--r--、`600`=rw-------。\n【特殊位(第四位)】4xxx=setuid(执行时以**文件属主**身份运行)｜2xxx=setgid(以**文件属组**身份运行；对目录表示新文件继承该组)｜1xxx=sticky(目录内文件只能被属主/目录属主/root 删除，如 /tmp)。例：4755 setuid、2775 setgid 目录、1777 sticky 目录。\n\n【符号模式】格式 `[ugoa...][+-=][rwxXst...]`：u/g/o/a=属主/属组/其他人/全部｜+ 增加｜- 移除｜= 精确设置(**清掉其余位**)｜r/w/x｜**X 仅当已是目录或已有执行位时才加 x**(批量给目录加执行很有用)｜s=setuid/setgid｜t=sticky｜u/g/o 还可表示「复制对应组的现有权限」(如 `g=u`)。例：chmod u+x a.sh、chmod go-w file、chmod a=r file、chmod -R a+rX dir。\n\n【选项，共 15 项】-c/--changes 只报告**发生了改变**的｜-f/--silent/--quiet 抑制大部分错误｜-v/--verbose 输出诊断｜--dereference 作用于符号链接**指向的目标**｜-h/--no-dereference 作用于符号链接本身｜--no-preserve-root 不特殊对待 /(GNU 默认)｜--preserve-root 拒绝在 / 上递归｜--reference=RFILE 用 RFILE 的 mode｜-R/--recursive 递归｜-H(-R 时跟随命令行参数里的目录符号链接)｜-L(-R 时跟随遇到的每个符号链接)｜-P(-R 时不跟随任何符号链接，**默认**)｜--help｜--version。**-H/-L/-P 只在给了 -R 时有效，且只有最后一个生效**。\n\n【易踩坑】**`chmod -R 777 /` 是经典灾难**，会毁掉系统；GNU 默认 `--no-preserve-root`，手滑无保护；**SSH 私钥权限必须是 600**，太开放(如 644)sshd 会直接拒绝使用；目录的 `x` 位含义是「可进入/可遍历」而非「可执行」，只给 r 不给 x 会连 `ls` 都列不了；**`X` 与 `x` 的区别**是批量处理混合树时的关键；chmod 默认**不跟随**符号链接(`-R` 时)，要改链接目标用 `--dereference`；`=` 会**清掉**该组所有其他权限位；特殊位在 `ls -l` 里显示为 rws/rwS(setuid)、rws(setgid)、rwt/rwT(sticky)，**大写表示对应执行位缺失**；umask 只影响**新建**文件，不影响 chmod。\n\n【macOS】BSD 版 chmod **选项更少**：没有 -c/--changes、--reference、--preserve-root、--dereference；符号模式与八进制模式一致；macOS 还支持 ACL(`chmod -a`/`-e`)，Linux 上要用 setfacl。",
+    "purpose": "给脚本/私钥/目录设置正确权限；批量修正目录树权限（用 a+rX）；设置 setuid/setgid/sticky 特殊位；按参考文件复制权限",
+    "category": "permission",
+    "tags": [
+      "chmod",
+      "权限",
+      "mode",
+      "setuid",
+      "setgid",
+      "sticky",
+      "umask"
+    ],
+    "params": [
+      {
+        "name": "mode",
+        "label": "权限模式",
+        "description": "八进制如 755/644/600/4755/1777，或符号如 u+x、go-w、a=r、a+rX",
+        "required": true,
+        "default": "",
+        "example": "755"
+      },
+      {
+        "name": "file",
+        "label": "文件/目录",
+        "description": "目标路径，可多个；配合 -R 递归",
+        "required": true,
+        "default": "",
+        "example": "deploy.sh"
+      },
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-R 递归｜-v 详细｜-c 只报变化｜--reference=FILE 抄权限｜--preserve-root 防手滑",
+        "required": false,
+        "default": "",
+        "example": "-R"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ chmod 755 deploy.sh && ls -l deploy.sh\n-rwxr-xr-x  1 tom  dev  1024 Oct 14 22:20 deploy.sh\n$ chmod -R a+rX /var/www\n$ chmod 600 ~/.ssh/id_ed25519 && ls -l ~/.ssh/id_ed25519\n-rw-------  1 tom  dev   411 Oct 14 22:20 /Users/tom/.ssh/id_ed25519\n$ chmod 1777 /tmp/shared && ls -ld /tmp/shared\ndrwxrwxrwt  2 root root  64 Oct 14 22:20 /tmp/shared",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "chown 修改属主/属组",
+    "command": "sudo chown {{options}} {{owner}} {{file}}",
+    "description": "修改文件/目录的属主（user）与属组（group）。配套 `chgrp GROUP FILE...` 只改属组。\n\n【基本语法】chown [OPTION]... [OWNER][:[GROUP]] FILE... ｜ chown [OPTION]... --reference=RFILE FILE...。\n\n【属主写法】`user` 只改属主｜`user:group` 同时改属主与属组｜`user:` 改属主并把属组设为该用户的登录组｜`:group` 只改属组｜`user.group` 同 `user:group`(点号写法，用户名含点时易歧义)｜`--from=OLDUSER:OLDGROUP` 仅在当前属主/属组匹配时才改。\n\n【选项，共 16 项】-c/--changes 只报告发生了改变的｜-f/--silent/--quiet 抑制大部分错误｜-v/--verbose 输出诊断｜--dereference 作用于符号链接的目标(**默认**)｜-h/--no-dereference 作用于符号链接本身(仅部分系统支持)｜--from=CUR_OWNER:CUR_GROUP 当前属主/属组匹配时才改(两者可省略其一)｜--no-preserve-root(GNU 默认)｜--preserve-root 拒绝在 / 上递归｜--reference=RFILE 用 RFILE 的属主/属组｜-R/--recursive 递归｜-H/-L/-P 同 chmod 的符号链接跟随策略｜--help｜--version。\n\n【易踩坑】**只有 root(或有 CAP_CHOWN)才能把文件改给别人**，普通用户只能改「自己拥有的文件」的属组(且必须是自己所属的组)；**`-R` 加错路径是极高危操作**(如 `chown -R user /`)，会破坏系统，GNU 的 `--preserve-root` **默认不开启**；`chown user.group` 与 `chown user:group` 等价，但**用户名里含 `.` 时(如 AD 域账号 DOMAIN.user)点号写法会歧义**，推荐始终用冒号；**`chown` 默认跟随符号链接(与 chmod 相反！)**，要改链接本身用 `-h`；属主改动**不受 umask 影响**；改属主后原属主的 setuid/setgid 位会被清除(安全设计)；复制文件时用 `cp -p`/`rsync -a` 保留属主比事后 chown 更稳妥。\n\n【macOS】BSD 版选项更少(无 --reference、--preserve-root 及 --from 的部分形式)，**BSD 的 `-R` 默认不跟随符号链接**，`-h` 语义略有差异；支持 `chown -R user:group` 与 ACL(`chmod -e`/`-a`)。",
+    "purpose": "把文件/目录交给其他用户或组（部署目录、Web 根目录）；递归修正属主属组；按参考文件复制属主；仅对特定属主生效的批量修正",
+    "category": "permission",
+    "tags": [
+      "chown",
+      "chgrp",
+      "属主",
+      "属组",
+      "所有权",
+      "递归"
+    ],
+    "params": [
+      {
+        "name": "owner",
+        "label": "属主/属组",
+        "description": "user｜user:group｜user:｜:group；--from=OLD:OLD 只在匹配时改",
+        "required": true,
+        "default": "",
+        "example": "www-data:www-data"
+      },
+      {
+        "name": "file",
+        "label": "文件/目录",
+        "description": "目标路径，可多个",
+        "required": true,
+        "default": "",
+        "example": "/var/www"
+      },
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-R 递归｜-h 改链接本身｜-v 详细｜--reference=FILE 抄属主｜--from=OLD 条件改",
+        "required": false,
+        "default": "",
+        "example": "-R"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ sudo chown www-data:www-data -R /var/www && ls -ld /var/www\ndrwxr-xr-x  4 www-data www-data  4096 Oct 14 22:20 /var/www\n$ sudo chown tom a.txt && ls -l a.txt\n-rw-r--r--  1 tom  dev  12 Oct 14 22:20 a.txt\n$ sudo chown --from=root:root -R /data\n$ chgrp -R dev /srv/project",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "sudo 以其他身份执行命令",
+    "command": "sudo {{options}} {{command}}",
+    "description": "以另一个用户（默认 root）的身份执行命令，按 `/etc/sudoers` 策略授权，并**缓存凭据**（默认 5 分钟）。\n\n【基本语法】sudo [options] [command] ｜ sudoedit [options] file...。\n\n【选项，手册共 29 项，全列】-A/--askpass 用(图形)助手程序读密码｜-B/--bell 密码提示时响铃｜-b/--background 命令在后台运行｜-C num/--close-from=num 执行前关闭 ≥num 的文件描述符(不得 <3)｜-D dir/--chdir=dir 在指定目录运行｜-E/--preserve-env 保留现有环境变量｜--preserve-env=list 只保留列表中的｜-e/--edit 编辑文件而非执行命令(= sudoedit)｜-g group/--group=group 指定主组｜-H/--set-home 把 HOME 设为目标用户家目录｜-h/--help｜-h host/--host=host｜-i/--login 以登录 shell 运行(读 .profile/.bash_profile)｜-K/--remove-timestamp 清除该用户**所有**缓存凭据｜-k/--reset-timestamp 使当前会话的缓存凭据失效｜-l/--list 列出当前用户(或 -U 指定用户)的权限｜-N/--no-update 不更新缓存凭据｜-n/--non-interactive 不提示任何输入(需密码则报错退出)｜-P/--preserve-groups 保留调用者的组向量｜-p prompt/--prompt=prompt 自定义密码提示(支持 %H 等转义)｜-R dir/--chroot=dir 在指定 chroot 里执行｜-S/--stdin 从 stdin 读密码(提示写 stderr)｜-s/--shell 用 SHELL 指定的 shell 运行｜-U user/--other-user=user 配合 -l｜-T timeout/--command-timeout=timeout 给命令设超时｜-u user/--user=user 以指定用户运行(默认 root；`#uid` 写数字)｜-V/--version｜-v/--validate 刷新缓存凭据(不执行命令)｜-- 选项结束，后续参数传给命令。\n\n【sudoers 要点】编辑**必须用 `visudo`**(会做语法检查并加锁)，直接改 /etc/sudoers 出错会导致 sudo 全废；常用指令：`user ALL=(ALL) NOPASSWD: ALL` 免密；`%wheel ALL=(ALL) ALL` 给组授权；`Defaults env_keep += \"HTTP_PROXY\"` 保留环境。\n\n【易踩坑】**`sudo cmd > file` 无效**——重定向由当前 shell 执行，仍以你的身份打开文件；写 root 文件要用 **`cmd | sudo tee file`** 或 `sudo sh -c 'cmd > file'`；**sudo 默认重置环境**(env_reset)，要传变量用 `sudo -E` 或 sudoers 里配 env_keep；`sudo -i` 与 `sudo -s` 区别：`-i` 是登录 shell(读 profile、切家目录)，`-s` 只是换 shell 不重设环境；`sudo -k` 清当前会话凭据、`-K` 清所有；NOPASSWD 方便但等于把提权口子放开，谨慎使用；`sudo -l` 可自查被授予了哪些权限(排查「为什么 sudo 被拒」第一步)。\n\n【macOS】自带 sudo，用法一致。macOS 的 sudo 也是 BSD/新版，支持 -E/-i/-s/-u；macOS 上 `sudo` 首次会弹 Touch ID/密码；系统完整性保护(SIP)下部分路径即使 root 也不可写。",
+    "purpose": "以 root 或其他用户身份执行单条命令；免密/受限授权；切换登录 shell；编辑系统文件；排查自身 sudo 权限",
+    "category": "permission",
+    "tags": [
+      "sudo",
+      "提权",
+      "权限",
+      "sudoers",
+      "visudo",
+      "root"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-u 以某用户运行｜-i 登录 shell｜-s shell｜-E 保留环境｜-k 清凭据｜-l 列权限｜-n 非交互｜-S 从 stdin 读密码",
+        "required": false,
+        "default": "",
+        "example": "-u www-data"
+      },
+      {
+        "name": "command",
+        "label": "命令",
+        "description": "要执行的命令及其参数",
+        "required": true,
+        "default": "",
+        "example": "systemctl restart nginx"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ sudo -l\nUser tom may run the following commands on host:\n    (ALL : ALL) ALL\n$ sudo systemctl restart nginx\n[sudo] password for tom:\n$ echo 'proxy=http://x' | sudo tee /etc/yum.conf.d/proxy.conf\nproxy=http://x\n$ sudo -u postgres psql -c 'select 1'\n ?column?\n----------\n        1",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "su 切换用户",
+    "command": "su {{options}} {{user}}",
+    "description": "切换到另一个用户（默认 root），或以其身份执行命令。\n\n【基本语法】su [options] [-] [user [argument...]]。\n\n【选项，手册共 14 项，全列】-c command/--command=command 传给 shell 执行(会创建新会话，见 setsid)｜-f/--fast 给 shell 传 -f(csh 相关)｜-g group/--group=group 指定主组(**仅 root 可用**)｜-G group/--supp-group=group 指定附加组(**仅 root**；首个附加组在无 -g 时兼作主组)｜`-`、-l/--login 以登录 shell 启动(环境类似真实登录)｜-m/-p/--preserve-environment 保留整个环境(不设 HOME/SHELL/USER/LOGNAME)，与 --login 同用时被忽略｜-P/--pty 为会话创建伪终端(更安全，不共享原终端)｜-s shell/--shell=shell 用指定 shell｜--session-command=command 同 -c 但不创建新会话(**不推荐**)｜-T/--no-pty 不创建伪终端(与 -P 相反)｜-w list/--whitelist-environment=list 登录清环境时保留列表中的变量｜-h/--help｜-V/--version。\n\n【`su` 与 `su -` 的区别】**`su user` 保留原环境变量**(PATH/HOME 基本不变)、当前目录不变；**`su - user`(或 `su -l user`) 重置为登录环境**(读目标用户 profile)、切到目标用户家目录。\n\n【易踩坑】**`su` 验的是目标用户的密码**，root 切到任何用户不需密码；**`sudo` 验的是自己的密码**，二者认证模型不同；**`su -` 的 `-` 不能省**：少了它 PATH/HOME 是原用户的，命令可能找不到或写错地方；`su -c 'cmd'` 的引号很重要，`su -c cmd` 会被 shell 拆词；su 是**旧的提权方式**，审计与细粒度授权差，现代发行版推荐 sudo(可记录、可限定命令)；部分发行版默认**不允许普通用户 su**(pam_wheel 限制)，只有 wheel 组成员可用；su 的历史漏洞(如 TIOCSTI 终端注入)使 `-P` 更安全；`su -` 与 `su -l` 等价，`--session-command` 官方明确**不推荐**。\n\n【macOS】自带 su(BSD 版)，选项更少；macOS 默认 **root 账号未启用**，需 `sudo su -` 或 `dsenableroot`；macOS 更常用 `sudo -i`。",
+    "purpose": "切换到 root 或其他用户；以某用户身份执行单条命令；在保留/重置环境两种模式下排查环境变量问题",
+    "category": "permission",
+    "tags": [
+      "su",
+      "切换用户",
+      "提权",
+      "root",
+      "登录shell",
+      "环境变量"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "`-`/`-l` 登录 shell(重置环境、切家目录)｜-c 'cmd' 执行一条命令｜-s shell 指定 shell｜-w LIST 保留环境变量｜-P 独立伪终端｜-m 保留整个环境",
+        "required": false,
+        "default": "-",
+        "example": "-c 'systemctl restart nginx'"
+      },
+      {
+        "name": "user",
+        "label": "目标用户",
+        "description": "省略则默认 root",
+        "required": false,
+        "default": "root",
+        "example": "tom"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ su - tom\ntom@host:~$ pwd\n/home/tom\ntom@host:~$ echo $PATH\n/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n$ su -c 'systemctl restart nginx' root\n$ sudo su -\nroot@host:~# id\nuid=0(root) gid=0(root) groups=0(root)",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "useradd / passwd 用户管理",
+    "command": "sudo useradd {{options}} {{user}}",
+    "description": "`useradd` 创建用户（shadow-utils），`passwd` 管理密码。配套还有 `usermod`、`userdel`、`groupadd`、`groupdel`、`chage`。\n\n【useradd 基本语法】useradd [options] LOGIN ｜ useradd -D [options]。\n\n【useradd 选项，手册共 33 项，全列】-b/--base-dir BASE_DIR 家目录基础目录(与用户名拼接)｜-c/--comment COMMENT 注释(通常是全名，写入 passwd 的 GECOS 字段)｜-d/--home-dir HOME_DIR 指定家目录｜-D/--defaults 查看/修改默认值(见下)｜-e/--expiredate DATE 账号失效日期(YYYY-MM-DD 或自 1970 起的**天数**)｜-f/--inactive INACTIVE 密码过期后再过多少天锁号(-1 表示不锁)｜-F/--add-subids-for-system 系统账号也更新 /etc/subuid、subgid｜-g/--gid GROUP 主组(组名或已存在的 GID)｜-G/--groups G1[,G2,...] 附加组(逗号分隔，**不能有空格**)｜-h/--help｜-k/--skel SKEL_DIR 骨架目录(家目录初始文件来源)｜-K/--key KEY=VALUE 覆盖 /etc/login.defs 默认值｜-l/--no-log-init 不写 lastlog/faillog｜-m/--create-home 创建家目录并复制骨架｜-M/--no-create-home 不创建家目录｜-N/--no-user-group 不创建同名组｜-o/--non-unique 允许 UID 重复(**必须与 -u 同用**)｜-p/--password PASSWORD 初始密码，**必须是 crypt(3) 加密后的值**｜-r/--system 创建系统账号(无 aging，UID 取 SYS_UID_MIN~MAX)｜-R/--root CHROOT_DIR 在 chroot 里操作(不支持 SELinux)｜-P/--prefix PREFIX_DIR 在指定根下操作配置文件｜-s/--shell SHELL 登录 shell｜-u/--uid UID 指定 UID(须唯一，除非 -o)｜-U/--user-group 创建同名组并把用户加入｜-Z/--selinux-user SEUSER｜--selinux-range SERANGE｜--badname 允许不符合标准的用户名。(`-D` 模式下 -b/-e/-f/-g/-s 改的是 /etc/default/useradd 的默认值。)\n\n【passwd 选项，手册共 17 项，全列】-a/--all 仅与 -S 同用显示所有用户状态｜-d/--delete 删除密码(置空，**账号变为无密码**)｜-e/--expire 立即令密码过期(强制下次登录改密)｜-h/--help｜-i/--inactive INACTIVE｜-k/--keep-tokens｜-l/--lock 锁定账号(密码前加 `!`)｜-n/--mindays MIN_DAYS｜-q/--quiet｜-r/--repository REPOSITORY｜-R/--root CHROOT_DIR｜-P/--prefix PREFIX_DIR｜-S/--status 显示账号状态(7 个字段)｜-u/--unlock 解锁｜-w/--warndays WARN_DAYS｜-x/--maxdays MAX_DAYS(-1 表示移除限制)｜-s/--stdin 从 stdin 读新密码(可管道)。\n\n【易踩坑】**`usermod -G docker tom` 会覆盖** tom 的所有附加组，**必须写 `-aG`**(append)才追加——这是最经典的坑；**`useradd` 不会自动建家目录**(除非 -m)，且默认 shell 可能不是 bash；`-p` 要的是 **crypt 加密后的密码**，直接写明文会得到一个「永远登不上」的账号(设密码请用 `passwd` 或 `chpasswd`)；**`passwd -d` 把密码置空 = 账号无密码可登录**，是严重安全问题；**`passwd -l` 只是加 `!` 前缀，不影响已建立的 SSH key 登录**；`userdel` 不加 `-r` 会**留下家目录与邮件**；`-G` 列表里**不能有空格**；`-e` 的日期可以是 YYYY-MM-DD 或自 1970 的天数；改 UID/GID 后要 `chown -R` 修正家目录属主。\n\n【macOS】没有 useradd/passwd -l 这套 shadow-utils：创建用户用 `sysadminctl -addUser` 或 `dscl . -create`；删除用 `sysadminctl -deleteUser`；改组用 `dseditgroup`；查看用 `dscl . -read /Users/tom`/`id`。macOS 用 DirectoryService 而非 /etc/passwd、/etc/shadow，直接编辑 /etc/passwd 无效。",
+    "purpose": "创建用户与家目录；设置/锁定/解锁密码；配置密码有效期策略；把用户加入附加组；查看账号 aging 状态",
+    "category": "permission",
+    "tags": [
+      "useradd",
+      "passwd",
+      "usermod",
+      "userdel",
+      "chpasswd",
+      "用户管理",
+      "附加组"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-m 建家目录｜-s 指定 shell｜-G 附加组(逗号分隔)｜-r 系统账号｜-g 主组｜-c 注释｜-u 指定 UID",
+        "required": false,
+        "default": "",
+        "example": "-m -s /bin/bash -G sudo,docker"
+      },
+      {
+        "name": "user",
+        "label": "用户名",
+        "description": "要创建/操作的用户名",
+        "required": true,
+        "default": "",
+        "example": "tom"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ sudo useradd -m -s /bin/bash -G sudo,docker -c 'Tom A' tom\n$ id tom\nuid=1001(tom) gid=1001(tom) groups=1001(tom),27(sudo),998(docker)\n$ sudo passwd tom\nNew password:\nRetype new password:\npasswd: password updated successfully\n$ sudo passwd -S tom\ntom P 10/14/2026 0 99999 7 -1\n$ sudo usermod -aG docker tom   # -a 不能省！",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "tar 打包/解包",
+    "command": "tar {{mode}} {{file}} {{options}} {{path}}",
+    "description": "GNU tar，把多个文件打成 `.tar`，可配合压缩。手册共 **157 项**。\n\n【基本语法】tar [OPTION...] [FILE]...。\n\n【三大模式】-c/--create 创建归档｜-x/--extract/--get 解包｜-t/--list 列出内容｜-r/--append 追加文件到归档末尾｜-u/--update 只追加比归档内更新的文件｜-A/--catenate 把归档拼接到另一个归档｜-d/--diff 比较归档与文件系统｜--delete 从归档中删除成员(**不支持压缩归档**)｜--test-label 测试卷标。\n\n【压缩相关】-z/--gzip(.tar.gz/.tgz)｜-j/--bzip2(.tar.bz2)｜-J/--xz(.tar.xz)｜-Z/--compress(.tar.Z)｜--zstd(.tar.zst)｜-a/--auto-compress 按扩展名自动选压缩｜-I CMD/--use-compress-program=CMD 用外部程序压缩｜--no-auto-compress。\n\n【常用选项】-f FILE/--file=FILE 指定归档文件(**必须紧邻文件名**)｜-v/--verbose 详细｜-C DIR/--directory=DIR 切换目录(可多次)｜-p/--preserve-permissions 保留权限｜-h/--dereference 跟随符号链接(打包其目标)｜-P/--absolute-names 保留绝对路径(**默认会剥掉前导 /**)｜--exclude=PATTERN 排除(可多次)｜-X FILE/--exclude-from=FILE｜-T FILE/--files-from=FILE｜--wildcards/--no-wildcards｜--strip-components=N 解包时剥掉前 N 层目录｜-O/--to-stdout 解到 stdout｜--transform=EXPR/--xform 用 sed 语法重命名成员｜--numeric-owner｜--same-owner/--no-same-owner｜-k/--keep-old-files 解包时不覆盖已存在文件｜--skip-old-files｜--overwrite/--overwrite-dir｜-U/--unlink-first 覆盖前先删｜--recursive-unlink｜--one-top-level[=DIR]｜-S/--sparse 高效处理稀疏文件｜--hole-detection=METHOD｜-W/--verify 写完校验｜--remove-files 打包后删源文件｜--no-recursion｜--ignore-failed-read｜--atime-preserve[=METHOD]｜--occurrence[=N]｜--restrict｜--totals[=SIGNAL]｜--checkpoint[=N]｜-G/--incremental 旧式增量备份｜-g FILE/--listed-incremental=FILE 新式增量备份｜--level=N｜--check-device/--no-check-device｜--show-defaults｜-?/--help｜--usage｜--version。\n\n【易踩坑】**`-f` 后面必须紧跟文件名**：`tar czf a.tgz dir` 对，`tar czfv a.tgz dir` **错**(v 被当成文件名)；**解包时 tar 会剥掉路径前导 `/`**，要保留用 `-P`(危险)；**`tar xf` 覆盖已存在文件是默认行为**，无提示，先 `tar tf` 看清单；经典「tar 炸弹」：归档里含 `../../etc/passwd` 这类路径，解包会写到目标目录外，**解不可信归档前先 `tar tf` 检查**；**压缩归档不能追加**(`tar rf a.tgz x` 会失败)；`--exclude` 模式匹配**位置敏感**；GNU tar **解压时能自动识别压缩格式**(即使没写 -z)，但**创建时必须显式指定**。\n\n【macOS】自带的是 **bsdtar 而非 GNU tar**：bsdtar 默认自动识别压缩、支持 -a，但**缺少 `--transform`、`--listed-incremental` 的 GNU 语义**，`--exclude` 行为也略有不同；要 GNU tar 需 `brew install gnu-tar`(命令为 `gtar`)；macOS 归档还涉及资源分支(`._*` 文件)与 `COPYFILE_DISABLE=1`。",
+    "purpose": "打包/解包目录；配合 gzip/bzip2/xz/zstd 压缩；只看归档清单；排除/剥离路径；增量备份；边打包边通过 SSH 传输",
+    "category": "archive",
+    "tags": [
+      "tar",
+      "打包",
+      "解包",
+      "归档",
+      "gzip",
+      "xz",
+      "zstd",
+      "增量备份"
+    ],
+    "params": [
+      {
+        "name": "mode",
+        "label": "模式",
+        "description": "-c 创建｜-x 解包｜-t 列表｜-r 追加；可组合 z/j/J/zstd 指定压缩",
+        "required": true,
+        "default": "",
+        "example": "-czvf"
+      },
+      {
+        "name": "file",
+        "label": "归档文件",
+        "description": "-f 的参数，**必须紧跟在 -f 后面**；`-` 表示标准输入/输出",
+        "required": true,
+        "default": "",
+        "example": "backup.tar.gz"
+      },
+      {
+        "name": "path",
+        "label": "路径/成员",
+        "description": "要打包的路径，或解包时要抽取的成员",
+        "required": false,
+        "default": "",
+        "example": "/var/www"
+      },
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-C 切目录｜--exclude 排除｜--strip-components=N 剥层｜-O 输出到 stdout｜-P 保留绝对路径",
+        "required": false,
+        "default": "",
+        "example": "-C /tmp"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ tar czvf backup.tar.gz /var/www\ntar: Removing leading `/' from member names\nvar/www/\nvar/www/index.html\nvar/www/app.js\n$ tar tzf backup.tar.gz\nvar/www/\nvar/www/index.html\n$ tar xzf backup.tar.gz -C /tmp\n$ tar cf - dir | ssh host 'tar xf - -C /dst'\n$ tar czf b.tgz --exclude='*.log' app/",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "gzip / gunzip gz 压缩解压",
+    "command": "gzip {{options}} {{file}}",
+    "description": "GNU gzip，用 LZ77 压缩**单文件**（**不能打包多个文件**，多文件请先 `tar`）。\n\n【基本语法】gzip [ -acdfhklLnNrtvV19 ] [-S suffix] [ name ... ] ｜ gunzip [ -acfhklLnNrtvV ] [-S suffix] [ name ... ] ｜ zcat [ -fhLV ] [ name ... ]。\n\n【选项，全列 22 项】-a/--ascii ASCII 文本模式(仅部分非 Unix 系统支持)｜-c/--stdout/--to-stdout 输出到 stdout、**保留原文件**｜-d/--decompress/--uncompress 解压｜-f/--force 强制压缩/解压(即使有硬链接/目标已存在/数据非 gzip 格式)｜-h/--help｜-k/--keep **保留输入文件**｜-l/--list 列出压缩信息(压缩后/原始大小/比率/原名)｜-L/--license 显示许可证｜-n/--no-name 压缩时不保存原始文件名与时间戳｜-N/--name 压缩时总是保存原始文件名与时间戳｜-q/--quiet 抑制所有警告｜-r/--recursive 递归处理目录｜-S .suf/--suffix .suf 用指定后缀代替 .gz｜--synchronous 同步输出(更安全但更慢)｜-t/--test 校验压缩文件完整性｜-v/--verbose 显示压缩率｜-V/--version｜-1…-9/--fast/--best 压缩级别(-1 最快/-9 最小，默认 -6)｜--rsyncable 让 rsync 能只传变化部分。\n\n`gunzip` = `gzip -d`；`zcat` = `gunzip -c`。\n\n【易踩坑】**`gzip` 默认删除原文件**(生成 .gz 后原文件消失)，要保留加 `-k`；**gzip 不能压缩多个文件成一个**(那是 tar 的活)，`gzip a b c` 会生成 a.gz b.gz c.gz；gzip **不压缩符号链接**(会跳过)；`gunzip` 能识别 .tgz/.taz 并当作 .tar.gz/.tar.Z，也能解开 zip 的**单成员 deflate**，但多成员 zip 必须用 unzip；用 `zcat` 看内容比先解压更安全；压缩已压缩文件(jpg/mp4)基本没有收益。\n\n【macOS】自带 gzip(BSD 版)，核心选项一致，也有 gunzip/zcat；macOS 上 `tar -z` 调用的是 bsdtar 内部的 gzip。",
+    "purpose": "压缩单个文件为 .gz；解压 .gz/.tgz；不解压直接查看内容(zcat)；校验压缩文件完整性；看压缩率",
+    "category": "archive",
+    "tags": [
+      "gzip",
+      "gunzip",
+      "zcat",
+      "压缩",
+      "解压",
+      "gz",
+      "日志轮转"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-k 保留原文件｜-d 解压｜-c 输出到 stdout｜-9 最高压缩｜-1 最快｜-r 递归｜-t 校验｜-l 看信息",
+        "required": false,
+        "default": "",
+        "example": "-9 -k"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要压缩/解压的文件；`-` 表示标准输入输出",
+        "required": true,
+        "default": "",
+        "example": "access.log"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ gzip -9 -k access.log && ls -l access.log*\n-rw-r--r--  1 tom dev 10485760 Oct 14 22:20 access.log\n-rw-r--r--  1 tom dev  1048576 Oct 14 22:20 access.log.gz\n$ gzip -l access.log.gz\n         compressed        uncompressed  ratio uncompressed_name\n            1048576            10485760  90.0% access.log\n$ gzip -dc access.log.gz | head -2\n10.0.0.1 - - [14/Oct/2026:22:20:11 +0800] \"GET / HTTP/1.1\" 200 612\n$ gzip -t access.log.gz && echo OK\nOK",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "zip / unzip zip 压缩解压",
+    "command": "zip {{options}} {{archive}} {{files}}",
+    "description": "Info-ZIP 工具。zip 支持**多文件 + 目录结构 + 单文件随机访问**（与 tar.gz 的流式不同），且跨平台（Windows 原生支持）。zip 手册共 **181 项**（含大量平台专有项），unzip 共 **45 项**。\n\n【zip 基本语法】zip [-options] [-b path] [-t mmddyyyy] [-n suffixes] [zipfile list] [-xi list]。\n\n【zip 常用选项】-r/--recurse-paths 递归打包目录｜-R/--recurse-patterns｜-m/--move 打包后**删除**源文件｜-d/--delete 从归档中删除条目｜-u/--update 只更新更新的文件｜-f/--freshen 只更新已存在的条目｜-g/--grow 追加到已有归档｜-FS/--filesync 同步归档与文件系统(删掉归档里多余项)｜-j/--junk-paths 只存文件名丢掉路径｜-p/--paths 保留相对路径(默认)｜-x/--exclude 排除｜-i/--include 只包含指定文件｜-e/--encrypt 交互式设密码加密｜-P password/--password **命令行给密码(不安全，会被 ps 看到)**｜-y/--symlinks 把符号链接当链接存储｜-X/--no-extra 不保存额外属性(uid/gid/时间)｜-0…-9 压缩级别(-0 只存储不压缩)｜-Z cm/--compression-method(store/deflate)｜-n suffixes/--suffixes 指定后缀的文件不压缩｜-q/--quiet｜-v/--verbose｜-T/--test 测试归档完整性｜-z/--archive-comment｜-c/--entry-comments｜-o/--latest-time｜-D/--no-dir-entries｜-s splitsize/--split-size 创建分卷归档｜-sp/--split-pause｜-t mmddyyyy/--from-date｜-tt mmddyyyy/--before-date｜-b path/--temp-path｜-MM/--must-match｜-nw/--no-wild｜-@/--names-stdin 从 stdin 读文件名列表｜-UN v/--unicode｜-U/--copy-entries｜-so/--show-options｜-sf/--show-files｜-h/--help｜-L/--license｜以及大量平台专有项(-!、-$、-k、-l、-ll、-S、-E、-ic、-ws、-DF、-FI、-RE、-C、-V 等)。\n\n【unzip 选项，45 项】-l 列出内容(简表)｜-v 列出(详细)/版本｜-t 测试归档(校验 CRC)｜-p 解到 stdout(二进制)｜-c 解到 stdout 并打印文件名｜-f freshen｜-u update｜**-o 覆盖已存在文件不提示(危险)**｜**-n 从不覆盖**｜-j 丢掉路径｜-d DIR 解到指定目录｜-x list 排除｜-q 安静(-qq 更安静)｜-a 自动转换文本｜-b 全部按二进制｜-C 大小写不敏感｜-D 不恢复时间戳｜-K 保留 SUID/SGID/sticky(默认清除)｜-L 大写文件名转小写｜-M 分页｜-P password 解密密码(不安全)｜-X 恢复属主/权限｜-U 修改/禁用 UTF-8 处理｜-W 通配符不跨目录｜-: 允许解到当前目录之外｜-^ 允许文件名含控制字符｜-$ 恢复卷标｜-Z zipinfo 模式｜-z 只显示归档注释｜-B 覆盖前备份。\n\n【易踩坑】**中文文件名乱码**：Windows 打的 zip 常用 GBK/CP936，Linux unzip 默认按 UTF-8 解会乱码，用 `unzip -O gbk`(需编译时支持)或 `-U`；**`unzip -o` 静默覆盖无提示**，反之默认行为是**交互式询问**，在脚本里会卡住，需显式 -o 或 -n；**`zip -P`/`unzip -P` 密码在命令行明文**，会被 ps/history 记录，且 zip 传统加密(ZipCrypto)很弱；zip 的**加密不加密文件名**；**`zip -r` 会把目录本身打进去**(`zip -r a.zip dir` 里含 `dir/...`)，只想装内容要 `cd dir && zip -r ../a.zip .`；`-m`(move) 打包后删源文件，误用会丢数据；zip 支持追加到末尾(`-g`)，但不能插到中间；超 4GB 需 Zip64(现代版本默认开启)。\n\n【macOS】自带 zip/unzip(Info-ZIP 移植版)。macOS 的 zip **默认包含 `._*` 资源分支文件**，用 `zip -X` 或设 `COPYFILE_DISABLE=1` 排除；macOS 的 unzip **通常不支持 `-O`**，处理中文乱码需装 GNU unzip 或用 Python/7z。",
+    "purpose": "打包/解压 zip 归档；与 Windows 互传文件；分卷归档；加密打包；查看/测试归档；处理中文文件名乱码",
+    "category": "archive",
+    "tags": [
+      "zip",
+      "unzip",
+      "压缩",
+      "解压",
+      "跨平台",
+      "分卷",
+      "GBK乱码"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "zip：-r 递归｜-9 最高压缩｜-x 排除｜-e 加密｜-s 分卷；unzip：-l 列出｜-o 覆盖｜-n 不覆盖｜-d 目标目录｜-O gbk 编码",
+        "required": false,
+        "default": "",
+        "example": "-r -9"
+      },
+      {
+        "name": "archive",
+        "label": "归档文件",
+        "description": "要创建/操作的 .zip 路径",
+        "required": true,
+        "default": "",
+        "example": "release.zip"
+      },
+      {
+        "name": "files",
+        "label": "文件/目录",
+        "description": "要打包的路径（zip），或要抽取的成员（unzip）",
+        "required": false,
+        "default": "",
+        "example": "dist/"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ zip -r -9 release.zip dist/ -x '*.log'\n  adding: dist/ (stored 0%)\n  adding: dist/app.js (deflated 72%)\n$ unzip -l release.zip\n  Length      Date    Time    Name\n        0  2026-10-14 22:20   dist/\n   184320  2026-10-14 22:20   dist/app.js\n   184320                     2 files\n$ unzip -n release.zip -d /tmp/out\nArchive:  release.zip\n   skipping: dist/app.js  already exists\n$ unzip -O gbk cn.zip   # 处理 GBK 文件名",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "xz xz 压缩解压",
+    "command": "xz {{options}} {{file}}",
+    "description": "用 LZMA2 算法，**压缩率通常优于 gzip/bzip2**，代价是更慢、更耗内存。手册共 **54 项**。\n\n【基本语法】xz [OPTION]... [FILE]...。\n\n【操作模式】-z/--compress 压缩(默认操作)｜-d/--decompress/--uncompress 解压｜-t/--test 校验完整性(等价 -dc 但丢弃输出)｜-l/--list 列出压缩文件信息。\n\n【常用选项】-k/--keep **保留输入文件**(5.2.6+ 对符号链接也生效)｜-f/--force 强制(覆盖已存在目标等)｜-c/--stdout/--to-stdout 输出到 stdout(隐含 --keep)｜--single-stream 只解第一个 .xz 流｜--no-sparse 不创建稀疏文件｜-S .suf/--suffix=.suf 指定后缀(默认 .xz/.lzma)｜--files[=file]/--files0[=file] 从文件读文件名(后者 NUL 分隔)｜-F fmt/--format=fmt 格式(auto/xz/lzma/raw)｜-C check/--check=check 完整性校验类型(none/crc32/crc64/sha256)｜--ignore-check 解压时不校验｜-0…-9 预设级别(默认 -6)｜-e/--extreme 更慢但压缩率更好的变体｜--fast/--best｜--block-size=size｜--block-list=items｜--flush-timeout=timeout｜--no-sync 不 fsync(更快，掉电风险)｜--memlimit-compress/-decompress/-mt-decompress=limit｜-M limit/--memlimit/--memory 同时设三种内存限制｜--no-adjust 内存不足直接报错｜-T threads/--threads=threads(0=按 CPU 核数)｜--filters=chain/--filters1..9｜--lzma1[=opts]/--lzma2[=opts]｜BCJ 过滤器 --x86/--arm/--armthumb/--arm64/--powerpc/--ia64/--sparc/--riscv｜--delta[=opts]｜-q/--quiet｜-v/--verbose｜-Q/--no-warn｜--robot 机器可解析输出｜--info-memory｜-h/--help｜-H/--long-help｜-V/--version。\n\n【易踩坑】**`xz` 默认删除原文件**，要保留加 `-k`；**xz 解压极耗内存**(高压缩级别可达数百 MB 甚至 GB)，小内存 VPS 上解大 xz 文件可能 OOM，用 `--memlimit` 限制或选较低级别；`-9e` 压缩非常慢，**只在归档长期保存时值得**；xz **不打包多文件**(那是 tar 的活)；`.xz` 与 `.lzma` 是不同格式(`-F lzma` 才生成 .lzma，`xz -d` 两者都能解)；压缩后的文件**不能用 grep 直接搜**，需 `xz -dc f.xz | grep`；**`-T0` 多线程在小文件上反而更慢**；`--check=none` 会牺牲完整性校验。\n\n【macOS】自带 xz(较新版本有)，用法一致；macOS 上 `tar -J` 调用的是 bsdtar 内部的 xz 支持。",
+    "purpose": "高压缩比归档（发布包、日志冷备）；解压 .xz/.lzma；不解压直接查看内容；多线程压缩大文件；校验完整性",
+    "category": "archive",
+    "tags": [
+      "xz",
+      "unxz",
+      "lzma",
+      "压缩",
+      "解压",
+      "高压缩比",
+      "LZMA2"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-k 保留原文件｜-d 解压｜-c 输出到 stdout｜-9e 最高压缩｜-T0 多线程｜-l 看信息｜-t 校验｜--memlimit 限制内存",
+        "required": false,
+        "default": "",
+        "example": "-9e -k"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要压缩/解压的文件；`-` 表示标准输入输出",
+        "required": true,
+        "default": "",
+        "example": "app.tar"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ xz -9e -k -T0 app.tar && ls -l app.tar*\n-rw-r--r--  1 tom dev 52428800 Oct 14 22:20 app.tar\n-rw-r--r--  1 tom dev  6291456 Oct 14 22:20 app.tar.xz\n$ xz -l app.tar.xz\nStrms  Blocks   Compressed Uncompressed  Ratio  Check   Filename\n    1       1      6.0 MiB     50.0 MiB  0.120  CRC64   app.tar.xz\n$ xz -dc app.tar.xz | tar tf -\napp/\napp/index.html\n$ unxz app.tar.xz    # = xz -d",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "echo 输出文本",
+    "command": "echo {{options}} {{string}}",
+    "description": "输出文本。**注意：`echo` 在 bash 里是内建命令**，行为受 shell 选项（`xpg_echo`）影响，且各实现差异大。\n\n【基本语法】echo [SHORT-OPTION]... [STRING]...。\n\n【选项，全列 5 项】-n 不输出末尾换行｜-e 启用反斜杠转义解释｜-E 禁用反斜杠转义解释(**默认**)｜--help｜--version。\n\n【`-e` 支持的转义】\\a 响铃(BEL)｜\\b 退格｜**\\c 不再输出后续内容(且不加换行)**｜\\e / \\E ESC｜\\f 换页｜\\n 换行｜\\r 回车｜\\t 水平制表｜\\v 垂直制表｜\\\\ 反斜杠｜\\0nnn 八进制字符｜\\xHH 十六进制字符｜\\uHHHH Unicode 码点(4 位)｜\\UHHHHHHHH Unicode 码点(8 位)。\n\n【易踩坑】**`echo` 的 `-e`/`-n` 不是 POSIX 标准**，不同 shell(dash/sh/bash/zsh)行为不同，**脚本里要可移植请用 `printf`**；echo 不引号时会被 shell 做**通配符展开与词分割**(`echo *` 会列出当前目录文件)；不加引号时多余空格会被压缩(`echo a  b` 输出 `a b`)；`-n`/`-e` 若出现在字符串位置可能被当成选项，要输出字面 `-n` 用 `echo -- -n` 或 printf；**`\\c` 会截断后续所有输出**且不加换行，容易造成「输出莫名少了」；bash 的 `shopt -s xpg_echo` 会让内建 echo 默认解释转义，**与 -E 默认行为相反**，是跨平台脚本的常见陷阱；想输出变量且保留原样(含空格/换行)**必须加双引号**：`echo \"$var\"`。\n\n【macOS】默认 shell 是 zsh，zsh 内建 echo **默认就解释转义**(类似 -e 打开)，与 bash 默认相反，跨平台要特别注意；要字面输出用 `echo -E` 或 printf。",
+    "purpose": "输出文本与变量；写文件/追加内容；生成带颜色/制表/换行的格式化输出；调试脚本时打印中间值",
+    "category": "shell",
+    "tags": [
+      "echo",
+      "输出",
+      "变量",
+      "转义",
+      "printf",
+      "shell内建"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-n 不换行｜-e 解释转义｜-E 不解释转义(bash 默认)",
+        "required": false,
+        "default": "",
+        "example": "-e"
+      },
+      {
+        "name": "string",
+        "label": "字符串",
+        "description": "要输出的内容；含变量或空格时请加双引号",
+        "required": false,
+        "default": "",
+        "example": "\"$PATH\""
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ echo hello\nhello\n$ echo -n hello; echo world\nhelloworld\n$ echo -e 'a\\tb\\nc'\na\tb\nc\n$ echo $PATH\n/usr/local/bin:/usr/bin:/bin\n$ echo -e '\\033[31mred\\033[0m'\nred            # 终端里显示为红色\n$ printf '%s\\n' \"$var\"   # 更可移植的替代",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "export 设置/导出环境变量",
+    "command": "export {{name}}={{value}}",
+    "description": "**bash 内建命令**，把变量标记为「导出」，使其对**后续启动的子进程**可见。\n\n【基本语法】export [-fn] [name[=value]] ... ｜ export -p [-f]。\n\n【选项，全列】-f 操作的是**函数**而非变量｜**-n 取消导出**(移除导出属性)，变量仍在但不再传给子进程｜-p 以可重用为输入的形式显示所有已导出的名字。不给名字、或只给 `-p` 时，列出所有已导出变量；`-p` 与 `-f` 同用则显示已导出的函数。\n\n【易踩坑】**`export` 只在当前 shell 及其子进程有效**，不会影响父 shell；写进脚本的 export 在脚本退出后消失。要持久化需写进 `~/.bashrc`、`~/.profile` 或 `/etc/environment`、`/etc/profile.d/*.sh`；**`VAR=x` 不等于 `export VAR=x`**——前者只是 shell 变量，子进程看不到；`export VAR=$OTHER` 与 `export VAR=\"$OTHER\"` 在含空格时不同，**始终加双引号**；**`export PATH=...` 覆盖后可能丢掉原有 PATH**，务必写成 `export PATH=\"new:$PATH\"`；`-n` 只取消导出、**不删除变量**(删除用 `unset`)；交互式 shell 与脚本读的初始化文件不同(登录 shell 读 `.bash_profile`，非登录交互读 `.bashrc`)，export 放错文件会「有时生效有时不」；**`sudo` 默认不继承导出的环境**(env_reset)，要传需 `sudo -E` 或在 sudoers 里配 `env_keep`。\n\n【等价写法】`declare -x FOO=bar` 与 `export FOO=bar` 等价；`export -p` 可查看当前所有已导出变量。\n\n【macOS】默认 shell 是 zsh，export 语义相同；但初始化文件不同：zsh 读 `~/.zshrc`/`~/.zprofile`；macOS 有 `launchctl setenv` 给 GUI 应用设环境变量，系统级变量在 `/etc/paths`、`/etc/paths.d/`。",
+    "purpose": "设置 JAVA_HOME/LANG/PATH 等环境变量；把变量传给子进程；追加 PATH 而不覆盖；取消导出；导出 shell 函数",
+    "category": "shell",
+    "tags": [
+      "export",
+      "环境变量",
+      "PATH",
+      "JAVA_HOME",
+      "shell内建",
+      "持久化"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "label": "变量名",
+        "description": "要导出的变量名，可一次写多个",
+        "required": true,
+        "default": "",
+        "example": "JAVA_HOME"
+      },
+      {
+        "name": "value",
+        "label": "值",
+        "description": "变量值；含空格/变量引用时请加双引号",
+        "required": false,
+        "default": "",
+        "example": "/usr/lib/jvm/java-21"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ export JAVA_HOME=/usr/lib/jvm/java-21\n$ export PATH=\"$JAVA_HOME/bin:$PATH\"\n$ export -p | grep JAVA\ndeclare -x JAVA_HOME=\"/usr/lib/jvm/java-21\"\n$ env | grep JAVA_HOME      # 验证已导出\nJAVA_HOME=/usr/lib/jvm/java-21\n$ export MYVAR=1 MYOTHER=2\n$ export -n SECRET           # 取消导出（变量仍在）",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "env 查看/临时修改环境变量",
+    "command": "env {{options}} {{name=value}} {{command}}",
+    "description": "在修改后的环境中运行命令，或显示当前环境。手册 13 项。\n\n【基本语法】env [OPTION]... [-] [NAME=VALUE]... [COMMAND [ARG]...]。\n\n【选项，全列 13 项】-a ARG/--argv0=ARG 把 ARG 作为 COMMAND 的第 0 个参数｜**-i/--ignore-environment 从空环境开始**｜-0/--null 每行输出以 NUL 结尾(而非换行)｜-u NAME/--unset=NAME 从环境中移除变量｜-C DIR/--chdir=DIR 切换工作目录｜**-S S/--split-string=S 按 shell 规则拆分 S(shebang 行传多参数的关键)**｜--block-signal[=SIG] 向 COMMAND 屏蔽信号｜--default-signal[=SIG] 重置信号处理为默认｜--ignore-signal[=SIG] 让 COMMAND 忽略信号｜--list-signal-handling 列出非默认的信号处理到 stderr｜-v/--debug 每个处理步骤打印详细信息｜--help｜--version。\n\n【易踩坑】**`env` 的临时变量只对该次命令有效**，不会留在当前 shell(那是 export 的活)；`env VAR=1` 只是**临时**设置，单跑没有意义(无 COMMAND 时只列出环境)；**shebang 行 `#!/usr/bin/env python3 -u` 在多数系统上不生效**(内核只取一个参数)，需 `#!/usr/bin/env -S python3 -u`；**`env -i` 从空环境开始，PATH 也没了**，必须显式给 PATH 否则命令找不到；env 输出顺序不固定(哈希表顺序)，要稳定输出用 `env | sort`；env 能看到的多为**已导出**的变量，shell 内部变量(未 export)看不到；`-u` 是「移除」不是「设空值」；env 与 printenv 区别：env 还能改环境并运行命令，printenv 只能打印。\n\n【macOS】自带 env(BSD 版)，**没有 `-S`、`-C`、`-a` 及信号相关选项**(较老版本)；macOS 上 `#!/usr/bin/env -S ...` 也常不生效，脚本宜用 `#!/usr/bin/env bash` 单参数形式。",
+    "purpose": "查看所有环境变量；临时设/移除变量运行命令；用干净环境复现问题；在 shebang 里传多个参数",
+    "category": "shell",
+    "tags": [
+      "env",
+      "环境变量",
+      "printenv",
+      "shebang",
+      "干净环境"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-i 空环境｜-u NAME 移除变量｜-0 NUL 分隔输出｜-C DIR 切目录｜-S 拆字符串｜-v 调试",
+        "required": false,
+        "default": "",
+        "example": "-i"
+      },
+      {
+        "name": "name=value",
+        "label": "变量赋值",
+        "description": "临时设置的 NAME=VALUE，可多个",
+        "required": false,
+        "default": "",
+        "example": "PATH=/usr/bin:/bin"
+      },
+      {
+        "name": "command",
+        "label": "命令",
+        "description": "在该环境中执行的命令；省略则只列出环境",
+        "required": false,
+        "default": "",
+        "example": "/bin/bash --noprofile --norc"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ env | grep -i proxy\nhttp_proxy=http://127.0.0.1:7890\nhttps_proxy=http://127.0.0.1:7890\n$ env -i PATH=/usr/bin:/bin /bin/sh -c 'echo $HOME; echo $PATH'\n\n/usr/bin:/bin\n$ env -u http_proxy curl -s https://example.com\n$ env -C /tmp pwd\n/tmp\n$ env -0 | tr '\\0' '\\n' | head -3",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "which / whereis 查命令路径",
+    "command": "which {{options}} {{program}}",
+    "description": "`which` 在 PATH 里找可执行文件；`whereis` 找二进制、手册、源码。\n\n【which 基本语法】which [options] [--] programname [...]。\n\n【which 选项，全列】**-a/--all 打印 PATH 里所有匹配**，而非只第一个｜-i/--read-alias 从 stdin 读别名并报告匹配的(配合 `alias which='alias | which -i'`)｜--skip-alias 忽略 --read-alias｜--read-functions 从 stdin 读 shell 函数定义并报告匹配｜--skip-functions｜--skip-dot 跳过 PATH 中以点开头的目录｜--skip-tilde 跳过以 `~` 开头的目录及 HOME 下的可执行文件｜--show-dot PATH 中点开头目录匹配时打印 `./program`｜--show-tilde 目录匹配 HOME 时输出 `~`｜--tty-only 不在 tty 上时停止处理右侧选项｜-v/-V/--version｜--help。**返回值是失败参数的个数**；没给 programname 时返回 -1。\n\n【whereis 选项，全列 12 项】-b 只搜二进制｜-m 只搜手册｜-s 只搜源码｜-u 只显示「不寻常」的条目｜-B list 限定二进制搜索目录(空格分隔)｜-M list 限定手册搜索目录｜-S list 限定源码搜索目录｜**-f 结束目录列表，开始文件名(用了 -B/-M/-S 就必须加)**｜-l 输出实际使用的查找路径｜-g 把后续名字当 glob 模式｜-h/--help｜-V/--version。\n\n【易踩坑】**`which` 不认 shell 内建与别名**(`which cd` 可能找不到，因为 cd 是内建)，查「shell 会怎么解释这个命令」用 **`type -a`**；which 只按 PATH 找、不查函数；**which 在不同发行版是不同实现**(debianutils 的 which vs GNU which)，选项有差异；**脚本里判断命令是否存在，最可移植的是 `command -v`**，而不是 which(后者可能未安装)；whereis 用的是**硬编码/预建数据库路径**，不查 PATH，所以可能与 which 结果不同；whereis 用了 -B/-M/-S 后**必须用 -f**；which 的返回值是「失败个数」，多个参数时非零不代表全失败。\n\n【macOS】自带 which(BSD/旧版)与 whereis，但 **macOS 的 which 不支持 --read-alias 等 GNU 选项**；macOS 推荐用 `type`/`command -v`；注意 macOS 的 which 不查 shell 函数。",
+    "purpose": "查命令实际执行的是哪个文件；排查 PATH 顺序导致的版本问题；确认命令是否安装；找命令对应的手册页",
+    "category": "shell",
+    "tags": [
+      "which",
+      "whereis",
+      "type",
+      "command",
+      "PATH",
+      "命令路径"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "which：-a 显示所有匹配；whereis：-b 二进制｜-m 手册｜-s 源码｜-l 显示查找路径",
+        "required": false,
+        "default": "",
+        "example": "-a"
+      },
+      {
+        "name": "program",
+        "label": "命令/文件名",
+        "description": "要查找的命令名或文件名",
+        "required": true,
+        "default": "",
+        "example": "java"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ which java\n/usr/lib/jvm/java-21/bin/java\n$ which -a python3\n/usr/local/bin/python3\n/usr/bin/python3\n$ whereis nginx\nnginx: /usr/sbin/nginx /usr/lib/nginx /etc/nginx /usr/share/man/man8/nginx.8.gz\n$ type -a ls\nls is aliased to `ls --color=auto'\nls is /usr/bin/ls\n$ command -v python3\n/usr/local/bin/python3",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "history 历史命令",
+    "command": "history {{options}}",
+    "description": "**bash 内建命令**，查看/操作命令历史。\n\n【基本语法】history [n] ｜ history -c ｜ history -d offset ｜ history -d start-end ｜ history -anrw [filename] ｜ history -p arg [arg ...] ｜ history -s arg [arg ...]。\n\n【选项，全列】`history [n]` 列出最近 n 条(不带 n 列全部)，带 `*` 前缀的是被修改过的｜**-c 清空历史列表**｜-d offset 删除第 offset 条(负数从末尾倒数，-1 是当前这条)｜-d start-end 删除区间(闭区间)｜-a 把**本次会话新产生**的历史追加到历史文件｜-n 读入历史文件中**本次会话尚未读过**的新行｜-r 读历史文件并追加到当前列表｜-w 把当前列表**覆盖写**到历史文件｜-p arg... 对参数做历史替换并输出(不存入列表)｜-s arg... 把参数作为**单条**存入历史列表。指定 filename 则用该文件代替 `$HISTFILE`。\n\n【相关环境变量】HISTSIZE 内存中保留的历史条数(0 表示不记录)｜HISTFILESIZE 历史文件保留的条数｜HISTFILE 历史文件路径(默认 `~/.bash_history`)｜HISTCONTROL `ignorespace`(空格开头不记)/`ignoredups`(重复不记)/`ignoreboth`/`erasedups`｜HISTIGNORE 冒号分隔的模式列表，匹配的行不记录(`&` 匹配上一条)｜HISTTIMEFORMAT 设置后为每条历史加时间戳(如 `'%F %T '`)。\n\n【历史展开】`!!` 上一条｜`!n` 第 n 条｜`!-n` 倒数第 n 条｜`!string` 最近一条以 string 开头的｜`!?string?` 最近一条含 string 的｜`!$`/`!!:$` 上一条的**最后一个参数**｜`!*` 上一条的所有参数｜`!^` 上一条的第一个参数｜`^old^new` 把上一条中的 old 换成 new 再执行｜`!cmd:s/old/new/` 对指定历史做替换｜`Ctrl-R` 反向增量搜索(`Ctrl-S` 正向)｜`Alt-.`/`Esc .` 插入上一条的最后一个参数。\n\n【易踩坑】**历史在会话退出时才写入 `~/.bash_history`**(除非 `history -a`/`-w`)，多终端并发时后写的会覆盖，导致丢历史；**敏感信息(密码、token)会进历史**——用 `HISTCONTROL=ignorespace` 并在命令前加空格，或 `set +o history` 临时关闭；**`history -c` 只清内存列表**，不清 `~/.bash_history` 文件，要彻底清需再 `history -w`(覆盖)或手动删文件；`HISTSIZE=0` 不记录但历史文件里已有的仍在；`!` 在**双引号内会触发展开**(`echo \"hi!\"` 在交互式 shell 里可能出错)；脚本(非交互 shell)默认**不记历史**。\n\n【macOS】默认 shell 是 zsh，历史文件是 `~/.zsh_history`，变量是 `HISTSIZE`/`SAVEHIST`，且 zsh 有 `setopt hist_ignore_dups` 等选项；若在 macOS 用 bash 则与 Linux 一致(但 bash 版本是 3.2，很旧)。",
+    "purpose": "查找以前执行过的命令；复用上一条命令或它的参数；清理敏感命令；配置历史记录策略与时间戳",
+    "category": "shell",
+    "tags": [
+      "history",
+      "历史命令",
+      "HISTSIZE",
+      "HISTCONTROL",
+      "HISTIGNORE",
+      "反向搜索"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "n 显示最近 n 条｜-c 清空｜-d offset 删除｜-a 追加到文件｜-w 覆盖写文件｜-p/-s 替换/存入｜管道接 `grep 关键词` 即可搜索",
+        "required": false,
+        "default": "",
+        "example": "-c"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ history | grep ssh\n  501  ssh user@10.0.0.5\n  512  scp a.txt user@10.0.0.5:/tmp/\n$ history 3\n  510  ls -la /var/log\n  511  df -h\n  512  scp a.txt user@10.0.0.5:/tmp/\n$ sudo !!\nsudo scp a.txt user@10.0.0.5:/tmp/\n$ ls -la /var/log && cd !$\ncd /var/log\n$ HISTTIMEFORMAT='%F %T ' history | tail -2\n2026-10-14 22:20:11  df -h\n2026-10-14 22:20:31  cd /var/log",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "alias 命令别名",
+    "command": "alias {{name}}='{{value}}'",
+    "description": "**bash 内建命令**，为命令定义快捷方式。配套 `unalias`。\n\n【基本语法】alias [-p] [name[=value] ...] ｜ unalias [-a] name [name ...]。\n\n【选项，全列】-p 以 `alias name=value` 形式打印所有别名(等价无参数)｜(无参数) 同上，打印所有别名｜`name` 打印该别名的定义｜`name=value` 定义/覆盖别名。unalias：`-a` 删除所有别名，否则删除指定的。\n\n【别名展开规则】**别名只在交互式 shell 中默认展开**，非交互 shell(脚本)需 `shopt -s expand_aliases`；别名在**解析时**展开，且只在**命令位置**(第一个词)展开；值**以空格结尾**时，下一个词也会尝试别名展开(可做「别名串」)；别名**不能带参数**，需要参数请用 shell 函数。\n\n【易踩坑】**别名在脚本里默认不生效**，需 `shopt -s expand_aliases` 且要在**定义之后**的行才生效；别名定义必须在**使用它的代码之前**(解析时展开)；别名**不能传参数**；想绕过别名用**反斜杠**(`\\ls`)或 `command ls`；别名**不递归**(`alias ls='ls -l'` 不会无限循环)；同名别名会覆盖且**没有警告**；交互式与登录 shell 读的文件不同，别名放错地方会「新开的终端没生效」；别名展开发生在**引号之外**，`echo 'll'` 不会展开。\n\n【持久化】把别名写进 `~/.bashrc`(交互式)或 `~/.bash_aliases`(Ubuntu 的 .bashrc 会 source 它)；**需要参数的场景改用函数**，例如 `mkcd() { mkdir -p \"$1\" && cd \"$1\"; }`。\n\n【macOS】默认 zsh，别名语法相同(alias 是内建)，持久化写 `~/.zshrc`；macOS 的 unalias 也支持 -a。",
+    "purpose": "定义常用命令的快捷方式；给 ls/grep/df 加默认选项；简化长命令；删除或查看已有别名",
+    "category": "shell",
+    "tags": [
+      "alias",
+      "unalias",
+      "别名",
+      "shell内建",
+      "bashrc",
+      "zshrc"
+    ],
+    "params": [
+      {
+        "name": "name",
+        "label": "别名",
+        "description": "要定义/查看/删除的别名名",
+        "required": true,
+        "default": "",
+        "example": "ll"
+      },
+      {
+        "name": "value",
+        "label": "展开内容",
+        "description": "别名展开后的命令；含空格需用单引号包住",
+        "required": false,
+        "default": "",
+        "example": "ls -lah"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ alias ll='ls -lah'\n$ ll\ntotal 24\ndrwxr-xr-x  5 tom  dev   160 Oct 14 22:20 .\n$ alias | grep '^alias ll'\nalias ll='ls -lah'\n$ type ll\nll is aliased to `ls -lah'\n$ unalias ll\n$ \\ls            # 反斜杠绕过别名\n$ alias grep='grep --color=auto'",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "crontab 定时任务",
+    "command": "crontab {{options}}",
+    "description": "管理 cron 定时任务表。`crontab` 命令（cronie）与 `crontab(5)` 文件格式。\n\n【命令语法】crontab [-u user] file ｜ crontab [-u user] [-i] {-e | -l | -r}。\n\n【crontab 选项，全列 10 项】-u user 操作指定用户的 crontab(需权限)｜-l 显示当前 crontab｜-e 用 `VISUAL`/`EDITOR` 编辑当前 crontab｜**-r 删除当前 crontab(无确认)**｜-i 配合 -r，删除前提示 y/Y｜-T 只测试语法，不安装｜-s 编辑/替换前把当前 SELinux 上下文作为 MLS_LEVEL 追加｜-n host 集群支持：设置由哪个主机运行任务(需 cron 以 -c 启动)｜-c 集群支持：查询当前由哪个主机运行｜-V 版本。\n\n【文件格式】`分 时 日 月 周  命令`。取值范围：分钟 0-59｜小时 0-23｜日 1-31｜月 1-12(或 jan-dec)｜周 0-7(0 或 7 = 周日，或 sun-sat)。**匹配规则：分、时、月三者都匹配，且「日」与「周」至少一个匹配时才执行**。\n\n【语法元素】`*` 任意值｜`a-b` 范围(含两端)｜`a,b,c` 列表｜`*/n` 每 n 个单位(如 `*/15` 每 15 分钟)｜`a-b/n` 范围内每 n 个｜`@reboot` 启动时执行一次｜`@yearly`/`@annually`(= 0 0 1 1 *)｜`@monthly`(= 0 0 1 * *)｜`@weekly`(= 0 0 * * 0)｜`@daily`/`@midnight`(= 0 0 * * *)｜`@hourly`(= 0 * * * *)。\n\n【环境与转义】crontab 里可设环境变量(`PATH=...`、`MAILTO=user@x`、`SHELL=/bin/bash`)；**命令里的 `%` 有特殊含义(被当作换行)，要字面 `%` 需转义为 `\\%`**；命令输出会邮件给 MAILTO 指定的用户。\n\n【系统级任务】`/etc/crontab`(多一个「用户名」字段)、`/etc/cron.d/*`、`/etc/cron.{hourly,daily,weekly,monthly}/`。\n\n【易踩坑】**cron 的 PATH 极简**(通常只有 /usr/bin:/bin)，脚本常「手动能跑、cron 跑不了」，**在 crontab 里显式设 PATH 或用绝对路径**；**cron 的环境变量与登录 shell 完全不同**(不读 .bashrc/.profile)；**`crontab -r` 直接删除、无确认**，是高频误操作，养成用 `-i` 的习惯；**`%` 在 crontab 里是特殊字符**，`date +%F` 必须写成 `date +\\%F`；**命令输出默认邮件**给任务属主，累积会撑爆 /var/mail，建议重定向 `>> log 2>&1` 或设 `MAILTO=\"\"`；**最小粒度是分钟**，秒级任务需靠 sleep 或 systemd timer；**DST 切换**时「不存在的时间」不触发、「重复的时间」触发两次；用 run-parts 的 /etc/cron.daily 等目录要求脚本**可执行且文件名不含点**；**别把长任务堆在同一时刻**，会造成负载尖峰。\n\n【macOS】仍自带 cron 与 crontab，用法与 Linux 一致(但建议用 launchd/launchctl 做系统级调度)；日志在 /var/log/cron(需开启)；cron 与 launchd 的权限模型不同，Full Disk Access 可能影响任务。",
+    "purpose": "配置周期性定时任务（备份、巡检、清理）；查看/编辑/备份/恢复 crontab；只做语法检查；按用户管理任务",
+    "category": "schedule",
+    "tags": [
+      "crontab",
+      "cron",
+      "定时任务",
+      "计划任务",
+      "cron表达式",
+      "MAILTO"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-l 列出｜-e 编辑｜-r 删除(无确认)｜-i 删除前提示｜-u user 指定用户｜-T 只测语法｜直接给文件名则导入该文件。编辑时每行格式：`分 时 日 月 周  命令`，`%` 要转义为 `\\%`",
+        "required": true,
+        "default": "",
+        "example": "-e"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ crontab -l\nSHELL=/bin/bash\nPATH=/usr/local/bin:/usr/bin:/bin\nMAILTO=admin@example.com\n0 2 * * *      /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1\n*/5 * * * *    /usr/bin/curl -s http://localhost/health\n0 9 * * 1-5    /usr/local/bin/report.sh\n@reboot        /usr/local/bin/start-worker.sh\n$ crontab -l > backup.txt && crontab backup.txt   # 备份/恢复\n$ crontab -i -r                                   # 删除（带提示）\ncrontab: really delete tom's crontab? y",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "date 显示/设置时间",
+    "command": "date {{options}} '+{{format}}'",
+    "description": "显示或设置系统时间。GNU coreutils 版，手册 12 项。\n\n【基本语法】date [OPTION]... [+FORMAT] ｜ date [-u|--utc|--universal] [MMDDhhmm[[CC]YY][.ss]]。\n\n【选项，全列 12 项】**-d STRING/--date=STRING 显示 STRING 描述的时间(而非当前)**｜--debug 标注解析结果并对可疑用法告警｜-f FILE/--file=FILE 对 FILE 每行做一次 --date(`-` 为 stdin)｜-I[FMT]/--iso-8601[=FMT] ISO 8601 格式(date/hours/minutes/seconds/ns)｜--resolution 输出时间戳分辨率｜-R/--rfc-email RFC 5322 格式｜--rfc-3339=FMT RFC 3339 格式｜-r FILE/--reference=FILE 显示 FILE 的最后修改时间｜**-s STRING/--set=STRING 设置时间(需 root)**｜-u/--utc/--universal 显示/设置 UTC｜--help｜--version。\n\n【常用格式符】%F = %Y-%m-%d｜%T = %H:%M:%S｜%Y/%y 4位/2位年｜%m/%d 月/日｜%H/%M/%S 时/分/秒(24 小时制)｜**%s Unix 时间戳**(自 1970-01-01 UTC 的秒数)｜%j 一年中的第几天｜%A/%a 星期全名/缩写｜%B/%b 月全名/缩写｜%Z/%z 时区名/数字偏移(+0800)｜%N 纳秒｜%u/%w 星期几(1-7 / 0-6)｜%I/%p 12 小时制/AM-PM｜%% 字面 %。\n\n【易踩坑】**`-d` 是 GNU 扩展**，BSD/macOS 的 date **没有 -d**(macOS 用 `-j -f` 或 `-r`)，跨平台脚本要小心；**`date -s`(设时间)需要 root**，且会立刻改动系统时钟，生产环境应配 NTP/chrony 而不是手动设；**`%` 在 crontab 里要转义**为 `\\%`；`date +%s` 是 Unix 时间戳，`date -d @N` 是反向，**别把两者搞混**；时间戳单位：%s 是**秒**，Java/JS 常用**毫秒**，转换要乘除 1000；`-u` 只影响**显示**(`-s` 时影响设置)，不改系统时区；系统时区由 `/etc/localtime`(软链到 /usr/share/zoneinfo/...)与 `TZ` 环境变量共同决定，`timedatectl` 是更现代的方式；**脚本里算时间差**用 `date +%s` 相减比解析字符串可靠；容器里 date 用的是宿主机时钟，但时区可能没配(→ UTC)。\n\n【macOS 差异，差异最大的命令之一】指定时间：Linux `date -d '2 days ago'` vs macOS `date -v-2d`；时间戳转日期：Linux `date -d @123` vs macOS `date -r 123`；解析字符串：Linux `date -d '2026-10-14'` vs macOS `date -j -f '%F' '2026-10-14'`；macOS 用 `-v` 做相对调整(-v+1m/-v-1d)，`-j` 表示「不设时间只解析」，`-f` 指定输入格式。",
+    "purpose": "查看当前时间与时区；格式化输出时间戳；时间戳与日期互转；相对时间计算；取文件修改时间；给日志/文件名打时间戳",
+    "category": "schedule",
+    "tags": [
+      "date",
+      "时间",
+      "时间戳",
+      "格式化",
+      "时区",
+      "TZ",
+      "NTP"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-d 'STRING' 指定时间｜-u UTC｜-Iseconds ISO8601｜-R RFC5322｜-r FILE 文件 mtime｜-s 设时间(需 root)",
+        "required": false,
+        "default": "",
+        "example": "-d '2 days ago'"
+      },
+      {
+        "name": "format",
+        "label": "格式",
+        "description": "+%F 日期｜+%T 时间｜+%s 时间戳｜+%Y%m%d 无分隔｜+%F\\ %T 完整",
+        "required": false,
+        "default": "%F",
+        "example": "%F %T"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ date\nWed Oct 14 22:20:11 CST 2026\n$ date +%F\n2026-10-14\n$ date '+%F %T'\n2026-10-14 22:20:11\n$ date +%s\n1791987611\n$ date -d @1791987611\nWed Oct 14 22:20:11 CST 2026\n$ date -d '2 days ago' +%F\n2026-10-12\n$ TZ='America/Los_Angeles' date\nWed Oct 14 07:20:11 PDT 2026\n$ date -r backup.tar.gz\nWed Oct 14 22:19:02 CST 2026",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "watch 定时执行",
+    "command": "watch {{options}} {{command}}",
+    "description": "周期性执行命令并全屏显示输出（procps-ng）。手册 18 项。\n\n【基本语法】watch [options] command。\n\n【选项，全列 18 项】-b/--beep 命令非零退出时响铃｜-c/--color 解释 ANSI 颜色/样式｜-C/--no-color 不解释颜色｜**-d/--differences[=permanent] 高亮两次输出的差异**(permanent 表示显示自首次以来的所有变化)｜-e/--errexit 命令出错时冻结更新，按键后退出(退出码为命令的退出码)｜-f/--follow 不清屏，像 tail -f 一样滚动｜-g/--chgexit 输出**变化**时退出｜-n SEC/--interval=SEC 更新间隔秒(<0.1 或 >2678400 会被夹到边界；支持小数)｜-p/--precise 按「上次**开始**」计时(更精确)，默认按「上次**结束**」计时｜-q CYCLES/--equexit=CYCLES 输出连续 N 个周期不变时退出｜-r/--no-rerun 终端 resize 时不重跑｜-s DIR/--shotsdir=DIR 截图保存目录｜-t/--no-title 不显示顶部标题栏｜-w/--no-wrap 不折行(长行截断)｜**-x/--exec 用 exec(3) 直接执行而非 sh -c**(更快，但失去 shell 特性)｜-h/--help｜-v/--version｜(交互) 按 `q` 退出、按 `空格` 立即执行一次。\n\n【易踩坑】**命令必须加引号**(含空格/管道/重定向时)，否则 `watch df -h` 会把 -h 当成 watch 的选项；**`-n` 最小 0.1 秒**，再小会被夹到 0.1；**默认按「上次结束」计时**，命令慢时实际间隔 = 命令耗时 + n，要固定节奏用 `-p`；**`-x`(exec) 不经过 shell**，管道、重定向、通配符都会失效；**watch 会反复执行命令，对「有副作用的命令(写文件、发请求)要非常小心」**；`-d` 在输出快速变化时几乎全屏高亮，反而看不清；输出被截断到屏幕大小，超长输出看不到全部。\n\n【macOS】macOS **不自带** procps 的 watch(macOS 上的 `watch` 是 snoop/tcpdump 相关的旧命令，完全不同)，Linux 用户到 macOS 需 `brew install watch`；macOS 的替代是 `while true; do clear; cmd; sleep 2; done`。",
+    "purpose": "周期性观察磁盘/内存/网络/进程指标；高亮显示变化；等待某条件变化；监视日志或文件列表变动",
+    "category": "schedule",
+    "tags": [
+      "watch",
+      "定时执行",
+      "监控",
+      "高亮差异",
+      "procps"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-n 间隔秒｜-d 高亮差异｜-g 变化即退出｜-e 出错即退出｜-t 无标题｜-x 不经 shell｜-c 彩色",
+        "required": false,
+        "default": "",
+        "example": "-d -n 2"
+      },
+      {
+        "name": "command",
+        "label": "命令",
+        "description": "要周期性执行的命令；**含空格/管道时必须加引号**",
+        "required": true,
+        "default": "",
+        "example": "'df -h'"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ watch -d -n 2 df -h\nEvery 2.0s: df -h                              host: Wed Oct 14 22:20:11 2026\nFilesystem      Size  Used Avail Use% Mounted on\n/dev/vda1        40G   18G   21G  47% /\ntmpfs           3.9G  1.2M  3.9G   1% /run\n^C\n$ watch -g -n 1 'curl -s -o /dev/null -w \"%{http_code}\" http://localhost'\nEvery 1.0s: curl -s -o /dev/null -w \"%{http_code}\" http://localhost\n200",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "xargs 参数传递",
+    "command": "{{input}} | xargs {{options}} {{command}}",
+    "description": "把标准输入的数据转成命令行参数传给另一个命令（GNU findutils）。\n\n【基本语法】xargs [options] [command [initial-arguments]]。\n\n【选项，全列】**-0/--null 输入项以 NUL 分隔**(引号/反斜杠不再特殊)｜-a FILE/--arg-file=FILE 从 FILE 读输入项｜-d DELIM/--delimiter=DELIM 用指定字符分隔(支持 \\n 等转义)｜-E EOF-STR 设置文件结束串｜-e[eof-str]/--eof[=eof-str] -E 的同义词(**已从 POSIX 移除**)｜**-I REPLACE-STR 用输入项替换初始参数里的 REPLACE-STR**(隐含 -x 与 -L 1)｜-i[replace-str]/--replace[=replace-str] -I 的同义词(**已从 POSIX 移除**；无参数时等价 -I{})｜-L MAX-LINES 每次命令最多用 MAX-LINES 个非空输入行(隐含 -x)｜-l[max-lines]/--max-lines -L 的同义词(已从 POSIX 移除)｜-n MAX-ARGS/--max-args=MAX-ARGS 每次命令最多 MAX-ARGS 个参数｜-P MAX-PROCS/--max-procs=MAX-PROCS 最多同时跑几个进程(0=尽可能多)｜-o/--open-tty 子进程执行前把 stdin 重开为 /dev/tty｜-p/--interactive 每条命令前询问(隐含 -t)｜--process-slot-var=NAME 给每个子进程设唯一的该环境变量｜**-r/--no-run-if-empty 输入为空时不运行命令**(默认会跑一次)｜-s MAX-CHARS/--max-chars=MAX-CHARS 命令行最大字符数｜--show-limits 显示命令行长度限制｜-t/--verbose 执行前把命令行打印到 stderr｜-x/--exit 超过 -s 大小限制时退出｜-- 选项结束｜--help｜--version。**互斥**：--max-lines(-L/-l)、--replace(-I/-i)、--max-args(-n) 互斥，同时给时**最后一个生效**。\n\n【退出码】0 成功｜123 某次命令以 1-125 退出｜124 命令以 255 退出｜125 命令被信号杀死｜126 命令无法执行｜127 命令不存在｜1 其他错误。\n\n【易踩坑】**文件名含空格/换行/引号时 xargs 会拆错**，**必须用 `find -print0 | xargs -0`**(或 `find -exec`)；**`xargs` 默认会跑一次命令，即使输入为空**(如 `echo -n | xargs rm` 会执行 rm)，加 `-r`(GNU 扩展)避免；**`xargs rm` 是 destructive**：一旦拆错参数可能删掉非预期文件，用 `-t` 先看会执行什么或用 `-p` 逐条确认；**`-I` 隐含 `-L 1`**，即每行一个参数、串行执行，**不能与 -n/-P 的并行期望混用**(-I 与 -n 互斥)；`-i`/`-l`/`-e` 是**已从 POSIX 移除**的老写法，新脚本用 -I/-L/-E；`-P` 并行时**输出顺序不确定**；xargs 输入**默认按空白(含换行)分隔**，要按行用 `-d '\\n'`，要按 NUL 用 `-0`；**-0 与 -d 会禁用文件结束串**。\n\n【macOS】自带 xargs(BSD 版)，**缺少 `-r`、`-d`、`-a`、`--process-slot-var`、`--show-limits`** 等 GNU 扩展；`-0`/`-n`/`-I`/`-L`/`-P`/`-t`/`-x` 可用；跨平台脚本注意别用 `-r`(BSD 默认就不会空跑)。",
+    "purpose": "把 find/ls 的输出批量传给 rm/grep/mv/curl；批量并行处理；安全处理含空格的文件名(-print0/-0)；占位符替换",
+    "category": "schedule",
+    "tags": [
+      "xargs",
+      "参数传递",
+      "批量",
+      "并行",
+      "find",
+      "print0"
+    ],
+    "params": [
+      {
+        "name": "input",
+        "label": "输入",
+        "description": "上游命令的输出，通常是 `find ... -print0` 或 `ls`",
+        "required": true,
+        "default": "",
+        "example": "find . -name '*.log' -print0"
+      },
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-0 NUL 分隔｜-n N 每次 N 个参数｜-I{} 占位替换｜-P N 并行｜-r 空输入不跑｜-t 显示命令｜-p 逐条确认",
+        "required": false,
+        "default": "",
+        "example": "-0"
+      },
+      {
+        "name": "command",
+        "label": "命令",
+        "description": "要接收参数的命令",
+        "required": true,
+        "default": "",
+        "example": "rm -f"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ find . -name '*.log' -print0 | xargs -0 rm -f\n$ echo a b c | xargs -n1 echo\na\nb\nc\n$ ls *.txt | xargs -I{} mv {} {}.bak\n$ find . -name '*.jpg' | xargs -P4 -n1 convert {} out/{}\n$ cat urls.txt | xargs -n1 -P8 curl -sO\n$ ls | xargs -r echo \"有文件才执行\"\n$ ls | xargs -t -I{} echo \"处理 {}\"\necho 处理 a.txt\n处理 a.txt",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "tee 分流输出",
+    "command": "{{command}} | tee {{options}} {{file}}",
+    "description": "把标准输入**同时**写到标准输出和文件（像水管三通）。手册 6 项。\n\n【基本语法】tee [OPTION]... [FILE]...。\n\n【选项，全列 6 项】**-a/--append 追加到文件**(而非覆盖)｜-i/--ignore-interrupts 忽略中断信号(SIGINT)｜-p 对管道以更合适的方式运行(诊断写非管道的输出)｜--output-error[=MODE] 写错误时的行为｜--help｜--version。`--output-error` 的 MODE：`warn`(写非管道输出出错时告警)、`warn-nopipe`(仅非管道告警)、`exit`(出错即退出)、`exit-nopipe`(非管道出错即退出)；不带 MODE 等价 `warn-nopipe`。\n\n【易踩坑】**`tee` 默认覆盖文件**，要追加必须 `-a`；**`sudo cmd > file` 无效**(重定向由当前 shell 做)，要写 root 文件用 **`cmd | sudo tee file`**——这是 sudo 的经典坑，tee 是其解药；tee 把数据**同时**送到 stdout 和文件，若只想要文件不想屏幕输出用 `> file`(但那样就不能用 sudo 了)；tee **不缓冲**(或行缓冲)，在长管道里可能影响性能，`stdbuf` 可调整；`-i` 让 tee 在收到 Ctrl-C 时继续把已缓冲数据写完；写多个文件时**任一个失败**可能导致整体失败(配合 --output-error 控制)；`tee /dev/stderr` 或 `/dev/tty` 可用来「既进管道又显示」。\n\n【macOS】自带 tee(BSD 版)，**没有 `-p` 和 `--output-error`**，其余一致。",
+    "purpose": "既在屏幕上看到输出又保存到文件；以 root 写系统文件(配合 sudo)；给构建/部署留全量日志；同时写多个文件",
+    "category": "schedule",
+    "tags": [
+      "tee",
+      "分流",
+      "日志",
+      "sudo",
+      "管道",
+      "追加"
+    ],
+    "params": [
+      {
+        "name": "command",
+        "label": "上游命令",
+        "description": "要分流输出的命令；连 stderr 要写 `2>&1`",
+        "required": true,
+        "default": "",
+        "example": "make 2>&1"
+      },
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-a 追加｜-i 忽略 Ctrl-C｜--output-error=MODE 写错误行为｜-p 管道友好模式",
+        "required": false,
+        "default": "",
+        "example": "-a"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要写入的文件，可多个；`/dev/stderr`、`/dev/tty` 是常用技巧",
+        "required": true,
+        "default": "",
+        "example": "build.log"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ make 2>&1 | tee build.log | tail -3\ngcc -O2 -o app main.c\nld app\nBuild finished successfully\n$ echo 'proxy=http://x' | sudo tee /etc/yum.conf.d/proxy.conf\nproxy=http://x\n$ cmd | tee -a out.log\n$ df -h | tee /dev/stderr | wc -l\nFilesystem      Size  Used Avail Use% Mounted on\n/dev/vda1        40G   18G   21G  47% /\n2",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "screen / tmux 会话保持",
+    "command": "tmux {{subcommand}} {{options}} {{target}}",
+    "description": "终端复用器：SSH 断开后会话继续运行，可重连。`screen` 是老牌，`tmux` 是现代化替代。\n\n【tmux 客户端选项，全列 14 项】-2 假定终端支持 256 色｜-C 控制模式启动｜-c shell-command 用指定命令代替默认 shell｜-D 不作为守护进程启动服务器｜-f file 指定配置文件(默认 ~/.tmux.conf)｜-h 打印用法｜-L socket-name 指定 socket 名(默认 /tmp/tmux-<uid>/default)｜-l 以登录 shell 行为｜-N 即使该命令会启动服务器也不启动｜-S socket-path 指定 socket 路径｜-T features 设置终端特性｜-u 强制 UTF-8 输出｜-V 显示版本｜-v 详细日志。\n\n【tmux 常用子命令，手册共 152 个】new-session(new) 新建会话(-s 命名、-d 分离、-A 存在则附加)｜attach-session(attach/a) 附加(-t name)｜detach-client(detach) 分离｜list-sessions(ls)｜kill-session｜**kill-server**｜rename-session｜new-window(neww)｜split-window(splitw)(-h 横分、-v 竖分)｜select-window/select-pane｜list-windows(lsw)/list-panes(lsp)｜send-keys(send) 发按键(脚本化)｜capture-pane(capturep) 抓取窗格内容｜resize-pane/resize-window｜swap-pane/swap-window/move-window/join-pane｜pipe-pane｜source-file(source) 加载配置｜set-option(set)/show-options(show)｜bind-key/unbind-key/list-keys(lsk)｜command-prompt/display-message｜has-session/wait-for/if-shell/run-shell。\n\n【tmux 常用按键，前缀默认 Ctrl-b】C-b d 分离｜C-b c 新建窗口｜C-b n/p 下/上一个窗口｜C-b 0..9 切窗口｜C-b , 重命名窗口｜C-b % 垂直分割(左右)｜C-b \" 水平分割(上下)｜C-b 方向键 切窗格｜C-b z 当前窗格最大化/还原｜C-b x 关闭窗格｜C-b [ 进入复制模式(可滚动)｜C-b ] 粘贴｜C-b ? 帮助｜C-b : 命令模式｜C-b t 时钟。\n\n【screen 选项，手册共 44 项，节选】-S name 指定会话名｜-ls [match]/--list 列出会话｜-r [pid.tty.host] 重连｜-R 重连(没有则创建)｜-d [pid.tty.host] 分离指定会话｜-d -r 先分离再重连｜-D -R 立刻附加(必要时分离他人)｜-x 附加到**未分离**的会话(多显示器共享)｜-m 忽略 $STY 强制新建｜-d -m 分离模式启动新会话｜-X cmd 向运行中的会话发送命令｜-Q 查询远程会话状态｜-wipe [match] 清理已死的会话｜-c file 指定配置文件(默认 ~/.screenrc)｜-t name 设置窗口标题｜-p number|name 预选窗口｜-A 适配所有窗口尺寸｜-a 包含所有能力｜-e xy 改转义字符｜-h num 历史缓冲行数｜-i 让中断键中断当前输出｜-L 开启自动输出日志｜-Logfile file｜-l/-ln 登录模式｜-O 最佳输出模式｜-P 开启认证｜-q 抑制错误信息｜-s program 指定 shell｜-T term 终端类型｜-U UTF-8 模式｜-v 版本｜-w 保持显示尺寸｜-4/-6 只用 IPv4/IPv6。screen 按键前缀默认 Ctrl-a：C-a d 分离、C-a c 新建窗口、C-a n/p 切换、C-a \" 窗口列表、C-a S 水平分割、C-a | 垂直分割、C-a Tab 切换区域、C-a [ 复制模式、C-a ? 帮助。\n\n【易踩坑】**忘记 `-t` 指定会话**时 `tmux attach` 只对唯一会话有效，多个会话会报错要你选；**`tmux kill-server` 会杀掉所有会话**，误用会丢掉所有后台任务；**tmux 的 socket 名(`-L`)决定会话隔离**，不同 -L 的会话互不可见；screen 默认前缀 Ctrl-a、tmux 是 Ctrl-b，**互相切换时最容易按错**(Ctrl-a a 可发送字面 Ctrl-a)；配置文件不同：tmux 是 ~/.tmux.conf、screen 是 ~/.screenrc；**tmux 里滚动要看历史需先 `C-b [`**(复制模式)，鼠标支持需显式 `set -g mouse on`；**分离(detach)不等于退出**：`C-b d` 让会话继续跑，直接 exit 或 `C-b x` 才是结束；**嵌套 tmux/screen 时前缀键会冲突**，需连按两次或改前缀；screen 的 `-x` 是「共享附加」，适合结对排障；会话在**服务器重启后丢失**(除非配了 systemd 自启 + 持久化方案如 tmux-resurrect)。\n\n【macOS】**不自带 screen/tmux**，需 `brew install tmux screen`；tmux 用法与 Linux 一致；iTerm2 的 tmux 集成模式(`tmux -CC`)在 macOS 上体验很好。",
+    "purpose": "SSH 断开后保持长任务不中断；多窗口/多窗格并行工作；共享终端给同事排障；脚本化发送命令与抓取输出",
+    "category": "schedule",
+    "tags": [
+      "tmux",
+      "screen",
+      "会话保持",
+      "终端复用",
+      "多窗口",
+      "detach",
+      "SSH保活"
+    ],
+    "params": [
+      {
+        "name": "subcommand",
+        "label": "子命令",
+        "description": "new 新建｜attach/a 附加｜ls 列出｜kill-session｜kill-server｜split-window｜send-keys｜capture-pane",
+        "required": true,
+        "default": "",
+        "example": "new"
+      },
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "tmux：-s 命名｜-d 后台｜-A 存在则附加｜-t 目标；screen：-S 命名｜-d 分离｜-r 重连｜-x 共享附加",
+        "required": false,
+        "default": "",
+        "example": "-s work"
+      },
+      {
+        "name": "target",
+        "label": "目标会话",
+        "description": "会话名（配合 -t），如 work",
+        "required": false,
+        "default": "",
+        "example": "work"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ tmux new -s deploy -d\n$ tmux ls\ndeploy: 1 windows (created Wed Oct 14 22:20:11 2026)\n$ tmux attach -t deploy\n# ... C-b d 分离（会话继续跑）\n[detached (from session deploy)]\n$ tmux send-keys -t deploy 'make deploy' Enter\n$ tmux capture-pane -p -t deploy | tail -2\nBuild finished\nDeploy complete\n$ screen -S work -X quit      # screen 结束指定会话\n$ tmux kill-server            # 杀掉所有会话（慎用）",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  }
+]
