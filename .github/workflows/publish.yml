@@ -92,6 +92,19 @@ jobs:
           echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
+      # 4. 校验 vcpkg 实装 OpenSSL 版本与工程内锁版本（src-tauri/vendor/openssl-src）
+      #    一致，防止 runner vcpkg 基线漂移导致 apps 源码与静态库版本不匹配。
+      #    openssl-app 的 build.rs 默认直接使用 vendor/openssl-src（无需 CI 提供源码）
+      - name: Verify vcpkg OpenSSL version (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $header = Get-Content "$env:OPENSSL_INCLUDE_DIR\openssl\opensslv.h" -Raw
+          $installed = [regex]::Match($header, 'OPENSSL_VERSION_TEXT\s+"OpenSSL\s+([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+          $locked = (Get-Content src-tauri/vendor/openssl-src/VELOTERM_VERSION -Raw).Trim()
+          Write-Host "vcpkg 实装: $installed / 工程锁死: $locked"
+          if ($installed -ne $locked) { throw "版本不一致：runner 的 vcpkg 基线已漂移。请按 src-tauri/vendor/openssl-src/README.md 升级锁版本（apps + include/internal + VELOTERM_VERSION）" }
+
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 

@@ -1,0 +1,28 @@
+# ── openssl-app sys-crate ────────────────────────────────────────────────────
+# 把 OpenSSL CLI（apps/openssl.c 的 main，上游 tag openssl-3.6.5）现场编译并
+# 静态链接进 Rust；libcrypto/libssl 一律取 Windows runner 上 vcpkg 已安装的
+# x64-windows-static 产物（与 SQLCipher 共用同一份），绝不引入 openssl-src
+# 或任何重复构建。
+#
+# 布局事实（源自 vcpkg 端口源码，2025-10 时点 master / openssl 3.6.5 port 2）：
+#   * installed/{triplet}          —— CI 已导出 OPENSSL_DIR 指向这里
+#   * buildtrees/openssl/src/<dir> —— vcpkg_from_github 的干净源码（含 apps\openssl.c）
+#   * buildtrees/openssl/x64-windows-static-rel / -dbg
+#                                  —— vcpkg_build_nmake 对源码的全量拷贝，
+#                                     已跑过 perl Configure（含生成的
+#                                     include\openssl\configuration.h、configdata.pm）
+#   * 端口默认（无 tools feature）传 no-apps → buildtrees 里【没有】
+#     apps\progs.c/h，本 build.rs 会用 perl 驱动 apps\progs.pl 现场生成。
+# 详见 build.rs 头注释。
+[package]
+name = "openssl-app"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "OpenSSL CLI (apps/openssl.c) 静态编入：仅 Windows，对接 vcpkg x64-windows-static"
+license = "Apache-2.0"
+publish = false
+
+[build-dependencies]
+# 与主工程 Cargo.lock 中一致（cc 1.8.0），用于编译 apps\*.c + apps\lib\*.c
+cc = "1"

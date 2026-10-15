@@ -213,6 +213,7 @@ dependencies = [
  "futures",
  "libc",
  "log",
+ "openssl-app",
  "palette_derive",
  "portable-pty",
  "r2d2",
@@ -5807,6 +5808,13 @@ dependencies = [
  "libc",
  "openssl-macros",
  "openssl-sys",
+]
+
+[[package]]
+name = "openssl-app"
+version = "0.1.0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

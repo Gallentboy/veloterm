@@ -5,7 +5,8 @@
 //!   uutils/findutils（find/xargs）、uutils/diffutils（diff/cmp/sdiff）、
 //!   ripgrep（rg）、fd-find（fd）、chmln/sd（sd）、frawk（awk，Cranelift
 //!   JIT）、tar-rs（tar，CLI 壳在 tar_impl.rs）、eza（eza/tree）、
-//!   wget-rs（wget，rustls）；which 为自研（unix_extras.rs）。
+//!   wget-rs（wget，rustls）、openssl（仅 Windows，vcpkg 静态库 + FFI，
+//!   见 vendor/openssl-app）；which 为自研（unix_extras.rs）。
 //! - `hardlinks`：启动时在 `tools/` 下为 coreutils 创建硬链接短名入口，
 //!   PATH 注入后用户在终端直接敲 `ls` / `grep` / `rg` / `fd` 等短名即用。
 //!
