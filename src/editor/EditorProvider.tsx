@@ -50,6 +50,8 @@ export interface EditorContextValue {
   conflictRemotes: Map<number, string>;
   /** 最近一次保存失败的错误信息（id → message，供状态栏显示） */
   saveErrors: Map<number, string>;
+  /** 内容加载失败原因（id → message，非空时编辑页显示错误面板而非转圈） */
+  loadErrors: Map<number, string>;
   /** 按 hostId + remotePath 去重打开；返回文件 id */
   openFile(params: { hostId: number; remotePath: string }): number;
   closeFile(id: number): void;
@@ -101,6 +103,9 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const conflictRemotesRef = useRef(conflictRemotes);
   const [saveErrors, setSaveErrors] = useState<Map<number, string>>(() => new Map());
   const saveErrorsRef = useRef(saveErrors);
+  /** 内容加载失败原因（id → message；供编辑页错误面板展示，区别于加载中的转圈） */
+  const [loadErrors, setLoadErrors] = useState<Map<number, string>>(() => new Map());
+  const loadErrorsRef = useRef(loadErrors);
 
   const draftTimersRef = useRef(new Map<number, ReturnType<typeof setTimeout>>());
   const fetchInFlightRef = useRef(new Set<number>());
@@ -150,6 +155,11 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   const updateSaveErrors = useCallback(
     (mutate: (map: Map<number, string>) => void) =>
       mutateMap(saveErrorsRef, setSaveErrors, mutate),
+    [mutateMap],
+  );
+  const updateLoadErrors = useCallback(
+    (mutate: (map: Map<number, string>) => void) =>
+      mutateMap(loadErrorsRef, setLoadErrors, mutate),
     [mutateMap],
   );
 
@@ -215,6 +225,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
           updateConflictRemotes((map) => map.delete(id));
           applyPanelState((current) => setStatus(current, id, 'clean', remoteHash));
         }
+        updateLoadErrors((map) => map.delete(id));
       } catch (error) {
         logEditorTrace(`fetch failed id=${id}: ${String(error)}`);
         if (!panelStateRef.current.files[id]) {
@@ -222,6 +233,9 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         }
         updateContents((map) => map.delete(id));
         updateConflictRemotes((map) => map.delete(id));
+        // 记录失败原因供错误面板展示（无权限 / 非文本 / 超大小 / 网络断开等），
+        // 避免 content=null 的文件在编辑页永久转圈且无从得知原因
+        updateLoadErrors((map) => map.set(id, toErrorMessage(error)));
         applyPanelState((current) => setStatus(current, id, 'orphaned'));
       } finally {
         fetchInFlightRef.current.delete(id);
@@ -350,9 +364,17 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       updateViewStates((map) => map.delete(id));
       updateConflictRemotes((map) => map.delete(id));
       updateSaveErrors((map) => map.delete(id));
+      updateLoadErrors((map) => map.delete(id));
       applyPanelState((current) => removeFile(current, id).state);
     },
-    [applyPanelState, updateConflictRemotes, updateContents, updateSaveErrors, updateViewStates],
+    [
+      applyPanelState,
+      updateConflictRemotes,
+      updateContents,
+      updateLoadErrors,
+      updateSaveErrors,
+      updateViewStates,
+    ],
   );
 
   const activateFile = useCallback(
@@ -503,6 +525,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       viewStates,
       conflictRemotes,
       saveErrors,
+      loadErrors,
       openFile,
       closeFile,
       activateFile,
@@ -521,6 +544,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
       files,
       handleContentChange,
       handleViewStateChange,
+      loadErrors,
       openFile,
       reloadFile,
       resolveConflict,
