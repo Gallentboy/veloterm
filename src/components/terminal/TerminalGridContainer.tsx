@@ -1,7 +1,6 @@
-import { Maximize2, Minimize2, RotateCw, Terminal, Unplug, X } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { Maximize2, Minimize2, Terminal, X } from 'lucide-react';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
-import { shortcutLabel } from '@/lib/keyboard';
 import { cn } from '@/lib/utils';
 import { TerminalSession } from '@/components/terminal/TerminalSession';
 import type { TerminalLayoutMode } from '@/terminal/TerminalProvider';
@@ -25,7 +24,8 @@ export interface TerminalGridContainerProps {
   onExit: (sessionId: number, exitCode: number) => void;
   /** SSH 会话断开回调（标记断开态，Tab 保留） */
   onSessionDisconnected: (sessionId: number, reason: string) => void;
-  /** 重连请求（横幅按钮 / ⌘R 快捷键触发）：释放旧会话并重新发起连接 */
+  /** 重连请求（⌘R/Ctrl+R 快捷键触发：终端内由 xterm 键处理分支，焦点在终端外时全局快捷键）：
+   *  释放旧会话并重新发起连接 */
   onReconnectSession: (sessionId: number) => void;
 }
 
@@ -64,7 +64,6 @@ export function TerminalGridContainer({
   onSessionDisconnected,
   onReconnectSession,
 }: TerminalGridContainerProps) {
-  const { t } = useTranslation();
   const isGrid = layoutMode === 'grid';
   const hasMaximized = maximizedSessionId !== null;
   // 单屏最大化时退化为 1×1 网格，避免被多列模板约束在单列内
@@ -132,32 +131,34 @@ export function TerminalGridContainer({
               </div>
 
               <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onMaximizeSession(session.id);
-                  }}
-                  className="size-5 rounded text-foreground-subtle hover:text-foreground"
-                  title="放大该终端 (双击顶栏)"
-                >
-                  <Maximize2 className="size-2.5" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCloseSession(session.id);
-                  }}
-                  className="size-5 rounded text-foreground-subtle hover:text-destructive hover:bg-destructive/10"
-                  title="关闭该终端"
-                >
-                  <X className="size-2.5" />
-                </Button>
+                <ControlHintTooltip title="放大该终端（双击顶栏）" side="bottom">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMaximizeSession(session.id);
+                    }}
+                    className="size-5 rounded text-foreground-subtle hover:text-foreground"
+                  >
+                    <Maximize2 className="size-2.5" />
+                  </Button>
+                </ControlHintTooltip>
+                <ControlHintTooltip title="关闭该终端" side="bottom">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCloseSession(session.id);
+                    }}
+                    className="size-5 rounded text-foreground-subtle hover:text-destructive hover:bg-destructive/10"
+                  >
+                    <X className="size-2.5" />
+                  </Button>
+                </ControlHintTooltip>
               </div>
             </div>
 
@@ -176,19 +177,20 @@ export function TerminalGridContainer({
                 </span>
               </div>
               <div className="flex items-center gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onMaximizeSession(null);
-                  }}
-                  className="h-6 w-6 rounded text-foreground-subtle hover:text-foreground"
-                  title="还原网格多屏 (Esc)"
-                >
-                  <Minimize2 className="size-3" />
-                </Button>
+                <ControlHintTooltip title="还原网格多屏" shortcut="Esc" side="bottom">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMaximizeSession(null);
+                    }}
+                    className="h-6 w-6 rounded text-foreground-subtle hover:text-foreground"
+                  >
+                    <Minimize2 className="size-3" />
+                  </Button>
+                </ControlHintTooltip>
               </div>
             </div>
 
@@ -218,48 +220,9 @@ export function TerminalGridContainer({
               />
             </div>
 
-            {/* SSH 断开横幅：保留终端现场，提供重连/关闭入口 */}
-            {session.status === 'disconnected' ? (
-              <div className="absolute inset-x-0 bottom-0 z-20 flex items-center gap-2.5 border-t border-warning/40 bg-warning/10 px-3 py-2 backdrop-blur-sm">
-                <Unplug className="size-4 shrink-0 text-warning" />
-                <div className="min-w-0 flex-1 leading-tight">
-                  <div className="text-ui-sm font-medium text-foreground select-none">
-                    {t('terminal.disconnected.title')}
-                  </div>
-                  <div className="truncate text-ui-xs text-foreground-subtle select-none">
-                    {session.disconnectReason}
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onReconnectSession(session.id);
-                  }}
-                >
-                  <RotateCw className="size-3.5" />
-                  <span>{t('terminal.disconnected.reconnect')}</span>
-                  <span className="ml-1 font-mono text-ui-xs text-foreground-subtlest">
-                    {shortcutLabel('R')}
-                  </span>
-                </Button>
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onCloseSession(session.id);
-                  }}
-                  className="text-foreground-subtle hover:text-destructive"
-                  title={t('terminal.disconnected.closeTab')}
-                >
-                  <X className="size-3.5" />
-                </Button>
-              </div>
-            ) : null}
+            {/* 断开态不再叠加 DOM 横幅：断开信息与重连快捷键提示由 TerminalSession
+                直接写进 xterm 终端缓冲（像真实终端掉线那样）；重连入口 = ⌘R/Ctrl+R，
+                关闭 Tab 走标签栏原有的关闭按钮 */}
           </div>
         );
       })}

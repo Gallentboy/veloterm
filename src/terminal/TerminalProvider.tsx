@@ -44,7 +44,7 @@ export interface TerminalContextValue {
   /** 双击 Tab 重命名（customTitle 为空回退 shellLabel / 默认名） */
   renameSession: (sessionId: number, customTitle: string | null) => void;
   clearSession: (sessionId: number) => void;
-  /** 标记会话为断开态（SSH 连接断开/启动失败时调用，Tab 保留并展示断开横幅） */
+  /** 标记会话为断开态（SSH 连接断开/启动失败时调用，Tab 保留；断开提示由 TerminalSession 写进 xterm） */
   markDisconnected: (sessionId: number, reason: string) => void;
   /** 重连：释放旧 xterm 与后端会话，remount 后走全新 SSH 连接 */
   reconnectSession: (sessionId: number) => void;
