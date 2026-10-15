@@ -1,0 +1,81 @@
+[package]
+name = "frawk"
+version = "0.4.7"
+authors = ["Eli Rosenthal <ezr@cs.brown.edu>"]
+edition = "2018"
+description = "an efficient Awk-like language"
+homepage = "https://github.com/ezrosent/frawk"
+repository = "https://github.com/ezrosent/frawk"
+readme = "README.md"
+keywords = ["awk", "csv", "tsv"]
+categories = ["command-line-utilities", "text-processing"]
+license = "MIT OR  Apache-2.0"
+build = "build.rs"
+
+# VeloTerm vendor 新增：把 frawk 主逻辑抽成 lib，供 coreutils 多呼叫二进制
+# 以 frawk::awk_main() 内嵌调用（main.rs 保留为独立 frawk bin 的薄壳入口）。
+[lib]
+name = "frawk"
+path = "src/lib.rs"
+
+[[bin]]
+bench = false
+name = "frawk"
+path = "src/main.rs"
+
+[dependencies]
+petgraph = "0.6"
+smallvec = "1.7"
+hashbrown = "0.11"
+lazy_static = "1.4.0"
+regex = "1.5"
+regex-syntax = "0.6.25"
+itoa = "1.0"
+ryu = "1.0"
+libc = "0.2"
+tikv-jemallocator = { version = "0.4", optional = true }
+rand = "0.8.4"
+lalrpop-util = "0.19.6"
+unicode-xid = "0.2.2"
+llvm-sys = {version = "120", optional = true }
+clap = "3.0"
+crossbeam-channel = "0.5"
+crossbeam = "0.8.1"
+num_cpus = "1.13.1"
+cfg-if = "1.0"
+memchr = "2.4"
+grep-cli = "0.1"
+termcolor = "1.1"
+itertools = "0.10"
+assert_cmd = "2.0.3"
+paste = "1.0"
+cranelift = "0.91"
+cranelift-codegen = "0.91"
+cranelift-frontend = "0.91"
+cranelift-module = "0.91"
+cranelift-native = "0.91"
+cranelift-jit = "0.91"
+fast-float = "0.2"
+bumpalo = { version = "3.6", features = ["collections"] }
+target-lexicon = "0.12.2"
+
+[dev-dependencies]
+assert_cmd = "2.0.3"
+tempfile = "3.3"
+
+
+[features]
+default = ["use_jemalloc", "allow_avx2", "llvm_backend", "unstable"]
+use_jemalloc = ["tikv-jemallocator"]
+# Certain features leverage the AVX2 instruction set, but AVX2 can often make
+# the entire application slightly slower, even on chips that support it. For
+# those cases, consider disabling allow_avx2.
+allow_avx2 = []
+llvm_backend = ["llvm-sys"]
+unstable = []
+
+[profile.release]
+lto = "thin"
+
+[build-dependencies]
+lalrpop = "0.19.6"

@@ -14,5 +14,8 @@
         "dragDropEnabled": false
       }
     ]
+  },
+  "bundle": {
+    "externalBin": ["binaries/coreutils"]
   }
 }

@@ -1,0 +1,29 @@
+[package]
+name = "sd-cli"
+version.workspace = true
+edition.workspace = true
+
+# VeloTerm vendor 修改：新增 [lib]，把原 main.rs 的主逻辑 librarify 到
+# src/lib.rs（sd_cli::sd_main / sd_cli::sd_main_from），以便 sd 命令内嵌进
+# coreutils 多呼叫二进制；main.rs 保留为独立 sd 二进制的薄壳入口。
+[lib]
+name = "sd_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sd"
+path = "src/main.rs"
+
+[dependencies]
+sd = { path = "../sd" }
+clap.workspace = true
+
+[dev-dependencies]
+assert_cmd = "2.0.12"
+anyhow = "1.0.75"
+clap_mangen = "0.2.14"
+console = "0.15.7"
+regex = "1.10.2"
+insta = "1.34.0"
+ansi-to-html = "0.1.3"
+tempfile.workspace = true
