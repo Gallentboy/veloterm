@@ -53,7 +53,7 @@
 
 ### OpenSSL 锁版本
 
-`vendor/openssl-src` 只含 apps + include/internal 最小子集。版本锁定是**双源手维护**（升级时两处必须同步改）：`VELOTERM_VERSION`（源码锁版本）+ `src-tauri/vcpkg.json` 的 overrides（CI 安装侧）——vcpkg 版本控制仅在 manifest 模式可用（classic 模式没有命令行版本语法），CI 以 manifest 精确安装锁定版本，不跟随 runner 基线（不同世代镜像的 vcpkg 基线会在版本间摇摆，实测相邻两次 CI 分别解析到 3.6.5/3.6.4）；校验步骤核实三方一致（当前 **3.6.5**）。apps 的 `cmp.c` 与 `lib/cmp_mock_srv.c` 是上游 build.info 里的成对项，必须一起排除。
+`vendor/openssl-src` 只含 apps + include/internal 最小子集。版本锁定是**双源手维护**（升级时两处必须同步改）：`VELOTERM_VERSION`（源码锁版本）+ `src-tauri/vcpkg.json` 的 overrides（CI 安装侧）——vcpkg 版本控制仅在 manifest 模式可用（classic 模式没有命令行版本语法），CI 以 manifest 精确安装锁定版本（当前 **3.6.4#1**，即 vcpkg 上游版本数据库可得的最高版）。曾踩的坑：classic 模式跟随 runner ports 快照装出过 versions 数据库里不存在的 3.6.5（上游从未收录），manifest 解析直接报 no version database entry——**锁版本必须以 vcpkg 版本数据库实有版本为准**，升级前先查 `vcpkg search openssl` 或 versions/o-/openssl.json；builtin-baseline 指向的 SHA 需先 `git fetch` 补齐旧镜像历史。apps 的 `cmp.c` 与 `lib/cmp_mock_srv.c` 是上游 build.info 里的成对项，必须一起排除。
 
 ### 前端约定
 

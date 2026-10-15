@@ -71,10 +71,9 @@ jobs:
           & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
 
       # 2. 安装 OpenSSL（manifest 模式，版本锁在 src-tauri/vcpkg.json 的 overrides）。
-      #    classic 模式（裸 vcpkg install openssl:triplet）跟随 runner 内置 vcpkg 基线，
-      #    不同世代镜像的基线在版本间摇摆（实测相邻两次 CI 分别解析到 3.6.5/3.6.4），
-      #    必然反复触发版本校验失败；manifest + overrides + builtin-baseline 是官方
-      #    版本控制的唯一途径，与 runner 当前基线彻底解耦。
+      #    锁版本必须是 vcpkg 上游版本数据库实有的版本（曾错锁 versions 库里不存在
+      #    的 3.6.5——classic 模式跟随 runner ports 快照装出过它，但 manifest 解析
+      #    直接报 no version database entry；上游实有最高为 3.6.4#1）。
       #    先 git fetch 补齐 runner 内置 vcpkg 仓库历史：builtin-baseline 指向打包
       #    manifest 时的 vcpkg master SHA，旧世代镜像的仓库里没有该 commit（实测报
       #    "failed to git show versions/baseline.json ... This may be fixed by

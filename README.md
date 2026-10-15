@@ -68,7 +68,7 @@ cargo clippy --workspace --all-targets
 | uutils/grep · sed · findutils · diffutils | grep、sed、find/xargs、diff/cmp/sdiff |
 | ripgrep · fd-find · chmln/sd · frawk | rg、fd、sd、awk（Cranelift JIT） |
 | tar-rs · eza · wget-rs | tar（自研 GNU 兼容 CLI 壳）、eza/tree、wget |
-| openssl-app + openssl-src | openssl CLI（vcpkg 3.6.5 静态库 + 锁版本源码，仅 Windows） |
+| openssl-app + openssl-src | openssl CLI（vcpkg 3.6.4 静态库 + 锁版本源码，仅 Windows） |
 | putty-telnet | telnet（PuTTY 源码内嵌 + C 层 GNU 参数解析，仅 Windows） |
 | 自研 | which、ps、top（sysinfo + crossterm） |
 
