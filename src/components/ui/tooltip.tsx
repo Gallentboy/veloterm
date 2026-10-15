@@ -70,7 +70,7 @@ export function Tooltip({
         <div
           role="tooltip"
           className={cn(
-            'pointer-events-none absolute z-[60] whitespace-nowrap rounded-md px-2 py-1 text-ui-xs font-medium text-foreground bg-popover/95 border border-border/80 shadow-md backdrop-blur-xs transition-opacity duration-150 animate-in fade-in select-none',
+            'pointer-events-none absolute z-[60] whitespace-nowrap rounded-md px-2 py-1 text-ui-xs font-normal text-foreground bg-popover/95 border border-border/80 shadow-md backdrop-blur-xs transition-opacity duration-150 animate-in fade-in select-none',
             posClass,
             className,
           )}
