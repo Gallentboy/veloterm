@@ -42,3 +42,5 @@ dist/
 binaries/
 # vendor 仓库本地构建产物（源码进库，target 不进）
 src-tauri/vendor/*/target/
+# vcpkg manifest 模式安装产物（CI 用，二进制缓存走 GitHub Packages feed）
+src-tauri/vcpkg_installed/

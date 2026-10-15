@@ -70,30 +70,37 @@ jobs:
             -Password "${{ secrets.GITHUB_TOKEN }}"
           & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
 
-      # 2. 安装 OpenSSL（首次运行编译并把二进制包推送到 GitHub Packages；
-      #    后续运行命中 feed 直接秒级恢复，不再重新编译）。
-      #    VCPKG_BUILD_TYPE=release：Windows 经典三元组默认 debug+release 双配置各编一遍，
-      #    本链路只链接 release（下方 OPENSSL_LIB_DIR），跳过 debug 构建时间减半
+      # 2. 安装 OpenSSL（manifest 模式，版本锁在 src-tauri/vcpkg.json 的 overrides）。
+      #    classic 模式（裸 vcpkg install openssl:triplet）跟随 runner 内置 vcpkg 基线，
+      #    不同世代镜像的基线在版本间摇摆（实测相邻两次 CI 分别解析到 3.6.5/3.6.4），
+      #    必然反复触发版本校验失败；manifest + overrides + builtin-baseline 是官方
+      #    版本控制的唯一途径，与 runner 当前基线彻底解耦。
+      #    首次运行按 baseline 编译并把二进制包推送到 GitHub Packages，后续命中
+      #    feed 直接秒级恢复。manifest 产物装在 <清单目录>/vcpkg_installed/。
+      #    VCPKG_BUILD_TYPE=release：跳过 debug 配置只编 release，时间减半
       - name: Install OpenSSL for SQLCipher (Windows)
         if: runner.os == 'Windows'
+        working-directory: src-tauri
         env:
           VCPKG_BUILD_TYPE: release
-        run: vcpkg install openssl:x64-windows-static
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+        run: vcpkg install
 
-      # 3. 设置 Rust 静态链接 OpenSSL 所需的环境变量
+      # 3. 设置 Rust 静态链接 OpenSSL 所需的环境变量（manifest 模式安装根：
+      #    src-tauri/vcpkg_installed/<triplet>）
       - name: Set OpenSSL env (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
-          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          $opensslDir = "$env:GITHUB_WORKSPACE\src-tauri\vcpkg_installed\x64-windows-static"
           echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
           echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
-      # 4. 校验 vcpkg 实装 OpenSSL 版本与工程内锁版本（src-tauri/vendor/openssl-src）
-      #    一致，防止 runner vcpkg 基线漂移导致 apps 源码与静态库版本不匹配。
+      # 4. 校验版本三处一致：vcpkg.json 的 override（安装侧）、vendor/openssl-src/
+      #    VELOTERM_VERSION（源码锁版本）、以及 runner 实装头文件里的真实版本。
+      #    前两处是手维护的双源，漂移在此拦截；第三处防 manifest 解析异常。
       #    openssl-app 的 build.rs 默认直接使用 vendor/openssl-src（无需 CI 提供源码）
       - name: Verify vcpkg OpenSSL version (Windows)
         if: runner.os == 'Windows'
@@ -102,8 +109,10 @@ jobs:
           $header = Get-Content "$env:OPENSSL_INCLUDE_DIR\openssl\opensslv.h" -Raw
           $installed = [regex]::Match($header, 'OPENSSL_VERSION_TEXT\s+"OpenSSL\s+([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
           $locked = (Get-Content src-tauri/vendor/openssl-src/VELOTERM_VERSION -Raw).Trim()
-          Write-Host "vcpkg 实装: $installed / 工程锁死: $locked"
-          if ($installed -ne $locked) { throw "版本不一致：runner 的 vcpkg 基线已漂移。请按 src-tauri/vendor/openssl-src/README.md 升级锁版本（apps + include/internal + VELOTERM_VERSION）" }
+          $manifest = (Get-Content src-tauri/vcpkg.json -Raw | ConvertFrom-Json).overrides | Where-Object { $_.name -eq 'openssl' } | Select-Object -ExpandProperty version
+          Write-Host "vcpkg 实装: $installed / 源码锁死: $locked / manifest override: $manifest"
+          if ($locked -ne $manifest) { throw "双源不一致：VELOTERM_VERSION=$locked 但 vcpkg.json override=$manifest，升级时两处必须同步修改" }
+          if ($installed -ne $locked) { throw "版本不一致：实装 $installed ≠ 锁死 $locked。请按 src-tauri/vendor/openssl-src/README.md 升级锁版本（apps + include/internal + VELOTERM_VERSION + vcpkg.json override）" }
 
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile

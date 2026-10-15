@@ -1,0 +1,17 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "veloterm-src-tauri",
+  "version": "0.1.0",
+  "dependencies": [
+    {
+      "name": "openssl"
+    }
+  ],
+  "builtin-baseline": "20ceb8adbf0504d4b0d5e4058a32f9d4fc896391",
+  "overrides": [
+    {
+      "name": "openssl",
+      "version": "3.6.5"
+    }
+  ]
+}
