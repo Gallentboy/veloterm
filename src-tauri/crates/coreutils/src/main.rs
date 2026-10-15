@@ -22,10 +22,27 @@ mod tar_impl;
 mod top;
 mod unix_extras;
 
-use sysinfo::ProcessStatus;
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, ProcessStatus, System, UpdateKind};
 
 fn main() {
     std::process::exit(coreutils::coreutils_main());
+}
+
+/// 刷新全部进程（ps 与 top 共用），显式指明刷新内容。
+///
+/// **不能用 `System::refresh_processes` 快捷法**：其默认种类是
+/// `with_memory().with_cpu().with_disk_usage().with_exe()`，**不含 cmd**——
+/// 不刷新则 `Process::cmd()` 恒为空，COMMAND 列退化为进程名，
+/// `ps -C` 按命令行参数搜索也永远命中不了（Windows/macOS 表现一致）。
+/// 同时去掉 ps/top 用不到的 disk_usage 与 exe，少读两类内核数据。
+pub(crate) fn refresh_all_processes(sys: &mut System) {
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        ProcessRefreshKind::new()
+            .with_memory()
+            .with_cpu()
+            .with_cmd(UpdateKind::Always),
+    );
 }
 
 /// 将 sysinfo 的进程状态映射为 GNU ps/top 的 STAT 单字母码（ps 与 top 共用）。
