@@ -10,6 +10,8 @@ jobs:
   publish-tauri:
     permissions:
       contents: write
+      # vcpkg 二进制缓存推送/拉取 GitHub Packages（NuGet feed）所需
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -19,6 +21,14 @@ jobs:
             args: '--target x86_64-pc-windows-msvc'
 
     runs-on: ${{ matrix.platform }}
+    env:
+      # vcpkg 二进制缓存走 GitHub Packages NuGet 源（官方教程：
+      # learn.microsoft.com/vcpkg/consume/binary-caching-github-packages）。
+      # 旧 x-gha 后端已于 2025-04 从 vcpkg-tool 移除（GitHub 下线了它用的内部缓存 API），
+      # 之前的 ACTIONS_CACHE_URL 导出 + x-gha 写法完全失效，这就是每次重新编译 OpenSSL 的根因。
+      USERNAME: Gallentboy
+      FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
+      VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
     steps:
       - uses: actions/checkout@v4
 
@@ -43,17 +53,25 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      # 1. 导出 GitHub Actions Cache 凭据给 vcpkg 的 x-gha 二进制缓存提供程序
-      - name: Export GitHub Actions Cache env for vcpkg
+      # 1. 用 GITHUB_TOKEN 把 GitHub Packages 注册为 NuGet 源（写入运行器用户级 NuGet.Config，
+      #    vcpkg 内部调用的 nuget.exe 会读同一份配置）。若首次推送遇到 401（组织限制默认
+      #    token 权限），改用具备 packages:read/write 的经典 PAT 存为 VCPKG_PAT_TOKEN 并替换下方两处 token 引用
+      - name: Add NuGet source for vcpkg binary cache (GitHub Packages)
         if: runner.os == 'Windows'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-            core.exportVariable('VCPKG_BINARY_SOURCES', 'clear;x-gha,readwrite');
+        shell: pwsh
+        run: |
+          $vcpkgExe = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" } else { "C:\vcpkg\vcpkg.exe" }
+          $nuget = (& $vcpkgExe fetch nuget | Select-Object -Last 1)
+          & $nuget sources add `
+            -Source "$env:FEED_URL" `
+            -StorePasswordInClearText `
+            -Name GitHubPackages `
+            -UserName "$env:USERNAME" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
 
-      # 2. 安装 OpenSSL（首次运行会编译并自动写入 GitHub Cache，后续运行直接秒级下载二进制恢复）
+      # 2. 安装 OpenSSL（首次运行编译并把二进制包推送到 GitHub Packages；
+      #    后续运行命中 feed 直接秒级恢复，不再重新编译）
       - name: Install OpenSSL for SQLCipher (Windows)
         if: runner.os == 'Windows'
         run: vcpkg install openssl:x64-windows-static

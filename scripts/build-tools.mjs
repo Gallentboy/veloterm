@@ -10,7 +10,7 @@
 // 未指定 target 时取 rustc 默认 host triple。
 
 import { execSync } from 'node:child_process';
-import { cpSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,6 +40,20 @@ if (!target) {
 
 console.log(`[build-tools] target: ${target}`);
 
+const exeExt = target.includes('windows') ? '.exe' : '';
+
+// 鸡生蛋破局：cargo build --bin coreutils 属于 app 包，编译前会先跑包级 build.rs
+// （tauri_build），而它要求 externalBin（binaries/coreutils-<triple>）已存在——
+// 恰是本次构建的产物。binaries/ 被 .gitignore 忽略，全新 CI / 新克隆必然死锁。
+// 先放空占位文件通过存在性检查，构建完成后下方 rmSync+cpSync 会用真实产物覆盖
+// （tauri build.rs 只校验存在性，真正打连包是 tauri-cli 打包阶段的事，那时已是真件）。
+const expected = join(outDir, `${TOOL}-${target}${exeExt}`);
+if (!existsSync(expected)) {
+  mkdirSync(outDir, { recursive: true });
+  writeFileSync(expected, '');
+  console.log(`[build-tools] 冷启动占位 ${expected}`);
+}
+
 // 编译 coreutils 多呼叫二进制（固定 release 供打包）
 execSync(`cargo build --release --bin ${TOOL}`, { cwd: srcTauri, stdio: 'inherit' });
 
@@ -50,7 +64,6 @@ mkdirSync(outDir, { recursive: true });
 // cargo 未传 --target 时输出到 target/release（无 triple 子目录）；
 // 传了 --target 时输出到 target/<triple>/release。
 // 本脚本不传 --target 编译，但复制时兼容两种目录形态。
-const exeExt = target.includes('windows') ? '.exe' : '';
 const plainOut = join(srcTauri, 'target', 'release');
 const tripleOut = join(srcTauri, 'target', target, 'release');
 const cargoOut = existsSync(join(tripleOut, TOOL + exeExt))
