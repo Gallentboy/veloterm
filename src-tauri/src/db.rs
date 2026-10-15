@@ -71,6 +71,10 @@ pub struct HostRecord {
     pub host_key_verification: SshHostKeyVerificationMode,
     #[serde(default)]
     pub allow_insecure_algos: bool,
+    /// 终端就绪钩子：会话建立后自动在终端执行的命令（引用命令库 commands.id；
+    /// NULL = 未启用。仅存主键 id，命令内容以命令库为准，命令被删后钩子静默失效）
+    #[serde(default)]
+    pub ready_command_id: Option<usize>,
     #[serde(default)]
     pub group_ids: Vec<usize>,
     pub created_at: i64,
@@ -202,6 +206,7 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           jump_host_id INTEGER,
           host_key_verification TEXT NOT NULL DEFAULT 'auto_accept',
           allow_insecure_algos INTEGER NOT NULL DEFAULT 0,
+          ready_command_id INTEGER,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
       );
@@ -239,6 +244,15 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
       );",
     )
     .map_err(|e| format!("failed to initialize schema in SQLCipher database: {e}"))?;
+
+    // 列级迁移（在建表之后）：老库升级补列。SQLite 的 ADD COLUMN 无 IF NOT EXISTS，
+    // 列已存在时报 duplicate column，吞掉该错误即幂等；新库建表已含该列，同样走这条路。
+    // 后续新增列时照抄一段同构语句即可
+    if let Err(e) = conn.execute_batch("ALTER TABLE hosts ADD COLUMN ready_command_id INTEGER")
+        && !e.to_string().contains("duplicate column")
+    {
+        return Err(format!("failed to apply column migration `ready_command_id`: {e}"));
+    }
 
     log::info!(
         "[DB] initialized SQLCipher encrypted database at {}",
@@ -492,7 +506,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
     let mut host_stmt = conn
         .prepare(
             "SELECT id, name, host, port, username, auth_json, jump_host_id,
-              host_key_verification, allow_insecure_algos, created_at, updated_at
+              host_key_verification, allow_insecure_algos, ready_command_id, created_at, updated_at
        FROM hosts
        ORDER BY id ASC",
         )
@@ -515,9 +529,10 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 jump_host_id: row.get(6)?,
                 host_key_verification: verification_mode_from_str(&verification_raw),
                 allow_insecure_algos: allow_insecure_int != 0,
+                ready_command_id: row.get(9)?,
                 group_ids: groups_by_host.remove(&id).unwrap_or_default(),
-                created_at: row.get(9)?,
-                updated_at: row.get(10)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
             })
         })
         .map_err(|e| format!("failed to query hosts: {e}"))?;
@@ -616,6 +631,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 jump_host_id: None,
                 host_key_verification: SshHostKeyVerificationMode::AutoAccept,
                 allow_insecure_algos: false,
+                ready_command_id: None,
                 group_ids,
                 created_at,
                 updated_at,
@@ -682,8 +698,8 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
         tx.execute(
             "INSERT INTO hosts (
           id, name, host, port, username, auth_json, jump_host_id,
-          host_key_verification, allow_insecure_algos, created_at, updated_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+          host_key_verification, allow_insecure_algos, ready_command_id, created_at, updated_at
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 host.id,
                 &host.name,
@@ -694,6 +710,7 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                 host.jump_host_id,
                 verification_str,
                 allow_insecure_int,
+                host.ready_command_id,
                 host.created_at,
                 host.updated_at,
             ],
@@ -826,6 +843,7 @@ mod tests {
                 jump_host_id: None,
                 host_key_verification: SshHostKeyVerificationMode::AutoAccept,
                 allow_insecure_algos: true,
+                ready_command_id: Some(7),
                 group_ids: vec![1],
                 created_at: 200,
                 updated_at: 200,
