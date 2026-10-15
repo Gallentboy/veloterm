@@ -61,13 +61,13 @@ export function ControlHintTooltip({
           className,
         )}
       >
-        <span className="text-ui-sm font-medium text-tooltip-foreground">{title}</span>
+        <span className="text-ui-sm font-normal text-tooltip-foreground">{title}</span>
         {shortcut ? (
           <kbd
             data-slot="kbd"
             style={shortcutFontStyle}
             className={cn(
-              'inline-flex h-4 shrink-0 items-center rounded-md bg-tooltip-tag px-1.5 text-ui-xs font-medium text-tooltip-tag-foreground',
+              'inline-flex h-4 shrink-0 items-center rounded-md bg-tooltip-tag px-1.5 text-ui-xs font-normal text-tooltip-tag-foreground',
               shortcutFontClassName,
             )}
           >
