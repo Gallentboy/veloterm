@@ -91,6 +91,9 @@ export default {
       exampleOutput: 'Example output',
       pin: 'Pin',
       required: 'Title and command are required',
+      mdEdit: 'Edit',
+      mdPreview: 'Preview',
+      mdEmptyPreview: 'Nothing to preview — switch to edit and write some Markdown',
     },
     palette: {
       title: 'Quick execute command',
@@ -193,6 +196,12 @@ export default {
       exitPane: 'Exit split pane',
       resetZoom: 'Reset zoom',
     },
+    menu: {
+      tryHint: 'try',
+    },
+    editFailedTitle: 'Cannot edit this file',
+    editFailedDesc: 'Failed to open "{{name}}" as text:',
+    editFailedOk: 'OK',
     drag: {
       unsupportedDir: 'Dragging folders is not supported yet — compress first or drag files individually',
       sameTarget: 'Source and target paths are identical, nothing to copy',
@@ -228,6 +237,8 @@ export default {
       orphaned: 'Host unreachable',
     },
     saveFailed: 'Save failed',
+    loadFailedTitle: 'Cannot load file',
+    loadFailedRetry: 'Retry',
     conflict: {
       overwrite: 'Overwrite remote with local',
       takeRemote: 'Take remote, discard local',

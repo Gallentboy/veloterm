@@ -91,6 +91,9 @@ export default {
       exampleOutput: '示例输出',
       pin: '置顶',
       required: '标题和命令不能为空',
+      mdEdit: '编辑',
+      mdPreview: '预览',
+      mdEmptyPreview: '暂无内容，切回编辑输入 Markdown',
     },
     palette: {
       title: '快速执行命令',
@@ -193,6 +196,12 @@ export default {
       exitPane: '退出分栏',
       resetZoom: '重置缩放',
     },
+    menu: {
+      tryHint: '尝试',
+    },
+    editFailedTitle: '无法编辑该文件',
+    editFailedDesc: '尝试以文本方式打开「{{name}}」失败：',
+    editFailedOk: '知道了',
     drag: {
       unsupportedDir: '暂不支持拖拽复制文件夹，请先压缩或逐个拖拽文件',
       sameTarget: '源与目标路径相同，无需复制',
@@ -228,6 +237,8 @@ export default {
       orphaned: '主机不可达',
     },
     saveFailed: '保存失败',
+    loadFailedTitle: '无法加载文件',
+    loadFailedRetry: '重试',
     conflict: {
       overwrite: '用本地覆盖远端',
       takeRemote: '取远端，丢弃本地',
