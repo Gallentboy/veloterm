@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { AboutDialog } from '@/components/AboutDialog';
 import { WorkspaceHelpMenuButton } from '@/components/WorkspaceHelpMenuButton';
 import type { Page } from '@/components/WorkspaceSidebar';
+import { shortcutLabel } from '@/lib/keyboard';
 import { isMacOS } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 
@@ -58,7 +59,7 @@ export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat, isAiPane
         {onToggleAiPanel ? (
           <ControlHintTooltip
             title={t('ai.panel.toggle')}
-            shortcut={isMacOS ? '⌘I' : 'Ctrl+I'}
+            shortcut={shortcutLabel('I')}
             side="bottom"
           >
             <Button

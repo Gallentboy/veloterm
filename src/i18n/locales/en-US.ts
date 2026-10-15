@@ -124,6 +124,11 @@ export default {
       previous: 'Previous match (Shift+Enter)',
       next: 'Next match (Enter)',
     },
+    disconnected: {
+      title: 'Disconnected',
+      reconnect: 'Reconnect',
+      closeTab: 'Close tab',
+    },
   },
   files: {
     title: 'Files',

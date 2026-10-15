@@ -13,6 +13,9 @@ import { createSafeUsizeCounter, JS_MAX_SAFE_INTEGER } from '@/utils/safeUsize';
 
 const TERMINAL_PANEL_STATE_STORAGE_KEY = 'veloterm:terminal:panel-state:v1';
 
+/** 会话连接状态：active = 正常运行；disconnected = SSH 连接断开，等待用户重连 */
+export type TerminalSessionStatus = 'active' | 'disconnected';
+
 export interface TerminalSessionDescriptor {
   id: number;
   index: number;
@@ -21,6 +24,13 @@ export interface TerminalSessionDescriptor {
   customTitle?: string;
   shellLabel: string | null;
   createdAt: number;
+  status: TerminalSessionStatus;
+  /** 断开原因（展示用，仅 disconnected 态有值） */
+  disconnectReason?: string;
+  /** 断开时间戳（ms，仅 disconnected 态有值） */
+  disconnectedAt?: number;
+  /** 重连次数（仅用于强制 remount TerminalSession，非业务语义） */
+  reconnectNonce?: number;
 }
 
 export interface TerminalPanelState {
@@ -55,6 +65,7 @@ export function createTerminalSessionDescriptor(params: {
     customTitle: params.customTitle,
     shellLabel: null,
     createdAt: Date.now(),
+    status: 'active',
   };
 }
 
@@ -209,6 +220,8 @@ export function readStoredTerminalPanelState(): TerminalPanelState {
       }
 
       validSessionIds.push(numericId);
+      // 应用重启后 xterm 实例与后端连接均已不在，重新挂载时会发起新连接：
+      // 强制 status: 'active'，不恢复断开态字段
       sessions[numericId] = {
         id: numericId,
         index: typeof item.index === 'number' && item.index >= 1 ? item.index : 1,
@@ -217,6 +230,10 @@ export function readStoredTerminalPanelState(): TerminalPanelState {
         customTitle: typeof item.customTitle === 'string' ? item.customTitle : undefined,
         shellLabel: typeof item.shellLabel === 'string' ? item.shellLabel : null,
         createdAt: typeof item.createdAt === 'number' ? item.createdAt : Date.now(),
+        status: 'active',
+        disconnectReason: undefined,
+        disconnectedAt: undefined,
+        reconnectNonce: undefined,
       };
     }
 
@@ -242,4 +259,60 @@ export function readStoredTerminalPanelState(): TerminalPanelState {
 export function persistTerminalPanelState(state: TerminalPanelState): void {
   if (typeof window === 'undefined') return;
   setDbKv(TERMINAL_PANEL_STATE_STORAGE_KEY, JSON.stringify(state));
+}
+
+/**
+ * 标记会话为断开态（SSH 连接断开时调用）：
+ * 幂等——会话不存在或已是 disconnected 时原样返回，不更新 disconnectedAt。
+ */
+export function markSessionDisconnected(
+  state: TerminalPanelState,
+  sessionId: number,
+  reason: string,
+): TerminalPanelState {
+  const session = state.sessions[sessionId];
+  if (!session || session.status === 'disconnected') {
+    return state;
+  }
+  return {
+    ...state,
+    sessions: {
+      ...state.sessions,
+      [sessionId]: {
+        ...session,
+        status: 'disconnected',
+        disconnectReason: reason,
+        disconnectedAt: Date.now(),
+      },
+    },
+  };
+}
+
+/**
+ * 标记会话进入重连流程：status → 'active'、清空断开信息、reconnectNonce + 1
+ * （nonce 变化强制 remount TerminalSession 走全新创建路径）、激活该会话。
+ */
+export function markSessionReconnecting(
+  state: TerminalPanelState,
+  sessionId: number,
+): TerminalPanelState {
+  const session = state.sessions[sessionId];
+  if (!session) {
+    return state;
+  }
+  const nextSession: TerminalSessionDescriptor = {
+    ...session,
+    status: 'active',
+    disconnectReason: undefined,
+    disconnectedAt: undefined,
+    reconnectNonce: (session.reconnectNonce ?? 0) + 1,
+  };
+  return {
+    ...state,
+    sessions: {
+      ...state.sessions,
+      [sessionId]: nextSession,
+    },
+    activeSessionId: sessionId,
+  };
 }

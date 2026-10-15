@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useHostsStore } from '@/hosts/HostsProvider';
+import { hasPrimaryModifier } from '@/lib/keyboard';
 import { cn } from '@/lib/utils';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import {
@@ -152,12 +153,12 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
     [activateSession],
   );
 
-  // 快捷键支持：⌘W 关闭当前 Tab、⌘⇧[ / ⌘⇧] 切换前后 Tab（切换会进入聚焦窗格）
+  // 快捷键支持：主修饰键+W 关闭当前 Tab、主修饰键+Shift+[ / ] 切换前后 Tab（切换会进入聚焦窗格）
   useEffect(() => {
     if (!isVisible) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      const mod = event.metaKey || event.ctrlKey;
+      const mod = hasPrimaryModifier(event);
       if (!mod) return;
       const key = event.key.toLowerCase();
 

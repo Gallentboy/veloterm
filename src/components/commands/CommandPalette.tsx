@@ -17,7 +17,7 @@ interface CommandPaletteProps {
 }
 
 /**
- * ⌘K 全局命令面板：模糊搜索 + 键盘导航 + Enter 直接发送到激活终端。
+ * 全局命令面板（主修饰键+K）：模糊搜索 + 键盘导航 + Enter 直接发送到激活终端。
  * 从任何页面打开，不依赖命令页。
  */
 export function CommandPalette({ open, onClose }: CommandPaletteProps) {
@@ -79,7 +79,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const execute = async (record: CommandRecord) => {
     if (activeTerminalKey == null) return;
     const placeholders = extractPlaceholders(record.command);
-    // ⌘K 面板直接执行：无占位符且 safe 才直接发；有占位符或需确认的跳到命令页
+    // 命令面板直接执行：无占位符且 safe 才直接发；有占位符或需确认的跳到命令页
     if (placeholders.length === 0 && record.dangerLevel === 'safe') {
       const result = await sendToTerminal(activeTerminalKey, `${record.command}\n`);
       if (result.ok) {

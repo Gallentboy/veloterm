@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { readClipboardText, writeClipboardText } from '@/lib/clipboard';
+import { hasPrimaryModifier, shortcutLabel } from '@/lib/keyboard';
 import { cn } from '@/lib/utils';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { TerminalSearchBar } from '@/components/terminal/TerminalSearchBar';
@@ -70,6 +71,12 @@ export interface TerminalSessionProps {
   onSizeChange?: (sessionId: number, size: TerminalSize) => void;
   onRendererStatusChange?: (sessionId: number, kind: 'webgl' | 'canvas2d' | 'dom') => void;
   onExit?: (sessionId: number, exitCode: number) => void;
+  /** 当前会话是否处于断开态（SSH 连接断开，等待重连） */
+  isDisconnected?: boolean;
+  /** SSH 会话断开回调（保留 Tab 与终端现场，标记断开态） */
+  onDisconnected?: (sessionId: number, reason: string) => void;
+  /** 终端聚焦时 ⌘R/Ctrl+R 重连请求 */
+  onReconnectRequest?: (sessionId: number) => void;
 }
 
 /**
@@ -95,6 +102,9 @@ export function TerminalSession({
   onSizeChange,
   onRendererStatusChange,
   onExit,
+  isDisconnected = false,
+  onDisconnected,
+  onReconnectRequest,
 }: TerminalSessionProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -133,10 +143,16 @@ export function TerminalSession({
   const onSizeChangeRef = useRef(onSizeChange);
   const onRendererStatusChangeRef = useRef(onRendererStatusChange);
   const onExitRef = useRef(onExit);
+  const isDisconnectedRef = useRef(isDisconnected);
+  const onDisconnectedRef = useRef(onDisconnected);
+  const onReconnectRequestRef = useRef(onReconnectRequest);
   onShellLabelChangeRef.current = onShellLabelChange;
   onSizeChangeRef.current = onSizeChange;
   onRendererStatusChangeRef.current = onRendererStatusChange;
   onExitRef.current = onExit;
+  isDisconnectedRef.current = isDisconnected;
+  onDisconnectedRef.current = onDisconnected;
+  onReconnectRequestRef.current = onReconnectRequest;
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -664,15 +680,30 @@ export function TerminalSession({
         return false;
       }
 
-      // 5. Ctrl/⌘+F：打开终端搜索栏（拦截浏览器原生 find-in-page）
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && key === 'f') {
+      // 5. 重连快捷键（主修饰键+R）：仅断开态拦截——
+      //    活动会话不拦截 Ctrl+R（保留 shell 反向搜索 ^R）；断开态下终端输入无意义，拦截并请求重连
+      if (
+        !e.altKey &&
+        !e.shiftKey &&
+        hasPrimaryModifier(e) &&
+        key === 'r' &&
+        isDisconnectedRef.current
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        onReconnectRequestRef.current?.(sessionId);
+        return false;
+      }
+
+      // 6. 主修饰键+F：打开终端搜索栏（拦截浏览器原生 find-in-page）
+      if (hasPrimaryModifier(e) && !e.altKey && !e.shiftKey && key === 'f') {
         e.preventDefault();
         e.stopPropagation();
         setIsSearchOpen(true);
         return false;
       }
 
-      // 6. Esc：搜索栏打开时优先关闭搜索栏（而非其他全局 Esc 语义）
+      // 7. Esc：搜索栏打开时优先关闭搜索栏（而非其他全局 Esc 语义）
       if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === 'Escape') {
         if (isSearchOpen) {
           e.preventDefault();
@@ -740,7 +771,13 @@ export function TerminalSession({
           if (isEntryDisposed) return;
           const uptimeMs = performance.now() - createdAt;
           const exitHandler = onExitRef.current;
-          // 若 Shell 正常退出且并非启动瞬间闪退，则触发自动关闭 Tab；否则在终端内打印退出码供排查
+          // SSH 会话断开：保留 Tab 与终端现场，标记断开态等用户重连，绝不自动关 Tab
+          if (hostId != null) {
+            term.write(`\r\n\x1b[33m[${shortcutLabel('R')} 重连]\x1b[0m\r\n`);
+            onDisconnectedRef.current?.(sessionId, `连接已断开（退出码 ${exitCode}）`);
+            return;
+          }
+          // 本地会话：若 Shell 正常退出且并非启动瞬间闪退，则触发自动关闭 Tab；否则打印退出码供排查
           if (exitHandler && exitCode === 0 && uptimeMs >= MIN_UPTIME_FOR_AUTO_CLOSE_MS) {
             exitHandler(sessionId, exitCode);
           } else {
@@ -796,7 +833,8 @@ export function TerminalSession({
         const message = error instanceof Error ? error.message : String(error);
         console.error('[TerminalSession] failed to create terminal:', error);
         term.write(`\r\n[Terminal failed to start]\r\n${message}\r\n`);
-        // SSH 会话启动失败：暂存错误现场，供终端面板「问 AI」一键带入
+        // SSH 会话启动失败：暂存错误现场，供终端面板「问 AI」一键带入；
+        // 同时标记断开态，让该 Tab 获得断开横幅与重连入口
         if (hostId != null) {
           const hostLabel = resolvedHost
             ? `${resolvedHost.username || 'root'}@${resolvedHost.host}:${resolvedHost.port}`
@@ -805,6 +843,7 @@ export function TerminalSession({
             'SSH 终端启动失败',
             buildSshErrorPrompt({ hostLabel, errorMessage: message }),
           );
+          onDisconnectedRef.current?.(sessionId, `连接失败：${message}`);
         }
       });
 

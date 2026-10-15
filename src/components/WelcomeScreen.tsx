@@ -1,5 +1,6 @@
 import { ChevronRight, SquareTerminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { PRIMARY_MODIFIER_LABEL } from '@/lib/keyboard';
 import { cn } from '@/lib/utils';
 
 function ShortcutHint({
@@ -59,12 +60,12 @@ export function WelcomeScreen({
         </div>
         <div className="flex flex-col p-1">
           <ShortcutHint
-            keys={['⌘', 'N']}
+            keys={[PRIMARY_MODIFIER_LABEL, 'N']}
             label={t('welcome.newTerminal')}
             onClick={onNewTerminal}
           />
           <ShortcutHint
-            keys={['⌘', ',']}
+            keys={[PRIMARY_MODIFIER_LABEL, ',']}
             label={t('welcome.openSettings')}
             onClick={onOpenSettings}
           />

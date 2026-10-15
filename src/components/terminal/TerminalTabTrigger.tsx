@@ -1,4 +1,4 @@
-import { SquareTerminal, X } from 'lucide-react';
+import { SquareTerminal, Unplug, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { MarqueeText } from '@/components/ui/MarqueeText';
@@ -101,7 +101,12 @@ export function TerminalTabTrigger({
         isActive && 'bg-selected text-foreground',
       )}
     >
-      <SquareTerminal className="size-3.5 shrink-0 text-foreground-subtle" />
+      {/* 断开态用 Unplug + warning 色指示（激活/非激活都保持 warning 色），正常态用默认终端图标 */}
+      {session.status === 'disconnected' ? (
+        <Unplug className="size-3.5 shrink-0 text-warning" />
+      ) : (
+        <SquareTerminal className="size-3.5 shrink-0 text-foreground-subtle" />
+      )}
       {isEditing ? (
         <input
           ref={inputRef}

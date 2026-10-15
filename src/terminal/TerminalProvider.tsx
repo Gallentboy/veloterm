@@ -9,6 +9,8 @@ import {
 } from 'react';
 import {
   addTerminalSession,
+  markSessionDisconnected,
+  markSessionReconnecting,
   persistTerminalPanelState,
   readStoredTerminalPanelState,
   removeTerminalSession,
@@ -42,6 +44,10 @@ export interface TerminalContextValue {
   /** 双击 Tab 重命名（customTitle 为空回退 shellLabel / 默认名） */
   renameSession: (sessionId: number, customTitle: string | null) => void;
   clearSession: (sessionId: number) => void;
+  /** 标记会话为断开态（SSH 连接断开/启动失败时调用，Tab 保留并展示断开横幅） */
+  markDisconnected: (sessionId: number, reason: string) => void;
+  /** 重连：释放旧 xterm 与后端会话，remount 后走全新 SSH 连接 */
+  reconnectSession: (sessionId: number) => void;
 }
 
 const LAYOUT_MODE_STORAGE_KEY = 'veloterm:terminal:layout-mode';
@@ -166,6 +172,17 @@ export function TerminalProvider({
     terminalSessionRegistry.clear(sessionId);
   }, []);
 
+  const markDisconnected = useCallback((sessionId: number, reason: string) => {
+    setPanelState((current) => markSessionDisconnected(current, sessionId, reason));
+  }, []);
+
+  // 重连 = 释放旧 xterm 实例与后端会话（release 内部已处理 transport.dispose），
+  // 再将状态置回 active 并 bump reconnectNonce，强制 TerminalSession remount 走全新创建路径
+  const reconnectSession = useCallback((sessionId: number) => {
+    terminalSessionRegistry.release(sessionId);
+    setPanelState((current) => markSessionReconnecting(current, sessionId));
+  }, []);
+
   const sessions = useMemo(
     () =>
       panelState.sessionIds
@@ -199,6 +216,8 @@ export function TerminalProvider({
       updateShellLabel,
       clearSession,
       renameSession,
+      markDisconnected,
+      reconnectSession,
     }),
     [
       activateSession,
@@ -208,7 +227,9 @@ export function TerminalProvider({
       createSession,
       isBroadcastActive,
       layoutMode,
+      markDisconnected,
       maximizedSessionId,
+      reconnectSession,
       sessions,
       setLayoutMode,
       toggleBroadcast,
