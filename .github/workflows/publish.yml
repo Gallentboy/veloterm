@@ -108,7 +108,8 @@ jobs:
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # 编译 coreutils 多呼叫二进制（uutils/coreutils + 自研 grep/sed/which）
+      # 编译 coreutils 多呼叫二进制（uutils/coreutils 全集 + vendor 的 grep/sed/
+      # findutils/diffutils/ripgrep/fd/sd/frawk/eza/wget/tar；仅 which 为自研）
       # 到 src-tauri/binaries/ 供 Tauri externalBin 打进安装包（--target 须与构建矩阵一致）；
       # 安装后应用启动时在 tools/ 下创建硬链接短名入口（ls.exe/grep.exe/…）
       - name: Build coreutils binary
