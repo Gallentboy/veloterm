@@ -230,6 +230,10 @@ uu_stdbuf = { path = "vendor/coreutils/src/uu/stdbuf" }
 # vcpkg 端口默认 no-apps，progs.c 由 build.rs 以 shim + progs.pl 生成。
 [target.'cfg(windows)'.dependencies]
 openssl-app = { path = "vendor/openssl-app" }
+# telnet CLI（仅 Windows）：PuTTY 源码级内嵌（MIT，vendor/putty-telnet/putty）。
+# c_src/telnet_main.c 在 C 层原生解析 GNU/inetutils 风格 telnet 参数并强制
+# PROT_TELNET，入口 putty_telnet::telnet_cmd_main（首元素为程序名 "telnet"）。
+putty-telnet = { path = "vendor/putty-telnet" }
 
 [dev-dependencies]
 # 传输层单测依赖 tokio paused-clock（start_paused / advance）

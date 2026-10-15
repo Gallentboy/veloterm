@@ -1,0 +1,26 @@
+# ── putty-telnet sys-crate ───────────────────────────────────────────────────
+# 把 PuTTY（MIT 许可）的 telnet 客户端以源码级内嵌：build.rs 仅在
+# target_os = windows 时用 cc 现场 PuTTY 源码（vendor/putty-telnet/putty/，
+# 上游 git.tartarus.org/simon/putty.git master @ 7507c54b，0.85 开发版）
+# 的「plink console 驱动 + telnet 后端」最小源文件集 + 本 crate 的
+# c_src/telnet_main.c（GNU/inetutils 风格参数解析在 C 层完成）编译并静态
+# 链接进 Rust。其他平台不编译任何东西，telnet_cmd_main 是返回 2 的桩。
+#
+# 源文件集的推导依据（PuTTY 自己的构建清单，非凭空猜测）：
+#   * 根 CMakeLists.txt 的 plink 目标 + cmake/setup.cmake 的 be_list 宏
+#   * windows/CMakeLists.txt 各组件的 Windows 侧源文件追加
+#   * 无 SSH 的组合（stub 替换 no-gss/no-ca-config/no-rand/nocproxy/
+#     nosshproxy）完全对齐同清单里的 puttytel（telnet+serial+raw 的
+#     GUI 变体）与 pterm 的选法 —— 详见 build.rs 头注释。
+[package]
+name = "putty-telnet"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "PuTTY telnet 客户端源码级内嵌：仅 Windows，提供 telnet 命令"
+license = "MIT"
+publish = false
+
+[build-dependencies]
+# 与主工程 Cargo.lock 一致（cc 1.8.0），用于编译 PuTTY C 源码
+cc = "1"
