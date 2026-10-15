@@ -96,8 +96,8 @@ fn run(argv: &[String]) -> Result<i32, String> {
         }
         // 短参数（可捆绑；-f/-C 可带内联值或取下一参数）
         let flags = &arg[1..];
-        let mut chars = flags.char_indices();
-        while let Some((ci, c)) = chars.next() {
+        let chars = flags.char_indices();
+        for (ci, c) in chars {
             match c {
                 'c' => mode = Some(Mode::Create),
                 'x' => mode = Some(Mode::Extract),
@@ -166,13 +166,15 @@ fn create(file: &str, paths: &[String], gzip: bool, verbose: bool) -> Result<i32
     }
     let out = fs::File::create(file).map_err(|e| format!("cannot create {file}: {e}"))?;
     let mut exit = 0;
+    // GNU tar 对绝对路径仅告警一次并照常打包，告警标志跨所有路径去重
+    let mut warned_absolute = false;
 
     if gzip {
         let enc = flate2::write::GzEncoder::new(out, flate2::Compression::default());
         let mut builder = tar::Builder::new(enc);
         builder.follow_symlinks(false);
         for p in paths {
-            if let Err(e) = append_path_recursive(&mut builder, p, verbose) {
+            if let Err(e) = append_path_recursive(&mut builder, p, verbose, &mut warned_absolute) {
                 eprintln!("tar: {p}: {e}");
                 exit = 1;
             }
@@ -185,7 +187,7 @@ fn create(file: &str, paths: &[String], gzip: bool, verbose: bool) -> Result<i32
         let mut builder = tar::Builder::new(out);
         builder.follow_symlinks(false);
         for p in paths {
-            if let Err(e) = append_path_recursive(&mut builder, p, verbose) {
+            if let Err(e) = append_path_recursive(&mut builder, p, verbose, &mut warned_absolute) {
                 eprintln!("tar: {p}: {e}");
                 exit = 1;
             }
@@ -197,21 +199,51 @@ fn create(file: &str, paths: &[String], gzip: bool, verbose: bool) -> Result<i32
     Ok(exit)
 }
 
+/// GNU 兼容的归档条目名：剥掉路径中的非 Normal 组件——前导 `/`（含 `//`）、
+/// Windows 盘符 / UNC / 根目录，以及任何位置的 `..`。tar-rs 的 `set_path`
+/// 对绝对路径与 `..` 直接拒绝；GNU tar 的对应行为是去除前导 `/` 并告警、
+/// 拒绝 `..`，这里取其安全并集（中间 `..` 也一并剥除，如 `a/../b` → `a/b`）。
+/// 返回空路径表示输入没有有效成分（如单独一个 `/`），调用方按错误处理。
+fn archive_name(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        if let Component::Normal(seg) = c {
+            out.push(seg);
+        }
+    }
+    out
+}
+
 fn append_path_recursive<W: io::Write>(
     builder: &mut tar::Builder<W>,
     path: &str,
     verbose: bool,
+    warned_absolute: &mut bool,
 ) -> io::Result<()> {
     let p = Path::new(path);
+    let name = archive_name(p);
+    if name.as_os_str().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot derive a relative archive member name",
+        ));
+    }
+    if !*warned_absolute
+        && p.components().next().is_some_and(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        eprintln!("tar: Removing leading `/' from member names");
+        *warned_absolute = true;
+    }
     if p.is_dir() {
-        builder.append_dir_all(path, path)?;
+        builder.append_dir_all(&name, p)?;
         if verbose {
-            println!("{path}/");
+            println!("{}/", name.display());
         }
     } else {
-        builder.append_path(path)?;
+        builder.append_path_with_name(p, &name)?;
         if verbose {
-            println!("{path}");
+            println!("{}", name.display());
         }
     }
     Ok(())
@@ -311,6 +343,40 @@ mod tests {
     }
 
     #[test]
+    fn archive_name_strips_non_normal_components() {
+        use std::path::Path;
+        assert_eq!(
+            archive_name(Path::new("/var/folders/src")),
+            Path::new("var/folders/src")
+        );
+        // 多重斜杠被 Components 归一，全部剥除
+        assert_eq!(
+            archive_name(Path::new("//double//slash")),
+            Path::new("double/slash")
+        );
+        // 相对路径原样保留
+        assert_eq!(archive_name(Path::new("rel/a.txt")), Path::new("rel/a.txt"));
+        // `..` 组件剥除（中间成分同理，如 a/../b → a/b）；全 `..` 输入为空
+        assert_eq!(archive_name(Path::new("..")), Path::new(""));
+        assert_eq!(
+            archive_name(Path::new("a/../b")),
+            Path::new("a/b")
+        );
+        // Windows 上盘符前缀被剥除；unix 上同样的串只是普通文件名（无前缀可剥）
+        if cfg!(windows) {
+            assert_eq!(
+                archive_name(Path::new(r"C:\Users\x")),
+                Path::new(r"Users\x")
+            );
+        } else {
+            assert_eq!(
+                archive_name(Path::new(r"C:\Users\x")),
+                Path::new(r"C:\Users\x")
+            );
+        }
+    }
+
+    #[test]
     fn create_list_extract_roundtrip() {
         let dir = tempdir("roundtrip");
         let src = dir.join("src");
@@ -340,7 +406,10 @@ mod tests {
             tar_main(s(&["-xf", archive_str.as_str(), "-C", dest_str.as_str()])),
             0
         );
-        let extracted_root = dest.join(&src);
+        // 解包到 -C 指定目录（不污染进程 cwd）并校验内容。
+        // 注意不能用 dest.join(&src)：src 是绝对路径，join 会整体替换掉 dest，
+        // 断言将退化为读原文件；必须按归档名（前导 / 剥除后的相对路径）拼
+        let extracted_root = dest.join(archive_name(&src));
         assert_eq!(
             fs::read_to_string(extracted_root.join("a.txt")).unwrap(),
             "alpha"
@@ -377,8 +446,9 @@ mod tests {
             tar_main(s(&["-xzf", archive_str.as_str(), "-C", dest_str.as_str()])),
             0
         );
+        // 同上：绝对路径 join 会替换 dest，按归档名拼接才是真实落盘位置
         assert_eq!(
-            fs::read_to_string(dest.join(&dir).join("f.txt")).unwrap(),
+            fs::read_to_string(dest.join(archive_name(&dir)).join("f.txt")).unwrap(),
             "gzip me"
         );
 
