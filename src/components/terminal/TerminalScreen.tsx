@@ -335,12 +335,12 @@ export function TerminalScreen({
               <Button
                 type="button"
                 size="sm"
-                variant={isBroadcastActive ? 'secondary' : 'ghost'}
+                variant="ghost"
                 onClick={toggleBroadcast}
                 className={cn(
-                  'h-7 px-2 text-xs font-medium gap-1.5 rounded-lg border transition-all',
+                  'h-7 px-2 text-xs gap-1.5 rounded-lg border transition-colors',
                   isBroadcastActive
-                    ? 'border-primary/50 bg-primary/10 text-primary shadow-xs ring-1 ring-primary/20'
+                    ? 'border-border bg-selected text-foreground hover:bg-selected'
                     : 'border-border/60 text-foreground-subtle hover:text-foreground hover:bg-hover'
                 )}
                 aria-label="协同广播"
@@ -361,19 +361,19 @@ export function TerminalScreen({
               <Button
                 type="button"
                 size="sm"
-                variant={layoutMode === 'grid' ? 'secondary' : 'ghost'}
+                variant="ghost"
                 onClick={toggleLayoutMode}
                 className={cn(
-                  'h-7 px-2 text-xs font-medium gap-1.5 rounded-lg border transition-all',
+                  'h-7 px-2 text-xs gap-1.5 rounded-lg border transition-colors',
                   layoutMode === 'grid'
-                    ? 'border-primary/50 bg-primary/10 text-primary shadow-xs ring-1 ring-primary/20'
+                    ? 'border-border bg-selected text-foreground hover:bg-selected'
                     : 'border-border/60 text-foreground-subtle hover:text-foreground hover:bg-hover'
                 )}
                 aria-label="切换网格视图"
               >
                 {layoutMode === 'grid' ? (
                   <>
-                    <LayoutGrid className="size-3.5 text-primary" />
+                    <LayoutGrid className="size-3.5" />
                     <span>宫格</span>
                   </>
                 ) : (
