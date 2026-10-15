@@ -49,8 +49,11 @@ const TAG: &str = "[openssl-app]";
 /// apps\*.c glob 排除项：vms_decc_init.c 仅 VMS（会 #error 非 VMS 平台）；
 /// progs.c 是生成物，统一由 progs 发现/生成步骤单独加入（防止重复编译）。
 const APPS_EXCLUDE: &[&str] = &["vms_decc_init.c", "progs.c"];
-/// apps\lib\*.c glob 排除项：两个 VMS 专属源文件
-const LIB_EXCLUDE: &[&str] = &["vms_decc_argv.c", "vms_term_sock.c"];
+/// apps\lib 排除名单：
+/// - vms_decc_argv.c / vms_term_sock.c 仅 VMS
+/// - cmp_mock_srv.c 是 CMP 测试用 mock server（不属于 openssl CLI 本体），
+///   依赖未 vendor 的 crypto/cmp/cmp_local.h 内部头（CI 实测 C1083）
+const LIB_EXCLUDE: &[&str] = &["vms_decc_argv.c", "vms_term_sock.c", "cmp_mock_srv.c"];
 
 fn main() {
     // 用 CARGO_CFG_TARGET_OS（而非 HOST）判断，保证 canadian 交叉也正确
