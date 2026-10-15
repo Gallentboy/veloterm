@@ -23,6 +23,7 @@ import {
 } from '@/terminal/terminalSessionRegistry';
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
 import { buildSshErrorPrompt, setAiErrorContext } from '@/services/aiContext';
+import { listCommands, markCommandUsed } from '@/services/commandService';
 import {
   createTerminalByteChannel,
   encodeBinaryString,
@@ -40,6 +41,10 @@ const WEBGL_ENSURE_DEFER_MS = 100;
 const MIN_UPTIME_FOR_AUTO_CLOSE_MS = 600;
 /** xterm 的 resize 会对整个 scrollback 同步重排（reflow），行数直接决定布局切换时的卡顿成本，控制在一个够用的档位 */
 const TERMINAL_SCROLLBACK_LINES = 2000;
+/** 就绪钩子：首屏输出（登录横幅 + 提示符）停止多久视为 shell 就绪，可以安全注入命令 */
+const HOOK_QUIET_MS = 500;
+/** 就绪钩子兜底上限：持续刷屏或无输出的异常场景下，限时后也按就绪处理 */
+const HOOK_MAX_WAIT_MS = 6000;
 
 type TerminalResizeReason = 'drag' | 'final' | 'visible' | 'init' | 'observer';
 
@@ -510,6 +515,53 @@ export function TerminalSession({
     const createdAt = performance.now();
     const registryDisposers: IDisposable[] = [];
 
+    // ===== 终端就绪钩子注入控制器 =====
+    // 命令必须等 shell 首屏输出静止后再发：若字节在 readline 接管 tty 之前到达，
+    // 会先被内核 tty 回显一次，随后 readline 读到输入缓冲又重绘一次——用户看到
+    // 命令出现两遍。策略：每次输出重置「静止计时」，静止 HOOK_QUIET_MS 即视为
+    // 提示符已就绪发送；HOOK_MAX_WAIT_MS 兜底（持续刷屏 / 无输出也不会永远不发）
+    const hookInjector = {
+      terminalId: null as number | null,
+      commandId: null as number | null,
+      command: null as string | null,
+      sent: false,
+      quietTimer: null as number | null,
+      deadlineTimer: null as number | null,
+    };
+
+    const hookClearTimers = () => {
+      if (hookInjector.quietTimer != null) {
+        window.clearTimeout(hookInjector.quietTimer);
+        hookInjector.quietTimer = null;
+      }
+      if (hookInjector.deadlineTimer != null) {
+        window.clearTimeout(hookInjector.deadlineTimer);
+        hookInjector.deadlineTimer = null;
+      }
+    };
+
+    const hookTrySend = () => {
+      if (isEntryDisposed || hookInjector.sent) return;
+      const { terminalId, commandId, command } = hookInjector;
+      if (terminalId == null || command == null) return;
+      hookInjector.sent = true;
+      hookClearTimers();
+      const bytes = encodeTerminalInput(`${command}\r`);
+      void transport.write({ id: terminalId, data: bytes });
+      if (commandId != null) {
+        void markCommandUsed(commandId);
+      }
+    };
+
+    /** 输出到达：重置静止计时（仅在待注入时生效） */
+    const hookOnOutput = () => {
+      if (hookInjector.command == null || hookInjector.sent || isEntryDisposed) return;
+      if (hookInjector.quietTimer != null) {
+        window.clearTimeout(hookInjector.quietTimer);
+      }
+      hookInjector.quietTimer = window.setTimeout(hookTrySend, HOOK_QUIET_MS);
+    };
+
     const term = new XTerm({
       fontSize: 13,
       fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
@@ -562,6 +614,7 @@ export function TerminalSession({
 
     entry.dispose = () => {
       isEntryDisposed = true;
+      hookClearTimers();
       entry.onTerminalIdReady = undefined;
       for (const d of registryDisposers) {
         try {
@@ -729,6 +782,8 @@ export function TerminalSession({
     const outputChannel = createTerminalByteChannel((bytes: Uint8Array) => {
       if (isEntryDisposed) return;
       term.write(bytes);
+      // 就绪钩子待发时，每次输出重置静止计时（输出停止 = 首屏完成，可安全注入）
+      hookOnOutput();
     });
 
     const initialCreateSize = initialTerminalSize ?? { cols: term.cols, rows: term.rows };
@@ -771,12 +826,17 @@ export function TerminalSession({
           if (isEntryDisposed) return;
           const uptimeMs = performance.now() - createdAt;
           const exitHandler = onExitRef.current;
-          // SSH 会话断开：保留 Tab 与终端现场，标记断开态等用户重连，绝不自动关 Tab
-          if (hostId != null) {
-            term.write(`\r\n\x1b[33m[${shortcutLabel('R')} 重连]\x1b[0m\r\n`);
-            onDisconnectedRef.current?.(sessionId, `连接已断开（退出码 ${exitCode}）`);
-            return;
-          }
+        // SSH 会话断开：保留 Tab 与终端现场，标记断开态等用户重连，绝不自动关 Tab。
+        // 提示直接写进 xterm 缓冲（像真实终端掉线那样），不叠加任何 DOM 覆盖层；
+        // 重连入口是快捷键（终端内 ⌘R/Ctrl+R，焦点在终端外时全局 ⌘R 也生效）
+        if (hostId != null) {
+          term.write(
+            `\r\n\x1b[33m⏏ 连接已断开（退出码 ${exitCode}）\x1b[0m\r\n` +
+              `\x1b[90m按 ${shortcutLabel('R')} 重新连接\x1b[0m\r\n`,
+          );
+          onDisconnectedRef.current?.(sessionId, `连接已断开（退出码 ${exitCode}）`);
+          return;
+        }
           // 本地会话：若 Shell 正常退出且并非启动瞬间闪退，则触发自动关闭 Tab；否则打印退出码供排查
           if (exitHandler && exitCode === 0 && uptimeMs >= MIN_UPTIME_FOR_AUTO_CLOSE_MS) {
             exitHandler(sessionId, exitCode);
@@ -827,6 +887,27 @@ export function TerminalSession({
             void transport.write({ id, data: bytes });
           }),
         );
+
+        // 终端就绪钩子：主机配置引用了命令库命令（仅存主键 id）时，等 shell 首屏
+        // 输出静止后再把命令作为终端输入发出（等价于用户敲入并回车）。
+        // 不能创建后立即发：命令字节若在 readline 接管 tty 前到达，会被内核回显
+        // + readline 重绘各显示一次，用户会看到命令出现两遍。命令已被删则静默跳过
+        const readyCommandId = resolvedHost?.readyCommandId ?? null;
+        if (readyCommandId != null) {
+          void listCommands()
+            .then((all) => all.find((cmd) => cmd.id === readyCommandId))
+            .then((cmd) => {
+              if (isEntryDisposed || !cmd) return;
+              hookInjector.terminalId = id;
+              hookInjector.commandId = cmd.id;
+              hookInjector.command = cmd.command;
+              // 兜底上限：持续刷屏 / 取命令期间已静默但后续无输出的极端场景
+              hookInjector.deadlineTimer = window.setTimeout(hookTrySend, HOOK_MAX_WAIT_MS);
+              // 从取到命令这一刻起立即开始静止计时（覆盖「首屏已输出完、当前静默」的常态）
+              hookInjector.quietTimer = window.setTimeout(hookTrySend, HOOK_QUIET_MS);
+            })
+            .catch(() => undefined);
+        }
       })
       .catch((error) => {
         if (isEntryDisposed) return;
@@ -834,8 +915,9 @@ export function TerminalSession({
         console.error('[TerminalSession] failed to create terminal:', error);
         term.write(`\r\n[Terminal failed to start]\r\n${message}\r\n`);
         // SSH 会话启动失败：暂存错误现场，供终端面板「问 AI」一键带入；
-        // 同时标记断开态，让该 Tab 获得断开横幅与重连入口
+        // 同时标记断开态供 ⌘R 重连（断开提示直接写在上方 xterm 输出里）
         if (hostId != null) {
+          term.write(`\x1b[90m按 ${shortcutLabel('R')} 重新连接\x1b[0m\r\n`);
           const hostLabel = resolvedHost
             ? `${resolvedHost.username || 'root'}@${resolvedHost.host}:${resolvedHost.port}`
             : `hostId=${hostId}`;
@@ -856,6 +938,7 @@ export function TerminalSession({
     return () => {
       entry.onTerminalIdReady = undefined;
       entry.openSearch = undefined;
+      hookClearTimers();
       themeObserver.disconnect();
       resizeObserver.disconnect();
       clearResizeThrottleTimer();
