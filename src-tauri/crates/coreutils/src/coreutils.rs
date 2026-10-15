@@ -2,9 +2,12 @@
 //!
 //! 单一 `coreutils` 可执行文件承载全部 GNU coreutils 命令，两种调用方式：
 //! 1. **argv[0] 分发**：安装时在 `tools/` 目录创建指向本二进制的硬链接
-//!    （`ls.exe` `grep.exe`…，见 `hardlinks.rs`），PATH 注入后用户敲短名，
-//!    进程以对应名字启动，按 argv[0] 路由到命令实现；
+//!    （`ls.exe` `grep.exe`…，由主程序启动钩子 `src/tools/hardlinks.rs` 建立），
+//!    PATH 注入后用户敲短名，进程以对应名字启动，按 argv[0] 路由到命令实现；
 //! 2. **子命令分发**：直接执行 `coreutils <cmd> [args...]`。
+//!
+//! 命令名清单（哪些命令存在）在零依赖的 `tools-catalog` crate —— 主程序只依赖
+//! 清单，不依赖本 crate，从而不链接 uutils/OpenSSL/PuTTY 整张依赖图。
 //!
 //! 命令实现取自工程内 vendor 的 uutils/coreutils 源码（tag 0.12.0，MIT，
 //! 见 `src-tauri/vendor/coreutils`），分组与 uutils 官方 feature 对齐；
@@ -16,148 +19,11 @@
 //! chcon/runcon 依赖 SELinux，不集成。
 
 use std::ffi::OsString;
+use tools_catalog::{all_commands, is_known_command};
 
 /// 读自身 argv 的内嵌命令（解析器无参数注入接口，仅硬链接 argv[0] 模式
 /// 可用，见 coreutils_main；子命令模式下给出提示）
 const OWN_ARGV_COMMANDS: &[&str] = &["awk", "fd", "rg"];
-
-/// 内嵌补充命令：OWN_ARGV 家族 + which（unix_extras.rs 自研）
-pub const EXTRA_COMMANDS: &[&str] = &["awk", "fd", "rg", "which"];
-
-/// 跨平台命令（102 个）：uutils feat_common_core 与 feat_Tier1 全集，
-/// 加 uutils/grep、uutils/sed、findutils、diffutils、chmln/sd 家族补充，
-/// 加 tar-rs、eza、wget-rs 的库封装（tree = eza --tree）
-const CROSS_PLATFORM_COMMANDS: &[&str] = &[
-    "arch",
-    "b2sum",
-    "base32",
-    "base64",
-    "basename",
-    "basenc",
-    "cat",
-    "cksum",
-    "cmp",
-    "comm",
-    "cp",
-    "csplit",
-    "cut",
-    "date",
-    "dd",
-    "df",
-    "diff",
-    "dir",
-    "dircolors",
-    "dirname",
-    "du",
-    "echo",
-    "env",
-    "eza",
-    "expand",
-    "expr",
-    "factor",
-    "false",
-    "find",
-    "fmt",
-    "fold",
-    "grep",
-    "head",
-    "hostid",
-    "hostname",
-    "join",
-    "kill",
-    "link",
-    "ln",
-    "ls",
-    "md5sum",
-    "mkdir",
-    "mktemp",
-    "more",
-    "mv",
-    "nl",
-    "nice",
-    "nohup",
-    "nproc",
-    "numfmt",
-    "od",
-    "paste",
-    "pathchk",
-    "pr",
-    "printenv",
-    "printf",
-    "ptx",
-    "pwd",
-    "readlink",
-    "realpath",
-    "rm",
-    "rmdir",
-    "sd",
-    "sdiff",
-    "sed",
-    "seq",
-    "sha1sum",
-    "sha224sum",
-    "sha256sum",
-    "sha384sum",
-    "sha512sum",
-    "shred",
-    "shuf",
-    "sleep",
-    "sort",
-    "split",
-    "sum",
-    "sync",
-    "tac",
-    "tar",
-    "tail",
-    "tee",
-    "test",
-    "timeout",
-    "touch",
-    "tr",
-    "tree",
-    "true",
-    "truncate",
-    "tsort",
-    "tty",
-    "uname",
-    "unexpand",
-    "uniq",
-    "unlink",
-    "uptime",
-    "vdir",
-    "wc",
-    "wget",
-    "whoami",
-    "xargs",
-    "yes",
-];
-
-/// Unix 专属命令（uutils feat_require_unix_core 12 个 + utmpx 3 个 + stdbuf）
-#[cfg(unix)]
-const PLATFORM_COMMANDS: &[&str] = &[
-    "chgrp", "chmod", "chown", "chroot", "groups", "id", "install", "logname", "mkfifo", "mknod",
-    "stat", "stty", "pinky", "users", "who", "stdbuf",
-];
-
-/// Windows 专属命令（uutils feat_os_windows 额外项 + vcpkg 静态链接的 openssl CLI +
-/// 源码内嵌 PuTTY 的 telnet）
-#[cfg(target_os = "windows")]
-const PLATFORM_COMMANDS: &[&str] = &["openssl", "stdbuf", "telnet"];
-
-/// 其余平台（本项目不存在，仅保证常量无条件可用）
-#[cfg(not(any(unix, target_os = "windows")))]
-const PLATFORM_COMMANDS: &[&str] = &[];
-
-/// 全部命令（hardlink 短名与 usage 列表的单一事实来源）
-pub fn all_commands() -> Vec<&'static str> {
-    let mut all = Vec::with_capacity(
-        CROSS_PLATFORM_COMMANDS.len() + PLATFORM_COMMANDS.len() + EXTRA_COMMANDS.len(),
-    );
-    all.extend_from_slice(CROSS_PLATFORM_COMMANDS);
-    all.extend_from_slice(PLATFORM_COMMANDS);
-    all.extend_from_slice(EXTRA_COMMANDS);
-    all
-}
 
 /// 从 argv[0] 解析被调用的命令名：取 basename 并去掉 `.exe` 后缀。
 /// 分隔符同时兼容 `/` 与 `\`（macOS 单测里也要能解析 Windows 风格路径，
@@ -170,13 +36,6 @@ pub fn util_name_from_argv0(argv0: &str) -> String {
         Some(stripped) => stripped.to_string(),
         None => lower,
     }
-}
-
-/// 是否为已知命令
-pub fn is_known_command(name: &str) -> bool {
-    CROSS_PLATFORM_COMMANDS.contains(&name)
-        || PLATFORM_COMMANDS.contains(&name)
-        || EXTRA_COMMANDS.contains(&name)
 }
 
 /// 执行 uutils 命令：locale 初始化后分发到对应 `uumain`。
@@ -267,7 +126,7 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         "sum" => uu_sum::uumain(it),
         "sync" => uu_sync::uumain(it),
         "tac" => uu_tac::uumain(it),
-        "tar" => super::tar_impl::tar_main(it),
+        "tar" => crate::tar_impl::tar_main(it),
         "tail" => uu_tail::uumain(it),
         "tee" => uu_tee::uumain(it),
         "test" => uu_test::uumain(it),
@@ -368,7 +227,9 @@ pub fn run_command(name: &str, args: &[OsString]) -> Option<i32> {
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
     match name {
-        "which" => return Some(super::unix_extras::cmd_which(&args_lossy)),
+        "ps" => return Some(crate::ps::run(args)),
+        "top" => return Some(crate::top::run(args)),
+        "which" => return Some(crate::unix_extras::cmd_which(&args_lossy)),
         // OWN_ARGV 家族（rg/fd/awk）：解析器直接读自身进程 argv，无注入接口，
         // 仅在硬链接短名模式下由 coreutils_main 直调各自入口；走到这里说明是
         // `coreutils <cmd> ...` 子命令模式，首参会误判，给出提示。
@@ -390,7 +251,7 @@ pub fn run_command(name: &str, args: &[OsString]) -> Option<i32> {
     Some(run_uutils(name, args))
 }
 
-/// coreutils 二进制 main 入口（供 `coreutils_main.rs` 调用）：
+/// coreutils 二进制 main 入口（供本 crate 的 `main.rs` 调用）：
 /// - 以已知命令名（硬链接短名）启动 → argv[0] 分发；
 /// - 否则（`coreutils` / `coreutils.exe`）→ 子命令模式 `coreutils <cmd> [args...]`。
 pub fn coreutils_main() -> i32 {
@@ -475,17 +336,11 @@ mod tests {
 
     #[test]
     fn command_table_consistency() {
-        // 无重复；平台组互不重叠；自研命令未被 uutils 命令覆盖
-        let all = all_commands();
-        let mut sorted = all.clone();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(sorted.len(), all.len());
-        for cmd in EXTRA_COMMANDS {
-            assert!(
-                !CROSS_PLATFORM_COMMANDS.contains(cmd) && !PLATFORM_COMMANDS.contains(cmd),
-                "{cmd} 不应与 uutils 命令重名"
-            );
+        // 清单自身的结构性约束（无重复 / 自研命令不与 uutils 重名）已随命令表
+        // 迁到 tools-catalog 的 `command_table_consistency`；此处只保证本 crate
+        // 的分发侧把整张表都当成已知命令，不会出现「清单里有、分发认不出」。
+        for cmd in all_commands() {
+            assert!(is_known_command(cmd), "{cmd} 应在分发白名单内");
         }
     }
 
@@ -498,12 +353,20 @@ mod tests {
     /// 跳过（真实行为由 new_families_smoke / release 冒烟覆盖）：
     /// - OWN_ARGV 家族（rg/fd/awk）读自身进程 argv，单测无法注入；
     /// - diff/cmp：上游 uutils/diffutils 未实现 --version——cmp 返回 2，
-    ///   diff 的解析失败路径会 std::process::exit(2) 直接杀掉测试进程。
+    ///   diff 的解析失败路径会 std::process::exit(2) 直接杀掉测试进程；
+    /// - sd / wget：入口内部走 clap 的 `Parser::parse_from`（分别是
+    ///   `sd_cli::sd_main_from` 与 `wget_rs::wget_main_from`），`--version`
+    ///   命中 clap 的 DisplayVersion 分支后 `std::process::exit(0)`。这会杀掉
+    ///   测试进程，且因退出码为 0，libtest 会**误报通过**并静默截断其后所有
+    ///   命令的扫描——历史上 sd 之后的 sdiff/sed/…/ps/top 等 60+ 条命令因此
+    ///   从未被真正扫到。
     #[test]
     fn all_commands_dispatch_version_sweep() {
         let expect_one = ["test", "false", "which"];
-        let skip = ["cmp", "diff"];
-        for name in all_commands() {
+        let skip = ["cmp", "diff", "sd", "wget"];
+        let all = all_commands();
+        let mut visited = 0usize;
+        for name in all.iter().copied() {
             if OWN_ARGV_COMMANDS.contains(&name) || skip.contains(&name) {
                 continue;
             }
@@ -514,7 +377,15 @@ mod tests {
             };
             let expected = i32::from(expect_one.contains(&name));
             assert_eq!(code, expected, "{name} 分发异常");
+            visited += 1;
         }
+        // 兜底：确认扫描确实走完了整张表（若某命令令进程静默退出，此处不会被
+        // 执行到——libtest 会误报通过，故再断言一次数量以留下书面预期）。
+        assert_eq!(
+            visited,
+            all.len() - OWN_ARGV_COMMANDS.len() - skip.len(),
+            "扫描条数与命令表不符"
+        );
     }
 
     #[test]
@@ -659,5 +530,24 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ps_and_top_smoke() {
+        let s = |v: &[&str]| -> Vec<OsString> { v.iter().map(OsString::from).collect() };
+
+        // ps 基础命令与各种格式
+        assert_eq!(run_command("ps", &s(&["--version"])).unwrap(), 0);
+        assert_eq!(run_command("ps", &s(&["--help"])).unwrap(), 0);
+        assert_eq!(run_command("ps", &[]).unwrap(), 0);
+        assert_eq!(run_command("ps", &s(&["-ef"])).unwrap(), 0);
+        assert_eq!(run_command("ps", &s(&["aux"])).unwrap(), 0);
+        let pid_str = std::process::id().to_string();
+        assert_eq!(run_command("ps", &s(&["-p", &pid_str])).unwrap(), 0);
+
+        // top 版本、帮助与批处理模式
+        assert_eq!(run_command("top", &s(&["--version"])).unwrap(), 0);
+        assert_eq!(run_command("top", &s(&["--help"])).unwrap(), 0);
+        assert_eq!(run_command("top", &s(&["-b", "-n", "1"])).unwrap(), 0);
     }
 }

@@ -1,18 +1,12 @@
-//! VeloTerm 内置 Unix 工具集（Windows 专属能力，随应用分发）：
+//! VeloTerm 内置工具集 —— **主程序侧**只剩一件事：安装硬链接短名入口。
 //!
-//! - `coreutils`：单一多呼叫二进制，命令实现全部来自工程 vendor 源码：
-//!   uutils/coreutils 0.12.0（GNU coreutils 全集）、uutils/grep、uutils/sed、
-//!   uutils/findutils（find/xargs）、uutils/diffutils（diff/cmp/sdiff）、
-//!   ripgrep（rg）、fd-find（fd）、chmln/sd（sd）、frawk（awk，Cranelift
-//!   JIT）、tar-rs（tar，CLI 壳在 tar_impl.rs）、eza（eza/tree）、
-//!   wget-rs（wget，rustls）、openssl 与 telnet（仅 Windows：vcpkg 静态库 FFI、
-//!   PuTTY 源码内嵌，见 vendor/openssl-app 与 vendor/putty-telnet）；
-//!   which 为自研（unix_extras.rs）。
-//! - `hardlinks`：启动时在 `tools/` 下为 coreutils 创建硬链接短名入口，
-//!   PATH 注入后用户在终端直接敲 `ls` / `grep` / `rg` / `fd` 等短名即用。
+//! 命令实现（多呼叫二进制分发核心、ps/top/tar/which）已拆到独立 crate
+//! `crates/coreutils`，命令名清单在零依赖的 `crates/tools-catalog`。主程序
+//! 只依赖清单，因此不再链接 uutils / ripgrep / openssl-app / putty-telnet。
+//!
+//! - `hardlinks`：Windows 启动时在 `tools/` 下为 coreutils 创建硬链接短名入口
+//!   （`ls.exe` `grep.exe`…），PATH 注入后用户在终端直接敲 `ls` / `grep` / `rg`
+//!   等短名即用。
 //!
 //! 无任何 .bat 转发，不依赖 Git Bash / MSYS2。
-pub mod coreutils;
 pub mod hardlinks;
-pub mod tar_impl;
-pub mod unix_extras;

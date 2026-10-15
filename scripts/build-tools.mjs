@@ -10,7 +10,7 @@
 // 未指定 target 时取 rustc 默认 host triple。
 
 import { execSync } from 'node:child_process';
-import { cpSync, mkdirSync, existsSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -43,25 +43,20 @@ console.log(`[build-tools] target: ${target}`);
 
 const exeExt = target.includes('windows') ? '.exe' : '';
 
-// 鸡生蛋破局：cargo build --bin coreutils 属于 app 包，编译前会先跑包级 build.rs
-// （tauri_build），而它要求 externalBin（binaries/coreutils-<triple>）已存在——
-// 恰是本次构建的产物。binaries/ 被 .gitignore 忽略，全新 CI / 新克隆必然死锁。
-// 先放空占位文件通过存在性检查，构建完成后下方 rmSync+cpSync 会用真实产物覆盖
-// （tauri build.rs 只校验存在性，真正打连包是 tauri-cli 打包阶段的事，那时已是真件）。
-const expected = join(outDir, `${TOOL}-${target}${exeExt}`);
-if (!existsSync(expected)) {
-  mkdirSync(outDir, { recursive: true });
-  writeFileSync(expected, '');
-  console.log(`[build-tools] 冷启动占位 ${expected}`);
-}
-
 // 编译 coreutils 多呼叫二进制（固定 release 供打包）。
+// coreutils 已拆为独立 workspace member（crates/coreutils）：根包 app 的默认
+// bin 选择不再包含它，必须显式 -p。该 crate 无 build.rs，构建不会触及 app 的
+// tauri_build（externalBin 存在性检查），不存在鸡生蛋问题——若历史上曾见
+// binaries/ 下残留空占位文件，那是旧版单包时代的工作区，现已不再需要。
 // 关键：显式传了 --target 时透传给 cargo —— cargo 对带 --target 的构建使用
 // 独立的 target/<triple>/ 缓存目录，与不带 --target 的 target/release 完全不共享；
 // CI 里 tauri build 带 --target x86_64-pc-windows-msvc，这里保持一致才能命中同一份缓存，
 // 否则整套依赖会被重编两遍。本地未传 --target 时与本地 `tauri build`（也不带）同样一致
 const cargoTargetArgs = explicitTarget ? `--target ${target} ` : '';
-execSync(`cargo build --release ${cargoTargetArgs}--bin ${TOOL}`, { cwd: srcTauri, stdio: 'inherit' });
+execSync(
+  `cargo build --release ${cargoTargetArgs}-p ${TOOL} --bin ${TOOL}`,
+  { cwd: srcTauri, stdio: 'inherit' },
+);
 
 // 清空并重建 externalBin 目录
 rmSync(outDir, { recursive: true, force: true });

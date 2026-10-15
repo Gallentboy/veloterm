@@ -1,0 +1,12 @@
+[package]
+name = "tools-catalog"
+version = "0.1.0"
+description = "VeloTerm built-in toolset catalog: single source of truth for command names"
+edition = "2024"
+rust-version = "1.90"
+# 仅供本工程内部使用，永不发布
+publish = false
+
+# 刻意保持「零依赖」：本 crate 只有静态字符串表，主程序（app）与 coreutils
+# 多呼叫二进制都依赖它，任何依赖都会经由它传染给主程序、破坏瘦身目标。
+[dependencies]
