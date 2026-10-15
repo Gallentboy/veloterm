@@ -23,6 +23,7 @@ const TOOL = 'coreutils';
 const args = process.argv.slice(2);
 let target = '';
 const targetFlag = args.indexOf('--target');
+const explicitTarget = targetFlag !== -1;
 if (targetFlag !== -1 && args[targetFlag + 1]) {
   target = args[targetFlag + 1];
 } else {
@@ -54,21 +55,28 @@ if (!existsSync(expected)) {
   console.log(`[build-tools] 冷启动占位 ${expected}`);
 }
 
-// 编译 coreutils 多呼叫二进制（固定 release 供打包）
-execSync(`cargo build --release --bin ${TOOL}`, { cwd: srcTauri, stdio: 'inherit' });
+// 编译 coreutils 多呼叫二进制（固定 release 供打包）。
+// 关键：显式传了 --target 时透传给 cargo —— cargo 对带 --target 的构建使用
+// 独立的 target/<triple>/ 缓存目录，与不带 --target 的 target/release 完全不共享；
+// CI 里 tauri build 带 --target x86_64-pc-windows-msvc，这里保持一致才能命中同一份缓存，
+// 否则整套依赖会被重编两遍。本地未传 --target 时与本地 `tauri build`（也不带）同样一致
+const cargoTargetArgs = explicitTarget ? `--target ${target} ` : '';
+execSync(`cargo build --release ${cargoTargetArgs}--bin ${TOOL}`, { cwd: srcTauri, stdio: 'inherit' });
 
 // 清空并重建 externalBin 目录
 rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 
 // cargo 未传 --target 时输出到 target/release（无 triple 子目录）；
-// 传了 --target 时输出到 target/<triple>/release。
-// 本脚本不传 --target 编译，但复制时兼容两种目录形态。
+// 传了 --target 时输出到 target/<triple>/release，与上方构建参数对应取用；
+// 本地未传时兼容两处都存在的历史产物
 const plainOut = join(srcTauri, 'target', 'release');
 const tripleOut = join(srcTauri, 'target', target, 'release');
-const cargoOut = existsSync(join(tripleOut, TOOL + exeExt))
+const cargoOut = explicitTarget
   ? tripleOut
-  : plainOut;
+  : existsSync(join(tripleOut, TOOL + exeExt))
+    ? tripleOut
+    : plainOut;
 
 const src = join(cargoOut, TOOL + exeExt);
 if (!existsSync(src)) {
