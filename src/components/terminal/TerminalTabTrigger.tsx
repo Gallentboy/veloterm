@@ -1,5 +1,6 @@
 import { SquareTerminal, Unplug, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
 import { MarqueeText } from '@/components/ui/MarqueeText';
 import { cn } from '@/lib/utils';
@@ -132,28 +133,36 @@ export function TerminalTabTrigger({
       ) : (
         <MarqueeText text={title} className="min-w-0 flex-1" />
       )}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={closeLabel}
+      <ControlHintTooltip
         title={closeLabel}
+        side="bottom"
+        align="end"
+        // 关闭按钮本身悬停/聚焦才显现（非激活 Tab），显现门控移到包裹层：
+        // 未显现时 pointer-events-none 让 tooltip 不会提前弹出；opacity 门控
+        // 同时控制按钮与 tooltip（tooltip 是包裹层子节点）
         className={cn(
-          'shrink-0 rounded-md',
           !isActive &&
             'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100',
         )}
-        onPointerDown={(event) => {
-          event.stopPropagation();
-        }}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onClose(session.id);
-        }}
       >
-        <X className="size-3" />
-      </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={closeLabel}
+          className="shrink-0 rounded-md"
+          onPointerDown={(event) => {
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose(session.id);
+        }}
+        >
+          <X className="size-3" />
+        </Button>
+      </ControlHintTooltip>
     </div>
   );
 }
