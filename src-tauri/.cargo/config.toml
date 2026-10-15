@@ -2,6 +2,9 @@
 rustflags = ["-C", "target-cpu=native"]
 
 # Windows MSVC：静态链接 C 运行时（/MT），产物不依赖目标机的 VC++ Redistributable
-# （vcruntime140.dll），干净系统可直接运行；代价是每个 exe 增大约 100-200KB
+# （vcruntime140.dll），干净系统可直接运行；代价是每个 exe 增大约 100-200KB。
+# --cap-lints allow 压制全部编译告警：vendor 路径依赖（frawk 等）不像 registry 依赖
+# 那样被 cargo 自动压制，缓存重放的告警会刷屏 CI 日志；自有代码的告警在 macOS
+# 开发构建中仍然可见，不受影响
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "--cap-lints", "allow"]
