@@ -1,0 +1,169 @@
+name: 编译
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 是否发布到 GitHub Releases
+        default: 'false'
+        type: boolean
+      tag:
+        description: 版本号（不输入则自动从 Cargo.toml 中获取）
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+
+    name: Windows-${{ matrix.target }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.target == 'x86_64-win7-windows-msvc' && 'nightly' || 'stable' }}
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: 构建项目
+        run: cargo build --release --target=${{ matrix.target }}
+
+      - name: 上传编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: wget-rs-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/wget-rs.exe
+
+  #build-windows-arm:
+  #  runs-on: windows-11-arm
+  #  strategy:
+  #    matrix:
+  #      target:
+  #        - aarch64-pc-windows-msvc
+#
+  #  name: Windows-${{ matrix.target }}
+  #  steps:
+  #    - name: 检出代码
+  #      uses: actions/checkout@v4
+#
+  #    - name: 安装 Rust
+  #      uses: actions-rs/toolchain@v1
+  #      with:
+  #        toolchain: stable
+  #        target: ${{ matrix.target }}
+  #        override: true
+#
+  #    - name: 构建项目
+  #      run: cargo build --release --target=${{ matrix.target }}
+#
+  #    - name: 上传编译产物
+  #      uses: actions/upload-artifact@v4
+  #      with:
+  #        name: wget-rs-windows-${{ matrix.target }}
+  #        path: |
+  #          target/${{ matrix.target }}/release/wget-rs.exe
+
+  build-linux:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          #- x86_64-unknown-linux-gnux32
+          #- x86_64-unknown-linux-musl
+    name: Linux-${{ matrix.target }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: 构建项目
+        run: cargo build --release --target=${{ matrix.target }}
+
+      - name: 上传编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: wget-rs-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/wget-rs
+
+  build-linux-arm:
+    runs-on: ubuntu-22.04-arm
+    strategy:
+      matrix:
+        target:
+          - aarch64-unknown-linux-gnu
+          #- x86_64-unknown-linux-gnux32
+          #- x86_64-unknown-linux-musl
+    name: Linux-${{ matrix.target }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: 构建项目
+        run: cargo build --release --target=${{ matrix.target }}
+
+      - name: 上传编译产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: wget-rs-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/wget-rs
+
+  release:
+    runs-on: ubuntu-latest
+    if: ${{ inputs.release }}
+    needs: [build-windows, build-linux, build-linux-arm]
+    steps:
+      - name: 下载编译产物
+        uses: actions/download-artifact@v4
+        with:
+          path: bin
+
+      - name: 获取版本号
+        if: ${{ inputs.tag == '' }}
+        id: get_version
+        run: |
+          wget https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/Cargo.toml
+          tag_name=$(grep '^version' Cargo.toml | head -n1 | awk -F\" '{print $2}')
+          echo "::set-output name=tag_name::$tag_name"
+
+      - name: 重新压缩
+        run: |
+          cd bin
+          wget https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/pack.sh
+          chmod +x pack.sh
+          ./pack.sh
+
+      - name: 发行
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.get_version.outputs.tag_name }}
+          files: |
+            *.tar.gz
