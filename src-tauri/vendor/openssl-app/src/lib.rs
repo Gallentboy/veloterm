@@ -13,7 +13,8 @@ mod imp {
 
     // apps/openssl.c 的 main 经 -Dmain=veloterm_openssl_main 改名后的 C 入口。
     // 签名即 `int main(int argc, char *argv[])`，按 C ABI 调用。
-    extern "C" {
+    // edition 2024 起 `extern` 块必须标 `unsafe`（RFC 3484）。
+    unsafe extern "C" {
         fn veloterm_openssl_main(argc: c_int, argv: *const *const c_char) -> c_int;
     }
 
