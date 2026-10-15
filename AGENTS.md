@@ -4,15 +4,82 @@
 
 - **严禁通过 Bash 写入文件**：包括但不限于 `python3 <<EOF`、`echo >`、`tee`、`sed -i`、shell 重定向等任何变体。
 - 修改或创建文件**必须使用专用文件写入工具**（Write / Edit / MultiEdit），确保每次改动精确、可审计、可回滚。
-- Bash 仅允许执行只读命令与构建/测试（如 git status、grep、cargo check、pnpm build）。
+- Bash 仅允许执行只读命令与构建/测试（如 git status、grep、cargo check、pnpm build）。唯一例外：vendor 源码树的整目录同步（下载上游 tarball 解压替换），属构建资产操作而非文件编辑。
 
-## Commands
+## 核心原则
 
-- `pnpm run dev` - Start the dev server
-- `pnpm run build` - Build the app for production
-- `pnpm run preview` - Preview the production build locally
+- 改动前先读目标模块的现状代码，以当前检出的源码为准；本文件描述的能力与实际不符时，以源码为准并同步更新本文件。
+- 定位问题时，未明确要求修改代码就先调查原因，结合源码与运行证据区分「已确认」与「待验证」。
+- 涉及多文件的功能改动，先明确接口契约（命令名、参数、prop、i18n key）再动手；两语言文案（zh-CN / en-US）必须同构同步。
+- 验证报告真实结果：测试失败就写失败，不把已有失败写成通过。
+
+## 验证门禁
+
+提交前的最低验证口径（macOS 本机）：
+
+| 检查 | 命令 | 要求 |
+| --- | --- | --- |
+| 前端类型 | `pnpm run typecheck` | 零错误 |
+| 前端构建 | `pnpm run build` | 成功 |
+| Rust 编译 | `cargo check --workspace --all-targets`（在 `src-tauri/`） | 零错误 |
+| Rust 测试 | `cargo test --workspace` | 全绿（app 54 + coreutils 26 + tools-catalog 1 为当前基线） |
+| Lint | `cargo clippy --workspace --all-targets` | 自有代码零警告 |
+
+冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑。
+
+## 平台约束（硬性）
+
+- **严禁在 macOS 上交叉编译 Windows 目标**。Windows 包只能由 GitHub Actions 的 windows-latest runner（或真实 Windows 机器）出。`scripts/build-tools.mjs` 已内置两道闸：非 Windows target 跳过、非 Windows 主机请求 Windows target 硬拒。
+- 工具链（openssl-app / putty-telnet 的 C 编译、vcpkg 静态库）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。
+- 所有 Windows 专属逻辑用 `#[cfg(target_os = "windows")]` / `[target.'cfg(windows)'.dependencies]` 门控，不留运行时判断。
+
+## 架构不变量
+
+### Cargo workspace 拆分
+
+`src-tauri` 是 workspace 根（根包 = Tauri 主程序 `app`），三个成员职责不可混：
+
+- **app 不依赖任何工具 crate**——uutils/ripgrep/openssl-app/putty-telnet 的依赖图只进 `crates/coreutils`。这是「主程序瘦身 + 增量构建互不牵连」的前提：改 UI 只重链 app，改工具只重链 coreutils。
+- **tools-catalog 保持零依赖**——命令名清单是 app（建硬链接）与 coreutils（argv0 分发白名单）的单一事实来源；任何依赖都会经它传染给主程序。
+- `vendor/` 被 workspace `exclude`：vendor 内 coreutils/sed/ripgrep/sd 自带 workspace，其余为无继承键的独立清单；不 exclude 则 uucore 的 `edition.workspace` 会误朝根清单取值而报错。
+- 裸 `cargo build` / `cargo test` 只作用于根包 app；工具链必须显式 `-p coreutils`。
+
+### Windows 工具链（BusyBox 模式）
+
+- 单一 `coreutils.exe` 多呼叫二进制；`rg`/`fd`/`awk` 三个命令的解析器直读自身 argv，**仅硬链接短名模式可用**，子命令模式给出提示。
+- 硬链接安装在应用启动钩子（`src/tools/hardlinks.rs`，仅 Windows 编译）完成：幂等判据是**文件身份**（Unix inode 对；Windows 退化为大小 + mtime），不是文件大小——同体积升级曾因此误判。
+- 依赖 uutils 家族统一走 vendor 的 uucore 0.12.0（各 vendor 清单已重定向），避免 lock 出现双版本。
+- 新增命令：改 `tools-catalog` 清单 → `crates/coreutils/src/coreutils.rs` 加分发臂 → 补 command_table_consistency 与 version sweep 的预期。
+
+### OpenSSL 锁版本
+
+`vendor/openssl-src` 只含 apps + include/internal 最小子集，`VELOTERM_VERSION` 文件是单一事实来源，CI 会校验与 runner vcpkg 实装版本一致（当前 **3.6.5**）。升级流程见该目录 README：CI 报版本漂移 → 下载新版源码替换两棵树 + 更新版本文件 → CI 复验。apps 的 `cmp.c` 与 `lib/cmp_mock_srv.c` 是上游 build.info 里的成对项，必须一起排除。
+
+### 前端约定
+
+- 弹层（下拉/右键菜单）一律 portal 到 `document.body` + fixed 定位（共享 `useAnchoredPanel`：视口夹取、空间不足上翻）；关闭判定用 `useDismissOnOutsidePointer` 的多 ref 排除区（触发器与弹层不同子树）。
+- 表单字段容器 `FormField` 用 div 不用 label——WebKit 会把 label 内点击转发给第一个可标签化后代，曾致「取消新建命令后下拉自动展开」。
+- 颜色/字号全部走语义 token（`bg-selected` / `border-hover` / `text-ui-*` 随 `--ui-font-size` 缩放）；选中态不用主色三件套（primary 边框+底色+文字），主色只留给活动指示。
+- Monaco 经 `import * as monaco from 'monaco-editor'` 全量入口（81 语言高亮全离线）；worker 用 `new Worker(new URL(...), { type: 'module' })` 让 Rspack 产独立 chunk，`new URL` 必须内联在 `new Worker` 里。
+- 终端内提示（断开/重连快捷键）直接写 xterm 缓冲，不叠 DOM 覆盖层；就绪钩子命令等首屏输出静止 500ms 再注入（早发会被内核回显 + readline 重绘各显示一次，看到两遍）。
+
+### 存储
+
+全部数据在 SQLCipher 加密库 `veloterm.db`：表结构变更走「建表批次后的幂等 ALTER（吞 duplicate column）」，新列在 HostRecord / HostNode / mapper / roundtrip 测试四处同步。主机「就绪钩子」只存命令库主键 id，命令删除后钩子静默失效。
+
+## 命令速查
+
+| 用途 | 命令 |
+| --- | --- |
+| 开发 | `pnpm veloterm:dev` |
+| 类型检查 | `pnpm run typecheck` |
+| 前端构建 | `pnpm run build` |
+| Rust 测试 | `cd src-tauri && cargo test --workspace` |
+| 工具链测试 | `cargo test -p coreutils` |
+| 工具链冒烟 | `cargo build -p coreutils`（debug） |
 
 ## Docs
 
-- Rsbuild: https://rsbuild.rs/llms.txt
-- Rspack: https://rspack.rs/llms.txt
+- Linux 命令参考：`docs/linux-*-reference.md`（内置工具链的行为基准）
+- OpenSSL 锁版本流程：`src-tauri/vendor/openssl-src/README.md`
+- Rsbuild: https://rsbuild.rs/llms.txt · Rspack: https://rspack.rs/llms.txt
