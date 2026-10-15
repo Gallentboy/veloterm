@@ -38,7 +38,7 @@
 //! 每一步都有多个候选 + 全程 `[openssl-app]` 日志；任何一步找不到就 panic，
 //! 消息里带**已尝试的全部路径**。若 vcpkg 二进制缓存命中（nuget restore），
 //! buildtrees 不会被填充 —— 因此默认优先使用**工程内锁版本的 vendor/openssl-src**
-//! （3.6.4 最小子集：apps/ + include/internal/，与 vcpkg 实装版本严格一致，
+//! （3.6.5 最小子集：apps/ + include/internal/，与 vcpkg 实装版本严格一致，
 //! 见其 VELOTERM_VERSION 与 README）；也支持 `OPENSSL_APP_SOURCE_DIR` 显式指定
 //! 或回退 vcpkg buildtrees 发现。
 
