@@ -80,8 +80,14 @@ jobs:
       #    fetching commits with git fetch"）；fetch master 增量后对象可达，版本解析
       #    从 git 历史读取版本化 port，不动工作树。
       #    首次运行按 baseline 编译并把二进制包推送到 GitHub Packages，后续命中
-      #    feed 直接秒级恢复。manifest 产物装在 <清单目录>/vcpkg_installed/。
-      #    VCPKG_BUILD_TYPE=release：跳过 debug 配置只编 release，时间减半
+      #    feed 直接秒级恢复。VCPKG_BUILD_TYPE=release：跳过 debug 配置只编 release。
+      #    --x-install-root 把 manifest 产物装进 classic 目录（<vcpkg根>\installed\<triplet>）
+      #    而非默认的 <清单目录>\vcpkg_installed\：OPENSSL_LIB_DIR 的字符串必须与
+      #    rust-cache 恢复的旧构建产物里烘焙的链接搜索路径一致——libsqlite3-sys 的
+      #    bundled 路径【未声明 rerun-if-env-changed=OPENSSL_LIB_DIR】，改环境变量
+      #    cargo 也不会重跑它的 build script，只会重放缓存的旧 rustc-link-search；
+      #    路径指向不存在的目录时最终链接 app.exe 直接 LNK1104（CI 实测）。
+      #    固定装进 classic 目录后路径世代恒定，缓存重放永远指向有效位置
       - name: Install OpenSSL for SQLCipher (Windows)
         if: runner.os == 'Windows'
         working-directory: src-tauri
@@ -91,11 +97,18 @@ jobs:
           VCPKG_DEFAULT_TRIPLET: x64-windows-static
         run: |
           $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
-          git -C $vcpkgRoot fetch origin master
-          vcpkg install
+          # C:\vcpkg 由镜像生成账户检出、作业以 runneradmin 运行：git 视为可疑属主
+          # 拒绝操作（exit 128），先放行再 fetch
+          git config --global --add safe.directory "$vcpkgRoot"
+          # 补历史属保险动作：fetch 失败（非 git 仓库/网络问题）不阻塞安装——
+          # 当前世代镜像已含 builtin-baseline 的历史，此前多轮 CI 均靠镜像自带历史通过
+          git -C "$vcpkgRoot" fetch origin master
+          if ($LASTEXITCODE -ne 0) { Write-Host "git fetch 补历史失败（exit $LASTEXITCODE），继续安装：当前镜像通常已含 baseline 历史" }
+          vcpkg install "--x-install-root=$vcpkgRoot\installed"
 
-      # 3. 设置 Rust 静态链接 OpenSSL 所需的环境变量（manifest 模式安装根：
-      #    src-tauri/vcpkg_installed/<triplet>）
+      # 3. 设置 Rust 静态链接 OpenSSL 所需的环境变量。路径必须是 <vcpkg根>\installed\
+      #    <triplet>（与上方 Install 步骤的 --x-install-root 一致）：除缓存重放的
+      #    原因外，openssl-app 的 build.rs 兜底逻辑也按该根目录布局探测
       - name: Set OpenSSL env (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
