@@ -102,8 +102,10 @@ export function TerminalGridContainer({
                   ? 'rounded-xl border border-border/80 bg-background shadow-xs'
                   : cn(
                       'rounded-lg border bg-background transition-colors',
+                      // 选中单元格用工程「强调边框」token（亮/暗双值），不叠主色描边：
+                      // 与 tab 选中态（bg-selected）同一套克制语汇，活动指示由顶栏与状态点承担
                       isActive
-                        ? 'border-primary/60 ring-1 ring-primary/40 shadow-xs'
+                        ? 'border-border-hover ring-1 ring-border-hover/60 shadow-xs'
                         : 'border-border/70 hover:border-border',
                     )
                 : 'h-full w-full flex-1',

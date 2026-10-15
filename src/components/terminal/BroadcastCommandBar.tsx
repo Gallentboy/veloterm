@@ -207,10 +207,10 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
           type="button"
           onClick={handleToggleAll}
           className={cn(
-            'inline-flex h-6 items-center gap-1 rounded-md border px-2 text-ui-xs font-medium transition-colors',
+            'inline-flex h-6 items-center gap-1 rounded-md border px-2 text-ui-xs transition-colors',
             allSelected
-              ? 'border-primary/50 bg-primary/10 text-primary font-semibold'
-              : 'border-border/70 bg-surface/40 text-foreground-subtle hover:text-foreground hover:bg-hover',
+              ? 'border-border bg-selected text-foreground'
+              : 'border-border/60 text-foreground-subtle hover:bg-hover hover:text-foreground',
           )}
         >
           {allSelected && <Check className="size-3" />}
@@ -226,10 +226,10 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
               type="button"
               onClick={() => handleToggleSession(session.id)}
               className={cn(
-                'inline-flex h-6 items-center gap-1 rounded-md border px-2 text-ui-xs font-medium transition-colors truncate max-w-[140px]',
+                'inline-flex h-6 items-center gap-1 rounded-md border px-2 text-ui-xs transition-colors truncate max-w-[140px]',
                 isChecked
-                  ? 'border-primary/50 bg-primary/10 text-primary font-semibold'
-                  : 'border-border/70 bg-surface/40 text-foreground-subtle hover:text-foreground hover:bg-hover',
+                  ? 'border-border bg-selected text-foreground'
+                  : 'border-border/60 text-foreground-subtle hover:bg-hover hover:text-foreground',
               )}
             >
               {isChecked && <Check className="size-3 shrink-0" />}
@@ -247,32 +247,30 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
 
       {/* 命令输入栏 */}
       <form onSubmit={handleSubmit} className="flex items-center gap-2">
-        <div className="relative flex flex-1 items-center">
-          <span className="pointer-events-none absolute left-2.5 font-mono text-ui-sm text-foreground-subtle select-none">
-            ❯
-          </span>
-          <input
-            ref={inputRef}
-            type="text"
-            value={command}
-            onChange={(e) => setCommand(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isExecuting}
-            placeholder={
-              selectedSessionIds.length === 0
-                ? '请先勾选至少一个广播目标终端...'
-                : '输入广播命令 (Enter 发送，按 ⌃C 或点击「⌃C 中断」发送中断信号，↑/↓ 调阅历史)...'
-            }
-            className="w-full rounded-lg border border-border/80 bg-surface/30 py-1.5 pl-7 pr-3 font-mono text-ui-sm text-foreground outline-none transition-colors focus:border-primary/70 focus:bg-background"
-          />
-        </div>
+        {/* 样式对齐工程表单基元（formFields.controlClassName）：h-8 / rounded-md /
+            bg-input / placeholder 语义色 / focus 用 border-hover。bg-input 在
+            亮/暗两套主题各有实值，不叠加半透明与主色焦点光晕 */}
+        <input
+          ref={inputRef}
+          type="text"
+          value={command}
+          onChange={(e) => setCommand(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={isExecuting}
+          placeholder={
+            selectedSessionIds.length === 0
+              ? '请先勾选至少一个广播目标终端...'
+              : '输入广播命令 (Enter 发送，按 ⌃C 或点击「⌃C 中断」发送中断信号，↑/↓ 调阅历史)...'
+          }
+          className="h-8 min-w-0 flex-1 rounded-md border border-border bg-input px-2.5 font-mono text-ui-base text-foreground outline-none transition-colors placeholder:text-foreground-subtlest focus:border-border-hover disabled:opacity-50"
+        />
 
         <Button
           type="submit"
           variant="default"
           size="sm"
           disabled={!command.trim() || selectedSessionIds.length === 0 || isExecuting}
-          className="h-8 gap-1.5 rounded-lg px-3.5 text-ui-xs font-medium shrink-0 shadow-xs"
+          className="h-8 shrink-0 gap-1.5 px-3.5 text-ui-base"
         >
           <Send className="size-3.5" />
           <span>发送广播</span>
@@ -286,7 +284,7 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
             size="sm"
             onClick={() => void executeSendSignal(0x03, 'Ctrl+C (SIGINT)')}
             disabled={selectedSessionIds.length === 0 || isExecuting}
-            className="h-8 gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive px-2.5 text-ui-xs font-medium shrink-0 shadow-xs transition-colors"
+            className="h-8 shrink-0 gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 text-ui-base text-destructive transition-colors hover:bg-destructive/20 hover:text-destructive"
           >
             <Ban className="size-3.5" />
             <span>⌃C 中断</span>
