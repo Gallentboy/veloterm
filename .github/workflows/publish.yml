@@ -75,16 +75,25 @@ jobs:
       #    不同世代镜像的基线在版本间摇摆（实测相邻两次 CI 分别解析到 3.6.5/3.6.4），
       #    必然反复触发版本校验失败；manifest + overrides + builtin-baseline 是官方
       #    版本控制的唯一途径，与 runner 当前基线彻底解耦。
+      #    先 git fetch 补齐 runner 内置 vcpkg 仓库历史：builtin-baseline 指向打包
+      #    manifest 时的 vcpkg master SHA，旧世代镜像的仓库里没有该 commit（实测报
+      #    "failed to git show versions/baseline.json ... This may be fixed by
+      #    fetching commits with git fetch"）；fetch master 增量后对象可达，版本解析
+      #    从 git 历史读取版本化 port，不动工作树。
       #    首次运行按 baseline 编译并把二进制包推送到 GitHub Packages，后续命中
       #    feed 直接秒级恢复。manifest 产物装在 <清单目录>/vcpkg_installed/。
       #    VCPKG_BUILD_TYPE=release：跳过 debug 配置只编 release，时间减半
       - name: Install OpenSSL for SQLCipher (Windows)
         if: runner.os == 'Windows'
         working-directory: src-tauri
+        shell: pwsh
         env:
           VCPKG_BUILD_TYPE: release
           VCPKG_DEFAULT_TRIPLET: x64-windows-static
-        run: vcpkg install
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          git -C $vcpkgRoot fetch origin master
+          vcpkg install
 
       # 3. 设置 Rust 静态链接 OpenSSL 所需的环境变量（manifest 模式安装根：
       #    src-tauri/vcpkg_installed/<triplet>）
