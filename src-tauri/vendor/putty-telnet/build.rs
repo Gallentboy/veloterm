@@ -95,6 +95,16 @@ const ROOT_SOURCES: &[&str] = &[
     "clicons.c",    // console
     "console.c",    // console
     "ldisc.c",      // noterminal
+    // settings 库 = cmdline.c + settings.c（上游根 CMakeLists 的
+    // add_sources_from_dir(settings) / settings 静态库展开，见头注释）。
+    // 漏掉 cmdline.c 会缺 3 个符号：cmdline_get_passwd_input（本 crate 的
+    // c_src/telnet_main.c 调用）、cmdline_lp_verbose（clicons.c 的
+    // LogPolicy 表）、cmdline_seat_verbose（各 *seat 的 Seat 表），
+    // Windows 链接期报 LNK2001/LNK2019。它引用的外部面只有
+    // conf_*（settings.c）、dupprintf/strbuf_*/filename_*（utils/）、
+    // console_set_batch_mode（console.c）、console_set_stdio_prompts
+    // （windows/console.c）——全部已在清单内，补入无新增缺口。
+    "cmdline.c",    // settings
     "settings.c",   // settings
     "errsock.c",    // network
     "logging.c",    // logging 对象库
