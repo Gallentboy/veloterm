@@ -24,6 +24,9 @@
 //! - apps\lib\build.info：VC 目标额外编 win32_init.c；vms_term_sock.c /
 //!   vms_decc_argv.c 仅 VMS —— glob 后按名排除。apps\build.info：vms_decc_init.c
 //!   仅 VMS；其余 apps\*.c 全部属于 openssl 程序（engine.c 因未禁 engine 而入选）。
+//!   唯一例外是 cmp.c：它与 apps\lib\cmp_mock_srv.c 在上游 build.info 里同处
+//!   一个 `IF[!$disabled{cmp}]`，而 cmp_mock_srv.c 依赖未 vendor 的内部头，
+//!   故成对排除（= 等价于上游 disable 掉 cmp 子命令），见 APPS_EXCLUDE 注释。
 //! - include 路径按上游 `INCLUDE[openssl]=.. ../include include` 与 libapps 的
 //!   `INCLUDE=../.. ../../include ../include` 归纳为：{base}、{base}\include、
 //!   {base}\apps\include，再补安装目录 include（crypto.h 等 28 个头是
@@ -47,12 +50,20 @@ use std::process::Command;
 /// 统一日志前缀
 const TAG: &str = "[openssl-app]";
 /// apps\*.c glob 排除项：vms_decc_init.c 仅 VMS（会 #error 非 VMS 平台）；
-/// progs.c 是生成物，统一由 progs 发现/生成步骤单独加入（防止重复编译）。
-const APPS_EXCLUDE: &[&str] = &["vms_decc_init.c", "progs.c"];
+/// progs.c 是生成物，统一由 progs 发现/生成步骤单独加入（防止重复编译）；
+/// cmp.c 与 apps\lib\cmp_mock_srv.c 是**不可拆的一对** —— 上游 apps\build.info
+/// 把两者写在同一个 `IF[!$disabled{cmp}]` 里（`$OPENSSLSRC=$OPENSSLSRC cmp.c
+/// lib/cmp_mock_srv.c`），cmp.c 无条件引用 15 个 ossl_cmp_mock_srv_* 符号。
+/// 既然 cmp_mock_srv.c 编不了（见 LIB_EXCLUDE），cmp.c 就必须一起排除，
+/// 否则链接期必然 LNK2019（CI 实测）。代价：openssl CLI 没有 `cmp` 子命令，
+/// 这与上游「cmp 被 disabled」时的表现一致（progs.c 的 shim 源链同源，
+/// 自动不含 cmp_main，不会留下悬空引用）。
+const APPS_EXCLUDE: &[&str] = &["vms_decc_init.c", "progs.c", "cmp.c"];
 /// apps\lib 排除名单：
 /// - vms_decc_argv.c / vms_term_sock.c 仅 VMS
 /// - cmp_mock_srv.c 是 CMP 测试用 mock server（不属于 openssl CLI 本体），
-///   依赖未 vendor 的 crypto/cmp/cmp_local.h 内部头（CI 实测 C1083）
+///   依赖未 vendor 的 crypto/cmp/cmp_local.h 内部头（CI 实测 C1083）；
+///   排除它必须同时排除 apps\cmp.c，见 APPS_EXCLUDE 注释
 const LIB_EXCLUDE: &[&str] = &["vms_decc_argv.c", "vms_term_sock.c", "cmp_mock_srv.c"];
 
 fn main() {
