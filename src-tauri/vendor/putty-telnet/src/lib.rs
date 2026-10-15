@@ -22,7 +22,8 @@ mod imp {
     // 在 C 层解析后直接驱动 PuTTY telnet 会话。签名即
     // `int putty_telnet_main(int argc, char **argv)`，按 C ABI 调用；
     // args 首元素约定为程序名（"telnet"），其后为参数。
-    extern "C" {
+    // edition 2024 起 `extern` 块必须标 `unsafe`（RFC 3484）。
+    unsafe extern "C" {
         fn putty_telnet_main(argc: c_int, argv: *const *const c_char) -> c_int;
     }
 
