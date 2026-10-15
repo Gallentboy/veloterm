@@ -71,9 +71,13 @@ jobs:
           & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
 
       # 2. 安装 OpenSSL（首次运行编译并把二进制包推送到 GitHub Packages；
-      #    后续运行命中 feed 直接秒级恢复，不再重新编译）
+      #    后续运行命中 feed 直接秒级恢复，不再重新编译）。
+      #    VCPKG_BUILD_TYPE=release：Windows 经典三元组默认 debug+release 双配置各编一遍，
+      #    本链路只链接 release（下方 OPENSSL_LIB_DIR），跳过 debug 构建时间减半
       - name: Install OpenSSL for SQLCipher (Windows)
         if: runner.os == 'Windows'
+        env:
+          VCPKG_BUILD_TYPE: release
         run: vcpkg install openssl:x64-windows-static
 
       # 3. 设置 Rust 静态链接 OpenSSL 所需的环境变量
