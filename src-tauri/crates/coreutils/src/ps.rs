@@ -3,13 +3,13 @@
 //! 支持参数：
 //! - `ps` / `ps -ef` / `ps aux`：列出进程
 //! - `-p, --pid <PID>`：指定 PID 过滤
-//! - `-C, --command <NAME>`：按进程名称过滤
+//! - `-C, --command <NAME>`：按进程名或命令行过滤（子串、忽略大小写）
 //! - `--sort <[-]cpu|[-]mem|[-]pid>`：排序
 //! - `-h, --help`：帮助
 //! - `-V, --version`：版本信息
 
 use std::ffi::OsString;
-use sysinfo::{ProcessesToUpdate, System};
+use sysinfo::System;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OutputFormat {
@@ -55,7 +55,7 @@ fn print_help() {
           -f             Do full-format listing\n  \
           aux, -aux      BSD-style process listing\n  \
           -p, --pid <PID>   Filter by process ID (comma-separated or repeated)\n  \
-          -C <name>      Filter by command/process name\n  \
+          -C <name>      Filter by process name or command line (substring)\n  \
           --sort <field> Sort by field: [-]cpu, [-]mem, [-]pid\n  \
           -h, --help     Display this help and exit\n  \
           -V, --version  Output version information and exit"
@@ -94,20 +94,14 @@ fn parse_args(args: &[OsString]) -> Option<PsOptions> {
                 opts.sort_key = SortKey::Cpu;
                 opts.sort_descending = true;
             }
-            "-p" | "--pid" => {
-                if let Some(val) = iter.next() {
-                    for part in val.split(',') {
-                        if let Ok(pid) = part.trim().parse::<u32>() {
-                            opts.filter_pids.push(pid);
-                        }
-                    }
-                }
-            }
-            "-C" => {
-                if let Some(val) = iter.next() {
-                    opts.filter_comm = Some(val.to_lowercase());
-                }
-            }
+            "-p" | "--pid" => match iter.next() {
+                Some(val) => collect_pids(&val, &mut opts),
+                None => eprintln!("ps: option -p requires an argument"),
+            },
+            "-C" => match iter.next() {
+                Some(val) => opts.filter_comm = Some(val.to_lowercase()),
+                None => eprintln!("ps: option -C requires an argument"),
+            },
             arg if arg.starts_with("--sort=") => {
                 let val = &arg["--sort=".len()..];
                 parse_sort_spec(val, &mut opts);
@@ -117,11 +111,41 @@ fn parse_args(args: &[OsString]) -> Option<PsOptions> {
                     parse_sort_spec(&val, &mut opts);
                 }
             }
+            // GNU 附值形态：--pid=123 / --command=xxx
+            arg if arg.starts_with("--pid=") => collect_pids(&arg["--pid=".len()..], &mut opts),
+            arg if arg.starts_with("--command=") => {
+                opts.filter_comm = Some(arg["--command=".len()..].to_lowercase());
+            }
+            // GNU 附着短形态：-p1234 / -Cnginx（-p、-C 的分离形态已在上方精确匹配）。
+            // 这两臂必须存在：旧版落到 `_ => {}` 被静默吞掉，筛选未生效却直接输出
+            // 全量列表，用户表现为「搜了等于没搜」
+            arg if arg.len() > 2 && arg.starts_with("-p") => collect_pids(&arg[2..], &mut opts),
+            arg if arg.len() > 2 && arg.starts_with("-C") => {
+                opts.filter_comm = Some(arg[2..].to_lowercase());
+            }
             _ => {}
         }
     }
 
     Some(opts)
+}
+
+/// 解析逗号分隔的 PID 列表（-p / --pid 的各类形态共用）；非法项打警告不静默，
+/// 否则「写了筛选却输出全量列表」会被误认为「搜不到」
+fn collect_pids(spec: &str, opts: &mut PsOptions) {
+    for part in spec.split(',') {
+        match part.trim().parse::<u32>() {
+            Ok(pid) => opts.filter_pids.push(pid),
+            Err(_) => eprintln!("ps: invalid process id: {part}"),
+        }
+    }
+}
+
+/// -C 过滤语义：进程名（Windows 下为 exe 文件名，如 WeChat.exe）**或**完整命令行
+/// 任一子串命中即可（忽略大小写）。只匹配进程名会让「按参数搜进程」落空
+/// （如 java -jar server.jar 里搜 server.jar），这正是 Windows 下最常见的搜不到
+fn matches_filter(name: &str, command: &str, filter: &str) -> bool {
+    name.to_lowercase().contains(filter) || command.to_lowercase().contains(filter)
 }
 
 fn parse_sort_spec(val: &str, opts: &mut PsOptions) {
@@ -168,10 +192,12 @@ pub fn run(args: &[OsString]) -> i32 {
     };
 
     let mut sys = System::new();
-    // 首次刷新后微延时并再次刷新，使 sysinfo 能够正确算出 CPU 使用率增量
-    sys.refresh_processes(ProcessesToUpdate::All);
+    // 首次刷新后微延时并再次刷新，使 sysinfo 能够正确算出 CPU 使用率增量。
+    // 刷新走 crate 级 helper：默认 `refresh_processes` 不含 cmd，不刷新则
+    // p.cmd() 恒为空，COMMAND 列会退化为进程名、-C 无法按参数匹配
+    crate::refresh_all_processes(&mut sys);
     std::thread::sleep(std::time::Duration::from_millis(120));
-    sys.refresh_processes(ProcessesToUpdate::All);
+    crate::refresh_all_processes(&mut sys);
 
     let total_mem = sys.total_memory();
 
@@ -185,12 +211,6 @@ pub fn run(args: &[OsString]) -> i32 {
             }
 
             let name = p.name().to_string_lossy();
-            if let Some(ref filter) = opts.filter_comm
-                && !name.to_lowercase().contains(filter)
-            {
-                return None;
-            }
-
             let cmd_parts = p.cmd();
             let command = if !cmd_parts.is_empty() {
                 cmd_parts
@@ -199,8 +219,14 @@ pub fn run(args: &[OsString]) -> i32 {
                     .collect::<Vec<_>>()
                     .join(" ")
             } else {
-                name.into_owned()
+                name.to_string()
             };
+
+            if let Some(ref filter) = opts.filter_comm
+                && !matches_filter(&name, &command, filter)
+            {
+                return None;
+            }
 
             let mem_bytes = p.memory();
             let mem_percent = if total_mem > 0 {
@@ -349,6 +375,27 @@ mod tests {
     fn pid_filter_accepts_comma_and_repeat() {
         let opts = parse(&["-p", "1,2", "--pid", "3"]).unwrap();
         assert_eq!(opts.filter_pids, vec![1, 2, 3]);
+    }
+
+    /// GNU 附值形态：-p1234 / -Cnginx / --pid=123 / --command=xxx
+    /// 旧版这些形态会被解析器静默吞掉，筛选不生效却输出全量列表
+    #[test]
+    fn attached_and_equals_value_forms() {
+        let opts = parse(&["-p1,2", "--pid=3"]).unwrap();
+        assert_eq!(opts.filter_pids, vec![1, 2, 3]);
+        let opts = parse(&["-Cnginx"]).unwrap();
+        assert_eq!(opts.filter_comm.as_deref(), Some("nginx"));
+        let opts = parse(&["--command=Node"]).unwrap();
+        assert_eq!(opts.filter_comm.as_deref(), Some("node"));
+    }
+
+    /// -C 匹配语义：进程名或命令行任一子串命中（忽略大小写）
+    #[test]
+    fn filter_matches_name_or_command_line() {
+        // Windows 常见：搜 exe 名或命令行参数
+        assert!(matches_filter("WeChat.exe", r"C:\Apps\WeChat.exe", "wechat"));
+        assert!(matches_filter("java.exe", "java -jar server.jar", "server.jar"));
+        assert!(!matches_filter("bash", "bash -l", "python"));
     }
 
     #[test]

@@ -30,7 +30,7 @@ use crossterm::{
 use std::ffi::OsString;
 use std::io::{IsTerminal, Write, stdout};
 use std::time::{Duration, Instant};
-use sysinfo::{ProcessesToUpdate, System};
+use sysinfo::System;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SortKey {
@@ -153,7 +153,9 @@ struct ProcessInfo {
 fn refresh_metrics(sys: &mut System) {
     sys.refresh_memory();
     sys.refresh_cpu_usage();
-    sys.refresh_processes(ProcessesToUpdate::All);
+    // 共用 ps 的刷新 helper：默认 `refresh_processes` 不含 cmd，
+    // 不刷新则 COMMAND 列会退化为进程名（看不到命令行参数）
+    crate::refresh_all_processes(sys);
 }
 
 /// RAII 守卫：确保退出时恢复终端状态（退出 AlternateScreen 与 RawMode，恢复光标）
