@@ -43,6 +43,8 @@ export interface HostNode {
   hostKeyVerification?: SshHostKeyVerificationMode;
   /** 是否允许兼容旧版不安全算法（ssh-rsa / dh-group1-sha1 / 3des-cbc 等）；缺省为 false */
   allowInsecureAlgos?: boolean;
+  /** 终端就绪钩子：会话建立后自动执行的命令库命令 id；null 或缺省 = 未启用（仅存主键 id，命令被删后钩子静默失效） */
+  readyCommandId?: number | null;
   /** 所属分组（多选）；空数组 = 未分组 */
   groupIds: number[];
   createdAt: number;

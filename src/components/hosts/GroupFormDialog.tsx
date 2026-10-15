@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FormField, Select, TextInput } from '@/components/hosts/formFields';
+import { FormField, TextInput } from '@/components/hosts/formFields';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
+import { SelectMenu } from '@/components/ui/SelectMenu';
 import { groupPathOptions } from '@/hosts/storage';
 import type { GroupNode } from '@/hosts/types';
 
@@ -53,14 +54,15 @@ export function GroupFormDialog({ node, defaultParentId, groups, onSave, onClose
           <TextInput value={name} onChange={(e) => setName(e.target.value)} placeholder="生产环境" />
         </FormField>
         <FormField label={t('groups.form.parent')}>
-          <Select value={parentId ?? ''} onChange={(e) => setParentId(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">{t('groups.form.root')}</option>
-            {options.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.path}
-              </option>
-            ))}
-          </Select>
+          <SelectMenu
+            aria-label={t('groups.form.parent')}
+            value={parentId != null ? String(parentId) : ''}
+            onChange={(next) => setParentId(next === '' ? null : Number(next))}
+            options={[
+              { value: '', label: t('groups.form.root') },
+              ...options.map((option) => ({ value: String(option.id), label: option.path })),
+            ]}
+          />
         </FormField>
         {error ? <p className="text-ui-sm text-destructive">{error}</p> : null}
       </div>
