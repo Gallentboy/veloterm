@@ -18,7 +18,7 @@
 //! 在 macOS 上以真实文件系统单元测试覆盖；`ensure_installed_tools` 仅
 //! Windows 编译，从 `current_exe()` 推导安装位置。
 
-use super::coreutils::all_commands;
+use tools_catalog::all_commands;
 use std::fs;
 use std::path::Path;
 

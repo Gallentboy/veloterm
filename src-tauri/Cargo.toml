@@ -1,3 +1,24 @@
+[workspace]
+# 本目录既是主程序包（app）也是工作区根。
+#
+# 内置工具集已拆为独立 member：命令名清单（零依赖）与多呼叫二进制各一个 crate。
+# 主程序不再依赖 uutils / ripgrep / findutils / openssl-app / putty-telnet 的
+# 任何一项 —— 这些只进入 coreutils 多呼叫二进制，于是
+#   · app 二进制不再被 OpenSSL/PuTTY/uutils 代码与静态库撑大；
+#   · 改 UI/Tauri IPC 只重链 app，改工具只重链 coreutils，Fat LTO 不再互相牵连。
+#
+# 默认成员 = 根包（app），故 `cargo build` / `cargo test` 只作用于主程序；
+# 工具集需显式 `cargo build -p coreutils`（打包脚本 scripts/build-tools.mjs 已如此调用）。
+members = ["crates/tools-catalog", "crates/coreutils"]
+# vendor 下的源码树各自独立：coreutils/sed/ripgrep/sd 自带 [workspace]（uu_*
+# 经 workspace 继承取值），findutils/grep/fd 等是无继承键的独立清单。若不
+# exclude，Cargo 会把 vendor 里的包划入本工作区，uucore 的
+# `edition.workspace = true` 便会错误地朝本清单（无 [workspace.package]）
+# 取值而报「workspace.package.edition was not defined」。
+exclude = ["vendor"]
+# edition 2024 对应 resolver 3（显式写出，避免与根包默认值隐式耦合）
+resolver = "3"
+
 [package]
 name = "app"
 version = "0.1.0"
@@ -7,8 +28,8 @@ license = ""
 repository = ""
 edition = "2024"
 rust-version = "1.90"
-# 多 bin 包（主程序 + coreutils 多呼叫二进制）：tauri dev 内部执行 `cargo run` 无 --bin，
-# 必须指定默认运行主程序，否则报 "could not determine which binary to run"
+# tauri dev 内部执行 `cargo run` 不带 --bin，显式钉住主程序 bin 以免歧义
+# （coreutils 多呼叫二进制已移出本包，见上方 [workspace]）
 default-run = "app"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -21,6 +42,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7.2", features = [] }
 
 [dependencies]
+# 内置工具集的命令名清单（零依赖 crate）：启动时据此在 tools/ 下创建硬链接
+# 短名入口。命令实现不在本 crate —— 见 crates/coreutils，主程序刻意不依赖它。
+tools-catalog = { path = "crates/tools-catalog" }
+
 anyhow = "1.0"
 bytes = "1.4"
 futures = "0.3"
@@ -60,197 +85,19 @@ tokio = { version = "1", features = [
 uuid = { version = "1", features = ["v4", "serde"] }
 window-vibrancy = "0.8.1"
 
-# ── uutils/coreutils 源码 vendor 集成（https://github.com/uutils/coreutils，MIT，tag 0.12.0）──
-# 命令实现直接取自 vendor/coreutils/src/uu/<name>（path 依赖，workspace 继承
-# 解析到 vendor 自己的根清单，uucore 等内部依赖全部走 vendor 内路径，不依赖 crates.io）。
-# 分组对齐 uutils 官方 feature：feat_common_core + feat_Tier1（跨平台）/
-# feat_require_unix_*（unix 专属）/ feat_os_windows 额外项。
-# grep/sed 不属于 coreutils（独立 GNU 包），已分别 vendor uutils/grep 与 uutils/sed；
-# 仅 which（各 uutils 仓库均未提供）由 src/tools/unix_extras.rs 自研补齐。
-# chcon/runcon 依赖 SELinux（uutils feat_require_selinux），不集成。
-# grep：uutils/grep 0.2.0 源码 vendor（GNU grep 1:1 语法克隆，MIT），
-# uucore 已在 vendor 内指向 coreutils 0.12 共用；正则引擎为 onig（bundled C 编译）。
-uu_grep = { path = "vendor/grep" }
-# rg：ripgrep 15.2.0 源码 vendor（Unlicense OR MIT），主逻辑抽出为 lib
-# （vendor/ripgrep/crates/core/lib.rs 的 ripgrep::rg_main()）内嵌进 coreutils 多呼叫二进制。
-ripgrep = { path = "vendor/ripgrep" }
-# awk：frawk v0.4.7 源码 vendor（ezrosent/frawk，MIT），Cranelift 纯 Rust JIT。
-# default-features 必须关闭：上游默认启用 llvm_backend（LLVM C++）、
-# unstable（nightly feature）与 use_jemalloc（C 分配器，Windows 不友好）。
-frawk = { path = "vendor/frawk", default-features = false, features = ["allow_avx2"] }
-# find / xargs：uutils/findutils 0.10.0 源码 vendor（MIT）。入口
-# findutils::find::find_main / xargs::xargs_main（&[&str] 含 argv[0] 约定）；
-# uucore 已指向 vendor 0.12，nix 已门控为 unix-only。
-findutils = { path = "vendor/findutils" }
-# fd：sharkdp/fd v10.5.0 源码 vendor（MIT/Apache），librarify 为
-# fd_find::fd_main()（读自身 argv，仅硬链接 argv[0] 模式）。
-fd-find = { path = "vendor/fd" }
-# diff / cmp / sdiff：uutils/diffutils v0.5.0 源码 vendor（MIT）。
-# 入口 diffutilslib::{diff,cmp,sdiff}_main（迭代器首元素为命令名，可注入）。
-diffutils = { path = "vendor/diffutils" }
-# sed：uutils/sed 0.2.0 源码 vendor（MIT），入口 sed::sed::uumain
-# （可注入迭代器；uucore 已指向 vendor 0.12）。
-sed = { path = "vendor/sed" }
-# sd：chmln/sd v1.1.0 源码 vendor（MIT），入口 sd_cli::sd_main_from
-# （可注入迭代器，首元素为程序名）。
-sd-cli = { path = "vendor/sd/sd-cli" }
-# tar：tar-rs 0.4.46 源码 vendor（MIT/Unlicense，纯库）。CLI 壳（-c/-x/-t/-f/-z/-v/-C）
-# 在 src/tools/tar_impl.rs 自研；-z 压缩经 flate2 纯 Rust 后端（miniz_oxide，无 zlib C 依赖）。
-tar = { path = "vendor/tar-rs" }
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-# eza / tree：eza v0.23.5 源码 vendor（MIT），入口 eza::eza_main_from（可注入；
-# tree 命令 = eza --tree）。git 集成经 git2 vendored libgit2（cc 现场编译，需 C 编译器）。
-eza = { path = "vendor/eza" }
-# palette 0.7.5 的源码与新版 palette_derive 宏不兼容（eza 上游因此钉 =0.7.5；
-# 本工程的 lockfile 需同步钉住 derive 版本，否则 cargo 会解析到更新的 0.7.x）
-palette_derive = "=0.7.5"
-# wget：wget-rs 0.1.0 源码 vendor，入口 wget_rs::wget_main_from（可注入）。
-# reqwest 已在 vendor 内改为 rustls-tls 纯 Rust（无 OpenSSL 系统依赖）。
-wget-rs = { path = "vendor/wget-rs" }
-# uucore 开 openssl feature：md5/sha1/sha2 系 checksum 切换到 libcrypto 后端
-# （全平台统一 aws-lc，与 russh 的 aws-lc-rs 同源共享构建链路；feature 统一化
-# 令所有 uu_* sum 工具全局生效，纯 Rust 实现保留为 FIPS 拒算法时的运行时兜底）
-uucore = { path = "vendor/coreutils/src/uucore", features = ["openssl"] }
-uu_arch = { path = "vendor/coreutils/src/uu/arch" }
-uu_b2sum = { path = "vendor/coreutils/src/uu/b2sum" }
-uu_base32 = { path = "vendor/coreutils/src/uu/base32" }
-uu_base64 = { path = "vendor/coreutils/src/uu/base64" }
-uu_basename = { path = "vendor/coreutils/src/uu/basename" }
-uu_basenc = { path = "vendor/coreutils/src/uu/basenc" }
-uu_cat = { path = "vendor/coreutils/src/uu/cat" }
-uu_cksum = { path = "vendor/coreutils/src/uu/cksum" }
-uu_comm = { path = "vendor/coreutils/src/uu/comm" }
-uu_cp = { path = "vendor/coreutils/src/uu/cp" }
-uu_csplit = { path = "vendor/coreutils/src/uu/csplit" }
-uu_cut = { path = "vendor/coreutils/src/uu/cut" }
-uu_date = { path = "vendor/coreutils/src/uu/date" }
-uu_dd = { path = "vendor/coreutils/src/uu/dd" }
-uu_df = { path = "vendor/coreutils/src/uu/df" }
-uu_dir = { path = "vendor/coreutils/src/uu/dir" }
-uu_dircolors = { path = "vendor/coreutils/src/uu/dircolors" }
-uu_dirname = { path = "vendor/coreutils/src/uu/dirname" }
-uu_du = { path = "vendor/coreutils/src/uu/du" }
-uu_echo = { path = "vendor/coreutils/src/uu/echo" }
-uu_env = { path = "vendor/coreutils/src/uu/env" }
-uu_expand = { path = "vendor/coreutils/src/uu/expand" }
-uu_expr = { path = "vendor/coreutils/src/uu/expr" }
-uu_factor = { path = "vendor/coreutils/src/uu/factor" }
-uu_false = { path = "vendor/coreutils/src/uu/false" }
-uu_fmt = { path = "vendor/coreutils/src/uu/fmt" }
-uu_fold = { path = "vendor/coreutils/src/uu/fold" }
-uu_head = { path = "vendor/coreutils/src/uu/head" }
-uu_hostid = { path = "vendor/coreutils/src/uu/hostid" }
-uu_hostname = { path = "vendor/coreutils/src/uu/hostname" }
-uu_join = { path = "vendor/coreutils/src/uu/join" }
-uu_kill = { path = "vendor/coreutils/src/uu/kill" }
-uu_link = { path = "vendor/coreutils/src/uu/link" }
-uu_ln = { path = "vendor/coreutils/src/uu/ln" }
-uu_ls = { path = "vendor/coreutils/src/uu/ls" }
-uu_md5sum = { path = "vendor/coreutils/src/uu/md5sum" }
-uu_mkdir = { path = "vendor/coreutils/src/uu/mkdir" }
-uu_mktemp = { path = "vendor/coreutils/src/uu/mktemp" }
-uu_more = { path = "vendor/coreutils/src/uu/more" }
-uu_mv = { path = "vendor/coreutils/src/uu/mv" }
-uu_nl = { path = "vendor/coreutils/src/uu/nl" }
-uu_nice = { path = "vendor/coreutils/src/uu/nice" }
-uu_nohup = { path = "vendor/coreutils/src/uu/nohup" }
-uu_nproc = { path = "vendor/coreutils/src/uu/nproc" }
-uu_numfmt = { path = "vendor/coreutils/src/uu/numfmt" }
-uu_od = { path = "vendor/coreutils/src/uu/od" }
-uu_paste = { path = "vendor/coreutils/src/uu/paste" }
-uu_pathchk = { path = "vendor/coreutils/src/uu/pathchk" }
-uu_pr = { path = "vendor/coreutils/src/uu/pr" }
-uu_printenv = { path = "vendor/coreutils/src/uu/printenv" }
-uu_printf = { path = "vendor/coreutils/src/uu/printf" }
-uu_ptx = { path = "vendor/coreutils/src/uu/ptx" }
-uu_pwd = { path = "vendor/coreutils/src/uu/pwd" }
-uu_readlink = { path = "vendor/coreutils/src/uu/readlink" }
-uu_realpath = { path = "vendor/coreutils/src/uu/realpath" }
-uu_rm = { path = "vendor/coreutils/src/uu/rm" }
-uu_rmdir = { path = "vendor/coreutils/src/uu/rmdir" }
-uu_seq = { path = "vendor/coreutils/src/uu/seq" }
-uu_sha1sum = { path = "vendor/coreutils/src/uu/sha1sum" }
-uu_sha224sum = { path = "vendor/coreutils/src/uu/sha224sum" }
-uu_sha256sum = { path = "vendor/coreutils/src/uu/sha256sum" }
-uu_sha384sum = { path = "vendor/coreutils/src/uu/sha384sum" }
-uu_sha512sum = { path = "vendor/coreutils/src/uu/sha512sum" }
-uu_shred = { path = "vendor/coreutils/src/uu/shred" }
-uu_shuf = { path = "vendor/coreutils/src/uu/shuf" }
-uu_sleep = { path = "vendor/coreutils/src/uu/sleep" }
-uu_sort = { path = "vendor/coreutils/src/uu/sort" }
-uu_split = { path = "vendor/coreutils/src/uu/split" }
-uu_sum = { path = "vendor/coreutils/src/uu/sum" }
-uu_sync = { path = "vendor/coreutils/src/uu/sync" }
-uu_tac = { path = "vendor/coreutils/src/uu/tac" }
-uu_tail = { path = "vendor/coreutils/src/uu/tail" }
-uu_tee = { path = "vendor/coreutils/src/uu/tee" }
-uu_test = { path = "vendor/coreutils/src/uu/test" }
-uu_timeout = { path = "vendor/coreutils/src/uu/timeout" }
-uu_touch = { path = "vendor/coreutils/src/uu/touch" }
-uu_tr = { path = "vendor/coreutils/src/uu/tr" }
-uu_true = { path = "vendor/coreutils/src/uu/true" }
-uu_truncate = { path = "vendor/coreutils/src/uu/truncate" }
-uu_tsort = { path = "vendor/coreutils/src/uu/tsort" }
-uu_tty = { path = "vendor/coreutils/src/uu/tty" }
-uu_uname = { path = "vendor/coreutils/src/uu/uname" }
-uu_unexpand = { path = "vendor/coreutils/src/uu/unexpand" }
-uu_uniq = { path = "vendor/coreutils/src/uu/uniq" }
-uu_unlink = { path = "vendor/coreutils/src/uu/unlink" }
-uu_uptime = { path = "vendor/coreutils/src/uu/uptime" }
-uu_vdir = { path = "vendor/coreutils/src/uu/vdir" }
-uu_wc = { path = "vendor/coreutils/src/uu/wc" }
-uu_whoami = { path = "vendor/coreutils/src/uu/whoami" }
-uu_yes = { path = "vendor/coreutils/src/uu/yes" }
-
-# unix 专属命令（uutils feat_require_unix_core + feat_require_unix_utmpx）
-[target.'cfg(unix)'.dependencies]
-uu_chgrp = { path = "vendor/coreutils/src/uu/chgrp" }
-uu_chmod = { path = "vendor/coreutils/src/uu/chmod" }
-uu_chown = { path = "vendor/coreutils/src/uu/chown" }
-uu_chroot = { path = "vendor/coreutils/src/uu/chroot" }
-uu_groups = { path = "vendor/coreutils/src/uu/groups" }
-uu_id = { path = "vendor/coreutils/src/uu/id" }
-uu_install = { path = "vendor/coreutils/src/uu/install" }
-uu_logname = { path = "vendor/coreutils/src/uu/logname" }
-uu_mkfifo = { path = "vendor/coreutils/src/uu/mkfifo" }
-uu_mknod = { path = "vendor/coreutils/src/uu/mknod" }
-uu_stat = { path = "vendor/coreutils/src/uu/stat" }
-uu_stty = { path = "vendor/coreutils/src/uu/stty" }
-uu_pinky = { path = "vendor/coreutils/src/uu/pinky" }
-uu_users = { path = "vendor/coreutils/src/uu/users" }
-uu_who = { path = "vendor/coreutils/src/uu/who" }
-
-# stdbuf：unix 与 windows 均可用（uutils feat_os_windows 额外项 / feat_require_unix）
-[target.'cfg(any(unix, windows))'.dependencies]
-uu_stdbuf = { path = "vendor/coreutils/src/uu/stdbuf" }
-
-# openssl CLI（仅 Windows）：vcpkg x64-windows-static 静态库（与 SQLCipher 共用同一份）
-# + 现场编译的 apps/openssl.c（-Dmain 改名 FFI）。入口 openssl_app::openssl_cmd_main，
-# 迭代器首元素为程序名 "openssl"。源码为工程内锁版本 vendor/openssl-src（3.6.4，
-# 与 vcpkg 实装 openssl:x64-windows-static@3.6.4#1 严格一致，CI 校验防漂移）；
-# vcpkg 端口默认 no-apps，progs.c 由 build.rs 以 shim + progs.pl 生成。
-[target.'cfg(windows)'.dependencies]
-openssl-app = { path = "vendor/openssl-app" }
-# telnet CLI（仅 Windows）：PuTTY 源码级内嵌（MIT，vendor/putty-telnet/putty）。
-# c_src/telnet_main.c 在 C 层原生解析 GNU/inetutils 风格 telnet 参数并强制
-# PROT_TELNET，入口 putty_telnet::telnet_cmd_main（首元素为程序名 "telnet"）。
-putty-telnet = { path = "vendor/putty-telnet" }
+# ── 已迁出的依赖 ──
+# 全部内置命令行工具（uutils/coreutils 全集 + grep/sed/findutils/diffutils/
+# ripgrep/fd/sd/frawk/eza/wget/tar，以及 Windows 专属的 openssl-app 与
+# putty-telnet）连同 crossterm / sysinfo 一起，现由 crates/coreutils 声明。
+# 本包保持零工具依赖，是「主程序瘦身」与「增量构建互不牵连」的前提。
 
 [dev-dependencies]
 # 传输层单测依赖 tokio paused-clock（start_paused / advance）
 tokio = { version = "1", features = ["test-util"] }
 
-# ── 内置 Unix 工具集：单一 coreutils 多呼叫二进制（BusyBox 模式）──
-# 安装时以 NTFS hardlink 生成 ls.exe/grep.exe/... 等短名入口（见 src/tools/hardlinks.rs），
-# PATH 注入 tools 目录后用户直接敲短名即用；无任何 .bat 转发。
-[[bin]]
-name = "coreutils"
-path = "src/tools/coreutils_main.rs"
-
 [lints.clippy]
 panic = "deny"
 indexing_slicing = "deny"
-
 
 [profile.release]
 panic = "abort"

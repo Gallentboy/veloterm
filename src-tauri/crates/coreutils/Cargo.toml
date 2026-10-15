@@ -1,0 +1,157 @@
+[package]
+name = "coreutils"
+version = "0.1.0"
+description = "VeloTerm built-in Unix toolset (BusyBox multicall binary)"
+edition = "2024"
+rust-version = "1.90"
+# 仅供本工程内部使用，永不发布
+publish = false
+
+[[bin]]
+name = "coreutils"
+path = "src/main.rs"
+
+[dependencies]
+# 命令名清单（零依赖 crate，主程序也依赖它创建硬链接短名入口）
+tools-catalog = { path = "../tools-catalog" }
+# 与 vendor 内 uu_more 的 workspace 依赖（0.29.0）严格同版，否则 lock 里会出现
+# crossterm 0.28 与 0.29 两条，同一套库编译两遍
+crossterm = "0.29"
+sysinfo = "0.31"
+
+# ── uutils/coreutils 源码 vendor 集成（路径指向 ../../vendor）──
+uu_grep = { path = "../../vendor/grep" }
+ripgrep = { path = "../../vendor/ripgrep" }
+frawk = { path = "../../vendor/frawk", default-features = false, features = ["allow_avx2"] }
+findutils = { path = "../../vendor/findutils" }
+fd-find = { path = "../../vendor/fd" }
+diffutils = { path = "../../vendor/diffutils" }
+sed = { path = "../../vendor/sed" }
+sd-cli = { path = "../../vendor/sd/sd-cli" }
+tar = { path = "../../vendor/tar-rs" }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+eza = { path = "../../vendor/eza" }
+palette_derive = "=0.7.5"
+wget-rs = { path = "../../vendor/wget-rs" }
+
+uucore = { path = "../../vendor/coreutils/src/uucore", features = ["openssl"] }
+uu_arch = { path = "../../vendor/coreutils/src/uu/arch" }
+uu_b2sum = { path = "../../vendor/coreutils/src/uu/b2sum" }
+uu_base32 = { path = "../../vendor/coreutils/src/uu/base32" }
+uu_base64 = { path = "../../vendor/coreutils/src/uu/base64" }
+uu_basename = { path = "../../vendor/coreutils/src/uu/basename" }
+uu_basenc = { path = "../../vendor/coreutils/src/uu/basenc" }
+uu_cat = { path = "../../vendor/coreutils/src/uu/cat" }
+uu_cksum = { path = "../../vendor/coreutils/src/uu/cksum" }
+uu_comm = { path = "../../vendor/coreutils/src/uu/comm" }
+uu_cp = { path = "../../vendor/coreutils/src/uu/cp" }
+uu_csplit = { path = "../../vendor/coreutils/src/uu/csplit" }
+uu_cut = { path = "../../vendor/coreutils/src/uu/cut" }
+uu_date = { path = "../../vendor/coreutils/src/uu/date" }
+uu_dd = { path = "../../vendor/coreutils/src/uu/dd" }
+uu_df = { path = "../../vendor/coreutils/src/uu/df" }
+uu_dir = { path = "../../vendor/coreutils/src/uu/dir" }
+uu_dircolors = { path = "../../vendor/coreutils/src/uu/dircolors" }
+uu_dirname = { path = "../../vendor/coreutils/src/uu/dirname" }
+uu_du = { path = "../../vendor/coreutils/src/uu/du" }
+uu_echo = { path = "../../vendor/coreutils/src/uu/echo" }
+uu_env = { path = "../../vendor/coreutils/src/uu/env" }
+uu_expand = { path = "../../vendor/coreutils/src/uu/expand" }
+uu_expr = { path = "../../vendor/coreutils/src/uu/expr" }
+uu_factor = { path = "../../vendor/coreutils/src/uu/factor" }
+uu_false = { path = "../../vendor/coreutils/src/uu/false" }
+uu_fmt = { path = "../../vendor/coreutils/src/uu/fmt" }
+uu_fold = { path = "../../vendor/coreutils/src/uu/fold" }
+uu_head = { path = "../../vendor/coreutils/src/uu/head" }
+uu_hostid = { path = "../../vendor/coreutils/src/uu/hostid" }
+uu_hostname = { path = "../../vendor/coreutils/src/uu/hostname" }
+uu_join = { path = "../../vendor/coreutils/src/uu/join" }
+uu_kill = { path = "../../vendor/coreutils/src/uu/kill" }
+uu_link = { path = "../../vendor/coreutils/src/uu/link" }
+uu_ln = { path = "../../vendor/coreutils/src/uu/ln" }
+uu_ls = { path = "../../vendor/coreutils/src/uu/ls" }
+uu_md5sum = { path = "../../vendor/coreutils/src/uu/md5sum" }
+uu_mkdir = { path = "../../vendor/coreutils/src/uu/mkdir" }
+uu_mktemp = { path = "../../vendor/coreutils/src/uu/mktemp" }
+uu_more = { path = "../../vendor/coreutils/src/uu/more" }
+uu_mv = { path = "../../vendor/coreutils/src/uu/mv" }
+uu_nl = { path = "../../vendor/coreutils/src/uu/nl" }
+uu_nice = { path = "../../vendor/coreutils/src/uu/nice" }
+uu_nohup = { path = "../../vendor/coreutils/src/uu/nohup" }
+uu_nproc = { path = "../../vendor/coreutils/src/uu/nproc" }
+uu_numfmt = { path = "../../vendor/coreutils/src/uu/numfmt" }
+uu_od = { path = "../../vendor/coreutils/src/uu/od" }
+uu_paste = { path = "../../vendor/coreutils/src/uu/paste" }
+uu_pathchk = { path = "../../vendor/coreutils/src/uu/pathchk" }
+uu_pr = { path = "../../vendor/coreutils/src/uu/pr" }
+uu_printenv = { path = "../../vendor/coreutils/src/uu/printenv" }
+uu_printf = { path = "../../vendor/coreutils/src/uu/printf" }
+uu_ptx = { path = "../../vendor/coreutils/src/uu/ptx" }
+uu_pwd = { path = "../../vendor/coreutils/src/uu/pwd" }
+uu_readlink = { path = "../../vendor/coreutils/src/uu/readlink" }
+uu_realpath = { path = "../../vendor/coreutils/src/uu/realpath" }
+uu_rm = { path = "../../vendor/coreutils/src/uu/rm" }
+uu_rmdir = { path = "../../vendor/coreutils/src/uu/rmdir" }
+uu_seq = { path = "../../vendor/coreutils/src/uu/seq" }
+uu_sha1sum = { path = "../../vendor/coreutils/src/uu/sha1sum" }
+uu_sha224sum = { path = "../../vendor/coreutils/src/uu/sha224sum" }
+uu_sha256sum = { path = "../../vendor/coreutils/src/uu/sha256sum" }
+uu_sha384sum = { path = "../../vendor/coreutils/src/uu/sha384sum" }
+uu_sha512sum = { path = "../../vendor/coreutils/src/uu/sha512sum" }
+uu_shred = { path = "../../vendor/coreutils/src/uu/shred" }
+uu_shuf = { path = "../../vendor/coreutils/src/uu/shuf" }
+uu_sleep = { path = "../../vendor/coreutils/src/uu/sleep" }
+uu_sort = { path = "../../vendor/coreutils/src/uu/sort" }
+uu_split = { path = "../../vendor/coreutils/src/uu/split" }
+uu_sum = { path = "../../vendor/coreutils/src/uu/sum" }
+uu_sync = { path = "../../vendor/coreutils/src/uu/sync" }
+uu_tac = { path = "../../vendor/coreutils/src/uu/tac" }
+uu_tail = { path = "../../vendor/coreutils/src/uu/tail" }
+uu_tee = { path = "../../vendor/coreutils/src/uu/tee" }
+uu_test = { path = "../../vendor/coreutils/src/uu/test" }
+uu_timeout = { path = "../../vendor/coreutils/src/uu/timeout" }
+uu_touch = { path = "../../vendor/coreutils/src/uu/touch" }
+uu_tr = { path = "../../vendor/coreutils/src/uu/tr" }
+uu_true = { path = "../../vendor/coreutils/src/uu/true" }
+uu_truncate = { path = "../../vendor/coreutils/src/uu/truncate" }
+uu_tsort = { path = "../../vendor/coreutils/src/uu/tsort" }
+uu_tty = { path = "../../vendor/coreutils/src/uu/tty" }
+uu_uname = { path = "../../vendor/coreutils/src/uu/uname" }
+uu_unexpand = { path = "../../vendor/coreutils/src/uu/unexpand" }
+uu_uniq = { path = "../../vendor/coreutils/src/uu/uniq" }
+uu_unlink = { path = "../../vendor/coreutils/src/uu/unlink" }
+uu_uptime = { path = "../../vendor/coreutils/src/uu/uptime" }
+uu_vdir = { path = "../../vendor/coreutils/src/uu/vdir" }
+uu_wc = { path = "../../vendor/coreutils/src/uu/wc" }
+uu_whoami = { path = "../../vendor/coreutils/src/uu/whoami" }
+uu_yes = { path = "../../vendor/coreutils/src/uu/yes" }
+
+# unix 专属命令（uutils feat_require_unix_core + feat_require_unix_utmpx）
+[target.'cfg(unix)'.dependencies]
+uu_chgrp = { path = "../../vendor/coreutils/src/uu/chgrp" }
+uu_chmod = { path = "../../vendor/coreutils/src/uu/chmod" }
+uu_chown = { path = "../../vendor/coreutils/src/uu/chown" }
+uu_chroot = { path = "../../vendor/coreutils/src/uu/chroot" }
+uu_groups = { path = "../../vendor/coreutils/src/uu/groups" }
+uu_id = { path = "../../vendor/coreutils/src/uu/id" }
+uu_install = { path = "../../vendor/coreutils/src/uu/install" }
+uu_logname = { path = "../../vendor/coreutils/src/uu/logname" }
+uu_mkfifo = { path = "../../vendor/coreutils/src/uu/mkfifo" }
+uu_mknod = { path = "../../vendor/coreutils/src/uu/mknod" }
+uu_stat = { path = "../../vendor/coreutils/src/uu/stat" }
+uu_stty = { path = "../../vendor/coreutils/src/uu/stty" }
+uu_pinky = { path = "../../vendor/coreutils/src/uu/pinky" }
+uu_users = { path = "../../vendor/coreutils/src/uu/users" }
+uu_who = { path = "../../vendor/coreutils/src/uu/who" }
+
+# stdbuf：unix 与 windows 均可用
+[target.'cfg(any(unix, windows))'.dependencies]
+uu_stdbuf = { path = "../../vendor/coreutils/src/uu/stdbuf" }
+
+# 仅 Windows：openssl CLI 与 telnet CLI
+[target.'cfg(windows)'.dependencies]
+openssl-app = { path = "../../vendor/openssl-app" }
+putty-telnet = { path = "../../vendor/putty-telnet" }
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }

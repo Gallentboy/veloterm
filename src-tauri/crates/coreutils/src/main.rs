@@ -1,0 +1,57 @@
+//! VeloTerm 内置 Unix 工具集：单一 `coreutils` 多呼叫二进制（BusyBox 模式）。
+//!
+//! 本 crate 是**独立 member**，主程序（app）不依赖它——这样 uutils / ripgrep /
+//! openssl-app / putty-telnet 的整张依赖图只进入 coreutils.exe，主程序保持轻量，
+//! 且改工具与改 UI 的增量构建互不牵连。命令名清单在零依赖的 `tools-catalog`。
+//!
+//! 命令实现全部来自工程 vendor 源码：uutils/coreutils 0.12.0（GNU coreutils
+//! 全集）、uutils/grep、uutils/sed、uutils/findutils（find/xargs）、
+//! uutils/diffutils（diff/cmp/sdiff）、ripgrep（rg）、fd-find（fd）、chmln/sd（sd）、
+//! frawk（awk，Cranelift JIT）、tar-rs（tar，CLI 壳在 tar_impl.rs）、eza（eza/tree）、
+//! wget-rs（wget，rustls）、openssl 与 telnet（仅 Windows：vcpkg 静态库 FFI、
+//! PuTTY 源码内嵌，见 vendor/openssl-app 与 vendor/putty-telnet）；
+//! which / ps / top 为自研（unix_extras.rs / ps.rs / top.rs）。
+//!
+//! 安装侧：主程序启动时在 `tools/` 下为本二进制创建硬链接短名入口
+//! （`ls.exe`/`grep.exe`/…），PATH 注入后用户直接敲短名即用；无任何 .bat 转发，
+//! 不依赖 Git Bash / MSYS2。
+
+mod coreutils;
+mod ps;
+mod tar_impl;
+mod top;
+mod unix_extras;
+
+use sysinfo::ProcessStatus;
+
+fn main() {
+    std::process::exit(coreutils::coreutils_main());
+}
+
+/// 将 sysinfo 的进程状态映射为 GNU ps/top 的 STAT 单字母码（ps 与 top 共用）。
+///
+/// sysinfo 0.31 的 `ProcessStatus` 未实现 `Display`，而其 `Debug` 名
+/// （如 `UninterruptibleDiskSleep`，23 字符）会撑爆定宽 STAT 列，故自行映射。
+/// 语义对齐 procps-ng 的 `ps` STAT 码表。
+pub(crate) fn status_code(status: ProcessStatus) -> &'static str {
+    use sysinfo::ProcessStatus::{
+        Dead, Idle, LockBlocked, Parked, Run, Sleep, Stop, Tracing, UninterruptibleDiskSleep,
+        Unknown, Wakekill, Waking, Zombie,
+    };
+
+    match status {
+        Idle => "I",                     // 空闲内核线程
+        Run => "R",                      // 运行或可运行（在运行队列）
+        Sleep => "S",                    // 可中断睡眠（等待事件完成）
+        Stop => "T",                     // 已停止（作业控制信号或调试）
+        Zombie => "Z",                   // 僵尸（已终止但未被父进程回收）
+        Tracing => "t",                  // 被调试器追踪而停止
+        Dead => "X",                     // 已死亡
+        Wakekill => "K",                 // 唤醒即被杀死
+        Waking => "W",                   // 唤醒中
+        Parked => "P",                   // 已停驻
+        LockBlocked => "L",              // 等待内核锁
+        UninterruptibleDiskSleep => "D", // 不可中断睡眠（通常为磁盘 IO）
+        Unknown(_) => "?",               // 平台未识别的状态码
+    }
+}
