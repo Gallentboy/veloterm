@@ -2,6 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "VeloTerm",
   "identifier": "com.gallentboy.veloterm.app",
+  "mainBinaryName": "VeloTerm",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
