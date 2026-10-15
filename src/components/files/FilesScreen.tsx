@@ -2,7 +2,6 @@ import { Columns2, FolderSync, Plus, Server } from 'lucide-react';
 import {
   useCallback,
   useEffect,
-  useId,
   useRef,
   useState,
   type DragEvent as ReactDragEvent,
@@ -13,8 +12,8 @@ import {
 import { useTranslation } from 'react-i18next';
 import { SftpSessionView } from '@/components/files/SftpSessionView';
 import { SftpTabTrigger, SFTP_TAB_DRAG_MIME } from '@/components/files/SftpTabTrigger';
+import { NewSessionMenu } from '@/components/NewSessionMenu';
 import { Button } from '@/components/ui/button';
-import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useHostsStore } from '@/hosts/HostsProvider';
 import { hasPrimaryModifier } from '@/lib/keyboard';
@@ -74,7 +73,6 @@ export interface FilesScreenProps {
  */
 export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }: FilesScreenProps) {
   const { t } = useTranslation();
-  const selectId = useId();
   const { hosts } = useHostsStore();
   const {
     sessions,
@@ -612,48 +610,16 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
                 );
               })}
             </div>
-          ) : (
-            <span className="text-ui-xs text-foreground-subtle select-none pl-1">
-              {t('files.title')}
-            </span>
-          )}
+          ) : null}
 
           {/* 新建 SFTP Tab 按钮（带主机选择下拉） */}
           {hosts.length > 0 && (
-            <div className="relative inline-flex items-center shrink-0">
-              <ControlHintTooltip title={t('files.newTab')} side="bottom">
-                <div className="relative flex items-center justify-center">
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    className="h-7 w-7 rounded-lg text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
-                    aria-label={t('files.newTab')}
-                  >
-                    <Plus className="size-3.5" />
-                  </Button>
-                  <select
-                    id={selectId}
-                    aria-label={t('files.newTab')}
-                    value=""
-                    onChange={(e) => {
-                      const hostId = Number(e.target.value);
-                      if (hostId) handleOpenHostSession(hostId);
-                    }}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer text-xs"
-                  >
-                    <option value="" disabled>
-                      {t('files.newTab')}
-                    </option>
-                    {hosts.map((host) => (
-                      <option key={host.id} value={host.id}>
-                        {host.name} ({host.username}@{host.host})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </ControlHintTooltip>
-            </div>
+            <NewSessionMenu
+              title={t('files.newTab')}
+              hostSectionLabel={t('files.remoteHosts')}
+              hosts={hosts}
+              onSelectHost={handleOpenHostSession}
+            />
           )}
         </div>
 
