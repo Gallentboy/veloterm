@@ -14,6 +14,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
@@ -278,30 +279,32 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
         </Button>
 
         {/* 广播发送 Ctrl+C 中断信号按钮 */}
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          onClick={() => void executeSendSignal(0x03, 'Ctrl+C (SIGINT)')}
-          disabled={selectedSessionIds.length === 0 || isExecuting}
-          className="h-8 gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive px-2.5 text-ui-xs font-medium shrink-0 shadow-xs transition-colors"
-          title="向勾选的所有目标终端广播发送中断信号 (Ctrl+C)"
-        >
-          <Ban className="size-3.5" />
-          <span>⌃C 中断</span>
-        </Button>
+        <ControlHintTooltip title="向勾选的所有目标终端广播发送中断信号 (Ctrl+C)" side="bottom">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => void executeSendSignal(0x03, 'Ctrl+C (SIGINT)')}
+            disabled={selectedSessionIds.length === 0 || isExecuting}
+            className="h-8 gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20 hover:text-destructive px-2.5 text-ui-xs font-medium shrink-0 shadow-xs transition-colors"
+          >
+            <Ban className="size-3.5" />
+            <span>⌃C 中断</span>
+          </Button>
+        </ControlHintTooltip>
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          onClick={onClose}
-          className="size-8 rounded-lg text-foreground-subtle hover:text-foreground shrink-0"
-          aria-label="关闭广播栏"
-          title="关闭广播栏 (Esc)"
-        >
-          <X className="size-4" />
-        </Button>
+        <ControlHintTooltip title="关闭广播栏" shortcut="Esc" side="bottom" align="end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            className="size-8 rounded-lg text-foreground-subtle hover:text-foreground shrink-0"
+            aria-label="关闭广播栏"
+          >
+            <X className="size-4" />
+          </Button>
+        </ControlHintTooltip>
       </form>
 
       {/* 高危命令拦截二次确认弹窗 */}

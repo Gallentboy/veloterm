@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AskAiErrorChip } from '@/components/ai/AskAiErrorChip';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
+import { NewSessionMenu } from '@/components/NewSessionMenu';
 import { BroadcastCommandBar } from '@/components/terminal/BroadcastCommandBar';
 import { TerminalGridContainer } from '@/components/terminal/TerminalGridContainer';
 import { TerminalTabTrigger } from '@/components/terminal/TerminalTabTrigger';
@@ -226,6 +227,15 @@ export function TerminalScreen({
   /** 探测结果带缓存，挂载时读取一次即可；用于 WebGL 徽标 tooltip 展示实际 GPU */
   const webglRenderer = useMemo(() => checkHardwareAcceleration().renderer, []);
 
+  /** 渲染加速状态徽标：GPU 加速（金黄） / Canvas 2D（浅绿） / 无加速（正常字色）。
+   *  颜色用语义 token（warning/success/foreground），亮暗两套值随主题自动切换 */
+  const rendererBadge =
+    activeRenderer === 'webgl'
+      ? { label: 'GPU', color: 'text-warning', title: `WebGL2 硬件加速 · ${webglRenderer}` }
+      : activeRenderer === 'canvas2d'
+        ? { label: '2D', color: 'text-success', title: 'Canvas 2D 渲染' }
+        : { label: '无加速', color: 'text-foreground', title: '无硬件加速 · DOM 渲染' };
+
   return (
     <section
       data-testid="terminal-screen"
@@ -261,80 +271,48 @@ export function TerminalScreen({
 
           {/* 新建终端 Tab 按钮（支持本地终端或快捷连接远程主机） */}
           {sessions.length > 0 && (
-            <div className="relative inline-flex items-center shrink-0">
-              <ControlHintTooltip title={`新建终端 (${shortcutLabel('T')})`} side="bottom">
-                <div className="relative flex items-center justify-center">
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    className="h-7 w-7 rounded-lg text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
-                    onClick={() => createSession()}
-                    aria-label="新建终端"
-                  >
-                    <Plus className="size-3.5" />
-                  </Button>
-                  {hosts.length > 0 && (
-                    <select
-                      id="new-terminal-session-select"
-                      aria-label="新建终端或连接主机"
-                      value=""
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === 'local') {
-                          createSession();
-                        } else {
-                          const hostId = Number(val);
-                          const host = hosts.find((h) => h.id === hostId);
-                          if (host) {
-                            createSession({ hostId: host.id, customTitle: host.name });
-                          }
-                        }
-                      }}
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer text-xs"
-                    >
-                      <option value="" disabled>
-                        新建终端...
-                      </option>
-                      <option value="local">💻 新建本地终端</option>
-                      <optgroup label="远程主机连接">
-                        {hosts.map((host) => (
-                          <option key={host.id} value={host.id}>
-                            🖥️ {host.name} ({host.username}@{host.host})
-                          </option>
-                        ))}
-                      </optgroup>
-                    </select>
-                  )}
-                </div>
-              </ControlHintTooltip>
-            </div>
+            <NewSessionMenu
+              title={`${t('terminal.new')} (${shortcutLabel('T')})`}
+              localLabel={t('terminal.newLocal')}
+              onNewLocal={() => createSession()}
+              onDirectAction={() => createSession()}
+              hostSectionLabel={t('terminal.remoteHosts')}
+              hosts={hosts}
+              onSelectHost={(hostId) => {
+                const host = hosts.find((h) => h.id === hostId);
+                if (host) {
+                  createSession({ hostId: host.id, customTitle: host.name });
+                }
+              }}
+            />
           )}
         </div>
 
         {/* 右侧状态与辅助动作 */}
         <div className="flex shrink-0 items-center gap-1.5">
             {onOpenCommandPalette ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={onOpenCommandPalette}
-                aria-label={t('commands.palette.title')}
-                title={`${t('commands.palette.title')} · ${shortcutLabel('K')}`}
-              >
-                <Command className="size-3.5" />
-              </Button>
+              <ControlHintTooltip title={t('commands.palette.title')} shortcut={shortcutLabel('K')} side="bottom">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={onOpenCommandPalette}
+                  aria-label={t('commands.palette.title')}
+                >
+                  <Command className="size-3.5" />
+                </Button>
+              </ControlHintTooltip>
             ) : null}
-          {activeRenderer !== 'dom' ? (
-            <span
-              className={cn(
-                'rounded bg-surface px-1.5 py-0.5 font-mono text-ui-xs select-none',
-                activeRenderer === 'webgl' ? 'text-success' : 'text-foreground-subtle',
-              )}
-              title={activeRenderer === 'webgl' ? `WebGL2 硬件加速 · ${webglRenderer}` : 'Canvas 2D 渲染'}
-            >
-              {activeRenderer === 'webgl' ? 'GPU' : '2D'}
-            </span>
+          {activeSession ? (
+            <ControlHintTooltip title={rendererBadge.title} side="bottom">
+              <span
+                className={cn(
+                  'rounded bg-surface px-1.5 py-0.5 font-mono text-ui-xs select-none',
+                  rendererBadge.color,
+                )}
+              >
+                {rendererBadge.label}
+              </span>
+            </ControlHintTooltip>
           ) : null}
           {activeSession?.shellLabel ? (
             <span className="rounded bg-surface px-1.5 py-0.5 font-mono text-ui-xs text-foreground-subtle select-none">
