@@ -24,9 +24,9 @@ const OWN_ARGV_COMMANDS: &[&str] = &["awk", "fd", "rg"];
 /// 内嵌补充命令：OWN_ARGV 家族 + which（unix_extras.rs 自研）
 pub const EXTRA_COMMANDS: &[&str] = &["awk", "fd", "rg", "which"];
 
-/// 跨平台命令（uutils feat_common_core 77 个 + feat_Tier1 扩展 13 个 +
-/// uutils/grep 1 个 + findutils 2 个 + diffutils 3 个 + uutils/sed 1 个 +
-/// chmln/sd 1 个）
+/// 跨平台命令（102 个）：uutils feat_common_core 与 feat_Tier1 全集，
+/// 加 uutils/grep、uutils/sed、findutils、diffutils、chmln/sd 家族补充，
+/// 加 tar-rs、eza、wget-rs 的库封装（tree = eza --tree）
 const CROSS_PLATFORM_COMMANDS: &[&str] = &[
     "arch",
     "b2sum",

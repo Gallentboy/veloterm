@@ -7,7 +7,7 @@ license = ""
 repository = ""
 edition = "2024"
 rust-version = "1.90"
-# 多 bin 包（主程序 + 11 个 Unix 工具 exe）：tauri dev 内部执行 `cargo run` 无 --bin，
+# 多 bin 包（主程序 + coreutils 多呼叫二进制）：tauri dev 内部执行 `cargo run` 无 --bin，
 # 必须指定默认运行主程序，否则报 "could not determine which binary to run"
 default-run = "app"
 
@@ -65,7 +65,8 @@ window-vibrancy = "0.8.1"
 # 解析到 vendor 自己的根清单，uucore 等内部依赖全部走 vendor 内路径，不依赖 crates.io）。
 # 分组对齐 uutils 官方 feature：feat_common_core + feat_Tier1（跨平台）/
 # feat_require_unix_*（unix 专属）/ feat_os_windows 额外项。
-# grep/sed/which 不属于 coreutils（独立 GNU 包），由 src/tools/unix_extras.rs 自研补齐。
+# grep/sed 不属于 coreutils（独立 GNU 包），已分别 vendor uutils/grep 与 uutils/sed；
+# 仅 which（各 uutils 仓库均未提供）由 src/tools/unix_extras.rs 自研补齐。
 # chcon/runcon 依赖 SELinux（uutils feat_require_selinux），不集成。
 # grep：uutils/grep 0.2.0 源码 vendor（GNU grep 1:1 语法克隆，MIT），
 # uucore 已在 vendor 内指向 coreutils 0.12 共用；正则引擎为 onig（bundled C 编译）。
