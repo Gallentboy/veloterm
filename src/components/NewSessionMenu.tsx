@@ -1,5 +1,5 @@
 import { Laptop, Plus, Server, type LucideIcon } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
@@ -75,10 +75,11 @@ export function NewSessionMenu({
   onSelectHost,
 }: NewSessionMenuProps) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const { panelRef, position, measure } = useAnchoredPanel(open);
-  // 关闭判定的排除区是两段不同子树的 DOM：触发按钮（rootRef）+ portal 弹层（panelRef）
-  useDismissOnOutsidePointer(open, [rootRef, panelRef], () => setOpen(false));
+  // anchorRef 必须挂在根 div 上：hook 的 measure() 读它取锚点 rect，不挂就是
+  // 点了没反应（position 恒为 null，弹层渲染条件永远不成立）
+  const { anchorRef, panelRef, position, measure } = useAnchoredPanel(open);
+  // 关闭判定的排除区是两段不同子树的 DOM：触发按钮（anchorRef）+ portal 弹层（panelRef）
+  useDismissOnOutsidePointer(open, [anchorRef, panelRef], () => setOpen(false));
 
   const hasLocal = Boolean(localLabel && onNewLocal);
   const selectableCount = (hasLocal ? 1 : 0) + hosts.length;
@@ -103,7 +104,7 @@ export function NewSessionMenu({
   };
 
   return (
-    <div ref={rootRef} className="relative inline-flex shrink-0 items-center">
+    <div ref={anchorRef} className="relative inline-flex shrink-0 items-center">
       <ControlHintTooltip title={title} side="bottom">
         <Button
           type="button"
