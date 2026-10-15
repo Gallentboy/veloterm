@@ -222,7 +222,10 @@ fn open_archive(file: &str, gzip: bool) -> Result<tar::Archive<Box<dyn io::Read>
     // GNU 兼容：读侧自动探测 gzip 魔数（1f 8b），-z 仅在探测不出时兜底
     let mut magic = [0u8; 2];
     let n = io::Read::read(&mut f, &mut magic).map_err(|e| e.to_string())?;
-    let f = io::Read::chain(io::Cursor::new(magic[..n].to_vec()), f);
+    let f = io::Read::chain(
+        io::Cursor::new(magic.get(..n).unwrap_or_default().to_vec()),
+        f,
+    );
     let is_gzip = gzip || (n == 2 && magic[0] == 0x1f && magic[1] == 0x8b);
     let reader: Box<dyn io::Read> = if is_gzip {
         Box::new(flate2::read::GzDecoder::new(f))
