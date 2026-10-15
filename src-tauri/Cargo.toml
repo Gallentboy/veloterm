@@ -106,7 +106,10 @@ palette_derive = "=0.7.5"
 # wget：wget-rs 0.1.0 源码 vendor，入口 wget_rs::wget_main_from（可注入）。
 # reqwest 已在 vendor 内改为 rustls-tls 纯 Rust（无 OpenSSL 系统依赖）。
 wget-rs = { path = "vendor/wget-rs" }
-uucore = { path = "vendor/coreutils/src/uucore" }
+# uucore 开 openssl feature：md5/sha1/sha2 系 checksum 切换到 libcrypto 后端
+# （全平台统一 aws-lc，与 russh 的 aws-lc-rs 同源共享构建链路；feature 统一化
+# 令所有 uu_* sum 工具全局生效，纯 Rust 实现保留为 FIPS 拒算法时的运行时兜底）
+uucore = { path = "vendor/coreutils/src/uucore", features = ["openssl"] }
 uu_arch = { path = "vendor/coreutils/src/uu/arch" }
 uu_b2sum = { path = "vendor/coreutils/src/uu/b2sum" }
 uu_base32 = { path = "vendor/coreutils/src/uu/base32" }

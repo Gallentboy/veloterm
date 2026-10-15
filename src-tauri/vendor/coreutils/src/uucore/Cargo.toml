@@ -132,9 +132,11 @@ windows-sys = { workspace = true, optional = true, default-features = false, fea
   "Win32_System_WindowsProgramming",
 ] }
 
+# 全平台统一走 aws-lc 后端（与 russh 的 aws-lc-rs 同源，aws-lc-sys 已在本工程
+# macOS 本地与 Windows CI 验证可构建）：不 vendored 编译 openssl-src（MSVC 上需
+# Perl+NASM），也不链接系统 LibreSSL / vcpkg OpenSSL
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
-openssl = { workspace = true, features = ["vendored"], optional = true }
-# vendored openssl with MSVC needs complex setup...
+openssl = { workspace = true, features = ["aws-lc"], optional = true }
 [target.'cfg(target_env = "msvc")'.dependencies]
 openssl = { workspace = true, features = ["aws-lc"], optional = true }
 
