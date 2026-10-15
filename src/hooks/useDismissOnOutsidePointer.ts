@@ -23,12 +23,19 @@ import { useEffect, useRef, type RefObject } from 'react';
  */
 export function useDismissOnOutsidePointer(
   isOpen: boolean,
-  menuRef: RefObject<HTMLElement | null>,
+  menuRef:
+    | RefObject<HTMLElement | null>
+    | ReadonlyArray<RefObject<HTMLElement | null>>,
   onDismiss: () => void,
 ): void {
   // 用 ref 持有最新回调，避免因回调每次渲染变化而反复重挂监听
   const dismissRef = useRef(onDismiss);
   dismissRef.current = onDismiss;
+
+  // 排除区可能是多段 DOM（如触发按钮 + portal 到 body 的弹层，两者不同子树）：
+  // 用 ref 持有最新列表，effect 只依赖 isOpen，避免内联数组每次渲染重挂监听
+  const refsRef = useRef<ReadonlyArray<RefObject<HTMLElement | null>>>([]);
+  refsRef.current = Array.isArray(menuRef) ? menuRef : [menuRef];
 
   useEffect(() => {
     if (!isOpen) {
@@ -36,7 +43,8 @@ export function useDismissOnOutsidePointer(
     }
 
     const isInsideMenu = (target: EventTarget | null): boolean =>
-      target instanceof Node && Boolean(menuRef.current?.contains(target));
+      target instanceof Node &&
+      refsRef.current.some((ref) => ref.current?.contains(target));
 
     const onPointerDown = (event: PointerEvent) => {
       if (isInsideMenu(event.target)) {
@@ -57,5 +65,6 @@ export function useDismissOnOutsidePointer(
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [isOpen, menuRef]);
+    // 排除区列表经 refsRef 读取最新值，故无需进依赖（内联数组每次渲染都是新引用）
+  }, [isOpen]);
 }
