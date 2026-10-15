@@ -16,6 +16,12 @@
     ]
   },
   "bundle": {
-    "externalBin": ["binaries/coreutils"]
+    "externalBin": ["binaries/coreutils"],
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "languages": ["SimpChinese", "English"]
+      }
+    }
   }
 }
