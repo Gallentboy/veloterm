@@ -112,6 +112,7 @@ export default {
     emptyTitle: 'No Open Terminals',
     emptyDesc: 'Local terminal inherits system profile, loading environment variables and dotfiles',
     connectHost: 'Connect from Hosts',
+    remoteHosts: 'Remote Hosts',
     contextMenu: {
       copy: 'Copy',
       paste: 'Paste',
@@ -124,11 +125,8 @@ export default {
       previous: 'Previous match (Shift+Enter)',
       next: 'Next match (Enter)',
     },
-    disconnected: {
-      title: 'Disconnected',
-      reconnect: 'Reconnect',
-      closeTab: 'Close tab',
-    },
+    // No DOM banner for disconnect state: the notice and reconnect shortcut hint are
+    // written straight into the xterm buffer by TerminalSession (hardcoded there)
   },
   files: {
     title: 'Files',
@@ -136,6 +134,7 @@ export default {
     defaultTab: 'SFTP',
     closeTab: 'Close {{title}}',
     newTab: 'New SFTP Session',
+    remoteHosts: 'Remote Hosts',
     emptyTitle: 'No SFTP Sessions Open',
     emptyDesc: 'Connect to an SSH host to manage, upload, and download remote files',
     openSftp: 'Connect Host for SFTP',
@@ -264,6 +263,17 @@ export default {
       hostKeyIgnore: 'Ignore (Skip verification)',
       allowInsecureAlgos: 'Allow Legacy / Insecure Algorithms',
       allowInsecureAlgosHint: 'Enable ssh-rsa, diffie-hellman-group1/14-sha1, 3des-cbc, hmac-sha1',
+      readyHook: 'Terminal Ready Hook',
+      readyHookNone: 'Disabled',
+      readyHookHint: 'Run this command in the terminal once the session is established (single command for now)',
+      readyHookMissing: 'Command was deleted; the reference will be cleared on save',
+      readyHookCreateNew: 'New Command',
+      readyHookNewTitle: 'Command title',
+      readyHookNewCommand: 'Command to run',
+      readyHookSearch: 'Search commands…',
+      readyHookNoMatch: 'No matching commands',
+      readyHookRequired: 'Both title and command are required',
+      readyHookSaveAndUse: 'Save & Use',
       viaJump: 'via {{name}}',
       groups: 'Groups (multiple)',
       noGroups: 'No groups yet — create them in Group Management',
