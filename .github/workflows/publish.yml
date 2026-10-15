@@ -118,8 +118,11 @@ jobs:
           $installed = [regex]::Match($header, 'OPENSSL_VERSION_TEXT\s+"OpenSSL\s+([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
           $locked = (Get-Content src-tauri/vendor/openssl-src/VELOTERM_VERSION -Raw).Trim()
           $manifest = (Get-Content src-tauri/vcpkg.json -Raw | ConvertFrom-Json).overrides | Where-Object { $_.name -eq 'openssl' } | Select-Object -ExpandProperty version
+          # override 的 #N 是 vcpkg port-version（打包层修订号），不属于 OpenSSL
+          # 版本语义，VELOTERM_VERSION 只记上游版本——比较前剥掉后缀
+          $manifestUpstream = ($manifest -split '#')[0]
           Write-Host "vcpkg 实装: $installed / 源码锁死: $locked / manifest override: $manifest"
-          if ($locked -ne $manifest) { throw "双源不一致：VELOTERM_VERSION=$locked 但 vcpkg.json override=$manifest，升级时两处必须同步修改" }
+          if ($locked -ne $manifestUpstream) { throw "双源不一致：VELOTERM_VERSION=$locked 但 vcpkg.json override=$manifest，升级时两处必须同步修改" }
           if ($installed -ne $locked) { throw "版本不一致：实装 $installed ≠ 锁死 $locked。请按 src-tauri/vendor/openssl-src/README.md 升级锁版本（apps + include/internal + VELOTERM_VERSION + vcpkg.json override）" }
 
       - name: install frontend dependencies
