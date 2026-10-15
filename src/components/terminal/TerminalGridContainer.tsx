@@ -1,5 +1,7 @@
-import { Maximize2, Minimize2, Terminal, X } from 'lucide-react';
+import { Maximize2, Minimize2, RotateCw, Terminal, Unplug, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
+import { shortcutLabel } from '@/lib/keyboard';
 import { cn } from '@/lib/utils';
 import { TerminalSession } from '@/components/terminal/TerminalSession';
 import type { TerminalLayoutMode } from '@/terminal/TerminalProvider';
@@ -21,6 +23,10 @@ export interface TerminalGridContainerProps {
   onSizeChange: (sessionId: number, size: TerminalSize) => void;
   onRendererStatusChange: (sessionId: number, kind: 'webgl' | 'canvas2d' | 'dom') => void;
   onExit: (sessionId: number, exitCode: number) => void;
+  /** SSH 会话断开回调（标记断开态，Tab 保留） */
+  onSessionDisconnected: (sessionId: number, reason: string) => void;
+  /** 重连请求（横幅按钮 / ⌘R 快捷键触发）：释放旧会话并重新发起连接 */
+  onReconnectSession: (sessionId: number) => void;
 }
 
 /**
@@ -55,7 +61,10 @@ export function TerminalGridContainer({
   onSizeChange,
   onRendererStatusChange,
   onExit,
+  onSessionDisconnected,
+  onReconnectSession,
 }: TerminalGridContainerProps) {
+  const { t } = useTranslation();
   const isGrid = layoutMode === 'grid';
   const hasMaximized = maximizedSessionId !== null;
   // 单屏最大化时退化为 1×1 网格，避免被多列模板约束在单列内
@@ -79,7 +88,9 @@ export function TerminalGridContainer({
 
         return (
           <div
-            key={session.id}
+            // reconnectNonce 变化时强制 remount TerminalSession 走全新创建路径
+            // （reconnectSession 已 release 旧注册表条目：新 xterm + 新 SSH 连接）
+            key={session.reconnectNonce ? `${session.id}:${session.reconnectNonce}` : session.id}
             role={isGrid ? 'gridcell' : 'tabpanel'}
             aria-hidden={!sessionVisible}
             data-state={isActive ? 'active' : 'inactive'}
@@ -201,8 +212,54 @@ export function TerminalGridContainer({
                 onSizeChange={onSizeChange}
                 onRendererStatusChange={onRendererStatusChange}
                 onExit={onExit}
+                isDisconnected={session.status === 'disconnected'}
+                onDisconnected={onSessionDisconnected}
+                onReconnectRequest={onReconnectSession}
               />
             </div>
+
+            {/* SSH 断开横幅：保留终端现场，提供重连/关闭入口 */}
+            {session.status === 'disconnected' ? (
+              <div className="absolute inset-x-0 bottom-0 z-20 flex items-center gap-2.5 border-t border-warning/40 bg-warning/10 px-3 py-2 backdrop-blur-sm">
+                <Unplug className="size-4 shrink-0 text-warning" />
+                <div className="min-w-0 flex-1 leading-tight">
+                  <div className="text-ui-sm font-medium text-foreground select-none">
+                    {t('terminal.disconnected.title')}
+                  </div>
+                  <div className="truncate text-ui-xs text-foreground-subtle select-none">
+                    {session.disconnectReason}
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onReconnectSession(session.id);
+                  }}
+                >
+                  <RotateCw className="size-3.5" />
+                  <span>{t('terminal.disconnected.reconnect')}</span>
+                  <span className="ml-1 font-mono text-ui-xs text-foreground-subtlest">
+                    {shortcutLabel('R')}
+                  </span>
+                </Button>
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onCloseSession(session.id);
+                  }}
+                  className="text-foreground-subtle hover:text-destructive"
+                  title={t('terminal.disconnected.closeTab')}
+                >
+                  <X className="size-3.5" />
+                </Button>
+              </div>
+            ) : null}
           </div>
         );
       })}

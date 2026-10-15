@@ -15,10 +15,17 @@ import { commandStore } from '@/services/commandStore';
 
 const CATEGORIES = [
   { value: '', label: '—' },
+  { value: 'file', label: '文件与目录' },
   { value: 'text', label: '文本处理' },
+  { value: 'archive', label: '归档与压缩' },
+  { value: 'package', label: '包管理' },
+  { value: 'permission', label: '权限与用户' },
+  { value: 'shell', label: 'Shell 与环境' },
+  { value: 'schedule', label: '定时与作业' },
   { value: 'network', label: '网络' },
   { value: 'disk', label: '磁盘' },
   { value: 'process', label: '进程' },
+  { value: 'system', label: '系统与服务' },
   { value: 'docker', label: 'Docker' },
   { value: 'gpu', label: 'GPU' },
   { value: 'ssh', label: 'SSH' },

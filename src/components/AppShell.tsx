@@ -22,6 +22,7 @@ import { WorkspaceHeader } from '@/components/WorkspaceHeader';
 import { WorkspaceSidebar, type Page } from '@/components/WorkspaceSidebar';
 import { useAppPanels } from '@/hooks/useAppPanels';
 import { useTranslation } from 'react-i18next';
+import { hasPrimaryModifier } from '@/lib/keyboard';
 import { isMacOS } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { getDbKv, setDbKv } from '@/services/dbStorage';
@@ -159,10 +160,10 @@ export function AppShell() {
     setPage('terminal');
   }, [createSession]);
 
-  // ⌘B 切换侧边栏、⌘N 新建/打开终端、⌘, 打开设置
+  // 主修饰键(⌘/Ctrl)+B 切换侧边栏、+N 新建/打开终端、+K 命令面板、+I AI 面板、+, 打开设置
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey) {
+      if (!hasPrimaryModifier(event) || event.altKey) {
         return;
       }
       const key = event.key.toLowerCase();

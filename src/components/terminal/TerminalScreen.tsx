@@ -18,6 +18,7 @@ import { TerminalTabTrigger } from '@/components/terminal/TerminalTabTrigger';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useHostsStore } from '@/hosts/HostsProvider';
+import { hasPrimaryModifier, shortcutLabel } from '@/lib/keyboard';
 import { cn } from '@/lib/utils';
 import { terminalSessionRegistry } from '@/terminal/terminalSessionRegistry';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
@@ -66,6 +67,8 @@ export function TerminalScreen({
     updateShellLabel,
     renameSession,
     clearSession,
+    markDisconnected,
+    reconnectSession,
   } = useTerminalStore();
 
   const [sizesBySession, setSizesBySession] = useState<Record<number, TerminalSize>>({});
@@ -101,14 +104,23 @@ export function TerminalScreen({
     [closeSession],
   );
 
-  // 终端页快捷键：
-  // ⌘T 新建 Tab、⌘W 关闭当前 Tab、⌘⇧[ / ⌘⇧] 切换前后 Tab、⌘F 终端搜索
-  // ⌘⇧G 切换标签/九宫格、⌘⇧B 切换协同广播、Esc 退出最大化或广播
+  // SSH 会话断开：仅标记断开态（Tab 保留、终端现场保活），不关闭 Tab；
+  // 本地会话仍走 handleSessionExit 自动关 Tab，两条路径不再重叠
+  const handleSessionDisconnected = useCallback(
+    (sessionId: number, reason: string) => {
+      markDisconnected(sessionId, reason);
+    },
+    [markDisconnected],
+  );
+
+  // 终端页快捷键（主修饰键 = ⌘/Ctrl）：
+  // +T 新建 Tab、+W 关闭当前 Tab、+⇧[ / +⇧] 切换前后 Tab、+F 终端搜索
+  // +⇧G 切换标签/九宫格、+⇧B 切换协同广播、+R 重连断开 Tab、Esc 退出最大化或广播
   useEffect(() => {
     if (!isVisible) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      const mod = event.metaKey || event.ctrlKey;
+      const mod = hasPrimaryModifier(event);
 
       if (!event.altKey && !event.shiftKey && !mod && event.key === 'Escape') {
         // 搜索栏聚焦（自绘终端搜索栏的输入框）时 Esc 只关搜索栏，由其内部处理，
@@ -125,12 +137,22 @@ export function TerminalScreen({
       if (!mod) return;
       const key = event.key.toLowerCase();
 
-      // ⌘F/Ctrl+F：打开激活会话的终端搜索栏（终端已聚焦时由 xterm 键处理分支处理，
+      // +F：打开激活会话的终端搜索栏（终端已聚焦时由 xterm 键处理分支处理，
       // 这里覆盖焦点在终端之外——如侧栏/顶栏——时的兜底，同时拦截浏览器 find-in-page）
       if (!event.altKey && !event.shiftKey && key === 'f') {
         if (activeSession) {
           event.preventDefault();
           terminalSessionRegistry.showSearch(activeSession.id);
+        }
+        return;
+      }
+
+      // +R：重连当前激活的已断开 Tab（焦点在终端内时由 xterm 键处理分支处理，
+      // 这里覆盖焦点在终端之外——如侧栏/顶栏——时的兜底；活动会话不拦截，保留 ^R 反向搜索）
+      if (!event.altKey && !event.shiftKey && key === 'r') {
+        if (activeSession?.status === 'disconnected') {
+          event.preventDefault();
+          reconnectSession(activeSession.id);
         }
         return;
       }
@@ -192,6 +214,7 @@ export function TerminalScreen({
     createSession,
     isVisible,
     maximizedSessionId,
+    reconnectSession,
     sessions,
     setMaximizedSessionId,
     toggleBroadcast,
@@ -239,7 +262,7 @@ export function TerminalScreen({
           {/* 新建终端 Tab 按钮（支持本地终端或快捷连接远程主机） */}
           {sessions.length > 0 && (
             <div className="relative inline-flex items-center shrink-0">
-              <ControlHintTooltip title="新建终端 (⌘T)" side="bottom">
+              <ControlHintTooltip title={`新建终端 (${shortcutLabel('T')})`} side="bottom">
                 <div className="relative flex items-center justify-center">
                   <Button
                     type="button"
@@ -297,7 +320,7 @@ export function TerminalScreen({
                 size="icon-sm"
                 onClick={onOpenCommandPalette}
                 aria-label={t('commands.palette.title')}
-                title={`${t('commands.palette.title')} · ⌘K`}
+                title={`${t('commands.palette.title')} · ${shortcutLabel('K')}`}
               >
                 <Command className="size-3.5" />
               </Button>
@@ -327,7 +350,7 @@ export function TerminalScreen({
           {/* 协同广播开关按钮 */}
           {sessions.length > 0 && (
             <ControlHintTooltip
-              title={isBroadcastActive ? '收起协同广播 (⌘⇧B)' : '开启多终端协同广播 (⌘⇧B)'}
+              title={isBroadcastActive ? `收起协同广播 (${shortcutLabel('B', { shift: true })})` : `开启多终端协同广播 (${shortcutLabel('B', { shift: true })})`}
               side="bottom"
               align="end"
             >
@@ -353,7 +376,7 @@ export function TerminalScreen({
           {/* 网格平铺视图 / 标签页视图切换按钮 */}
           {sessions.length > 0 && (
             <ControlHintTooltip
-              title={layoutMode === 'grid' ? '切换为标签页视图 (⌘⇧G)' : '切换为九宫格平铺视图 (⌘⇧G)'}
+              title={layoutMode === 'grid' ? `切换为标签页视图 (${shortcutLabel('G', { shift: true })})` : `切换为九宫格平铺视图 (${shortcutLabel('G', { shift: true })})`}
               side="bottom"
               align="end"
             >
@@ -410,7 +433,7 @@ export function TerminalScreen({
           primaryAction={{
             label: t('terminal.newLocal'),
             icon: Plus,
-            shortcut: '⌘T',
+            shortcut: shortcutLabel('T'),
             onClick: () => createSession(),
           }}
           secondaryAction={
@@ -440,6 +463,8 @@ export function TerminalScreen({
           onSizeChange={handleSizeChange}
           onRendererStatusChange={handleRendererStatusChange}
           onExit={handleSessionExit}
+          onSessionDisconnected={handleSessionDisconnected}
+          onReconnectSession={reconnectSession}
         />
       )}
 

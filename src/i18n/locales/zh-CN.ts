@@ -124,6 +124,11 @@ export default {
       previous: '上一个匹配 (Shift+Enter)',
       next: '下一个匹配 (Enter)',
     },
+    disconnected: {
+      title: '连接已断开',
+      reconnect: '重新连接',
+      closeTab: '关闭标签页',
+    },
   },
   files: {
     title: '文件管理',

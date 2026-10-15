@@ -2,10 +2,11 @@ import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
+import { shortcutLabel } from '@/lib/keyboard';
 import { isMacOS, MACOS_TRAFFIC_LIGHT_LEFT_PADDING_PX } from '@/lib/platform';
 
-/** ZCode shortcutCommands: toggleSidebar 默认绑定 CmdOrCtrl+B */
-export const TOGGLE_SIDEBAR_SHORTCUT = isMacOS ? '⌘B' : 'Ctrl+B';
+/** ZCode shortcutCommands: toggleSidebar 默认绑定主修饰键(⌘/Ctrl)+B */
+export const TOGGLE_SIDEBAR_SHORTCUT = shortcutLabel('B');
 
 interface DesktopTopOverlayProps {
   isSidebarVisible: boolean;
