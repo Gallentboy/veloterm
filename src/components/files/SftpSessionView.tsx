@@ -29,6 +29,7 @@ import {
   removeRemoteItem,
   type RemoteFileItem,
 } from '@/services/sftpService';
+import { loadRemoteContent } from '@/editor/contentLoader';
 import {
   transferQueue,
   useTransferSettings,
@@ -304,6 +305,14 @@ export function SftpSessionView({
   const [error, setError] = useState<string | null>(null);
   const [itemToDelete, setItemToDelete] = useState<RemoteFileItem | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  // 文件/目录行右键菜单（与面板空白菜单同款定位与dismiss模式）
+  const [fileMenu, setFileMenu] = useState<
+    { x: number; y: number; item: RemoteFileItem } | null
+  >(null);
+  const fileMenuRef = useRef<HTMLDivElement | null>(null);
+  // 「尝试编辑」失败弹窗（后端拒绝原因直接展示给用户）
+  const [editAttempt, setEditAttempt] = useState<{ name: string; message: string } | null>(null);
+  const [isTryingEdit, setIsTryingEdit] = useState<boolean>(false);
   // 是否正被拖拽悬停（作为放置目标时的高亮态）
   const [isDropTarget, setIsDropTarget] = useState<boolean>(false);
 
@@ -375,6 +384,41 @@ export function SftpSessionView({
 
   // document 捕获阶段监听，不受子树 stopPropagation / drag-region 影响
   useDismissOnOutsidePointer(Boolean(paneMenu), paneMenuRef, closePaneMenu);
+  useDismissOnOutsidePointer(Boolean(fileMenu), fileMenuRef, () => setFileMenu(null));
+
+  /**
+   * 尝试编辑：对白名单文件直接进编辑器；非白名单（未知后缀等）也先走一次
+   * sftp_read_file —— 后端 stat 大小上限 + 512B 探针嗅探做真实判定，
+   * 内容确是文本（如无后缀的 runbook）则直接打开编辑，否则把拒绝原因弹窗告知用户。
+   */
+  const handleTryEdit = useCallback(
+    async (item: RemoteFileItem) => {
+      if (!onOpenEditor || isTryingEdit) return;
+      if (item.editable) {
+        setFileMenu(null);
+        onOpenEditor({ hostId, remotePath: item.path });
+        return;
+      }
+      setIsTryingEdit(true);
+      try {
+        const result = await loadRemoteContent(hostId, item.path);
+        if (!result) {
+          throw new Error('远程内容不可用');
+        }
+        setFileMenu(null);
+        onOpenEditor({ hostId, remotePath: item.path });
+      } catch (err) {
+        setFileMenu(null);
+        setEditAttempt({
+          name: item.name,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        setIsTryingEdit(false);
+      }
+    },
+    [hostId, isTryingEdit, onOpenEditor],
+  );
 
   // onPathChange 经 ref 稳定引用：父组件（FilesScreen）每次重渲染传入的都是新的内联回调，
   // 若进入 loadDirectory 依赖数组，拖分栏/聚焦切换/任何重渲染都会重建 loadDirectory，
@@ -760,6 +804,15 @@ export function SftpSessionView({
                         onOpenEditor({ hostId, remotePath: item.path });
                       }
                     }}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setFileMenu({
+                        x: Math.min(event.clientX, window.innerWidth - 180),
+                        y: Math.min(event.clientY, window.innerHeight - 150),
+                        item,
+                      });
+                    }}
                     className="hover:bg-surface/40 transition-colors cursor-pointer group"
                   >
                     <td className="py-1.5 pl-4 pr-2 font-medium">
@@ -1017,6 +1070,121 @@ export function SftpSessionView({
               {Math.round(fontScale * 100)}%
             </span>
           </button>
+        </div>
+      ) : null}
+
+      {/* 文件/目录行右键菜单：文件（编辑[尝试]/下载/删除）、目录（进入/删除） */}
+      {fileMenu ? (
+        <div
+          ref={fileMenuRef}
+          role="menu"
+          style={{ left: fileMenu.x, top: fileMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+          className="fixed z-50 min-w-36 overflow-hidden rounded-lg border border-border bg-menu p-1 text-ui-sm text-foreground shadow-lg"
+        >
+          {fileMenu.item.is_dir ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const target = fileMenu.item;
+                setFileMenu(null);
+                handleNavigate(target.path);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+            >
+              <FolderOpen className="size-3.5 text-foreground-subtle" />
+              <span>{t('files.enterDir')}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!onOpenEditor || isTryingEdit}
+              onClick={() => void handleTryEdit(fileMenu.item)}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors',
+                !onOpenEditor || isTryingEdit
+                  ? 'cursor-not-allowed opacity-40'
+                  : 'hover:bg-menu-hover',
+              )}
+            >
+              {isTryingEdit ? (
+                <Loader2 className="size-3.5 animate-spin text-foreground-subtle" />
+              ) : (
+                <FileCode className="size-3.5 text-foreground-subtle" />
+              )}
+              <span>{t('files.edit')}</span>
+              {/* 非白名单文件：编辑是「尝试」——后端探针嗅探，文本则开，否则弹窗说明 */}
+              {!fileMenu.item.editable ? (
+                <span className="ml-auto font-mono text-ui-xs text-foreground-subtlest">
+                  {t('files.menu.tryHint')}
+                </span>
+              ) : null}
+            </button>
+          )}
+          {!fileMenu.item.is_dir ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const target = fileMenu.item;
+                setFileMenu(null);
+                void handleDownload(target);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+            >
+              <Download className="size-3.5 text-foreground-subtle" />
+              <span>{t('files.download')}</span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const target = fileMenu.item;
+              setFileMenu(null);
+              setItemToDelete(target);
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover hover:text-destructive"
+          >
+            <Trash2 className="size-3.5 text-foreground-subtle" />
+            <span>{t('files.delete')}</span>
+          </button>
+        </div>
+      ) : null}
+
+      {/* 尝试编辑失败弹窗：展示后端真实拒绝原因（非文本 / 超大小上限等） */}
+      {editAttempt ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/25 p-4 animate-in fade-in duration-150"
+        >
+          <div className="flex w-[420px] max-w-full flex-col overflow-hidden rounded-2xl border border-border/80 bg-popover p-5 shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="mt-0.5 size-4 shrink-0 text-warning" />
+              <h4 className="text-ui-base font-semibold text-foreground select-none">
+                {t('files.editFailedTitle')}
+              </h4>
+            </div>
+            <div className="mt-2 space-y-2 text-ui-sm text-foreground-subtle">
+              <p>{t('files.editFailedDesc', { name: editAttempt.name })}</p>
+              <p className="rounded-md border border-border/60 bg-surface/60 px-2.5 py-1.5 font-mono text-ui-xs text-foreground break-all select-all">
+                {editAttempt.message}
+              </p>
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setEditAttempt(null)}
+                className="h-8 px-3 rounded-lg"
+              >
+                {t('files.editFailedOk')}
+              </Button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>

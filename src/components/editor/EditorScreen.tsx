@@ -1,4 +1,4 @@
-import { FileCode } from 'lucide-react';
+import { AlertTriangle, FileCode, RotateCw } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EditorTabBar } from '@/components/editor/EditorTabBar';
@@ -66,9 +66,11 @@ export function EditorScreen() {
     viewStates,
     conflictRemotes,
     saveErrors,
+    loadErrors,
     closeFile,
     activateFile,
     saveFile,
+    reloadFile,
     handleContentChange,
     handleViewStateChange,
   } = useEditorStore();
@@ -135,6 +137,9 @@ export function EditorScreen() {
   const readOnly =
     file.status === 'offline' || file.status === 'orphaned' || file.status === 'conflict';
   const saveError = saveErrors.get(file.id) ?? null;
+  // 加载失败（无权限 / 非文本 / 超大小 / 连接断开等）：显示错误面板而非让
+  // content=null 的 Monaco 卡片永久转圈；reloadFile 内部会置回 loading 并重新拉取
+  const loadError = loadErrors.get(file.id) ?? null;
 
   return (
     <section
@@ -148,20 +153,46 @@ export function EditorScreen() {
         onClose={closeFile}
       />
 
-      <div className="min-h-0 flex-1 overflow-hidden p-3 pt-2">
-        <MemoizedMonacoDocumentCard
-          key={file.id}
-          file={file}
-          content={content}
-          viewState={viewState}
-          diffRemoteContent={diffRemoteContent}
-          readOnly={readOnly}
-          onContentChange={handleContentChangeForActive}
-          onSaveRequest={handleSaveRequestForActive}
-          onViewStateChange={handleViewStateChangeById}
-          onCursorChange={handleCursorChange}
-        />
-      </div>
+      {content === null && loadError !== null ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+          <div className="flex w-full max-w-md flex-col items-center gap-3 text-center">
+            <div className="flex size-12 items-center justify-center rounded-2xl border border-border/60 bg-surface/50 shadow-xs">
+              <AlertTriangle className="size-6 text-warning" strokeWidth={1.5} />
+            </div>
+            <h3 className="text-ui-base font-medium text-foreground">
+              {t('editor.loadFailedTitle')}
+            </h3>
+            <p className="w-full truncate rounded-md border border-border/60 bg-surface/60 px-2.5 py-1.5 font-mono text-ui-xs text-foreground-subtle select-all">
+              {file.remotePath}
+            </p>
+            <p className="text-ui-sm leading-relaxed text-foreground-subtle">{loadError}</p>
+            <div className="mt-1 flex items-center gap-2">
+              <Button type="button" variant="outline" onClick={() => void reloadFile(file.id)}>
+                <RotateCw className="size-3.5" />
+                <span>{t('editor.loadFailedRetry')}</span>
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => closeFile(file.id)}>
+                {t('common.close')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-hidden p-3 pt-2">
+          <MemoizedMonacoDocumentCard
+            key={file.id}
+            file={file}
+            content={content}
+            viewState={viewState}
+            diffRemoteContent={diffRemoteContent}
+            readOnly={readOnly}
+            onContentChange={handleContentChangeForActive}
+            onSaveRequest={handleSaveRequestForActive}
+            onViewStateChange={handleViewStateChangeById}
+            onCursorChange={handleCursorChange}
+          />
+        </div>
+      )}
 
       <footer className="flex h-6 shrink-0 items-center justify-between gap-2 border-t border-border/50 px-3 text-ui-xs text-foreground-subtle select-none">
         <div className="flex min-w-0 items-center gap-2">
