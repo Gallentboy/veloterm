@@ -53,7 +53,7 @@
 
 ### OpenSSL 锁版本
 
-`vendor/openssl-src` 只含 apps + include/internal 最小子集，`VELOTERM_VERSION` 文件是单一事实来源，CI 会校验与 runner vcpkg 实装版本一致（当前 **3.6.5**）。升级流程见该目录 README：CI 报版本漂移 → 下载新版源码替换两棵树 + 更新版本文件 → CI 复验。apps 的 `cmp.c` 与 `lib/cmp_mock_srv.c` 是上游 build.info 里的成对项，必须一起排除。
+`vendor/openssl-src` 只含 apps + include/internal 最小子集。版本锁定是**双源手维护**（升级时两处必须同步改）：`VELOTERM_VERSION`（源码锁版本）+ `src-tauri/vcpkg.json` 的 overrides（CI 安装侧）——vcpkg 版本控制仅在 manifest 模式可用（classic 模式没有命令行版本语法），CI 以 manifest 精确安装锁定版本，不跟随 runner 基线（不同世代镜像的 vcpkg 基线会在版本间摇摆，实测相邻两次 CI 分别解析到 3.6.5/3.6.4）；校验步骤核实三方一致（当前 **3.6.5**）。apps 的 `cmp.c` 与 `lib/cmp_mock_srv.c` 是上游 build.info 里的成对项，必须一起排除。
 
 ### 前端约定
 
