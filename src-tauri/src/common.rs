@@ -7,59 +7,59 @@ pub const JS_MAX_SAFE_INTEGER: usize = 9_007_199_254_740_991;
 /// 当计数到达 [`JS_MAX_SAFE_INTEGER`] 极限时自动从 `0` 重新开始循环。
 #[inline(always)]
 pub fn next_safe_usize(counter: &AtomicUsize) -> usize {
-  loop {
-    let current = counter.load(Ordering::Relaxed);
-    let next = if current >= JS_MAX_SAFE_INTEGER {
-      0
-    } else {
-      current + 1
-    };
-    if counter
-      .compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
-      .is_ok()
-    {
-      return current;
+    loop {
+        let current = counter.load(Ordering::Relaxed);
+        let next = if current >= JS_MAX_SAFE_INTEGER {
+            0
+        } else {
+            current + 1
+        };
+        if counter
+            .compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return current;
+        }
     }
-  }
 }
 
 /// 线程安全的 JS 安全范围 `usize` 自增计数器（到达 [`JS_MAX_SAFE_INTEGER`] 自动归零）。
 #[derive(Debug)]
 pub struct SafeUsizeCounter {
-  inner: AtomicUsize,
+    inner: AtomicUsize,
 }
 
 impl Default for SafeUsizeCounter {
-  #[inline(always)]
-  fn default() -> Self {
-    Self::new(0)
-  }
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new(0)
+    }
 }
 
 impl SafeUsizeCounter {
-  #[inline(always)]
-  pub const fn new(initial: usize) -> Self {
-    Self {
-      inner: AtomicUsize::new(initial),
+    #[inline(always)]
+    pub const fn new(initial: usize) -> Self {
+        Self {
+            inner: AtomicUsize::new(initial),
+        }
     }
-  }
 
-  #[inline(always)]
-  pub fn next(&self) -> usize {
-    next_safe_usize(&self.inner)
-  }
+    #[inline(always)]
+    pub fn next(&self) -> usize {
+        next_safe_usize(&self.inner)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+    use super::*;
 
-  #[test]
-  fn safe_usize_counter_wraps_to_zero_at_max_safe_integer() {
-    let counter = SafeUsizeCounter::new(JS_MAX_SAFE_INTEGER - 1);
-    assert_eq!(counter.next(), JS_MAX_SAFE_INTEGER - 1);
-    assert_eq!(counter.next(), JS_MAX_SAFE_INTEGER);
-    assert_eq!(counter.next(), 0);
-    assert_eq!(counter.next(), 1);
-  }
+    #[test]
+    fn safe_usize_counter_wraps_to_zero_at_max_safe_integer() {
+        let counter = SafeUsizeCounter::new(JS_MAX_SAFE_INTEGER - 1);
+        assert_eq!(counter.next(), JS_MAX_SAFE_INTEGER - 1);
+        assert_eq!(counter.next(), JS_MAX_SAFE_INTEGER);
+        assert_eq!(counter.next(), 0);
+        assert_eq!(counter.next(), 1);
+    }
 }
