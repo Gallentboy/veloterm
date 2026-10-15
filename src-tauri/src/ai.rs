@@ -9,63 +9,62 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::ipc::Channel;
 use tauri::State;
+use tauri::ipc::Channel;
 
 use crate::db::DbPool;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProviderRecord {
-  pub id: usize,
-  pub name: String,
-  /// "openai" | "anthropic" | "gemini"
-  pub provider_type: String,
-  /// 自定义端点（openai 兼容：DeepSeek/GLM 等）；空 = 官方默认
-  pub base_url: Option<String>,
-  pub model: String,
-  /// 多 Key 轮询池
-  pub api_keys: Vec<String>,
-  #[serde(default)]
-  pub is_default: bool,
-  pub created_at: i64,
-  pub updated_at: i64,
+    pub id: usize,
+    pub name: String,
+    /// "openai" | "anthropic" | "gemini"
+    pub provider_type: String,
+    /// 自定义端点（openai 兼容：DeepSeek/GLM 等）；空 = 官方默认
+    pub base_url: Option<String>,
+    pub model: String,
+    /// 多 Key 轮询池
+    pub api_keys: Vec<String>,
+    #[serde(default)]
+    pub is_default: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 /// Channel 推送的流式事件
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiChunk {
-  /// 增量文本
-  pub delta: Option<String>,
-  /// 本轮使用的 key 序号（从 0 起），便于前端展示轮询状态
-  pub key_index: Option<usize>,
-  pub error: Option<String>,
-  pub done: bool,
+    /// 增量文本
+    pub delta: Option<String>,
+    /// 本轮使用的 key 序号（从 0 起），便于前端展示轮询状态
+    pub key_index: Option<usize>,
+    pub error: Option<String>,
+    pub done: bool,
 }
 
 /// 每供应商的 key 轮询计数（请求间轮换）
 static KEY_ROTATION: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
 
 fn next_key_index(provider_id: usize, key_count: usize) -> usize {
-  if key_count <= 1 {
-    return 0;
-  }
-  let mut guard = KEY_ROTATION.lock().unwrap();
-  let map = guard.get_or_insert_with(HashMap::new);
-  let counter = map.entry(provider_id).or_insert(0);
-  let current = *counter;
-  *counter = (*counter + 1) % key_count;
-  current
+    if key_count <= 1 {
+        return 0;
+    }
+    let mut guard = KEY_ROTATION.lock().unwrap();
+    let map = guard.get_or_insert_with(HashMap::new);
+    let counter = map.entry(provider_id).or_insert(0);
+    let current = *counter;
+    *counter = (*counter + 1) % key_count;
+    current
 }
 
 // ─────────────────────────── 数据库 ───────────────────────────
 
 fn ensure_table(pool: &DbPool) -> Result<(), String> {
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  conn
-    .execute_batch(
-      "CREATE TABLE IF NOT EXISTS ai_providers (
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS ai_providers (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         provider_type TEXT NOT NULL,
@@ -78,50 +77,54 @@ fn ensure_table(pool: &DbPool) -> Result<(), String> {
       );",
     )
     .map_err(|e| e.to_string())?;
-  Ok(())
+    Ok(())
 }
 
 fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AiProviderRecord> {
-  let api_keys_json: String = row.get("api_keys")?;
-  let is_default: i64 = row.get("is_default")?;
-  Ok(AiProviderRecord {
-    id: row.get::<_, i64>("id")? as usize,
-    name: row.get("name")?,
-    provider_type: row.get("provider_type")?,
-    base_url: row.get("base_url")?,
-    model: row.get("model")?,
-    api_keys: serde_json::from_str(&api_keys_json).unwrap_or_default(),
-    is_default: is_default != 0,
-    created_at: row.get("created_at")?,
-    updated_at: row.get("updated_at")?,
-  })
+    let api_keys_json: String = row.get("api_keys")?;
+    let is_default: i64 = row.get("is_default")?;
+    Ok(AiProviderRecord {
+        id: row.get::<_, i64>("id")? as usize,
+        name: row.get("name")?,
+        provider_type: row.get("provider_type")?,
+        base_url: row.get("base_url")?,
+        model: row.get("model")?,
+        api_keys: serde_json::from_str(&api_keys_json).unwrap_or_default(),
+        is_default: is_default != 0,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
 }
 
 pub fn list_providers(pool: &DbPool) -> Result<Vec<AiProviderRecord>, String> {
-  ensure_table(pool)?;
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  let mut stmt = conn
-    .prepare("SELECT * FROM ai_providers ORDER BY id ASC")
-    .map_err(|e| e.to_string())?;
-  let rows = stmt
-    .query_map([], row_to_record)
-    .map_err(|e| e.to_string())?;
-  rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    ensure_table(pool)?;
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT * FROM ai_providers ORDER BY id ASC")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], row_to_record)
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 pub fn get_provider(pool: &DbPool, id: usize) -> Result<AiProviderRecord, String> {
-  ensure_table(pool)?;
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  conn
-    .query_row("SELECT * FROM ai_providers WHERE id = ?1", [id as i64], row_to_record)
+    ensure_table(pool)?;
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    conn.query_row(
+        "SELECT * FROM ai_providers WHERE id = ?1",
+        [id as i64],
+        row_to_record,
+    )
     .map_err(|e| e.to_string())
 }
 
 pub fn save_provider(pool: &DbPool, record: &AiProviderRecord) -> Result<(), String> {
-  ensure_table(pool)?;
-  let api_keys = serde_json::to_string(&record.api_keys).map_err(|e| e.to_string())?;
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  conn
+    ensure_table(pool)?;
+    let api_keys = serde_json::to_string(&record.api_keys).map_err(|e| e.to_string())?;
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    conn
     .execute(
       "INSERT INTO ai_providers (id, name, provider_type, base_url, model, api_keys, is_default, created_at, updated_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -146,380 +149,394 @@ pub fn save_provider(pool: &DbPool, record: &AiProviderRecord) -> Result<(), Str
       ],
     )
     .map_err(|e| e.to_string())?;
-  Ok(())
+    Ok(())
 }
 
 pub fn delete_provider(pool: &DbPool, id: usize) -> Result<(), String> {
-  ensure_table(pool)?;
-  let conn = pool.get().map_err(|e| e.to_string())?;
-  conn
-    .execute("DELETE FROM ai_providers WHERE id = ?1", [id as i64])
-    .map_err(|e| e.to_string())?;
-  Ok(())
+    ensure_table(pool)?;
+    let conn = pool.get().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM ai_providers WHERE id = ?1", [id as i64])
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub fn default_provider(pool: &DbPool) -> Result<Option<AiProviderRecord>, String> {
-  let providers = list_providers(pool)?;
-  Ok(
-    providers
-      .iter()
-      .find(|p| p.is_default)
-      .or_else(|| providers.first())
-      .cloned(),
-  )
+    let providers = list_providers(pool)?;
+    Ok(providers
+        .iter()
+        .find(|p| p.is_default)
+        .or_else(|| providers.first())
+        .cloned())
 }
 
 // ─────────────────────────── rig 统一流式 ───────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiChatMessage {
-  pub role: String, // "user" | "assistant"
-  pub content: String,
+    pub role: String, // "user" | "assistant"
+    pub content: String,
 }
 
 /// 泛型流式执行：三供应商模型收敛到同一循环，Channel 推增量
 async fn stream_model<M>(
-  model: M,
-  history: Vec<AiChatMessage>,
-  preamble: Option<String>,
-  key_index: usize,
-  on_chunk: &Channel<AiChunk>,
+    model: M,
+    history: Vec<AiChatMessage>,
+    preamble: Option<String>,
+    key_index: usize,
+    on_chunk: &Channel<AiChunk>,
 ) -> Result<(), String>
 where
-  M: rig::completion::CompletionModel + Clone,
+    M: rig::completion::CompletionModel + Clone,
 {
-  use futures::StreamExt;
+    use futures::StreamExt;
 
-  let mut messages = Vec::with_capacity(history.len());
-  for item in &history {
-    match item.role.as_str() {
-      "assistant" => messages.push(rig::message::Message::assistant(item.content.clone())),
-      _ => messages.push(rig::message::Message::user(item.content.clone())),
+    let mut messages = Vec::with_capacity(history.len());
+    for item in &history {
+        match item.role.as_str() {
+            "assistant" => messages.push(rig::message::Message::assistant(item.content.clone())),
+            _ => messages.push(rig::message::Message::user(item.content.clone())),
+        }
     }
-  }
 
-  // rig 的 build() 会把 prompt 追加到消息尾部：若传空串会产生一条空 user 消息，
-  // 部分服务商会拒绝。这里把最后一条 user 消息作为 prompt，其余进 chat_history。
-  let prompt = messages.pop().unwrap_or_else(|| rig::message::Message::user(""));
-  let mut builder = model.completion_request(prompt).messages(messages);
-  if let Some(p) = preamble {
-    builder = builder.preamble(p);
-  }
-  // Anthropic 硬性要求 max_tokens；其他供应商无害
-  builder = builder.max_tokens(4096);
-  let request = builder.build();
-
-  let mut stream = model.stream(request).await.map_err(|e| e.to_string())?;
-  while let Some(part) = stream.next().await {
-    match part {
-      Ok(rig::streaming::StreamedAssistantContent::Text(text)) => {
-        let _ = on_chunk.send(AiChunk {
-          delta: Some(text.text.clone()),
-          key_index: Some(key_index),
-          error: None,
-          done: false,
-        });
-      }
-      Ok(_) => {}
-      Err(e) => {
-        let _ = on_chunk.send(AiChunk {
-          delta: None,
-          key_index: None,
-          error: Some(e.to_string()),
-          done: true,
-        });
-        return Err(e.to_string());
-      }
+    // rig 的 build() 会把 prompt 追加到消息尾部：若传空串会产生一条空 user 消息，
+    // 部分服务商会拒绝。这里把最后一条 user 消息作为 prompt，其余进 chat_history。
+    let prompt = messages
+        .pop()
+        .unwrap_or_else(|| rig::message::Message::user(""));
+    let mut builder = model.completion_request(prompt).messages(messages);
+    if let Some(p) = preamble {
+        builder = builder.preamble(p);
     }
-  }
-  let _ = on_chunk.send(AiChunk {
-    delta: None,
-    key_index: None,
-    error: None,
-    done: true,
-  });
-  Ok(())
+    // Anthropic 硬性要求 max_tokens；其他供应商无害
+    builder = builder.max_tokens(4096);
+    let request = builder.build();
+
+    let mut stream = model.stream(request).await.map_err(|e| e.to_string())?;
+    while let Some(part) = stream.next().await {
+        match part {
+            Ok(rig::streaming::StreamedAssistantContent::Text(text)) => {
+                let _ = on_chunk.send(AiChunk {
+                    delta: Some(text.text.clone()),
+                    key_index: Some(key_index),
+                    error: None,
+                    done: false,
+                });
+            }
+            Ok(_) => {}
+            Err(e) => {
+                let _ = on_chunk.send(AiChunk {
+                    delta: None,
+                    key_index: None,
+                    error: Some(e.to_string()),
+                    done: true,
+                });
+                return Err(e.to_string());
+            }
+        }
+    }
+    let _ = on_chunk.send(AiChunk {
+        delta: None,
+        key_index: None,
+        error: None,
+        done: true,
+    });
+    Ok(())
 }
 
 /// 分页拉取模型列表的通用 HTTP 循环：page_param 拼 query，next_page 从响应提取下一页游标，
 /// None 即停。容忍缺失游标（非标端点常见）。
 async fn fetch_models_paginated(
-  url: &str,
-  headers: Vec<(String, String)>,
-  page_param: &str,
-  extract_next: fn(&serde_json::Value) -> Option<String>,
-  strip_prefix: Option<&str>,
+    url: &str,
+    headers: Vec<(String, String)>,
+    page_param: &str,
+    extract_next: fn(&serde_json::Value) -> Option<String>,
+    strip_prefix: Option<&str>,
 ) -> Result<Vec<String>, String> {
-  use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-  let client = reqwest::Client::new();
-  let mut header_map = HeaderMap::new();
-  for (name, value) in headers {
-    if let (Ok(n), Ok(v)) = (
-      HeaderName::from_bytes(name.as_bytes()),
-      HeaderValue::from_str(&value),
-    ) {
-      header_map.insert(n, v);
-    }
-  }
-
-  let mut all: Vec<String> = Vec::new();
-  let mut cursor: Option<String> = None;
-  // 分页保险：最多 20 页
-  for _ in 0..20 {
-    let mut request = client.get(url).headers(header_map.clone());
-    if let Some(cursor) = &cursor {
-      request = request.query(&[(page_param, cursor)]);
-    }
-    let response = request
-      .send()
-      .await
-      .map_err(|e| format!("请求模型列表失败: {e}"))?;
-    let status = response.status();
-    let text = response
-      .text()
-      .await
-      .map_err(|e| format!("读取模型列表失败: {e}"))?;
-    if !status.is_success() {
-      return Err(format!("模型列表接口返回 {status}: {}", truncate_str(&text, 200)));
-    }
-    let value: serde_json::Value = serde_json::from_str(&text)
-      .map_err(|e| format!("模型列表响应不是合法 JSON: {e}"))?;
-    let mut page = parse_openai_models_json(&value);
-    if let Some(prefix) = strip_prefix {
-      for id in page.iter_mut() {
-        if let Some(stripped) = id.strip_prefix(prefix) {
-          *id = stripped.to_string();
+    use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+    let client = reqwest::Client::new();
+    let mut header_map = HeaderMap::new();
+    for (name, value) in headers {
+        if let (Ok(n), Ok(v)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            header_map.insert(n, v);
         }
-      }
     }
-    all.append(&mut page);
-    match extract_next(&value) {
-      Some(next) if !next.is_empty() => cursor = Some(next),
-      _ => break,
+
+    let mut all: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    // 分页保险：最多 20 页
+    for _ in 0..20 {
+        let mut request = client.get(url).headers(header_map.clone());
+        if let Some(cursor) = &cursor {
+            request = request.query(&[(page_param, cursor)]);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| format!("请求模型列表失败: {e}"))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|e| format!("读取模型列表失败: {e}"))?;
+        if !status.is_success() {
+            return Err(format!(
+                "模型列表接口返回 {status}: {}",
+                truncate_str(&text, 200)
+            ));
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("模型列表响应不是合法 JSON: {e}"))?;
+        let mut page = parse_openai_models_json(&value);
+        if let Some(prefix) = strip_prefix {
+            for id in page.iter_mut() {
+                if let Some(stripped) = id.strip_prefix(prefix) {
+                    *id = stripped.to_string();
+                }
+            }
+        }
+        all.append(&mut page);
+        match extract_next(&value) {
+            Some(next) if !next.is_empty() => cursor = Some(next),
+            _ => break,
+        }
     }
-  }
-  all.sort();
-  all.dedup();
-  Ok(all)
+    all.sort();
+    all.dedup();
+    Ok(all)
 }
 
 fn truncate_str(s: &str, max: usize) -> String {
-  if s.chars().count() <= max {
-    s.to_string()
-  } else {
-    let cut: String = s.chars().take(max).collect();
-    format!("{cut}…")
-  }
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let cut: String = s.chars().take(max).collect();
+        format!("{cut}…")
+    }
 }
 
 /// 宽容解析 OpenAI 兼容端点的 /models 响应：
 /// 兼容 `data`/`models` 键或裸数组；条目可为字符串或对象（取 id/name/model 字段）；
 /// 结果去重排序、滤空。rig 的强类型解析在非标端点上会直接失败。
 fn parse_openai_models_json(value: &serde_json::Value) -> Vec<String> {
-  let mut ids: Vec<String> = Vec::new();
-  let items = value
-    .get("data")
-    .and_then(|d| d.as_array())
-    .or_else(|| value.get("models").and_then(|m| m.as_array()))
-    .or_else(|| value.as_array());
-  if let Some(items) = items {
-    for item in items {
-      let id = item
-        .as_str()
-        .map(|s| s.to_string())
-        .or_else(|| {
-          ["id", "name", "model"]
-            .iter()
-            .find_map(|key| item.get(*key).and_then(|v| v.as_str()).map(|s| s.to_string()))
-        });
-      if let Some(id) = id.filter(|id| !id.trim().is_empty()) {
-        ids.push(id);
-      }
+    let mut ids: Vec<String> = Vec::new();
+    let items = value
+        .get("data")
+        .and_then(|d| d.as_array())
+        .or_else(|| value.get("models").and_then(|m| m.as_array()))
+        .or_else(|| value.as_array());
+    if let Some(items) = items {
+        for item in items {
+            let id = item.as_str().map(|s| s.to_string()).or_else(|| {
+                ["id", "name", "model"].iter().find_map(|key| {
+                    item.get(*key)
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+            });
+            if let Some(id) = id.filter(|id| !id.trim().is_empty()) {
+                ids.push(id);
+            }
+        }
     }
-  }
-  ids.sort();
-  ids.dedup();
-  ids
+    ids.sort();
+    ids.dedup();
+    ids
 }
 
 pub fn pick_key(record: &AiProviderRecord) -> Result<(usize, String), String> {
-  if record.api_keys.is_empty() {
-    return Err("该供应商未配置任何 API Key".to_string());
-  }
-  let index = next_key_index(record.id, record.api_keys.len());
-  let key = record.api_keys.get(index).cloned().ok_or("API Key 池为空")?;
-  Ok((index, key))
+    if record.api_keys.is_empty() {
+        return Err("该供应商未配置任何 API Key".to_string());
+    }
+    let index = next_key_index(record.id, record.api_keys.len());
+    let key = record
+        .api_keys
+        .get(index)
+        .cloned()
+        .ok_or("API Key 池为空")?;
+    Ok((index, key))
 }
 
 /// 三供应商分别构建模型并进入统一流循环（模型类型不同，无法装箱为一个返回值）
 async fn run_provider(
-  record: &AiProviderRecord,
-  api_key: &str,
-  history: Vec<AiChatMessage>,
-  preamble: Option<String>,
-  key_index: usize,
-  on_chunk: &Channel<AiChunk>,
+    record: &AiProviderRecord,
+    api_key: &str,
+    history: Vec<AiChatMessage>,
+    preamble: Option<String>,
+    key_index: usize,
+    on_chunk: &Channel<AiChunk>,
 ) -> Result<(), String> {
-  use rig::client::CompletionClient;
-  match record.provider_type.as_str() {
-    "openai" => {
-      // CompletionsClient = Chat Completions API（OpenAI 兼容端点的最大公约数），
-      // 默认 Client 走新 Responses API，部分兼容服务不支持。
-      use rig::providers::openai::CompletionsClient;
-      let mut builder = CompletionsClient::builder().api_key(api_key);
-      if let Some(base_url) = record.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
-        builder = builder.base_url(base_url);
-      }
-      let client = builder.build().map_err(|e| e.to_string())?;
-      let model = client.completion_model(record.model.clone());
-      stream_model(model, history, preamble, key_index, on_chunk).await
+    use rig::client::CompletionClient;
+    match record.provider_type.as_str() {
+        "openai" => {
+            // CompletionsClient = Chat Completions API（OpenAI 兼容端点的最大公约数），
+            // 默认 Client 走新 Responses API，部分兼容服务不支持。
+            use rig::providers::openai::CompletionsClient;
+            let mut builder = CompletionsClient::builder().api_key(api_key);
+            if let Some(base_url) = record.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
+                builder = builder.base_url(base_url);
+            }
+            let client = builder.build().map_err(|e| e.to_string())?;
+            let model = client.completion_model(record.model.clone());
+            stream_model(model, history, preamble, key_index, on_chunk).await
+        }
+        "anthropic" => {
+            use rig::providers::anthropic;
+            let mut builder = anthropic::Client::builder().api_key(api_key);
+            if let Some(base_url) = record.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
+                builder = builder.base_url(base_url);
+            }
+            let client = builder.build().map_err(|e| e.to_string())?;
+            let model = client.completion_model(record.model.clone());
+            stream_model(model, history, preamble, key_index, on_chunk).await
+        }
+        "gemini" => {
+            use rig::providers::gemini;
+            let mut builder = gemini::Client::builder().api_key(api_key);
+            if let Some(base_url) = record.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
+                builder = builder.base_url(base_url);
+            }
+            let client = builder.build().map_err(|e| e.to_string())?;
+            let model = client.completion_model(record.model.clone());
+            stream_model(model, history, preamble, key_index, on_chunk).await
+        }
+        other => Err(format!("不支持的供应商类型: {other}")),
     }
-    "anthropic" => {
-      use rig::providers::anthropic;
-      let mut builder = anthropic::Client::builder().api_key(api_key);
-      if let Some(base_url) = record.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
-        builder = builder.base_url(base_url);
-      }
-      let client = builder.build().map_err(|e| e.to_string())?;
-      let model = client.completion_model(record.model.clone());
-      stream_model(model, history, preamble, key_index, on_chunk).await
-    }
-    "gemini" => {
-      use rig::providers::gemini;
-      let mut builder = gemini::Client::builder().api_key(api_key);
-      if let Some(base_url) = record.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
-        builder = builder.base_url(base_url);
-      }
-      let client = builder.build().map_err(|e| e.to_string())?;
-      let model = client.completion_model(record.model.clone());
-      stream_model(model, history, preamble, key_index, on_chunk).await
-    }
-    other => Err(format!("不支持的供应商类型: {other}")),
-  }
 }
 
 // ─────────────────────────── Tauri 命令 ───────────────────────────
 
 #[tauri::command]
 pub fn ai_provider_list(state: State<'_, DbPool>) -> Result<Vec<AiProviderRecord>, String> {
-  list_providers(&state)
+    list_providers(&state)
 }
 
 #[tauri::command]
-pub fn ai_provider_save(
-  record: AiProviderRecord,
-  state: State<'_, DbPool>,
-) -> Result<(), String> {
-  if record.name.trim().is_empty() {
-    return Err("名称不能为空".to_string());
-  }
-  if record.model.trim().is_empty() {
-    return Err("模型不能为空".to_string());
-  }
-  if record.api_keys.iter().any(|k| k.trim().is_empty()) {
-    return Err("API Key 不能为空串".to_string());
-  }
-  save_provider(&state, &record)
+pub fn ai_provider_save(record: AiProviderRecord, state: State<'_, DbPool>) -> Result<(), String> {
+    if record.name.trim().is_empty() {
+        return Err("名称不能为空".to_string());
+    }
+    if record.model.trim().is_empty() {
+        return Err("模型不能为空".to_string());
+    }
+    if record.api_keys.iter().any(|k| k.trim().is_empty()) {
+        return Err("API Key 不能为空串".to_string());
+    }
+    save_provider(&state, &record)
 }
 
 #[tauri::command]
 pub fn ai_provider_delete(id: usize, state: State<'_, DbPool>) -> Result<(), String> {
-  delete_provider(&state, id)
+    delete_provider(&state, id)
 }
 
 /// 统一流式问答：provider_id 为 None 时用默认供应商；多 Key 轮询
 #[tauri::command]
 pub async fn ai_chat(
-  provider_id: Option<usize>,
-  history: Vec<AiChatMessage>,
-  preamble: Option<String>,
-  on_chunk: Channel<AiChunk>,
-  state: State<'_, DbPool>,
+    provider_id: Option<usize>,
+    history: Vec<AiChatMessage>,
+    preamble: Option<String>,
+    on_chunk: Channel<AiChunk>,
+    state: State<'_, DbPool>,
 ) -> Result<(), String> {
-  let record = match provider_id {
-    Some(id) => get_provider(&state, id)?,
-    None => default_provider(&state)?.ok_or("尚未配置任何 AI 供应商")?,
-  };
+    let record = match provider_id {
+        Some(id) => get_provider(&state, id)?,
+        None => default_provider(&state)?.ok_or("尚未配置任何 AI 供应商")?,
+    };
 
-  let (key_index, api_key) = pick_key(&record)?;
+    let (key_index, api_key) = pick_key(&record)?;
 
-  // Channel 通知 key 轮询序号（首个事件）
-  let _ = on_chunk.send(AiChunk {
-    delta: None,
-    key_index: Some(key_index),
-    error: None,
-    done: false,
-  });
+    // Channel 通知 key 轮询序号（首个事件）
+    let _ = on_chunk.send(AiChunk {
+        delta: None,
+        key_index: Some(key_index),
+        error: None,
+        done: false,
+    });
 
-  run_provider(&record, &api_key, history, preamble, key_index, &on_chunk).await
+    run_provider(&record, &api_key, history, preamble, key_index, &on_chunk).await
 }
 
 /// 列出供应商可用模型（OpenAI /v1/models、Anthropic /v1/models、Gemini models.list）
 #[tauri::command]
 pub async fn ai_list_models(record: AiProviderRecord) -> Result<Vec<String>, String> {
-  let (_key_index, api_key) = pick_key(&record)?;
-  let base_url = record.base_url.as_deref().filter(|u| !u.trim().is_empty());
+    let (_key_index, api_key) = pick_key(&record)?;
+    let base_url = record.base_url.as_deref().filter(|u| !u.trim().is_empty());
 
-  let base = |default: &str| -> String {
-    base_url
-      .map(|u| u.trim_end_matches('/').to_string())
-      .unwrap_or_else(|| default.to_string())
-  };
+    let base = |default: &str| -> String {
+        base_url
+            .map(|u| u.trim_end_matches('/').to_string())
+            .unwrap_or_else(|| default.to_string())
+    };
 
-  match record.provider_type.as_str() {
-    // OpenAI 兼容：Bearer 鉴权；游标在 last_id（OpenAI 规范无分页，网关可能自定）
-    "openai" => {
-      fetch_models_paginated(
-        &format!("{}/models", base("https://api.openai.com/v1")),
-        vec![("Authorization".to_string(), format!("Bearer {api_key}"))],
-        "after",
-        |v| v.get("last_id").and_then(|x| x.as_str()).map(String::from),
-        None,
-      )
-      .await
+    match record.provider_type.as_str() {
+        // OpenAI 兼容：Bearer 鉴权；游标在 last_id（OpenAI 规范无分页，网关可能自定）
+        "openai" => {
+            fetch_models_paginated(
+                &format!("{}/models", base("https://api.openai.com/v1")),
+                vec![("Authorization".to_string(), format!("Bearer {api_key}"))],
+                "after",
+                |v| v.get("last_id").and_then(|x| x.as_str()).map(String::from),
+                None,
+            )
+            .await
+        }
+        // Anthropic：x-api-key + anthropic-version 头（官方硬性要求），has_more/last_id 分页
+        "anthropic" => {
+            fetch_models_paginated(
+                &format!("{}/v1/models", base("https://api.anthropic.com")),
+                vec![
+                    ("x-api-key".to_string(), api_key.clone()),
+                    ("anthropic-version".to_string(), "2023-06-01".to_string()),
+                ],
+                "after",
+                |v| v.get("last_id").and_then(|x| x.as_str()).map(String::from),
+                None,
+            )
+            .await
+        }
+        // Gemini：key 作 query 参数；nextPageToken 分页；name 带 "models/" 前缀需剥掉
+        "gemini" => {
+            fetch_models_paginated(
+                &format!(
+                    "{}/v1beta/models?key={api_key}",
+                    base("https://generativelanguage.googleapis.com")
+                ),
+                vec![],
+                "pageToken",
+                |v| {
+                    v.get("nextPageToken")
+                        .and_then(|x| x.as_str())
+                        .map(String::from)
+                },
+                Some("models/"),
+            )
+            .await
+        }
+        other => Err(format!("不支持的供应商类型: {other}")),
     }
-    // Anthropic：x-api-key + anthropic-version 头（官方硬性要求），has_more/last_id 分页
-    "anthropic" => {
-      fetch_models_paginated(
-        &format!("{}/v1/models", base("https://api.anthropic.com")),
-        vec![
-          ("x-api-key".to_string(), api_key.clone()),
-          ("anthropic-version".to_string(), "2023-06-01".to_string()),
-        ],
-        "after",
-        |v| v.get("last_id").and_then(|x| x.as_str()).map(String::from),
-        None,
-      )
-      .await
-    }
-    // Gemini：key 作 query 参数；nextPageToken 分页；name 带 "models/" 前缀需剥掉
-    "gemini" => {
-      fetch_models_paginated(
-        &format!(
-          "{}/v1beta/models?key={api_key}",
-          base("https://generativelanguage.googleapis.com")
-        ),
-        vec![],
-        "pageToken",
-        |v| v.get("nextPageToken").and_then(|x| x.as_str()).map(String::from),
-        Some("models/"),
-      )
-      .await
-    }
-    other => Err(format!("不支持的供应商类型: {other}")),
-  }
 }
 
 /// 连通性测试：发送一个极短 prompt，返回首个增量或错误
 #[tauri::command]
 pub async fn ai_provider_test(
-  record: AiProviderRecord,
-  on_chunk: Channel<AiChunk>,
+    record: AiProviderRecord,
+    on_chunk: Channel<AiChunk>,
 ) -> Result<(), String> {
-  let (key_index, api_key) = pick_key(&record)?;
-  let history = vec![AiChatMessage {
-    role: "user".to_string(),
-    content: "回复两个字：连通".to_string(),
-  }];
-  run_provider(&record, &api_key, history, Some("你是连通性测试助手".to_string()), key_index, &on_chunk).await
+    let (key_index, api_key) = pick_key(&record)?;
+    let history = vec![AiChatMessage {
+        role: "user".to_string(),
+        content: "回复两个字：连通".to_string(),
+    }];
+    run_provider(
+        &record,
+        &api_key,
+        history,
+        Some("你是连通性测试助手".to_string()),
+        key_index,
+        &on_chunk,
+    )
+    .await
 }

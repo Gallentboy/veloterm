@@ -10,117 +10,120 @@ use tauri::{AppHandle, Emitter};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LifecycleKind {
-  Connecting,
-  Connected,
-  ShellReady,
-  Failed,
-  Disconnected,
+    Connecting,
+    Connected,
+    ShellReady,
+    Failed,
+    Disconnected,
 }
 
 /// 断开原因分类（前端可据此区分 UI 表现：网络闪断→可重连、服务端关闭→提示）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DisconnectReason {
-  Network,
-  Server,
-  User,
-  Timeout,
+    Network,
+    Server,
+    User,
+    Timeout,
 }
 
 /// 生命周期事件负载（SSH 与 SFTP 共用同一结构）
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LifecycleEvent {
-  pub kind: LifecycleKind,
-  /// 前端会话 id（终端为 descriptor.id，SFTP 为后端连接序号）
-  pub session_id: usize,
-  pub host_id: Option<usize>,
-  pub host: String,
-  pub port: u16,
-  pub username: Option<String>,
-  /// 仅 kind = failed 时有值
-  pub error: Option<String>,
-  /// 仅 kind = disconnected 时有值
-  pub reason: Option<DisconnectReason>,
-  /// Unix 毫秒时间戳
-  pub timestamp: u64,
+    pub kind: LifecycleKind,
+    /// 前端会话 id（终端为 descriptor.id，SFTP 为后端连接序号）
+    pub session_id: usize,
+    pub host_id: Option<usize>,
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    /// 仅 kind = failed 时有值
+    pub error: Option<String>,
+    /// 仅 kind = disconnected 时有值
+    pub reason: Option<DisconnectReason>,
+    /// Unix 毫秒时间戳
+    pub timestamp: u64,
 }
 
 /// 生命周期事件发射器 trait（AppHandle 实现真发射，测试可用 noop）
 pub trait LifecycleEmitter: Send + Sync + 'static {
-  fn emit_lifecycle(&self, prefix: &str, event: &LifecycleEvent);
+    fn emit_lifecycle(&self, prefix: &str, event: &LifecycleEvent);
 }
 
 impl LifecycleEmitter for AppHandle {
-  fn emit_lifecycle(&self, prefix: &str, event: &LifecycleEvent) {
-    let event_name = format!("{prefix}://{}", match event.kind {
-      LifecycleKind::Connecting => "connecting",
-      LifecycleKind::Connected => "connected",
-      LifecycleKind::ShellReady => "shell-ready",
-      LifecycleKind::Failed => "failed",
-      LifecycleKind::Disconnected => "disconnected",
-    });
-    if let Err(e) = self.emit(&event_name, event) {
-      log::warn!("[Lifecycle] emit {} failed: {e}", event_name);
+    fn emit_lifecycle(&self, prefix: &str, event: &LifecycleEvent) {
+        let event_name = format!(
+            "{prefix}://{}",
+            match event.kind {
+                LifecycleKind::Connecting => "connecting",
+                LifecycleKind::Connected => "connected",
+                LifecycleKind::ShellReady => "shell-ready",
+                LifecycleKind::Failed => "failed",
+                LifecycleKind::Disconnected => "disconnected",
+            }
+        );
+        if let Err(e) = self.emit(&event_name, event) {
+            log::warn!("[Lifecycle] emit {} failed: {e}", event_name);
+        }
     }
-  }
 }
 
 /// 便捷构造 + 发射（避免在每个调用点手写完整结构体）
 pub fn emit_ssh_lifecycle(
-  emitter: &dyn LifecycleEmitter,
-  kind: LifecycleKind,
-  session_id: usize,
-  host_id: Option<usize>,
-  host: &str,
-  port: u16,
-  username: Option<&str>,
-  error: Option<&str>,
-  reason: Option<DisconnectReason>,
+    emitter: &dyn LifecycleEmitter,
+    kind: LifecycleKind,
+    session_id: usize,
+    host_id: Option<usize>,
+    host: &str,
+    port: u16,
+    username: Option<&str>,
+    error: Option<&str>,
+    reason: Option<DisconnectReason>,
 ) {
-  emitter.emit_lifecycle(
-    "ssh",
-    &LifecycleEvent {
-      kind,
-      session_id,
-      host_id,
-      host: host.to_string(),
-      port,
-      username: username.map(str::to_string),
-      error: error.map(str::to_string),
-      reason,
-      timestamp: std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0),
-    },
-  );
+    emitter.emit_lifecycle(
+        "ssh",
+        &LifecycleEvent {
+            kind,
+            session_id,
+            host_id,
+            host: host.to_string(),
+            port,
+            username: username.map(str::to_string),
+            error: error.map(str::to_string),
+            reason,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        },
+    );
 }
 
 pub fn emit_sftp_lifecycle(
-  emitter: &dyn LifecycleEmitter,
-  kind: LifecycleKind,
-  session_id: usize,
-  host_id: Option<usize>,
-  host: &str,
-  port: u16,
-  error: Option<&str>,
+    emitter: &dyn LifecycleEmitter,
+    kind: LifecycleKind,
+    session_id: usize,
+    host_id: Option<usize>,
+    host: &str,
+    port: u16,
+    error: Option<&str>,
 ) {
-  emitter.emit_lifecycle(
-    "sftp",
-    &LifecycleEvent {
-      kind,
-      session_id,
-      host_id,
-      host: host.to_string(),
-      port,
-      username: None,
-      error: error.map(str::to_string),
-      reason: None,
-      timestamp: std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0),
-    },
-  );
+    emitter.emit_lifecycle(
+        "sftp",
+        &LifecycleEvent {
+            kind,
+            session_id,
+            host_id,
+            host: host.to_string(),
+            port,
+            username: None,
+            error: error.map(str::to_string),
+            reason: None,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        },
+    );
 }
