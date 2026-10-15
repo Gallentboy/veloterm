@@ -6,7 +6,7 @@
 //!
 //! # 依据（从上游源码逐条核实过的事实）
 //!
-//! - vcpkg openssl 端口（3.6.5, port 2）在 Windows 上走 `vcpkg_build_nmake`：
+//! - vcpkg openssl 端口在 Windows 上走 `vcpkg_build_nmake`：
 //!   它把源码**全量拷贝**到 `{root}\buildtrees\openssl\{triplet}-rel`（与 `-dbg`），
 //!   再在里面跑 `perl Configure ...` + nmake。因此：
 //!   - `buildtrees\openssl\src\<dir>` = 干净源码（apps\openssl.c 在）；
@@ -387,7 +387,7 @@ fn generate_progs(src_dir: &Path, apps_dir: &Path, gen_dir: &Path) -> Result<(Pa
 
 /// 渲染最小 configdata shim：'openssl' => [*.o]，每个 .o => 绝对 .c 路径。
 /// 路径统一成正斜杠，避开 Perl 单引号串里反斜杠转义歧义。
-/// 渲染逻辑已用真实 openssl-3.6.5 源码 + Strawberry perl 验证过
+/// 渲染逻辑已用真实 OpenSSL 源码 + Strawberry perl 验证过
 /// （见下方单元测试与本 crate 报告）。
 fn render_configdata_shim(app_srcs: &[PathBuf]) -> String {
     let mut o_names = Vec::new();
@@ -466,7 +466,7 @@ mod tests {
     use super::*;
 
     /// shim 必须是可被 Strawberry perl 消化的合法 Perl：结构关键行 + 源链逐条就位。
-    /// （该渲染结果已用真实 openssl-3.6.5 apps/progs.pl 全量验证过：-C 生成
+    /// （该渲染结果已用真实 OpenSSL apps/progs.pl 全量验证过：-C 生成
     /// 55 条 FT_general 命令表、-H 生成 127 行声明、stderr 零告警。）
     #[test]
     fn configdata_shim_renders_valid_perl() {
