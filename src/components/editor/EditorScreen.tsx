@@ -117,7 +117,9 @@ export function EditorScreen() {
           <div className="flex size-14 items-center justify-center rounded-2xl border border-border/60 bg-surface/50 shadow-xs">
             <FileCode className="size-7 text-foreground-subtle" strokeWidth={1.5} />
           </div>
-          <p className="max-w-sm text-ui-xs leading-relaxed text-foreground-subtle">
+          {/* 空态文案用主字号（--text-ui-base），随「界面字号」设置缩放；
+              此前是 text-ui-xs（主字号 -4px）明显偏小 */}
+          <p className="max-w-sm text-ui-base leading-relaxed text-foreground-subtle">
             {t('editor.empty')}
           </p>
         </div>
