@@ -1,0 +1,630 @@
+[
+  {
+    "id": 0,
+    "title": "cat 查看全文/拼接",
+    "command": "cat {{options}} {{file}}",
+    "description": "把文件内容原样输出到 stdout；不指定文件时读标准输入。适合小文件快速查看与拼接。\n\n【选项】-A/--show-all 等价 -vET，把不可见字符全显出来(排查配置首选)｜-b/--number-nonblank 给非空行编号(覆盖 -n)｜-e 等价 -vE｜-E/--show-ends 行尾显示 $ (可暴露 CRLF 的 ^M)｜-n/--number 给所有输出行编号｜-s/--squeeze-blank 连续空行压成一行｜-t 等价 -vT｜-T/--show-tabs 把 TAB 显示为 ^I｜-u (被忽略，为兼容保留)｜-v/--show-nonprinting 用 ^ 与 M- 记法显示非打印字符(LFD 与 TAB 除外)｜--help 显示帮助｜--version 显示版本。\n\n【不可见字符记法】^I=TAB｜^M=CR｜$=行尾｜M- 前缀=高位字节。\n\n【BSD/macOS 差异】macOS 的 cat 没有 -A，需拆成 -v -e -t。",
+    "purpose": "小文件快速查看；用 -A 排查 CRLF/TAB/不可见字符；多文件拼接输出",
+    "category": "text",
+    "tags": [
+      "cat",
+      "查看",
+      "拼接",
+      "配置",
+      "CRLF"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-n 编号｜-A 显示所有不可见字符｜-s 压缩空行｜-b 非空行编号｜-E 显示行尾$",
+        "required": false,
+        "default": "-n",
+        "example": "-A"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要查看的文件，可多个；省略则读标准输入",
+        "required": false,
+        "default": "file.txt",
+        "example": "/etc/hosts"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ cat -n file.txt\n     1  hello\n     2  world\n$ cat -A config.conf\nkey=value^I$",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "less 分页查看(推荐)",
+    "command": "less {{options}} {{file}}",
+    "description": "比 more 强的分页器：可前后翻页、可搜索、不把整个文件读进内存。日常查看大文件应优先用它。\n\n【交互按键】Space/b 下/上翻一屏｜d/u 下/上翻半屏｜j/k 或 ↓↑ 下/上一行｜g/G 文件头/尾｜/pattern 向下搜索(n 下一个 N 上一个)｜?pattern 向上搜索｜F 进入 follow 模式(等价 tail -f，Ctrl-C 退出)｜-N 切换行号｜-S 切换长行截断｜:e file 打开另一文件｜q 退出。\n\n【常用选项】-N/--LINE-NUMBERS 每行行首显示行号｜-S/--chop-long-lines 长行截断不折行(看宽表首选)｜-R/--RAW-CONTROL-CHARS 只把 ANSI 颜色序列按原样输出(grep --color 管道过来必须加)｜-r/--raw-control-chars 所有控制字符原样输出(屏幕会乱)｜-i/--ignore-case 搜索忽略大小写(模式含大写时失效)｜-I/--IGNORE-CASE 忽略大小写(即使模式含大写)｜-F/--quit-if-one-screen 内容不足一屏直接退出｜-X/--no-init 退出时不清屏｜-g/--hilite-search 只高亮最近一次命中的串｜-G/--HILITE-SEARCH 完全不高亮｜-m/--long-prompt 带百分比的详细提示｜-M/--LONG-PROMPT 更详细｜-s/--squeeze-blank-lines 压缩连续空行｜-e/--quit-at-eof 第二次到 EOF 退出｜-E/--QUIT-AT-EOF 第一次到 EOF 就退出｜-c/--clear-screen 全屏重绘｜-f/--force 强制打开非普通文件｜-n/--line-numbers 关闭行号(默认开)｜-p pattern/--pattern 从第一个匹配处开始｜-t tag/--tag 从 ctags 标签处开始｜-j n/--jump-target 指定目标行位置｜-x n/--tabs tab 宽度｜-z n/--window 滚动窗口行数｜-~/--tilde EOF 后显示空行｜-u/--underline-special 退格与回车当可打印字符｜-U/--UNDERLINE-SPECIAL 退格/TAB/回车当控制字符｜-w/--hilite-unread 翻整页后高亮第一行新内容｜-W/--HILITE-UNREAD 任意移动后都高亮｜-q/--quiet/--silent 适度静音｜-Q/--QUIET/--SILENT 完全静音｜-K/--quit-on-intr 收到 Ctrl-C 立即退出｜-J/--status-column 左边缘状态列｜-L/--no-lessopen 忽略 LESSOPEN｜-o file/--log-file 复制输入到文件(仅管道)｜-O file/--LOG-FILE 同 -o 但覆盖不询问｜-b n/--buffers 每文件缓冲(KB，-1 无限制)｜-B/--auto-buffers 关闭管道自动缓冲｜-h n/--max-back-scroll 向后滚动最大行数｜-y n/--max-forw-scroll 向前滚动最大行数｜--use-color 彩色文本｜--wordwrap 折行尽量在空白处断｜--mouse/--MOUSE 启用鼠标(后者方向相反)｜--incsearch 增量搜索｜--follow-name F 模式按文件名重开｜--header=L,C,N 固定表头行/列｜--save-marks 跨会话保存标记｜--help/-? 帮助｜-V/--version 版本。\n\n【手册共列出 107 个命令行选项】，上表覆盖日常与运维高频项。\n\n【环境变量】LESS 默认选项(如 -R -F -X)｜LESSOPEN 输入预处理器｜LESSCLOSE 关闭预处理器时执行｜LESSCHARSET 字符集｜LESSHISTFILE 历史文件(设 - 关闭)。\n\n【BSD/macOS 差异】行为基本一致；macOS 自带版本较旧，--header 等部分长选项可能缺失。",
+    "purpose": "查看大文件/日志；配合 grep --color 保留高亮；+F 实时跟踪日志；固定表头看宽表",
+    "category": "text",
+    "tags": [
+      "less",
+      "分页",
+      "日志",
+      "查看",
+      "搜索"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-N 行号｜-S 不折行｜-R 保留颜色｜-F 不足一屏退出｜-X 退出不清屏｜+F 实时跟踪",
+        "required": false,
+        "default": "-N -S",
+        "example": "-R -F -X"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要查看的文件，可为管道输入",
+        "required": false,
+        "default": "app.log",
+        "example": "/var/log/syslog"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ grep --color=always ERROR app.log | less -R\n2026-10-14 09:40:11 ERROR connect timeout\n2026-10-14 09:41:02 ERROR upstream 502",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "more 分页查看(基础)",
+    "command": "more {{options}} {{file}}",
+    "description": "只能向前翻的分页器，功能比 less 少，但某些精简系统只有它。\n\n【选项】-d/--silent 提示 [Press space to continue, 'q' to quit.]，非法按键时显示提示而非响铃｜-l/--logical 不在含 ^L(换页符)的行暂停｜-e/--exit-on-eof 到 EOF 时退出(未设 POSIXLY_CORRECT 或非终端时默认开启)｜-f/--no-pause 按逻辑行计数而非屏幕行(长行不折行)｜-p/--print-over 不滚动，清整屏后显示(可执行文件名为 page 时自动开启)｜-c/--clean-print 不滚动，从顶部逐屏绘制｜-s/--squeeze 多个空行压成一个｜-u/--plain 抑制下划线(向后兼容，被静默忽略)｜-n number/--lines 每屏行数(正整数)｜-number 等价 --lines，从第 number 行开始｜+number 从第 number 行开始｜+/pattern 从第一个匹配 pattern 处开始｜-h/--help 帮助｜-V/--version 版本。\n\n【交互按键】Space 下翻一屏｜Enter 下滚一行｜b/Ctrl-B 上翻一屏(需终端支持)｜/pattern 搜索｜h/? 帮助｜q 退出。\n\n【BSD/macOS 差异】macOS 的 more 实际是 less 的软链或精简实现，选项支持不全。",
+    "purpose": "精简系统上的分页查看；作为 less 不可用时的后备",
+    "category": "text",
+    "tags": [
+      "more",
+      "分页",
+      "查看"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-d 带提示｜-s 压缩空行｜-f 按逻辑行计数｜-number 从第 n 行开始｜+/pattern 从匹配处开始",
+        "required": false,
+        "default": "-d",
+        "example": "-s"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要查看的文件",
+        "required": false,
+        "default": "file.txt",
+        "example": "big.log"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ more -d file.txt\n--More--(12%)[Press space to continue, 'q' to quit.]",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "head 看头部",
+    "command": "head {{options}} {{file}}",
+    "description": "输出文件前 N 行(默认 10 行)。常用于快速预览大文件结构、只看表头。\n\n【选项】-n/--lines=[-]NUM 输出前 NUM 行(默认 10)；-NUM 表示除末尾 NUM 行外全部｜-c/--bytes=[-]NUM 输出前 NUM 字节；-NUM 表示除末尾 NUM 字节外全部｜-q/--quiet/--silent 不打印文件名头｜-v/--verbose 总是打印文件名头｜-z/--zero-terminated 行分隔符为 NUL｜--help 帮助｜--version 版本。\n\n【旧式写法】head -5 file、head -20 file 仍可用(NUM 前可不带 -n)。\n\n【BSD/macOS 差异】macOS 的 head 不支持负数，如 head -n -5。",
+    "purpose": "快速预览大文件；只看 CSV 表头；截取前 N 行做样本",
+    "category": "text",
+    "tags": [
+      "head",
+      "头部",
+      "预览",
+      "表头"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-n 20 前20行｜-n -5 除最后5行外全部｜-c 100 前100字节｜-q 不显示文件名头",
+        "required": false,
+        "default": "-n 20",
+        "example": "-n -5"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要查看的文件，可多个",
+        "required": false,
+        "default": "file.txt",
+        "example": "data.csv"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ head -n 3 data.csv\nid,name,score\n1,alice,92\n2,bob,88",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "tail 看尾部/跟踪日志",
+    "command": "tail {{options}} {{file}}",
+    "description": "输出文件最后 N 行(默认 10 行)。运维最高频命令之一：tail -f 实时看日志。\n\n【选项】-n/--lines=[+]NUM 输出最后 NUM 行(默认 10)；+NUM 表示从第 NUM 行开始｜-c/--bytes=[+]NUM 输出最后 NUM 字节；+NUM 从第 NUM 字节开始｜-f/--follow[={name|descriptor}] 文件增长时持续输出追加内容(缺省参数 descriptor)｜-F 等价 --follow=name --retry(日志轮转时用这个)｜--retry 文件不可访问时持续重试打开｜--pid=PID 配合 -f，PID 消失后退出(可重复指定)｜-s/--sleep-interval=N 轮询间隔秒数(默认 1.0)｜--max-unchanged-stats=N --follow=name 下 N 次迭代后大小未变则重开(检测轮转，默认 5)｜--debug 显示实际使用的 follow 实现｜-q/--quiet/--silent 不输出文件名头｜-v/--verbose 总是输出文件名头｜-z/--zero-terminated 行分隔符为 NUL｜--help 帮助｜--version 版本。\n\n【-f 与 -F 的区别】-f(=--follow=descriptor) 跟踪文件描述符：日志被轮转(rename+新建同名文件)后会跟丢，仍盯着旧 inode；-F(=--follow=name --retry) 跟踪文件名：自动跟上新文件，文件被删除重建会自动重试重开。长期跟踪生产日志务必用 -F。\n\n【BSD/macOS 差异】macOS 的 tail -r 可反转行序，Linux GNU tail 无此选项；-F 两者都有。",
+    "purpose": "实时跟踪日志；查看文件末尾报错；-n +2 跳过表头；配合 grep 过滤错误",
+    "category": "text",
+    "tags": [
+      "tail",
+      "日志",
+      "跟踪",
+      "follow",
+      "实时"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-n 50 最后50行｜-f 实时跟踪｜-F 抗轮转跟踪｜-n +2 从第2行开始｜--pid=PID 进程退出即停",
+        "required": false,
+        "default": "-n 50",
+        "example": "-F"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要查看的文件",
+        "required": false,
+        "default": "app.log",
+        "example": "/var/log/nginx/access.log"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ tail -n 3 -F app.log\n2026-10-14 09:40:11 INFO  request ok\n2026-10-14 09:40:12 ERROR db timeout\n2026-10-14 09:40:13 INFO  request ok",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "grep 文本搜索",
+    "command": "grep {{options}} {{pattern}} {{path}}",
+    "description": "在文件或目录中搜索匹配 PATTERNS 的行。退出码：0 有匹配、1 无匹配、2 出错。\n\n【模式解释】-E/--extended-regexp 按扩展正则(ERE)｜-F/--fixed-strings 按固定字符串(不解析正则，最快)｜-G/--basic-regexp 按基本正则(BRE，默认)｜-P/--perl-regexp 按 Perl 兼容正则(PCRE)｜-e PATTERNS/--regexp 指定模式(可多次；可保护以 - 开头的模式)｜-f FILE/--file 从文件逐行读模式(- 表示 stdin)。\n\n【匹配控制】-i/--ignore-case 忽略大小写｜--no-ignore-case 不忽略大小写(默认)｜-v/--invert-match 反向选择(输出不匹配的行)｜-w/--word-regexp 只匹配完整单词｜-x/--line-regexp 只匹配整行。\n\n【输出控制】-c/--count 只输出匹配行数(配合 -v 统计不匹配行数)｜--color[=WHEN]/--colour 高亮(never/always/auto)｜-L/--files-without-match 只输出不含匹配的文件名｜-l/--files-with-matches 只输出含匹配的文件名｜-m NUM/--max-count 每文件最多匹配 NUM 行后停止｜-o/--only-matching 只输出匹配到的部分(每个一行)｜-q/--quiet/--silent 静默，有匹配即返回 0｜-s/--no-messages 抑制文件不可读错误｜-b/--byte-offset 输出字节偏移｜-H/--with-filename 输出文件名(多文件默认开)｜-h/--no-filename 不输出文件名前缀(单文件默认开)｜-n/--line-number 输出行号｜-T/--initial-tab 内容首字符对齐制表位｜-Z/--null 文件名后输出 NUL(配合 xargs -0)｜--label=LABEL 把 stdin 标记为 LABEL。\n\n【上下文】-A NUM/--after-context 额外输出匹配行之后 NUM 行｜-B NUM/--before-context 之前 NUM 行｜-C NUM/-NUM/--context 前后各 NUM 行｜--group-separator=SEP 组间分隔符(默认 --)｜--no-group-separator 不输出组间分隔符。\n\n【文件与目录】-r/--recursive 递归搜索目录(不跟符号链接，除非在命令行上)｜-R/--dereference-recursive 递归并跟随所有符号链接｜-d ACTION/--directories 目录处理 read(默认)/skip/recurse｜-D ACTION/--devices 设备处理 read(默认)/skip｜--include=GLOB 只搜 basename 匹配的文件｜--exclude=GLOB 跳过 basename 匹配的文件｜--exclude-from=FILE 从文件读排除 glob｜--exclude-dir=GLOB 跳过匹配的目录｜-a/--text 把二进制当文本｜-I 把二进制当无匹配｜--binary-files=TYPE binary(默认)/text/without-match｜-U/--binary 强制按二进制｜--line-buffered 行缓冲输出(有性能损耗)｜-z/--null-data 输入输出按 NUL 分隔。\n\n【BSD/macOS 差异】macOS 的 BSD grep 无 -P(需 brew install grep 用 ggrep)，--exclude-dir 支持也较晚。",
+    "purpose": "在日志/代码里搜索关键字；递归查 TODO；统计错误数；按上下文定位异常堆栈",
+    "category": "text",
+    "tags": [
+      "grep",
+      "搜索",
+      "正则",
+      "日志",
+      "过滤"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-i 忽略大小写｜-n 行号｜-r 递归｜-v 反向｜-E 扩展正则｜-F 固定串｜-c 计数｜-A/-B/-C 上下文｜--include/--exclude 文件筛选",
+        "required": false,
+        "default": "-rn",
+        "example": "-rn --include='*.ts'"
+      },
+      {
+        "name": "pattern",
+        "label": "匹配模式",
+        "description": "要搜索的字符串或正则；含元字符的串用 -F",
+        "required": true,
+        "default": "ERROR",
+        "example": "TODO"
+      },
+      {
+        "name": "path",
+        "label": "搜索路径",
+        "description": "文件或目录，省略则读标准输入",
+        "required": false,
+        "default": ".",
+        "example": "src/"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ grep -rn --include='*.ts' \"TODO\" src/\nsrc/app.ts:12:// TODO 优化查询\nsrc/db.ts:45:// TODO 加索引\n$ echo $?\n0",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "sed 流编辑",
+    "command": "sed {{options}} {{script}} {{file}}",
+    "description": "逐行读入、按脚本处理、输出。注意 -i 会就地改写文件，属于危险操作。\n\n【选项】-n/--quiet/--silent 抑制模式空间的自动打印(配合 p 只打印指定行)｜-e script/--expression 追加脚本片段(可多次)｜-f script-file/--file 从文件读取脚本｜-i[SUFFIX]/--in-place 就地编辑(给了 SUFFIX 则先备份，如 -i.bak)｜--follow-symlinks 就地编辑时跟随符号链接｜-E/-r/--regexp-extended 使用扩展正则(可移植性建议用 POSIX 的 -E)｜-s/--separate 把多个文件当独立流处理｜-z/--null-data 以 NUL 分隔行｜-u/--unbuffered 少读多刷降低延迟｜-l N/--line-length l 命令的折行长度｜--posix 禁用所有 GNU 扩展｜--sandbox 沙箱模式(禁用 e/r/w 命令)｜--debug 注解脚本执行过程｜--help 帮助｜--version 版本。\n\n【常用脚本命令】s/regexp/replacement/flags 替换(flags：g 全局、N 第 N 个、p 打印、i/I 忽略大小写、w file 写文件)｜d 删除模式空间｜p 打印模式空间(常配 -n)｜a text 匹配行后追加｜i text 匹配行前插入｜c text 用 text 替换整行｜y/src/dst/ 字符逐一转换｜q [exit-code] 立即退出｜n/N 读下一行｜h/H/g/G/x 保持空间与模式空间之间存取/交换｜b/t/T label 跳转/条件跳转｜= 打印当前行号。\n\n【地址】N 第 N 行｜$ 最后一行｜/regexp/ 匹配行｜/regexp/I 忽略大小写匹配｜/regexp/M 多行匹配｜first~step 从 first 起每 step 行｜addr1,addr2 范围｜addr1,+N 从 addr1 起往后 N 行｜addr! 取反。\n\n【BSD/macOS 差异】macOS 的 sed -i 必须带参数(哪怕空串)：sed -i '' 's/a/b/' file，否则会把下一个参数当备份后缀；GNU 允许 -i 裸用。",
+    "purpose": "批量文本替换；删除注释/空行；提取行区间；格式化配置文件",
+    "category": "text",
+    "tags": [
+      "sed",
+      "替换",
+      "流编辑",
+      "正则",
+      "批处理"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-i 就地编辑(危险)｜-i.bak 就地编辑并备份｜-n 抑制自动打印｜-E 扩展正则｜-e 追加脚本",
+        "required": false,
+        "default": "",
+        "example": "-i.bak"
+      },
+      {
+        "name": "script",
+        "label": "脚本",
+        "description": "如 s/old/new/g、/^#/d、5,10p",
+        "required": true,
+        "default": "s/foo/bar/g",
+        "example": "/^$/d"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要处理的文件；省略则读标准输入",
+        "required": false,
+        "default": "file.txt",
+        "example": "config.conf"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ sed -n '2,3p' file.txt\nline2\nline3\n$ sed 's/foo/bar/g' file.txt\nbar bar bar",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "awk 列处理/报表",
+    "command": "awk {{options}} {{program}} {{file}}",
+    "description": "按行读入、按字段处理并输出的文本处理语言。Linux 上的 awk 通常是 gawk(GNU awk)。\n\n【程序结构】pattern { action statements }；pattern 为真时执行 action，省略 action 默认打印 $0。特殊模式 BEGIN { ... }(读输入前)、END { ... }(读完后)。\n\n【内置变量】$0 整行｜$1..$NF 字段｜NF 字段数｜NR 当前行号｜FNR 文件内行号｜FS 输入分隔符｜OFS 输出分隔符｜RS 记录分隔符｜ORS 输出记录分隔符｜FILENAME 文件名｜ARGC/ARGV。\n\n【内置函数】print｜printf｜length｜substr｜index｜split｜sub/gsub｜match｜toupper/tolower｜sprintf｜int｜gensub(gawk)。\n\n【选项】-f program-file/--file 从文件读程序(可多次)｜-F fs/--field-separator 设置输入字段分隔符 FS｜-v var=val/--assign 程序执行前给变量赋值｜-e program-text/--source 用 program-text 作为源码｜-E file/--exec 类似 -f 但作为最后处理的选项(#! 脚本/CGI 用)｜-i include-file/--include 加载 awk 源库｜-l lib/--load 加载 gawk 扩展共享库｜-k/--csv 启用 CSV 特殊处理｜-c/--traditional 兼容模式｜-P/--posix POSIX 模式｜-L [value]/--lint 对可疑/不可移植构造告警｜-M/--bignum 强制任意精度运算(需 MPFR/GMP)｜-N/--use-lc-numeric 用本地小数点解析数字｜-n/--non-decimal-data 识别输入中的八进制/十六进制(慎用)｜-b/--characters-as-bytes 按单字节字符处理｜-O/--optimize 启用默认优化(默认)｜-s/--no-optimize 禁用默认优化｜-d[file]/--dump-variables 输出全局变量列表(默认 awkvars.out)｜-o[file]/--pretty-print 输出美化后的程序(默认 awkprof.out)｜-p[prof-file]/--profile 性能剖析｜-D[file]/--debug 启用调试器｜-I/--trace 打印执行的内部字节码名｜-g/--gen-pot 生成 .pot 本地化模板｜-S/--sandbox 沙箱模式｜-C/--copyright 版权信息｜-h/--help 帮助｜-V/--version 版本｜-- 选项结束标记。\n\n【BSD/macOS 差异】macOS 的 awk 是较老的 BWK awk，无 --csv、--lint、gensub 等 gawk 扩展；需要 gawk 请 brew install gawk。",
+    "purpose": "提取/重排列；按列汇总求和平均；条件过滤；CSV 报表；去重",
+    "category": "text",
+    "tags": [
+      "awk",
+      "列处理",
+      "报表",
+      "字段",
+      "汇总"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-F 分隔符｜-v var=val 传变量｜-f 脚本文件｜--csv CSV 模式(gawk)",
+        "required": false,
+        "default": "",
+        "example": "-F,"
+      },
+      {
+        "name": "program",
+        "label": "程序",
+        "description": "如 '{print $1}'、'$3>100'、'{s+=$1} END{print s}'",
+        "required": true,
+        "default": "{print $1}",
+        "example": "'{s+=$2} END {print s}'"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "输入文件；省略则读标准输入",
+        "required": false,
+        "default": "file.txt",
+        "example": "data.csv"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ awk -F: '{print $1}' /etc/passwd\nroot\ndaemon\n$ awk '{s+=$1} END {print s}' nums.txt\n150",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "cut 按列截取",
+    "command": "cut {{options}} {{file}}",
+    "description": "按字节、字符或字段截取每行的指定列。不擅长处理多空格对齐的列(那是 awk 的活)。\n\n【选项】-b/--bytes=LIST 只选这些字节位置｜-c/--characters=LIST 只选这些字符位置｜-f/--fields=LIST 只选这些字段(默认 TAB 分隔)｜-d/--delimiter=DELIM 用 DELIM 代替 TAB 作字段分隔符｜-s/--only-delimited 不打印不含分隔符的行｜--complement 取补集(反选)｜-O/--output-delimiter=STRING 输出分隔符(默认同输入分隔符)｜-n 配合 -b 不输出被截断的多字节字符｜-z/--zero-terminated 行分隔符为 NUL｜-w/--whitespace-delimited[=trimmed] 以连续空白为字段分隔符(trimmed 时忽略首尾空白)｜-F LIST 类似 -f 但隐含 -w 与 -O ' '｜--help 帮助｜--version 版本。\n\n【LIST 语法】N 第 N 项｜N- 第 N 项到结尾｜N-M 第 N 到第 M 项｜-M 第 1 到第 M 项｜N,M,... 多个不连续项。\n\n【BSD/macOS 差异】macOS 的 cut 无 --complement、-w、-F。",
+    "purpose": "从 CSV/冒号分隔文件里取指定列；截取固定宽度字段",
+    "category": "text",
+    "tags": [
+      "cut",
+      "列",
+      "截取",
+      "CSV",
+      "字段"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-d 分隔符｜-f 字段列表｜-c 字符位置｜-s 跳过无分隔符行｜--complement 反选｜--output-delimiter 输出分隔符",
+        "required": true,
+        "default": "-d: -f1",
+        "example": "-d, -f1,3"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "输入文件；省略则读标准输入",
+        "required": false,
+        "default": "file.txt",
+        "example": "/etc/passwd"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ cut -d: -f1,7 /etc/passwd\nroot:/bin/bash\ndaemon:/usr/sbin/nologin",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "sort 排序",
+    "command": "sort {{options}} {{file}}",
+    "description": "默认按整行字典序升序排序。\n\n【排序键】-n/--numeric-sort 按数值比较｜-g/--general-numeric-sort 按通用数值(支持科学计数法)｜-h/--human-numeric-sort 按人类可读数字(2K/1G)｜-M/--month-sort 按月份名(JAN<...<DEC)｜-V/--version-sort 版本号自然排序｜-R/--random-sort 随机打乱但相同键归组｜--sort=WORD 指定方式 general-numeric/human-numeric/month/numeric/random/version。\n\n【比较修饰】-b/--ignore-leading-blanks 忽略前导空白｜-d/--dictionary-order 只考虑空白与字母数字｜-f/--ignore-case 忽略大小写｜-i/--ignore-nonprinting 只考虑可打印字符｜-r/--reverse 反序｜-s/--stable 稳定排序｜-u/--unique 相同键只输出第一条(配合 -c 检查严格有序)｜-k/--key=KEYDEF 按指定键排序｜-t/--field-separator=SEP 字段分隔符。\n\n【KEYDEF 语法】-k F[.C][OPTS][,F[.C][OPTS]]；F 字段号(1 起)、C 字段内字符位置(1 起)；OPTS 可为 n/g/h/M/V/r/b/d/f/i。例：-k2,2n 表示第 2 字段按数值。\n\n【其他】-o/--output=FILE 结果写到 FILE(可与输入同名，安全)｜-m/--merge 合并已排序文件｜-c/--check[=diagnose-first] 检查是否已排序｜-C/--check=quiet/silent 同 -c 但不报首个乱序行｜-z/--zero-terminated 行分隔符为 NUL｜-S/--buffer-size=SIZE 主内存缓冲｜-T/--temporary-directory=DIR 临时目录(可多次)｜--parallel=N 并行线程数｜--batch-size=NMERGE 一次最多合并 NMERGE 个输入｜--compress-program=PROG 用 PROG 压缩临时文件｜--files0-from=F 从 F 的 NUL 分隔文件名读输入｜--random-source=FILE 取随机字节｜--debug 注解用于排序的部分并告警可疑用法｜--help 帮助｜--version 版本。\n\n【BSD/macOS 差异】macOS 的 sort 无 -h、-V(支持较晚)，无 --parallel、--debug。",
+    "purpose": "排序文件行；按指定列数值/版本排序；排序去重；为 uniq 做准备",
+    "category": "text",
+    "tags": [
+      "sort",
+      "排序",
+      "数值",
+      "去重",
+      "uniq"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-n 数值｜-r 反序｜-k 指定键｜-t 分隔符｜-u 去重｜-h 人类可读大小｜-V 版本号｜-f 忽略大小写｜-o 输出到文件",
+        "required": false,
+        "default": "",
+        "example": "-k2,2n"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "输入文件；省略则读标准输入",
+        "required": false,
+        "default": "file.txt",
+        "example": "data.txt"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ sort -k2,2n data.txt\na 3\nc 10\nb 25\n$ sort -rn nums.txt\n99\n42\n7",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "uniq 去重(需先排序)",
+    "command": "uniq {{options}} {{file}}",
+    "description": "只去除相邻重复行，所以几乎总是先 sort。\n\n【选项】-c/--count 行首加上出现次数｜-d/--repeated 只输出有重复的行(每组一行)｜-D 输出所有重复行｜--all-repeated[=METHOD] 类似 -D 但允许空行分隔组(METHOD：none(默认)/prepend/separate)｜-u/--unique 只输出不重复的行｜-i/--ignore-case 比较时忽略大小写｜-f/--skip-fields=N 跳过前 N 个字段再比较｜-s/--skip-chars=N 跳过前 N 个字符再比较｜-w/--check-chars=N 最多比较 N 个字符｜--group[=METHOD] 显示所有行并用空行分组(METHOD：separate(默认)/prepend/append/both)｜-z/--zero-terminated 行分隔符为 NUL｜--help 帮助｜--version 版本。\n\n【BSD/macOS 差异】macOS 的 uniq 无 --group、-D(有 -d)，--all-repeated 缺失。",
+    "purpose": "排序后去重；统计每行出现次数；找出重复行/唯一行",
+    "category": "text",
+    "tags": [
+      "uniq",
+      "去重",
+      "计数",
+      "重复"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-c 计数｜-d 只看重复｜-u 只看唯一｜-i 忽略大小写｜-f N 跳过N字段｜-s N 跳过N字符",
+        "required": false,
+        "default": "-c",
+        "example": "-d"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "输入文件；省略则读标准输入(通常来自 sort 管道)",
+        "required": false,
+        "default": "file.txt",
+        "example": "sorted.txt"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ sort file.txt | uniq -c | sort -rn\n      3 apple\n      2 banana\n      1 cherry",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "wc 统计行/词/字节",
+    "command": "wc {{options}} {{file}}",
+    "description": "默认输出 行数 单词数 字节数。\n\n【选项】-l/--lines 统计换行符个数(行数)｜-w/--words 统计单词数｜-c/--bytes 统计字节数｜-m/--chars 统计字符数｜-L/--max-line-length 最长行的显示宽度｜--total=WHEN 何时输出总计行(auto/always/only/never)｜--files0-from=F 从 F 的 NUL 分隔文件名读输入｜--debug 显示使用的行计数加速方式｜--help 帮助｜--version 版本。\n\n【BSD/macOS 差异】macOS 的 wc 无 --total、--files0-from。",
+    "purpose": "统计文件行数/词数/字节数；统计代码行数；统计文件个数",
+    "category": "text",
+    "tags": [
+      "wc",
+      "统计",
+      "行数",
+      "字数",
+      "字节"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-l 行数｜-w 单词数｜-c 字节数｜-m 字符数｜-L 最长行宽度",
+        "required": false,
+        "default": "-l",
+        "example": "-lw"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "输入文件；省略则读标准输入",
+        "required": false,
+        "default": "file.txt",
+        "example": "*.log"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ wc -l file.txt\n     128 file.txt\n$ cat file.txt | wc -l\n128",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "diff 比较文件",
+    "command": "diff {{options}} {{file1}} {{file2}}",
+    "description": "比较两个文件(或目录)的差异。输出格式决定后续怎么用。退出码：0 无差异、1 有差异、2 出错。\n\n【输出格式】--normal 普通格式(默认)｜-c/-C NUM/--context[=NUM] 上下文格式(默认 3 行)｜-u/-U NUM/--unified[=NUM] 统一格式(默认 3 行，最常用，即 patch 格式)｜-e/--ed ed 脚本格式｜-n/--rcs RCS 格式｜-y/--side-by-side 左右两列并排｜-q/--brief 只报告是否不同｜-s/--report-identical-files 相同也报告｜-D/--ifdef=NAME 输出带 #ifdef NAME 的合并文件。\n\n【并排格式相关】-W/--width=NUM 输出宽度(默认 130)｜--left-column 相同行只显示左列｜--suppress-common-lines 不显示相同行｜-t/--expand-tabs 展开 TAB｜-T/--initial-tab 前置 TAB 对齐｜--tabsize=NUM TAB 宽度(默认 8)｜--suppress-blank-empty 抑制空输出行前的空格/TAB。\n\n【忽略差异(比对配置时最关键)】-i/--ignore-case 忽略大小写｜-w/--ignore-all-space 忽略所有空白｜-b/--ignore-space-change 忽略空白数量变化｜-Z/--ignore-trailing-space 忽略行尾空白｜-E/--ignore-tab-expansion 忽略 TAB 展开差异｜-B/--ignore-blank-lines 忽略纯空行变化｜-I RE/--ignore-matching-lines 忽略所有行都匹配 RE 的变化｜-a/--text 把所有文件当文本｜--strip-trailing-cr 去掉输入行尾 CR(CRLF 与 LF 混用时救命)。\n\n【目录比较】-r/--recursive 递归比较子目录｜-N/--new-file 缺失文件当空文件(配合 -r 可做完整 diff)｜--unidirectional-new-file 缺失的第一个文件当空文件｜-x PAT/--exclude 排除匹配 PAT 的文件｜-X FILE/--exclude-from 从 FILE 读排除模式｜-S FILE/--starting-file 从 FILE 开始比较｜--from-file=FILE1 FILE1 与所有操作数比较｜--to-file=FILE2 所有操作数与 FILE2 比较｜--ignore-file-name-case 忽略文件名大小写｜--no-ignore-file-name-case 考虑文件名大小写｜--no-dereference 不跟随符号链接。\n\n【其他】-d/--minimal 尽力找更小差异集｜--horizon-lines=NUM 保留公共前缀/后缀｜--speed-large-files 假设大文件多处小改动｜-l/--paginate 输出经 pr 分页｜--color[=WHEN] 彩色输出｜--palette=PALETTE 配色｜--label LABEL 替代文件名与时间戳(可重复)｜--GTYPE-group-format=GFMT/--line-format=LFMT/--LTYPE-line-format=LFMT 自定义格式｜--help 帮助｜-v/--version 版本。\n\n【BSD/macOS 差异】macOS 的 diff 无 --color、--palette，--suppress-blank-empty 缺失。",
+    "purpose": "比较配置/代码差异；生成 patch；目录级对比；忽略空白后的等价性检查",
+    "category": "text",
+    "tags": [
+      "diff",
+      "比较",
+      "patch",
+      "差异",
+      "配置"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-u 统一格式｜-y 并排｜-q 只问是否不同｜-w 忽略空白｜-B 忽略空行｜-r 递归目录｜-N 缺失当空文件",
+        "required": false,
+        "default": "-u",
+        "example": "-y --suppress-common-lines"
+      },
+      {
+        "name": "file1",
+        "label": "文件1/目录1",
+        "description": "第一个待比较对象",
+        "required": true,
+        "default": "a.txt",
+        "example": "dir1"
+      },
+      {
+        "name": "file2",
+        "label": "文件2/目录2",
+        "description": "第二个待比较对象",
+        "required": true,
+        "default": "b.txt",
+        "example": "dir2"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ diff -u a.txt b.txt\n--- a.txt\n+++ b.txt\n@@ -1,3 +1,3 @@\n hello\n-world\n+earth\n end\n$ echo $?\n1",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "vim 全功能编辑器",
+    "command": "vim {{options}} {{file}}",
+    "description": "模式化文本编辑器。三种模式：普通模式(启动即进入/任何模式按 Esc)、插入模式(i/a/o/O/I/A)、命令行模式(: / ?)。\n\n【必会操作】:w 保存｜:q 退出｜:wq 或 ZZ 保存退出｜:q! 强制退出(不保存)｜:wq! 保存并强制退出(只读文件)｜i/a 光标前/后插入｜o/O 下/上新行插入｜dd 删除整行(5dd 删 5 行)｜yy 复制整行(5yy 复制 5 行)｜p/P 粘贴(后/前)｜u 撤销｜Ctrl-R 重做｜/pattern 搜索(n 下一个 N 上一个)｜:s/old/new/g 替换当前行｜:%s/old/new/g 替换全文｜:%s/old/new/gc 全文替换逐个确认｜:42 或 42G 跳到第 42 行｜gg/G 文件头/尾｜:set nu 显示行号(:set nonu 关闭)｜:e file 打开另一个文件。\n\n【命令行选项(手册共 80+ 项，节选)】+[num] 光标定位到第 num 行(省略则末行)｜+/{pat} 定位到第一个匹配行｜+{command}/-c {command} 读入首个文件后执行 Ex 命令(最多 10 个)｜--cmd {command} 在处理任何 vimrc 之前执行命令｜-b 二进制模式｜-C 兼容模式(尽量像 Vi)｜-N 非兼容模式｜-d diff 模式(vimdiff)｜-R 只读模式(隐含 -n)｜-m 禁止修改文件(可改缓冲不能写盘)｜-M 完全禁止修改｜-n 不使用交换文件(崩溃无法恢复)｜-o[N] 水平分屏打开 N 个窗口｜-O[N] 垂直分屏｜-p[N] 打开 N 个标签页｜-r 列出交换文件｜-r {file} 恢复模式｜-S {file} 读入首个文件后 source(缺省 Session.vim)｜-u {vimrc} 使用指定 vimrc(-u NONE 跳过所有初始化)｜-U {gvimrc} 使用指定 gvimrc｜-i {viminfo} 指定 viminfo 文件(NONE 表示不用)｜-s {scriptin} 把脚本当键盘输入回放｜-w {scriptout} 记录所有按键｜-W {scriptout} 同 -w 但覆盖｜-V[N] 详细模式(默认 10)｜-x 加密写入｜-X 不连接 X server｜-y easy 模式｜-Z 受限模式｜--clean 不使用任何个人配置｜--noplugin 跳过插件｜--nofork 前台运行｜--not-a-term 告知非终端避免延迟｜--startuptime {file} 记录启动耗时｜--version 版本｜--help/-h/-? 帮助。\n\n【BSD/macOS 差异】macOS 自带的是老版 vim，--clean、-p 等较新选项可能缺失。",
+    "purpose": "编辑配置文件/代码；diff 模式对比；批量替换；恢复崩溃会话",
+    "category": "text",
+    "tags": [
+      "vim",
+      "编辑器",
+      "编辑",
+      "diff",
+      "模式"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "+42 跳到42行｜+/pattern 定位匹配｜-R 只读｜-O 左右分屏｜-p 标签页｜--clean 干净启动｜-u NONE 不加载配置",
+        "required": false,
+        "default": "",
+        "example": "-O"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要编辑的文件，可多个",
+        "required": false,
+        "default": "file.txt",
+        "example": "config.conf"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ vim +/ERROR app.log\n# 打开后按 i 进入插入，Esc 回普通模式\n# :wq 保存退出，:q! 放弃退出",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "nano 轻量编辑器",
+    "command": "nano {{options}} {{file}}",
+    "description": "界面底部直接列出快捷键的轻量编辑器，对新手最友好。^ 表示 Ctrl，M- 表示 Alt。\n\n【常用按键】Ctrl-O 保存｜Ctrl-X 退出｜Ctrl-W 搜索｜Ctrl-K 剪切整行｜Ctrl-U 粘贴｜Ctrl-\\ 替换｜Ctrl-G 帮助｜Ctrl-C 显示光标位置｜Ctrl-_ 跳转到指定行。\n\n【选项(手册共 59 项)】-A/--smarthome Home 键更智能｜-B/--backup 保存时把上一版备份为 文件名~｜-C dir/--backupdir 备份到指定目录并唯一编号(需 -B)｜-D/--boldtext 界面用粗体代替反显｜-E/--tabstospaces 输入的 TAB 转空格｜-F/--newbuffer 默认读入新缓冲｜-G/--locking 使用 vim 风格文件锁｜-H/--historylog 记录最近 100 条搜索/替换/命令｜-I/--ignorercfiles 不读系统与用户的 nanorc｜-J number/--guidestripe 在指定列画竖线｜-K/--rawsequences 直接解释转义序列(会禁用鼠标)｜-L/--nonewlines 文件末尾无换行时不自动补｜-M/--trimblanks 折行时去掉行尾空白｜-N/--noconvert 禁用 DOS 格式自动转换｜-O/--bookstyle 对齐时把以空白开头的行视为段落开头｜-P/--positionlog 记录最近 200 个文件光标位置｜-Q \"regex\"/--quotestr 设置引用前缀正则｜-R/--restricted 受限模式(只读写命令行指定文件)｜-S/--softwrap 超宽行软折行显示｜-T number/--tabsize TAB 宽度(默认 8)｜-U/--quickblank 状态栏消息按键一次即消失｜-V/--version 版本｜-W/--wordbounds 把标点也算单词一部分｜-X \"chars\"/--wordchars 指定额外单词字符｜-Y name/--syntax 指定语法高亮｜-Z/--zap 未修改的 Backspace/Delete 删除标记区域｜-a/--atblanks 软折行在空白处断行｜-b/--breaklonglines 自动硬折行(与 -w 相反)｜-c/--constantshow 状态栏常显光标位置｜-d/--rebinddelete 修正 Delete/Backspace｜-e/--emptyline 标题栏下留空一整行｜-f file/--rcfile 只读该文件作为配置｜-g/--showcursor 文件浏览器中显示光标｜-h/--help 帮助｜-i/--autoindent 新行自动缩进对齐上一行｜-j/--jumpyscrolling 每次滚动半屏｜-k/--cutfromcursor 剪切从光标到行尾｜-l/--linenumbers 显示行号｜-m/--mouse 启用鼠标｜-n/--noread 把命令行给出的名字当新文件｜-o dir/--operatingdir 限制只在该目录内读写｜-p/--preserve 保留 ^S/^Q 给终端｜-q/--indicator 右侧显示滚动条｜-r number/--fill 对齐/硬折行的目标宽度(默认 -8)｜-s \"prog [args]\"/--speller 指定拼写检查程序｜-t/--saveonexit 退出时直接保存不提示｜-u/--unix 默认按 Unix 格式保存｜-v/--view 只读查看模式｜-w/--nowrap 不自动硬折行(默认，与 -b 相反)｜-x/--nohelp 不显示底部两行帮助｜-y/--afterends Ctrl-Right/Ctrl-Delete 停在词尾｜-z/--listsyntaxes 列出可用语法并退出｜-!/--magic 用 libmagic 判断语法｜-@/--colonparsing 解析 文件名:行号｜-%/--stateflags 右上角显示状态标志｜-_/--minibar 用迷你状态栏代替标题栏｜-0/--zero 隐藏所有界面元素｜-1/--solosidescroll 只横向滚动当前行｜-/ /--modernbindings 使用现代快捷键。\n\n【BSD/macOS 差异】macOS 的 nano 版本较旧，--minibar、--zero、-1、-/ 等新选项可能缺失。",
+    "purpose": "快速编辑小文件/配置；新手友好；只读查看；指定语法高亮",
+    "category": "text",
+    "tags": [
+      "nano",
+      "编辑器",
+      "编辑",
+      "轻量",
+      "新手"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-l 行号｜-w 不硬折行｜-m 鼠标｜-v 只读｜-R 受限｜-u Unix 格式｜-Y 语法｜+/42 跳到42行",
+        "required": false,
+        "default": "-w",
+        "example": "-l -w"
+      },
+      {
+        "name": "file",
+        "label": "文件",
+        "description": "要编辑的文件",
+        "required": false,
+        "default": "file.txt",
+        "example": "config.conf"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ nano -l file.txt\n# 底部提示：^O Write Out  ^W Where Is  ^X Exit",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  }
+]

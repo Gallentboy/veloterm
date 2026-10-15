@@ -1,0 +1,562 @@
+[
+  {
+    "id": 0,
+    "title": "ps 查看进程快照",
+    "command": "ps {{options}}",
+    "description": "输出进程快照。ps 的输出列由所选选项决定，不是固定的一组列。三种风格：UNIX(-ef)、BSD(aux，不带 -)、GNU 长选项(--sort)。\n\n【ps aux 的 11 列】USER 有效用户｜PID 进程号｜%CPU CPU占比(自启动以来累计，不是瞬时值)｜%MEM 常驻内存占物理内存比｜VSZ 虚拟内存KiB｜RSS 常驻集KiB(实际占用物理内存)｜TTY 控制终端(? 表示无终端，多为守护进程)｜STAT 状态码｜START 启动时间｜TIME 累计CPU时间(user+system)｜COMMAND 命令(默认截断，用 auxww 不截断)。\n\n【ps -ef 的 8 列】UID PID PPID C STIME TTY TIME CMD —— 比 aux 多了 PPID(父进程)与 C。\n\n【STAT 状态码】D 不可中断睡眠(通常I/O)｜I 空闲内核线程｜R 运行中或可运行｜S 可中断睡眠(等事件)｜T 被作业控制信号停止｜t 被调试器停止｜W 换页(Linux 2.6起无效)｜X 已死(不应出现)｜Z 僵尸(已终止但父进程未回收)。BSD 格式附加字符：< 高优先级｜N 低优先级｜L 页面被锁进内存｜s 会话首进程｜l 多线程｜+ 前台进程组。\n\n【进程选择】-A/-e 所有进程｜-a 所有但排除会话首进程与无终端进程｜-d 所有但排除会话首进程｜-N/--deselect 取反｜-C cmdlist 按可执行名(不是命令行)｜-p/--pid 按PID｜-q/--quick-pid 按PID(快速模式，保持顺序)｜--ppid 按父进程｜-s/--sid 按会话｜-t/--tty 按终端(- 表示无终端)｜-U/--User 按真实用户｜-u/--user 按有效用户｜-G/--Group 按真实组｜-g/--group 按会话或有效组名｜-123 按进程组PGID｜-T 显示线程(带SPID)｜-L 显示线程(带LWP/NLWP)｜-m 线程排在进程后。\n\n【输出格式】-f 完整格式｜-F 超完整(加 SZ/RSS/PSR)｜-l 长格式｜-j 作业格式｜-o/--format 自定义列(如 -o pid,user,%cpu,args)｜-O 同 -o 但预置默认列｜-M/Z 加 SELinux 上下文列｜-c 不同调度器信息｜-y 不显flags用rss替代addr(仅配-l)｜-P 加psr(CPU编号)列｜-w 宽输出(写两次不限宽度)｜--no-headers 不打印表头｜--headers 每页重复表头｜--forest/-H ASCII 进程树｜--cols/--columns/--width 设屏宽｜--rows/--lines 设屏高｜--sort spec 排序(如 --sort=-%cpu,-%mem)｜--delimiter 列分隔符｜-D/--date-format lstart 日期格式｜--signames 用缩写信号名显示信号掩码｜--cumulative 计入已死子进程｜--context 安全上下文｜--info 调试信息｜--help [section]｜-V/--version。\n\n【常用格式关键字】pid ppid pgid sid uid user ruser group tty stat %cpu(pcpu) %mem(pmem) vsz rss ni pri c f(flags) wchan lstart etime time(bsdtime) nlwp comm args(command) psr。\n\n【BSD/macOS 差异】macOS 的 ps 默认就是 BSD 风格，ps aux 可用，但没有 --forest/-H/-eLf 的完整 GNU 支持，-o 支持的关键字也少(无 nlwp/psr)；macOS 上 -M 是显示线程而非 SELinux 上下文。",
+    "purpose": "查看进程列表/状态/资源占用；按 CPU 或内存排序找热点；找僵尸进程；看进程树与父子关系",
+    "category": "process",
+    "tags": [
+      "ps",
+      "进程",
+      "快照",
+      "STAT",
+      "排序"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "aux BSD风格全量｜-ef UNIX风格含PPID｜--sort=-%cpu 按CPU排序｜-eo 自定义列｜--forest 进程树｜-C 按可执行名｜-u 按用户",
+        "required": false,
+        "default": "aux",
+        "example": "-ef"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ ps aux | head -3\nUSER  PID %CPU %MEM    VSZ   RSS TTY  STAT START   TIME COMMAND\nroot    1  0.0  0.1 168924 13240 ?    Ss   Oct13   0:12 /sbin/init\nwww    812  2.3  4.1 890124 67204 ?    Sl   Oct13   3:41 nginx: worker\n$ ps -eo stat,pid,args | awk '$1 ~ /Z/'\nZ    4521 [python3] <defunct>",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "top / htop 实时进程监控",
+    "command": "top {{options}}",
+    "description": "实时刷新显示系统与进程状态。屏幕分三区：Summary Area(汇总区)、Fields/Columns Header(列标题)、Task Area(任务区)。\n\n【汇总区内存行的来源】total=MemTotal｜free=MemFree｜used=MemTotal-MemAvailable｜buff/cache=Buffers+Cached+SReclaimable；交换行的 avail=MemAvailable(属物理内存)。\n\n【top 选项】-b/--batch 批处理模式(不接受输入，配 -n 跑完即退，写脚本/重定向必用)｜-n/--iterations 最多刷新多少帧后结束｜-d/--delay=SECS[.TENTHS] 刷新间隔(支持小数，不允许负数)｜-p/--pid 只监控指定 PID(最多20个)｜-U/--filter-any-user 匹配任意uid，! 前缀取反｜-u/--filter-only-euser 只匹配有效用户，! 前缀取反｜-o/--sort-override=FIELDNAME 指定排序列(+ 从高到低，- 从低到高)｜-O/--list-fields 列出可用字段名后退出｜-H/--threads-show 显示单个线程｜-i/--idle-toggle 反转空闲任务显示｜-c/--cmdline-toggle 反转命令行/程序名｜-S/--accum-time-toggle 累计时间模式｜-E/--scale-summary-mem=k|m|g|t|p|e 强制汇总区内存单位｜-e/--scale-task-mem=k|m|g|t|p 强制任务区内存单位｜-1/--single-cpu-toggle 单行/每核一行｜-s/--secure-mode 强制安全模式｜-A/--apply-defaults 只用编译默认值(必须是唯一选项)｜-w/--width[=COLUMNS] 输出宽度｜-h/--help｜-V/--version。\n\n【top 交互按键·全局】q 退出｜?/h 帮助｜Enter/Space 刷新｜d/s 改刷新间隔｜k 杀进程｜r renice｜W 把配置写入 ~/.toprc｜Z 改配色｜A 备用显示模式｜B 加粗开关｜0 零值抑制｜= 清除显示限制｜L 定位字符串｜& 定位下一个匹配｜Y 检视其他输出｜^O 显示生效的过滤器。\n\n【top 交互按键·汇总区】l 负载/运行时长｜t 任务/CPU状态｜m 内存/交换｜1 单核/每核｜2 NUMA/CPU汇总｜3 展开NUMA节点｜4 多元素相邻｜5 P核/E核｜! 合并CPU模式｜^ 核心vs CPU｜C 滚动坐标。\n\n【top 交互按键·任务区】f 字段管理(也是改排序列的正规入口)｜R 反转排序方向｜< / > 把排序列左移/右移｜M/N/P/T 旧版排序快捷键(%MEM/PID/%CPU/TIME+，兼容保留不显示在帮助里；A 排序启动时间已不支持)｜c 命令行/程序名｜i 空闲进程｜n/# 设置最大显示任务数｜u/U 只显示指定用户｜o/O 过滤器｜V 森林视图(进程树)｜v 折叠/展开子进程｜F 保持父进程焦点｜S 累计时间模式｜x 列高亮(配合排序建议打开)｜y 行高亮｜z 彩色/单色｜b 加粗/反显｜j/J 字符列/数字列对齐｜^A ^G ^K ^N ^P ^U ^L 显示 capabilities/cgroup/命令行/环境变量/命名空间/补充组/已记录消息。\n\n【htop 选项】-d/--delay=DELAY 刷新间隔(单位是十分之一秒！<1 提到 1，>100 降到 100)｜-C/--no-color/--no-colour 单色｜-F/--filter=FILTER 按命令过滤(大小写不敏感、固定字符串匹配，可用 | 分隔多个词)｜-p/--pid 只显示指定 PID｜-s/--sort-key=COLUMN 按此列排序(--sort-key help 列出可选列，会强制列表视图除非同时给 -t)｜-u/--user[=USERNAME|UID] 只显示指定用户(省略则为自己)｜-t/--tree[=MODE] 树状视图(MODE：0/classic、1/soft/stable、2/hard/STABLE)｜-H/--highlight-changes=DELAY 高亮新老进程｜-U/--no-unicode 用 ASCII 画图形表｜-M/--no-mouse 禁用鼠标｜--no-function-bar 隐藏功能键栏｜--no-meters 隐藏图形表｜--readonly 禁用一切修改系统的功能｜--drop-capabilities[=off|basic|strict] 丢弃不需要的 capabilities(需编译期开启+libcap)｜-h/--help｜-V/--version。\n\n【BSD/macOS 差异】macOS 自带 top 但选项差异很大(-l 是采样次数、-n 是显示行数)，且没有 htop(需 brew install htop)。",
+    "purpose": "实时看 CPU/内存占用与热点进程；交互式杀进程/renice；脚本里抓一帧快照",
+    "category": "process",
+    "tags": [
+      "top",
+      "htop",
+      "监控",
+      "实时",
+      "负载"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-b 批处理｜-n 1 只跑一帧｜-d 1 刷新间隔(秒)｜-o %CPU 排序字段｜-p PID 只看某进程｜-u USER 只看某用户｜-H 显示线程",
+        "required": false,
+        "default": "",
+        "example": "-b -n 1 -o %MEM"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ top -b -n 1 -o %CPU | head -12\ntop - 09:41:02 up 1 day,  3:12,  2 users,  load average: 0.42, 0.35, 0.31\nTasks: 218 total,   1 running, 217 sleeping\n%Cpu(s):  3.2 us,  0.8 sy,  0.0 ni, 95.6 id\nMiB Mem :  15872.0 total,  1024.5 free,  6210.3 used,  8637.2 buff/cache\nMiB Swap:   8192.0 total,   8192.0 free,     0.0 used.  9102.4 avail Mem\n    PID USER  PR  NI    VIRT    RES  %CPU  %MEM COMMAND\n   812 www   20   0  890124  67204  12.3   4.1 nginx: worker",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "kill 向进程发信号",
+    "command": "kill {{options}} {{pid}}",
+    "description": "向进程发送信号，默认发送 SIGTERM(15)。kill 既是 shell 内建也是 /bin/kill 外部命令。\n\n【PID 写法】n(n>0) 向 PID n 发信号｜0 向调用进程所在进程组的所有进程发｜-1 向所有 PID>1 的进程发(极其危险)｜-n(n>1) 向进程组 n 的所有进程发。\n\n【选项】-s/--signal signal 指定信号(名字或编号)｜-l/--list [number|0xsigmask] 列出信号名/把编号转成名字/把信号掩码转成名字｜-L/--table 类似 -l 但打印信号名与对应编号｜-a/--all 不把命令名到 PID 的转换限制为同 UID 进程｜-p/--pid 只打印 PID 不发信号｜-r/--require-handler 若目标未在用户态捕获该信号则不发｜-q/--queue value 用 sigqueue(3) 而非 kill(2)，随信号发送整数｜--timeout milliseconds signal 先发一个信号延迟后再发一个跟随信号(基于 PID fd)｜--verbose 打印将被 signal 的 PID 与信号｜-d/--show-process-state pid 解码 /proc/pid/status 的信号字段｜-h/--help｜-V/--version。\n\n【常用信号(编号经 Linux 内核源码核实)】SIGHUP=1 终端挂断/守护进程重载配置｜SIGINT=2 键盘中断(Ctrl-C)｜SIGQUIT=3 键盘退出产生core｜SIGKILL=9 强制杀死(不可捕获/阻塞/忽略)｜SIGUSR1=10 用户自定义1｜SIGSEGV=11 无效内存引用｜SIGUSR2=12 用户自定义2｜SIGPIPE=13 管道破裂｜SIGALRM=14 alarm定时器｜SIGTERM=15 终止(kill默认)｜SIGCHLD=17 子进程状态变化｜SIGCONT=18 继续｜SIGSTOP=19 停止(不可捕获/阻塞/忽略)｜SIGTSTP=20 终端停止(Ctrl-Z)｜SIGTTIN=21 后台读终端｜SIGTTOU=22 后台写终端｜SIGWINCH=28 窗口大小改变｜SIGRTMIN..SIGRTMAX=32..64 实时信号(glibc 下 SIGRTMIN 通常为34)。\n\n【BSD/macOS 差异】macOS 无 --timeout/--require-handler/-q/-d；且信号编号不同(SIGUSR1=30、SIGUSR2=31、SIGSTOP=17、SIGTSTP=18)，跨平台脚本不要硬编码编号。",
+    "purpose": "优雅停止进程(先 TERM)；强制杀死卡死进程(KILL)；让守护进程重载配置(HUP)；暂停/恢复进程(STOP/CONT)",
+    "category": "process",
+    "tags": [
+      "kill",
+      "信号",
+      "SIGTERM",
+      "SIGKILL",
+      "进程"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-15/默认 优雅终止｜-9 强制杀死｜-HUP 重载配置｜-STOP 暂停｜-CONT 恢复｜-l 列出信号｜-0 探测进程是否存在",
+        "required": false,
+        "default": "-15",
+        "example": "-9"
+      },
+      {
+        "name": "pid",
+        "label": "进程号",
+        "description": "目标进程 PID，可多个；也可用 %1 这类作业号(shell 内建)",
+        "required": true,
+        "default": "1234",
+        "example": "1234"
+      }
+    ],
+    "dangerLevel": "destructive",
+    "exampleOutput": "$ kill 1234          # 发 SIGTERM 请求优雅退出\n$ kill -9 1234       # 强制杀死\n$ kill -l 9\nKILL\n$ kill -HUP 1234    # 让守护进程重载配置",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "killall 按名发信号",
+    "command": "killall {{options}} {{name}}",
+    "description": "按进程名(不是命令行)匹配并发信号，默认 SIGTERM。\n\n【选项】-e/--exact 要求完全匹配(名字超过15字符时若无法取得全名会被跳过，配合 -v 会打印每个被跳过的条目)｜-I/--ignore-case 匹配忽略大小写｜-g/--process-group 杀进程组(每组只发一次信号，即使匹配到多个进程)｜-i/--interactive 杀之前逐个交互确认｜-l/--list 列出所有已知信号名｜-n/--ns PID 匹配指定 PID 所在命名空间(默认匹配所有)｜-o/--older-than TIME 只匹配比 TIME 更老(更早启动)的进程，TIME 为浮点数+单位(s m h d w M y)｜-y/--younger-than TIME 只匹配比 TIME 更年轻的进程｜-q/--quiet 没杀到任何进程时不抱怨｜-r/--regexp 进程名模式按 POSIX 扩展正则解释｜-s/--signal SIG 或 -SIG 发送指定信号(替代 SIGTERM)｜-u/--user USER 只杀该用户拥有的进程(此时进程名可省略)｜-v/--verbose 报告信号是否发送成功｜-w/--wait 等所有被杀进程真正退出(每秒检查一次；若信号被忽略或进程变僵尸可能永远等待)｜-Z/--context PATTERN 按安全上下文匹配(必须放在其他参数之前)｜-V/--version。\n\n【BSD/macOS 差异】macOS 的 killall 参数集小得多，无 -r/-o/-y/-w/-Z/-n。",
+    "purpose": "按名字批量停止服务进程；重载配置；按用户清理进程",
+    "category": "process",
+    "tags": [
+      "killall",
+      "进程",
+      "按名",
+      "信号",
+      "批量"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-9 强制｜-HUP 重载｜-i 交互确认｜-v 详细｜-u USER 按用户｜-r 正则｜-o 1h 只杀超过1小时的｜-w 等待退出",
+        "required": false,
+        "default": "",
+        "example": "-9"
+      },
+      {
+        "name": "name",
+        "label": "进程名",
+        "description": "进程名(通常 ≤15 字符，非完整命令行)；配合 -u 时可省略",
+        "required": true,
+        "default": "nginx",
+        "example": "nginx"
+      }
+    ],
+    "dangerLevel": "destructive",
+    "exampleOutput": "$ killall -v -9 nginx\nKilled nginx(812) with signal 9\nKilled nginx(813) with signal 9\n$ killall -HUP nginx   # 重载配置",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "pkill 按模式发信号",
+    "command": "pkill {{options}} {{pattern}}",
+    "description": "按模式匹配进程(默认匹配进程名，-f 时匹配完整命令行)并发信号。与 pgrep 共用一套选项(pgrep 只列出不发信号)。\n\n【选项】-signal/--signal 指定发送的信号｜-f/--full 用完整命令行匹配(否则只匹配进程名)｜-x/--exact 名字(或 -f 时的命令行)必须完全匹配｜-i/--ignore-case 忽略大小写｜-c/--count 只打印匹配数量(pkill 的计数是匹配数，不是成功信号数)｜-e/--echo 显示被杀进程的名字与 PID(仅 pkill)｜-a/--list-full 同时列出完整命令行与 PID(仅 pgrep)｜-l/--list-name 同时列出进程名与 PID(仅 pgrep)｜-d/--delimiter 输出 PID 之间的分隔符(仅 pgrep)｜-Q/--shell-quote 命令行以 shell 引用形式输出(仅 pgrep)｜--quiet 不向 stdout 写任何内容(仅 pgrep)｜-F/--pidfile file 从文件读 PID(- 表示 stdin)｜-L/--logpidfile 若 pidfile 未加锁则失败｜-A/--ignore-ancestors 忽略 pgrep/pkill 自身的所有祖先进程(sudo 提权时有用)｜-H/--require-handler 只匹配在用户态装了该信号处理器的进程｜-m/--mrelease 发完信号后调用 process_mrelease() 立即释放目标内存｜-n/--newest 只选最新的(最晚启动)｜-o/--oldest 只选最老的(最早启动)｜-O/--older secs 只选启动超过 secs 秒的｜-p/--pid 只匹配指定 PID｜-P/--parent 只匹配指定父进程的子进程｜-g/--pgroup 只匹配指定进程组(0 表示自身进程组)｜-G/--group 只匹配真实组 ID｜-u/--euid 只匹配有效用户 ID｜-U/--uid 只匹配真实用户 ID｜-s/--session 只匹配指定会话 ID(0 表示自身会话)｜-t/--terminal 只匹配指定控制终端(不带 /dev/ 前缀)｜-r/--runstates D,R,S,Z 只匹配指定进程状态｜-v/--inverse 取反匹配(pkill 下短选项被禁用)｜-w/--lightweight 显示所有线程 ID 而非 PID(pkill 下被禁用)｜-q/--queue value 随信号发送整数 value｜--cgroup 按 cgroup v2 名匹配｜--env name[=value] 按环境变量匹配｜--ns pid 匹配属于同一命名空间的进程(匹配其他用户需 root)｜--nslist 限定要匹配的命名空间(ipc mnt net pid user uts)｜-V/--version｜-h/--help。\n\n【BSD/macOS 差异】macOS 的 pkill 无 -A/-H/-m/-q/--cgroup/--env/--ns；-F 存在但行为略有差异。",
+    "purpose": "按命令行模式批量杀进程；先 pgrep -af 预览再 pkill；按用户/终端/新旧筛选",
+    "category": "process",
+    "tags": [
+      "pkill",
+      "pgrep",
+      "模式",
+      "进程",
+      "正则"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-f 匹配完整命令行｜-9 强制｜-x 精确匹配｜-u USER 按用户｜-n 最新一个｜-o 最老一个｜-e 显示被杀进程",
+        "required": false,
+        "default": "-f",
+        "example": "-9 -f"
+      },
+      {
+        "name": "pattern",
+        "label": "匹配模式",
+        "description": "POSIX 扩展正则；默认只匹配进程名，加 -f 后匹配完整命令行",
+        "required": true,
+        "default": "java",
+        "example": "java.*MyApp"
+      }
+    ],
+    "dangerLevel": "destructive",
+    "exampleOutput": "$ pgrep -af java\n1523 java -jar /opt/app/myapp.jar\n$ pkill -f 'java.*MyApp'\n$ pkill -9 -f 'python.*train.py'",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "jobs / fg / bg 任务控制",
+    "command": "jobs {{options}}",
+    "description": "shell 内建(不是外部命令)。shell 把每个管道当作一个作业，作业号从 1 开始，jobs 用方括号显示。\n\n【三个命令】jobs 列出活动作业｜fg [jobspec] 把作业调回前台并成为当前作业(返回该命令的退出状态)｜bg [jobspec ...] 让挂起的作业在后台继续(如同用 & 启动)，无参数时作用于当前作业。\n\n【jobs 选项】-l 除常规信息外还列出进程 ID｜-n 只显示自上次通知后状态发生变化的作业｜-p 只列出作业进程组首进程的 PID｜-r 只显示运行中的作业｜-s 只显示已停止的作业｜-x command [args] 把 command/args 中的 jobspec 替换为对应进程组 ID 后执行并返回其退出状态。\n\n【jobspec 语法】%n 作业号 n｜%% / %+ / % 当前作业｜%- 前一个作业｜%string 以 string 开头的作业｜%?string 命令行中包含 string 的作业。前缀或子串匹配到多个作业时 bash 会报错。\n\n【相关机制】cmd & 后台启动，shell 打印 [1] 25647(作业号+末进程PID)｜Ctrl-Z 挂起前台进程(发 SIGTSTP)｜Ctrl-C 中断前台进程(发 SIGINT)｜Ctrl-Y 延迟挂起(进程下次读终端时停止)｜wait [jobspec] 等待作业结束｜disown 把作业从作业表移除(免受 SIGHUP)｜kill %1 杀掉 1 号作业。\n\n【BSD/macOS 差异】bash/zsh 的作业控制行为一致；但 zsh 的 % 语义更丰富且 jobs 输出格式不同。",
+    "purpose": "查看后台任务；把任务在前后台之间切换；挂起/恢复长时间运行的任务",
+    "category": "process",
+    "tags": [
+      "jobs",
+      "fg",
+      "bg",
+      "任务控制",
+      "后台"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "jobs: -l 带PID｜-r 只看运行中｜-s 只看已停止｜-n 只看状态变化的｜-p 只列PID；fg/bg 接受 jobspec 如 %1",
+        "required": false,
+        "default": "-l",
+        "example": "-l"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ sleep 300 &\n[1] 25647\n$ jobs -l\n[1]+ 25647 Running                 sleep 300 &\n# 按 Ctrl-Z 挂起后：\n[1]+  Stopped                 sleep 300\n$ bg %1\n$ fg %1",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "nohup 后台不挂断运行",
+    "command": "nohup {{command}}",
+    "description": "让 COMMAND 忽略挂断信号(SIGHUP)，输出重定向到非终端。\n\n【选项】--help 显示帮助并退出｜--version 输出版本信息并退出。\n\n【重定向行为】若标准输入是终端则从一个不可读文件重定向｜若标准输出是终端则追加输出到 nohup.out(若不可写则用 $HOME/nohup.out)｜若标准错误是终端则重定向到标准输出｜想保存到指定文件用 nohup COMMAND > FILE。\n\n【退出状态】125 nohup 命令自身失败｜126 COMMAND 找到但无法调用｜127 COMMAND 找不到｜其他 COMMAND 自身的退出状态。\n\n【BSD/macOS 差异】nohup 行为基本一致，--help/--version 的 GNU 长选项在 macOS 上不可用。",
+    "purpose": "让长任务在退出终端后继续运行；后台跑训练/构建/部署脚本",
+    "category": "process",
+    "tags": [
+      "nohup",
+      "后台",
+      "SIGHUP",
+      "守护",
+      "长任务"
+    ],
+    "params": [
+      {
+        "name": "command",
+        "label": "命令",
+        "description": "要运行的命令及其参数；建议显式重定向输出并加 & 放后台",
+        "required": true,
+        "default": "./long_task.sh",
+        "example": "python train.py > train.log 2>&1 &"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ nohup python train.py > train.log 2>&1 &\n[1] 25647\n$ tail -f train.log\nEpoch 1/100 loss=0.842",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "systemctl 服务管理",
+    "command": "systemctl {{options}} {{unit}}",
+    "description": "systemd 的服务与单元管理。\n\n【常用子命令】status 查看状态(含最近日志)｜start/stop/restart 启动/停止/重启｜reload 重载配置(不重启进程)｜enable/disable 设置/取消开机自启｜is-active/is-enabled/is-failed 查询状态(返回退出码，适合脚本)｜list-units 列出已加载单元｜list-unit-files 列出所有已安装单元文件｜list-dependencies 列出依赖｜daemon-reload 重新加载 unit 文件(改完 .service 必须执行)｜mask/unmask 屏蔽/解除屏蔽(比 disable 更强，无法被依赖拉起)｜cat 显示 unit 文件｜edit 编辑(生成 override 片段)｜show 显示单元属性(可 -p 过滤)｜kill 向单元进程发信号｜clean 清理单元资源｜reset-failed 清除失败状态｜list-timers 列出定时器｜list-jobs 列出排队作业｜halt/poweroff/reboot 关机/关机/重启(危险)｜suspend/hibernate/hybrid-sleep 休眠｜default/rescue/emergency 切换运行目标｜preset/preset-all 按预设启用禁用。\n\n【选项(手册共 66 项，节选)】-t/--type= 限定单元类型｜--state= 限定 LOAD/SUB/ACTIVE 状态(--state=failed 或 --failed)｜-p/--property= 配合 show 限定属性｜-P 等价 --value --property=，只显示值(v246+)｜-a/--all 也显示非活动单元｜-r/--recursive 也显示本地容器单元｜--reverse 显示反向依赖｜--after/--before 显示之后/之前的单元｜--with-dependencies 一并打印依赖｜-l/--full 不省略名称与描述｜--value 只打印值｜--job-mode= 排队新作业时如何处理已有作业(fail/replace/isolate/flush 等，默认 replace)｜-T/--show-transaction 显示所有相关作业｜--check-inhibitors= 关机休眠时是否检查 inhibitor 锁(auto/yes/no)｜-i 等于 --check-inhibitors=no｜--dry-run 只打印将要做的事｜-q/--quiet 抑制命令结果与提示(错误仍打印)｜-v/--verbose 执行时显示单元日志(v258+)｜--no-warn 不产生默认警告｜--no-block 不同步等待完成｜--wait 配合 start/restart 同步等待单元再次终止｜--user 与当前用户的服务管理器通信｜--system 与系统服务管理器通信(默认)｜--failed 列出失败单元｜--no-wall 关机重启前不发 wall 消息｜--global 操作全局用户配置目录｜--no-reload 变更后不隐式重载｜--kill-whom= kill 时选择目标(main/control/cgroup/all)｜--kill-value=INT kill 时随信号发送整数(仅实时信号)｜-s/--signal= kill 时指定信号(默认 SIGTERM)｜--what= clean 时选择资源类型｜-f/--force 覆盖冲突符号链接/创建不存在单元｜--message= 关机时附带说明｜--now enable/disable/mask 后立即 start/stop｜--root= 操作指定根路径｜--image=/--image-policy= 操作磁盘镜像｜--runtime 只做临时更改｜--preset-mode= preset 行为｜-n/--lines= status 显示多少行日志(默认10)｜-o/--output= status 日志格式｜--firmware-setup 重启进固件设置｜--boot-loader-menu/--boot-loader-entry 下次启动引导项｜--plain list-* 用列表而非树｜--timestamp= 时间戳格式｜--drop-in=NAME edit 时指定 drop-in 名｜--when= 定时关机重启｜--stdin edit 时从 stdin 读｜-H/--host= 远程执行｜-M/--machine= 本地容器中执行｜-C/--capsule= capsule 中执行｜--no-ask-password｜--no-pager｜--legend=BOOL｜-h/--help｜--version。\n\n【BSD/macOS 差异】macOS 没有 systemd，用 launchctl 替代。",
+    "purpose": "启停/重启服务；设置开机自启；查服务状态与日志；排查服务起不来的原因",
+    "category": "system",
+    "tags": [
+      "systemctl",
+      "systemd",
+      "服务",
+      "守护进程",
+      "自启"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "start/stop/restart/reload 动作｜enable --now 自启并启动｜disable 取消自启｜is-active/is-enabled 查询｜--user 用户级服务",
+        "required": false,
+        "default": "status",
+        "example": "restart"
+      },
+      {
+        "name": "unit",
+        "label": "单元",
+        "description": "服务名(可省略 .service 后缀)",
+        "required": false,
+        "default": "nginx",
+        "example": "nginx"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ systemctl status nginx\n● nginx.service - A high performance web server\n     Loaded: loaded (/lib/systemd/system/nginx.service; enabled)\n     Active: active (running) since Mon 2026-10-13 09:12:04 CST\n   Main PID: 812 (nginx)\n$ systemctl enable --now nginx\nCreated symlink /etc/systemd/system/multi-user.target.wants/nginx.service",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "journalctl 查看 systemd 日志",
+    "command": "journalctl {{options}} {{unit}}",
+    "description": "查看 systemd 日志。普通用户默认看不到系统日志，需加入 systemd-journal 组或 sudo。\n\n【范围与来源】--system 系统服务与内核消息｜--user 当前用户的服务消息｜-M/--machine= 本地容器消息｜-m/--merge 交错显示所有可用日志(含远程)｜-D/--directory= 指定日志目录｜-i/--file=GLOB 指定日志文件(可多次)｜--root= 指定根目录下的日志层次｜--image=/--image-policy= 磁盘镜像｜--namespace= 指定命名空间(* 表示全部)。\n\n【过滤】-S/--since= 起始时间｜-U/--until= 结束时间(格式 \"2012-10-30 18:17:16\"，可省略时间或秒)｜-b/--boot[=...] 指定某次启动(空=本次，-1 上次，all 全部)｜-u/--unit= 按 systemd 单元过滤(可给模式)｜--user-unit= 按用户会话单元｜-I/--invocation= 按某次调用｜-t/--identifier= 按 syslog 标识符(可多次)｜-T/--exclude-identifier= 排除标识符(v256+)｜-p/--priority= 按优先级(0/emerg..7/debug，或 FROM..TO 区间)｜--facility= 按 facility(help 列出可选值)｜-g/--grep= MESSAGE 按 PCRE 正则过滤(全小写模式则大小写不敏感)｜--case-sensitive[=BOOL] 指定是否大小写敏感｜-k/--dmesg 只看内核消息(隐含 --boot=0)｜-c/--cursor= 从指定游标开始｜--after-cursor= 从游标之后开始｜--cursor-file=FILE 从文件读游标开始并把最后游标写回。\n\n【输出格式】-o/--output= short(默认)/short-full/short-iso/short-precise/short-monotonic/short-unix/verbose/export/json/json-pretty/json-sse/json-seq/cat/with-unit｜--output-fields= 限定输出字段｜-n/--lines= 显示最近 N 条(或 all；+N 表示最旧的 N 条；默认10)｜-r/--reverse 反转(最新在前)｜--show-cursor 显示游标｜--utc 用 UTC｜-x/--catalog 附加解释文本｜-W/--no-hostname 不显示主机名(仅 short 系列)｜--no-full/--full/-l 省略/完整显示超长字段｜-a/--all 完整显示所有字段｜--truncate-newline 在第一个换行处截断(v254+)｜-q/--quiet 抑制信息性消息｜--no-pager 不分页｜-e/--pager-end 立即跳到末尾(隐含 --lines=1000 与 --boot=0)｜-f/--follow 持续跟踪新条目(Ctrl-C 退出)｜--no-tail 跟踪模式也显示已存输出｜--synchronize-on-exit=。\n\n【维护与查询】-N/--fields 打印所有字段名｜-F/--field= 打印某字段所有取值｜--list-boots 列出启动编号与时间｜--list-invocations 列出调用 ID(需 -u)｜--disk-usage 日志磁盘占用｜--vacuum-size= 删除最旧归档日志直到低于指定大小｜--vacuum-time= 删除早于指定时间的归档日志｜--vacuum-files= 保留最多 N 个归档文件｜--verify/--verify-key= 校验日志一致性/真实性｜--sync 落盘并同步｜--flush 把 /run/log/journal 刷到 /var/log/journal｜--relinquish-var/--smart-relinquish-var｜--rotate 轮转日志｜--header 显示内部头部｜--list-catalog/--dump-catalog/--update-catalog｜--setup-keys/--interval=/--force｜-h/--help｜--version。\n\n【BSD/macOS 差异】macOS 没有 journald，用 log show --predicate 或 /var/log/system.log。",
+    "purpose": "查服务日志与报错；实时跟踪日志；按时间/优先级/正则过滤；清理日志占用",
+    "category": "system",
+    "tags": [
+      "journalctl",
+      "systemd",
+      "日志",
+      "排错",
+      "跟踪"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-u UNIT 按单元｜-f 实时跟踪｜-n 100 最近100条｜-r 倒序｜--since today 起始时间｜-p err 按优先级｜-b 本次启动｜-k 内核消息｜-o json-pretty 格式",
+        "required": false,
+        "default": "-u",
+        "example": "-u nginx -f"
+      },
+      {
+        "name": "unit",
+        "label": "单元",
+        "description": "服务名；也可用其他 MATCHES 字段(如 _PID=1234、可执行文件路径)",
+        "required": false,
+        "default": "nginx",
+        "example": "nginx"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ journalctl -u nginx -n 3 --no-pager\nOct 14 09:40:11 host nginx[812]: 10.0.0.1 - - \"GET / HTTP/1.1\" 200 612\nOct 14 09:40:12 host nginx[812]: upstream timed out (110: Connection timed out)\nOct 14 09:40:13 host nginx[812]: 10.0.0.1 - - \"GET /api HTTP/1.1\" 502 157\n$ journalctl --disk-usage\nArchived and active journals take up 128.0M in the file system.",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "free 内存使用",
+    "command": "free {{options}}",
+    "description": "显示系统空闲与已用内存(含交换)，数据来自解析 /proc/meminfo。\n\n【列的含义】total 可用总内存(MemTotal 与 SwapTotal，物理与交换内存减去少量保留位与内核二进制代码)｜used 已用或不可用内存(计算为 total - available)｜free 未使用内存(MemFree 与 SwapFree)｜shared (主要)被 tmpfs 使用的内存(Shmem)｜buffers 内核缓冲区使用的内存(Buffers)｜cache 页缓存与 slab 使用的内存(Cached + SReclaimable)｜buff/cache buffers 与 cache 之和｜available 估算的、可用来启动新应用而不触发交换的内存(MemAvailable)。\n\n【available 与 free 的关键差别】available 把可回收的页缓存与部分 slab 也算进去，更接近真实可用量。内核 3.14 起提供，2.6.27+ 模拟，更早则等同 free。\n\n【选项】-b/--bytes 字节｜-k/--kibi KiB(默认)｜-m/--mebi MiB｜-g/--gibi GiB｜--tebi TiB｜--pebi PiB｜--kilo KB(隐含 --si)｜--mega MB(隐含 --si)｜--giga GB(隐含 --si)｜--tera TB(隐含 --si)｜--peta PB(隐含 --si)｜-h/--human 自动缩放到最短的三位数单位(B/Ki/Mi/Gi/Ti/Pi)｜-w/--wide 宽模式(行长超80字符，buffers 与 cache 分成两列)｜-c/--count count 显示 count 次(需配合 -s)｜-l/--lohi 显示详细的 low/high 内存统计｜-L/--line 单行输出(常配合 -s)｜-s/--seconds delay 每 delay 秒持续显示(支持浮点)｜--si 用 1000 进制代替 1024 进制｜-t/--total 显示列总计行｜-v/--committed 显示内存提交上限与已提交/未提交内存(关闭 overcommit 时才有意义)｜--help｜-V/--version。\n\n【BSD/macOS 差异】macOS 没有 free，用 vm_stat、top、memory_pressure 或 sysctl hw.memsize 替代。",
+    "purpose": "查看内存与交换使用；判断内存是否吃紧；持续监控内存变化",
+    "category": "system",
+    "tags": [
+      "free",
+      "内存",
+      "swap",
+      "available",
+      "监控"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-h 人类可读(1024进制)｜-m MiB｜-g GiB｜-w 宽模式分开显示buffers与cache｜-t 带总计｜-s 2 每2秒刷新｜-l 含low/high内存",
+        "required": false,
+        "default": "-h",
+        "example": "-h -w"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ free -h\n               total        used        free      shared  buff/cache   available\nMem:            15Gi       6.1Gi       1.0Gi       412Mi       8.4Gi       8.9Gi\nSwap:          8.0Gi          0B       8.0Gi\n$ free -h -s 2   # 每 2 秒刷新",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "uptime 运行时长/负载",
+    "command": "uptime {{options}}",
+    "description": "单行显示：当前时间、系统运行时长、当前登录用户数、过去 1/5/15 分钟的系统负载均值。与 w(1) 的头部行是同一份信息。\n\n【负载均值的含义】系统负载均值是处于可运行或不可中断状态的进程的平均数量。可运行状态指正在使用 CPU 或等待使用 CPU；不可中断状态指等待 I/O 访问(例如等磁盘)。均值取三个时间区间。\n\n【关键】负载均值没有按 CPU 数量归一化：负载 1 在单核系统上表示一直满载，而在 4 核系统上表示有 75% 的时间是空闲的。\n\n【选项】-c/--container 显示容器运行时长而非系统运行时长｜-p/--pretty 以易读格式显示｜-r/--raw 原始格式(当前时间与运行时长以秒为单位)｜-s/--since 系统启动时刻(格式 yyyy-mm-dd HH:MM:SS)｜-h/--help｜-V/--version。\n\n【环境变量】PROCPS_CONTAINER 被设置时等价于给了 --container。\n\n【BSD/macOS 差异】macOS 有 uptime，但无 -p/-s/-r/--container(这些是 procps-ng 的扩展)。",
+    "purpose": "快速看系统负载与运行时长；判断负载是否异常；脚本里做健康检查",
+    "category": "system",
+    "tags": [
+      "uptime",
+      "负载",
+      "load average",
+      "运行时长",
+      "监控"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-p 易读格式｜-s 系统启动时刻｜-r 原始秒数｜-c 容器运行时长",
+        "required": false,
+        "default": "",
+        "example": "-p"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ uptime\n 09:41:02 up 1 day,  3:12,  2 users,  load average: 0.42, 0.35, 0.31\n$ uptime -p\nup 1 day, 3 hours, 12 minutes\n$ uptime -s\n2026-10-13 06:29:11",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "uname 系统信息",
+    "command": "uname {{options}}",
+    "description": "打印系统与内核信息。\n\n【选项】-a/--all 按以下顺序打印所有信息(-p 与 -i 未知时省略)｜-s/--kernel-name 内核名｜-n/--nodename 网络节点主机名｜-r/--kernel-release 内核发行版本号｜-v/--kernel-version 内核版本｜-m/--machine 机器硬件名(架构)｜-p/--processor 处理器类型(非可移植)｜-i/--hardware-platform 硬件平台(非可移植)｜-o/--operating-system 操作系统｜--help｜--version。\n\n【-a 的输出顺序】-s -n -r -v -m -p -i -o。\n\n【BSD/macOS 差异】macOS 的 uname 没有 -o；uname -a 输出格式不同(含 Darwin 版本)。",
+    "purpose": "确认内核版本与架构；判断是否匹配二进制包；写安装脚本时做环境检测",
+    "category": "system",
+    "tags": [
+      "uname",
+      "内核",
+      "架构",
+      "版本",
+      "系统"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-a 全部信息｜-r 内核版本｜-m 架构｜-s 内核名｜-o 操作系统",
+        "required": false,
+        "default": "-a",
+        "example": "-r"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ uname -a\nLinux host 6.8.0-45-generic #45-Ubuntu SMP PREEMPT_DYNAMIC x86_64 GNU/Linux\n$ uname -m\nx86_64\n$ uname -r\n6.8.0-45-generic",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "lscpu CPU 信息",
+    "command": "lscpu {{options}}",
+    "description": "显示 CPU 架构与拓扑信息，数据来自 /proc/cpuinfo、/sys/devices/system/cpu/ 等。\n\n【选项】-a/--all 输出中包含在线与离线 CPU(-e 的默认行为，只能配合 -e 或 -p)｜-b/--online 只输出在线 CPU(-p 的默认行为)｜-c/--offline 只输出离线 CPU｜-e/--extended[=list] 人类可读格式显示 CPU 信息(可指定列如 -e=cpu,node)｜-p/--parse[=list] 优化为易解析输出(指定 list 时缓存列用 : 分隔)｜-C/--caches[=list] 显示 CPU 缓存详情(如 -C=NAME,ONE-SIZE)｜-H/--list-columns 列出 --extended/--parse/--caches 可用的列｜--output-all 输出所有可用列(需配合 -e/-p/-C)｜-r/--raw 原始格式(仅对 -e/-p/-C 有效)｜-B/--bytes 以字节而非人类可读形式打印大小｜-x/--hex CPU 集合用十六进制掩码(如 ff)，默认是列表格式(如 0,1)｜-y/--physical 显示所有拓扑列的物理 ID(内核提供，不保证唯一或连续)｜-s/--sysroot directory 收集其他 Linux 实例的 CPU 数据｜-J/--json JSON 输出｜--hierarchic[=when] 汇总输出中使用子节(never/always/auto)｜--annotate[=when] 给列名加注解｜--arm-id[=list] 打印已知 ARM 核实现者及名称｜--arm-model id 打印指定核型号名称(需配合 --arm-id=id)｜-h/--help｜-V/--version。\n\n【常用输出字段】Architecture 架构｜CPU(s) 逻辑 CPU 总数｜Thread(s) per core 每核线程数(超线程)｜Core(s) per socket 每插槽核数｜Socket(s) 物理插槽数｜NUMA node(s) NUMA 节点数｜CPU MHz 当前频率｜CPU max/min MHz｜BogoMIPS｜Virtualization 虚拟化类型(VT-x/AMD-V)｜Hypervisor vendor 虚拟化厂商(在虚机里才显示)｜L1d/L1i/L2/L3 cache｜Flags CPU 特性标志(avx512f、sse4_2 等)。\n\n【BSD/macOS 差异】macOS 没有 lscpu，用 sysctl -n machdep.cpu.brand_string、hw.ncpu、hw.physicalcpu。",
+    "purpose": "确认 CPU 核数与超线程拓扑；判断是否虚拟化；查 CPU 特性标志；算并行度",
+    "category": "system",
+    "tags": [
+      "lscpu",
+      "CPU",
+      "架构",
+      "核数",
+      "拓扑"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-e 每个逻辑CPU一行｜-p 易解析格式｜-C 缓存详情｜-J JSON｜-B 大小以字节｜-y 物理ID",
+        "required": false,
+        "default": "",
+        "example": "-e"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ lscpu | grep -E 'Model name|Socket|Core|Thread|CPU\\(s\\)'\nCPU(s):                          16\nThread(s) per core:              2\nCore(s) per socket:              8\nSocket(s):                       1\nModel name:                      Intel(R) Core(TM) i9-9880H CPU @ 2.30GHz",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "lsblk 块设备列表",
+    "command": "lsblk {{options}}",
+    "description": "以树状(默认)列出块设备及其分区、挂载点。不会列出 RAM 盘(除非 -a)。\n\n【选项】-a/--all 禁用所有内置过滤，列出所有空设备与 RAM 盘｜-A/--noempty 不打印空设备｜-b/--bytes 大小以字节显示｜-d/--nodeps 不打印持有者/从属设备(如 lsblk -d /dev/sda 只看 sda 本身)｜-D/--discard 打印丢弃能力(TRIM、UNMAP)｜-E/--dedup column 用该列作为去重键对输出树去重(多路径常用 -E WWN)｜-e/--exclude list 排除指定主设备号的设备(过滤只作用于顶层设备)｜-I/--include list 只包含指定主设备号的设备｜-f/--fs 输出文件系统信息(等价 -o NAME,FSTYPE,FSVER,LABEL,UUID,FSAVAIL,FSUSE%,MOUNTPOINTS)｜-i/--ascii 用 ASCII 字符画树｜-J/--json JSON 输出(建议配合 --output，必要时加 --tree)｜-l/--list 列表形式(不体现设备间关系)｜-m/--perms 输出设备属主、属组、权限(等价 -o NAME,SIZE,OWNER,GROUP,MODE)｜-M/--merge 合并子树父节点(RAID 与多路径更易读)｜-N/--nvme 只输出 NVMe 设备｜-v/--virtio 只输出 virtio 设备｜-n/--noheadings 不打印表头｜-o/--output list 指定输出列(+list 表示在默认列基础上追加)｜-O/--output-all 输出所有可用列｜-P/--pairs 以 key=\"value\" 输出｜-p/--paths 打印完整设备路径｜-Q/--filter expression 只打印满足表达式的设备(先过滤后取数，比 grep 高效)｜--highlight expression 给匹配行着色(实验)｜--ct name[:parameter[:function]] 定义自定义计数器(count/min/max/sum)｜--ct-filter expression 为下一个计数器定义限制(实验)｜-r/--raw 原始格式输出｜-S/--scsi 只输出 SCSI 设备｜-s/--inverse 逆序打印依赖关系｜-T/--tree[=column] 强制树状输出｜-t/--topology 输出块设备拓扑｜-w/--width number 输出宽度｜-x/--sort column 按列排序(会默认启用 --list 格式)｜-y/--shell 列名改为只含 shell 变量允许的字符(MIN_IO 而非 MIN-IO)｜-z/--zoned 打印 zone 相关信息｜--sysroot directory｜--properties-by list 指定收集文件系统与分区表信息的方法(默认 file,udev,blkid)｜--hyperlink[=when]｜--annotate[=when]｜-H/--list-columns｜-h/--help｜-V/--version。\n\n【常用列】NAME KNAME PATH TYPE SIZE RO RM MODEL SERIAL WWN UUID FSTYPE FSVER LABEL PARTLABEL PARTUUID MOUNTPOINTS FSAVAIL FSUSE% OWNER GROUP MODE ROTA SCHED ALIGNMENT MIN-IO OPT-IO PHY-SEC LOG-SEC RQ-SIZE。\n\n【BSD/macOS 差异】macOS 没有 lsblk，用 diskutil list。",
+    "purpose": "查看磁盘与分区结构；确认挂载点与文件系统；判断 SSD/HDD(看 ROTA)；查设备 UUID 与 WWN",
+    "category": "disk",
+    "tags": [
+      "lsblk",
+      "磁盘",
+      "分区",
+      "块设备",
+      "挂载"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-f 含文件系统｜-d 只看磁盘不展开分区｜-o 自定义列｜-p 完整路径｜-l 列表形式｜-J JSON｜-e 7 排除loop｜-t 拓扑",
+        "required": false,
+        "default": "",
+        "example": "-f"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS\nNAME   SIZE FSTYPE MOUNTPOINTS\nsda    476G        \n├─sda1  512M vfat   /boot/efi\n├─sda2  100G ext4   /\n└─sda3  375G ext4   /data\nnvme0n1 1.8T       \n└─nvme0n1p1 1.8T ext4 /mnt/data2\n$ lsblk -d -o NAME,ROTA,SIZE\nNAME    ROTA SIZE\nsda        1 476G\nnvme0n1    0 1.8T",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "df 文件系统空间",
+    "command": "df {{options}}",
+    "description": "显示每个文件名参数所在文件系统的可用空间。不给文件名则显示所有已挂载文件系统。默认以 1K 块显示(设了 POSIXLY_CORRECT 则用 512 字节块)。\n\n【输出列】Filesystem 1K-blocks(或 Size) Used Available Use% Mounted on。\n\n【选项】-a/--all 包含伪文件系统、重复文件系统、不可访问的文件系统｜-h/--human-readable 以 1024 的幂显示(如 1023M)｜-H/--si 以 1000 的幂显示(如 1.1G)｜-B/--block-size=SIZE 按 SIZE 缩放(如 -BM 以 1,048,576 字节为单位)｜-k 等价 --block-size=1K｜-i/--inodes 显示 inode 信息而非块使用｜-l/--local 只列出本地文件系统｜-P/--portability 使用 POSIX 输出格式｜-t/--type=TYPE 只列出指定类型｜-T/--print-type 打印文件系统类型｜-x/--exclude-type=TYPE 排除指定类型｜--output[=FIELD_LIST] 用 FIELD_LIST 定义的输出格式｜--total 省略对可用空间无意义的条目并产生一个总计｜--sync 获取信息前调用 sync｜--no-sync 不调用 sync(默认)｜-v (被忽略，为兼容保留)｜--help｜--version。\n\n【SIZE 也可由环境变量指定】DF_BLOCK_SIZE、BLOCK_SIZE、BLOCKSIZE。\n\n【BSD/macOS 差异】macOS 的 df 无 -T/--total/--output；-h 存在；用 -H 表示 1000 进制。",
+    "purpose": "查看磁盘空间使用；排查磁盘满；查 inode 耗尽(磁盘有空间但写不进去)；看挂载点",
+    "category": "disk",
+    "tags": [
+      "df",
+      "磁盘",
+      "空间",
+      "inode",
+      "挂载"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-h 人类可读｜-T 带文件系统类型｜-i 看 inode｜--total 带总计｜-x tmpfs 排除类型｜--output 自定义列",
+        "required": false,
+        "default": "-h",
+        "example": "-hT"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ df -hT\nFilesystem     Type      Size  Used Avail Use% Mounted on\n/dev/sda2      ext4      98G   62G   32G  67% /\n/dev/sda3      ext4     369G  210G  141G  60% /data\n/dev/nvme0n1p1 ext4     1.8T  1.2T  512G  71% /mnt/data2\n$ df -i / | tail -1\n/dev/sda2      6553600 412338 6141262   7% /",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "du 目录占用",
+    "command": "du {{options}} {{path}}",
+    "description": "估算文件/目录的磁盘使用量(默认按块，不是表观大小)。du 默认递归，所以要配合 -s 或 -d 控制输出量。\n\n【选项】-s/--summarize 只显示每个参数的总计｜-h/--human-readable 人类可读(1K 234M 2G)｜--si 类似 -h 但用 1000 的幂｜-d/--max-depth=N 只显示深度 ≤ N 的目录总计(-d 0 等同 --summarize)｜-a/--all 为所有文件(不只目录)写出计数｜-c/--total 产生一个总计｜-b/--bytes 等价 --apparent-size --block-size=1｜-A/--apparent-size 打印表观大小而非磁盘占用(稀疏文件、内部碎片、间接块会让两者不同)｜-B/--block-size=SIZE 按 SIZE 缩放｜-k/-m 等价 --block-size=1K / 1M｜-L/--dereference 跟随所有符号链接｜-D/--dereference-args 或 -H 只跟随命令行上列出的符号链接｜-P/--no-dereference 不跟随任何符号链接(默认)｜-l/--count-links 硬链接时重复计数｜-S/--separate-dirs 目录不计入子目录的大小｜-x/--one-file-system 跳过不同文件系统上的目录｜-t/--threshold=SIZE 排除小于 SIZE 的条目(负值则排除大于的)｜--exclude=PATTERN 排除匹配的文件｜-X/--exclude-from=FILE 排除匹配 FILE 中任一模式的文件｜--time 显示最近修改时间｜--time=WORD 用 atime/access/use/ctime/status 替代修改时间｜--time-style=STYLE 时间格式｜--inodes 列出 inode 使用而非块使用｜-0/--null 每行以 NUL 结尾(配合 xargs -0)｜--files0-from=F 汇总 F 中 NUL 分隔文件名对应的占用｜--help｜--version。\n\n【SIZE 也可由环境变量指定】DU_BLOCK_SIZE、BLOCK_SIZE、BLOCKSIZE。\n\n【BSD/macOS 差异】macOS 的 du 无 --exclude/--exclude-from/-t/--threshold/--time-style；-d 支持较晚。",
+    "purpose": "找出占空间最多的目录/文件；清理磁盘前定位大文件；统计项目体积",
+    "category": "disk",
+    "tags": [
+      "du",
+      "目录",
+      "占用",
+      "磁盘",
+      "清理"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-sh 总计+人类可读｜-d 1 只看第一层｜-ah 所有文件｜--exclude 排除｜-x 不跨文件系统｜-c 带总计",
+        "required": false,
+        "default": "-sh",
+        "example": "-sh"
+      },
+      {
+        "name": "path",
+        "label": "路径",
+        "description": "要统计的目录或文件，可用通配符如 *",
+        "required": false,
+        "default": ".",
+        "example": "*"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ du -sh *\n1.2G\tnode_modules\n486M\ttarget\n12K\tdocs\n$ du -ah . | sort -rh | head -3\n1.2G\t./node_modules\n486M\t./target\n120M\t./target/debug",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  }
+]

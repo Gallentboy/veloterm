@@ -1,0 +1,621 @@
+[
+  {
+    "id": 0,
+    "title": "ip 网络配置（替代 ifconfig/route/arp）",
+    "command": "ip {{object}} {{command}}",
+    "description": "iproute2 核心命令，用「对象-命令」模型统一了 ifconfig(地址/链路)、route(路由)、arp(邻居) 三套旧工具。语法：ip [ OPTIONS ] OBJECT { COMMAND | help }。\n\n【常用 OBJECT】addr(a) 接口IP地址｜link(l) 链路层状态｜route(r) 路由表｜neigh(n) ARP/NDISC 邻居缓存｜rule 策略路由｜netns 网络命名空间｜tunnel/tuntap 隧道设备｜maddr 组播地址｜-s link 接口收发统计(替代 netstat -i)。\n\n【全局选项，共27项】-V 版本｜-h/-human 人类可读统计｜-b/-batch FILE 从文件批处理(首错即停)｜-force 批处理遇错不终止｜-s/-stats 输出更多信息(可重复)｜-d/-details 更详细｜-l/-loops N flush 循环次数(默认10，0=删光)｜-f/-family FAMILY 协议族(inet/inet6/bridge/mpls/link)｜-4/-6/-B/-M/-0 分别是 family inet/inet6/bridge/mpls/link 的快捷方式｜-o/-oneline 每条记录一行｜-r/-resolve 解析域名｜-n/-netns NETNS 切换命名空间｜-N/-Numeric 打印编号而非可读名｜-a/-all 对所有对象执行｜-c[color] 彩色输出(always/auto/never)｜-t/-timestamp 与 monitor 搭配显示时间｜-ts 短时间格式｜-rc SIZE netlink 接收缓冲(默认1MB)｜-iec 用 IEC 单位(1Ki=1024)｜-br/-brief 表格化精简输出(仅 addr/link/neigh show)｜-j/-json JSON 输出｜-p/-pretty JSON 缩进｜-echo 请求内核回送配置。\n\n【常用子命令】ip a 看地址｜ip -br a 精简｜ip a add 192.168.1.10/24 dev eth0 加地址｜ip a del ... 删地址｜ip l set eth0 up/down 启停网卡｜ip l set eth0 mtu 1400 改MTU｜ip l set eth0 promisc on 混杂模式｜ip r 看路由｜ip r add default via 192.168.1.1 加默认路由｜ip r del default 删默认路由｜ip r get 8.8.8.8 查走哪条路由｜ip n 看ARP｜ip -s l show eth0 统计｜ip netns list/exec 命名空间｜ip monitor route 实时监视。\n\n【危险】ip addr flush dev eth0 清空网卡地址、ip link set eth0 down 关网卡、ip route del default 删默认路由，远程执行会当场切断网络(俗称把梯子踢了)，只能靠带外/控制台恢复。\n\n【持久化】ip 的改动重启即失效，需写发行版配置(/etc/network/interfaces、netplan、NetworkManager、systemd-networkd)。\n\n【macOS 差异】macOS 没有 ip：看地址用 ifconfig，看路由用 netstat -rn 或 route，看 ARP 用 arp -an。可 brew install iproute2mac 获得部分兼容层。",
+    "purpose": "查看/配置网卡地址、启停网卡、改 MTU；管理路由表与默认网关；查看/清理 ARP 缓存；查看接口收发统计；操作网络命名空间",
+    "category": "network",
+    "tags": [
+      "ip",
+      "iproute2",
+      "网络配置",
+      "路由",
+      "地址",
+      "替代ifconfig"
+    ],
+    "params": [
+      {
+        "name": "object",
+        "label": "对象",
+        "description": "addr 地址｜link 链路｜route 路由｜neigh ARP｜rule 策略路由｜netns 命名空间｜-s link 统计",
+        "required": false,
+        "default": "addr",
+        "example": "route"
+      },
+      {
+        "name": "command",
+        "label": "命令",
+        "description": "show 查看｜add 添加｜del 删除｜set 设置｜flush 清空｜get 查询路径｜monitor 监视",
+        "required": false,
+        "default": "show",
+        "example": "get 8.8.8.8"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ ip -br -4 addr\nlo               UNKNOWN        127.0.0.1/8\neth0             UP             192.168.1.10/24\n$ ip route get 8.8.8.8\n8.8.8.8 via 192.168.1.1 dev eth0 src 192.168.1.10 uid 501\n$ ip -j -p addr show dev eth0\n[ { \"ifname\": \"eth0\", \"operstate\": \"UP\", ... } ]",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "ping 连通性测试",
+    "command": "ping {{options}} {{host}}",
+    "description": "基于 ICMP ECHO_REQUEST/ECHO_REPLY 测试主机可达性与往返时延。手册共 40 项。\n\n【选项】-3 RTT不向上取整｜-4/-6 只用IPv4/IPv6｜-a 有应答发声｜-A 自适应ping(间隔随RTT调整，默认2ms)｜-b 允许ping广播｜-B 不允许中途改源地址｜-c count 发count个包后停｜-C 创建socket时调connect()｜-d 设SO_DEBUG(Linux内核未用)｜-D 每行前打时间戳｜-e identifier 设ICMP identification字段｜-f 洪水ping(需root)｜-F flowlabel IPv6流标签｜-h 帮助｜-H 强制DNS反解(覆盖-n)｜-i interval 发包间隔秒(默认1，<2ms需root)｜-I interface 指定源地址/接口/VRF｜-j JSON输出(实验)｜-l preload 连发preload个(>3需root)｜-L 抑制组播回环｜-m mark 打mark｜-M pmtudisc_opt PMTU策略(do/want/probe/dont)｜-N nodeinfo IPv6节点信息查询｜-n 只输出数字不反解｜-O 发下一包前报告未应答｜-p pattern 最多16字节填充｜-q 安静只显示摘要｜-Q tos 设QoS/TOS｜-r 绕过路由表直连｜-R 记录路由(IPv4最多9跳)｜-s packetsize 数据字节(默认56，+8头=64)｜-S sndbuf 发送缓冲｜-t ttl 设TTL｜-T timestampoption IP时间戳选项｜-U 完整用户时延｜-v 详细｜-V 版本｜-w deadline 总超时秒(不管收没收到)｜-W timeout 等应答超时秒(0=无限)。\n\n【关键区别】-c 是发包数，-w 是总时限，两者哪个先到算哪个。\n\n【坑】ping 通不代表端口通(很多防火墙只放行ICMP)；ping 不通也不代表服务挂了(ICMP常被禁)。-s 最大 IPv4 65507 / IPv6 65527，但多数系统限制更小。-f 洪水会瞬间打满带宽。-R 记录路由在现代网络基本被丢弃。\n\n【macOS 差异】macOS ping 没有 -3/-C/-e/-H/-j/-M/-m/-N/-O/-Q/-S/-T/-U。最易踩的是 -W：macOS 单位是毫秒，Linux 是秒(ping -W 1000 在 Linux 要等1000秒)；macOS 也不支持 -w 总时限。",
+    "purpose": "测试主机是否可达、看丢包率与往返时延；探测路径 MTU；测本地网络质量；配合 -c/-w 做脚本化存活检测",
+    "category": "network",
+    "tags": [
+      "ping",
+      "ICMP",
+      "连通性",
+      "延迟",
+      "丢包",
+      "MTU"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-c N 发N个包｜-i 间隔｜-W 超时(注意macOS是毫秒)｜-s 包大小｜-n 不反解｜-q 安静｜-M do 禁分片探MTU",
+        "required": false,
+        "default": "-c 4",
+        "example": "-c 4 -i 0.2"
+      },
+      {
+        "name": "host",
+        "label": "目标",
+        "description": "域名或 IP；IPv6 链路本地地址需带 %接口 后缀",
+        "required": true,
+        "default": "",
+        "example": "baidu.com"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ ping -c 4 baidu.com\nPING baidu.com (110.242.68.66) 56(84) bytes of data.\n64 bytes from 110.242.68.66: icmp_seq=1 ttl=52 time=12.3 ms\n...\n--- baidu.com ping statistics ---\n4 packets transmitted, 4 received, 0% packet loss, time 3005ms\nrtt min/avg/max/mdev = 12.1/12.4/12.9/0.3 ms",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "curl HTTP/多协议请求",
+    "command": "curl {{options}} {{url}}",
+    "description": "用 URL 语法说话的传输工具，支持 HTTP/HTTPS、FTP、SFTP、SCP、SMTP、IMAP、LDAP、TFTP、MQTT、TELNET 等。手册共 267 个选项。\n\n【输出控制】-o FILE 写文件｜-O 用远端文件名｜-J 用 Content-Disposition 文件名｜--remote-name-all 全部按-O｜--output-dir DIR 输出目录｜--create-dirs 自动建目录｜--no-clobber 不覆盖(改 file.1)｜-R 用远端时间戳｜--remove-on-error 出错删残件｜--xattr URL写扩展属性｜-D FILE 响应头写文件｜-i 输出含响应头｜-I 只取头部(HEAD)｜-s 静默｜-S 配合-s显示错误｜--no-progress-meter 关进度条留告警｜-# 简单进度条｜-w FORMAT 结束按格式输出(如 %{http_code})｜-v 详细｜--trace/--trace-ascii FILE 完整追踪｜--trace-time/--trace-ids 追踪加时间/ID｜-N 禁缓冲｜--stderr FILE｜-M 完整手册｜-h 帮助｜-V 版本。\n\n【方法与数据】-d 表单POST｜--data-binary 原样POST｜--data-raw 不解析@｜--data-urlencode URL编码｜--json 快捷JSON POST｜-F name=content 表单(可 @file)｜--form-string 不解析@｜-G 改GET｜-X METHOD 指定方法｜-T FILE 上传｜--url-query 追加query｜-e 设Referer｜-A 设User-Agent｜-H 追加头(可多次)｜-b 发Cookie｜-c 存Cookie｜-L 跟随重定向｜--location-trusted 跟随并传凭据｜--max-redirs 上限(默认50)｜--post301/302/303 重定向保持POST｜-r RANGE 字节范围｜-z 时间条件｜--etag-save/--etag-compare ETag缓存｜--compressed 请求并解压｜--raw 禁解码｜-0/--http1.1/--http2/--http3 指定HTTP版本｜-: 分隔多次操作｜-Z 并行｜--parallel-max 并行上限。\n\n【认证】-u user:pass｜--basic/--digest/--ntlm/--negotiate/--anyauth 方式｜-n 读~/.netrc｜--netrc-file｜--oauth2-bearer TOKEN｜--aws-sigv4 AWS签名｜--krb/--delegation Kerberos｜-U 代理认证｜--proxy-basic/digest/ntlm/negotiate。\n\n【连接/超时/重试】--connect-timeout 连接超时｜-m/--max-time 总超时｜--keepalive-time｜-Y/-y 低速中止｜--limit-rate 限速｜--max-filesize｜--retry N 重试｜--retry-delay｜--retry-max-time｜--retry-all-errors｜--retry-connrefused｜--happy-eyeballs-timeout-ms｜-4/-6 地址族｜--interface 出口接口｜--local-port｜--resolve host:port:addr 命令行版hosts｜--connect-to 改连接目标｜-C - 断点续传｜--unix-socket 走Unix套接字。\n\n【代理】-x [proto://]host:port｜--preproxy｜-p 建CONNECT隧道｜--noproxy 白名单｜--socks4/4a/5/5-hostname｜--proxy-header｜--proxy-insecure｜--proxy-cacert 等代理侧TLS。\n\n【TLS】-k 跳过证书校验(危险)｜--cacert/--capath CA｜-E 客户端证书｜--cert-status OCSP｜--key/--pass 私钥｜--ciphers｜--tls-max/--tlsv1.2/--tlsv1.3 版本｜--pinnedpubkey 固定公钥｜--crlfile。\n\n【DNS/DoH】--dns-servers｜--dns-interface｜--doh-url 用DoH解析。\n\n【坑】-I 发HEAD，有的服务返回405；-X POST 不自动带body(还要-d)；-d @file 会读文件并处理换行，二进制用 --data-binary；-L 默认不向新主机发凭据，确需用 --location-trusted(会把凭据发给任意重定向目标)；--max-time 是总时限。退出码即错误码：6=解析失败 7=连接失败 22=HTTP错误(配合-f) 28=超时。\n\n【macOS 差异】macOS 自带 Apple 定制版 curl，核心选项一致；需完整特性可 brew install curl。",
+    "purpose": "调接口(POST/GET/JSON/表单)、看响应头与状态码；下载文件、断点续传；调试 HTTP/TLS/代理问题；脚本化健康检查与限速下载",
+    "category": "network",
+    "tags": [
+      "curl",
+      "HTTP",
+      "HTTPS",
+      "API",
+      "下载",
+      "调试"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-I 只看头｜-s -o /dev/null -w '%{http_code}' 取状态码｜-L 跟随重定向｜-o 输出文件｜-X 方法｜-d 数据｜-H 头｜-u 认证｜-x 代理｜-k 跳过证书校验",
+        "required": false,
+        "default": "-I",
+        "example": "-s -o /dev/null -w '%{http_code}'"
+      },
+      {
+        "name": "url",
+        "label": "URL",
+        "description": "完整 URL；无 scheme 时 curl 会按主机名猜测协议",
+        "required": true,
+        "default": "",
+        "example": "https://example.com"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ curl -s -o /dev/null -w '%{http_code} %{time_total}s\\n' https://example.com\n200 0.132s\n$ curl -I https://example.com\nHTTP/2 200\ncontent-type: text/html; charset=UTF-8\ndate: Tue, 14 Oct 2026 12:00:00 GMT",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "wget 下载/递归镜像",
+    "command": "wget {{options}} {{url}}",
+    "description": "GNU Wget 是非交互式、擅长递归抓取与镜像的下载器。手册共 204 个选项。\n\n【启动/日志/输入】-V 版本｜-h 帮助｜-b 后台(日志进 wget-log)｜-e command 执行一条 wgetrc 命令｜-o/-a 日志写/追加文件｜-d 调试｜-q 静默｜-v 详细(默认)｜-nv 关详细但留错误｜-i FILE 从文件读URL(- 为stdin)｜-F 输入按HTML解析｜-B URL 基准URL｜--config FILE｜--rejected-log 记录被拒URL｜--input-metalink/--metalink-over-http Metalink｜--xattr URL写扩展属性。\n\n【下载控制】--bind-address 绑定源地址｜--dns-servers 指定DNS(libcares)｜-t N 重试(默认20，0/inf无限)｜-O FILE 合并写一个文件｜-nc 不覆盖已存在｜--backups N 覆盖前备份.1/.2｜--no-netrc｜-c 断点续传｜--start-pos OFFSET 从偏移开始｜--progress dot/bar｜--show-progress 任何详细度都显示进度｜-N 时间戳模式(只下更新的)｜-S 打印服务器响应头｜--spider 只检查不下载｜-T SEC 总超时｜--dns-timeout/--connect-timeout/--read-timeout 分项超时｜--limit-rate 限速｜-w SEC 抓取间隔｜--waitretry 重试退避上限｜--random-wait 间隔0.5~1.5倍随机｜--no-proxy｜-Q quota 配额(单文件不受限)｜-4/-6 地址族｜--prefer-family｜--retry-connrefused｜--user/--password 通用凭据｜--ask-password｜--unlink 覆盖前先unlink｜--retry-on-http-error=code。\n\n【目录/命名】-nd 不建目录层级｜-x 强制建层级｜-nH 不生成主机名目录｜--protocol-directories｜--cut-dirs N 忽略前N级｜-P prefix 目录前缀｜--default-page NAME(默认index.html)｜-E 给HTML加.html后缀。\n\n【HTTP】--http-user/--http-password｜--no-http-keep-alive｜--no-cache｜--no-cookies｜--load-cookies/--save-cookies｜--keep-session-cookies｜--ignore-length｜--header 追加头(可多次)｜--compression auto/gzip/none｜--max-redirect N(默认20)｜--proxy-user/--proxy-password｜--referer｜--save-headers｜-U 设User-Agent｜--post-data/--post-file POST｜--method HTTP方法｜--body-data/--body-file｜--content-disposition(实验)｜--content-on-error｜--trust-server-names｜--auth-no-challenge｜--secure-protocol｜--https-only｜--ciphers｜--no-check-certificate(危险)｜--certificate/--private-key 客户端证书｜--ca-certificate/--ca-directory/--crl-file｜--pinnedpubkey｜--hsts-file｜--warc-file WARC归档。\n\n【FTP】--ftp-user/--ftp-password｜--no-remove-listing｜--no-glob｜--no-passive-ftp｜--preserve-permissions｜--retr-symlinks｜--ftps-implicit/--ftps-fallback-to-ftp 等FTPS。\n\n【递归/镜像】-r 递归(默认深度5)｜-l depth 最大深度(0/inf无限)｜--delete-after 下载后删文件｜-k 转换链接为本地可看｜-K 转换前备份.orig｜-m 镜像(= -r -N -l inf --no-remove-listing)｜-p 下载页面所需资源｜-A/--accept 接受后缀｜-R/--reject 拒绝后缀｜--accept-regex/--reject-regex 正则｜-D/--domains 限定域名｜--exclude-domains｜--follow-ftp｜--ignore-tags｜--ignore-case｜-H 跨主机｜-L 只跟随相对链接｜-I/--include-directories｜-X/--exclude-directories｜-np 不上溯父目录。\n\n【坑】-O 会把多个URL内容合并到一个文件，不是重命名；-r 默认深度只有5；-m 会无限深度抓取，务必配 -np/-A/-R/--domains 收窄；-k 在下载完成后才转换，中途中断会留下未转换页面；-b 后台输出进 wget-log 不在终端。\n\n【macOS 差异】macOS 不自带 wget(只有 curl)，需 brew install wget；Homebrew 版是标准 GNU Wget，选项与 Linux 一致。",
+    "purpose": "下载文件、断点续传；递归抓取站点文档、镜像页面；批量检查 URL 存活(--spider)；限速/限深/按后缀过滤下载",
+    "category": "network",
+    "tags": [
+      "wget",
+      "下载",
+      "递归",
+      "镜像",
+      "爬取",
+      "断点续传"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-c 断点续传｜-O 输出文件｜-q 静默｜--spider 只检查｜-r -np -l 深度 递归｜-m 镜像｜--limit-rate 限速｜-A 后缀过滤",
+        "required": false,
+        "default": "-c",
+        "example": "-r -np -l 3"
+      },
+      {
+        "name": "url",
+        "label": "URL",
+        "description": "单个或多个 URL；-i 从文件读时命令行可省略",
+        "required": true,
+        "default": "",
+        "example": "https://example.com/file.iso"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ wget -c https://example.com/big.iso\n--2026-10-14 12:00:00--  https://example.com/big.iso\nLength: 104857600 (100M) [application/octet-stream]\nSaving to: 'big.iso'\nbig.iso    45%[========>       ]  45.00M  5.2MB/s    eta 11s",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "ss 查看端口/连接（替代 netstat）",
+    "command": "ss {{options}}",
+    "description": "socket statistics，用 netlink 直接从内核读 socket 信息，比 netstat 遍历 /proc 快得多，是 netstat 的现代替代。手册共 46 项。\n\n【选项】-h 帮助｜-V 版本｜-H 不显示表头｜-Q 不显示队列列｜-O 每个socket一行｜-n 不解析服务名/显示精确带宽｜-r 解析数字地址端口｜-a 显示监听+非监听｜-l 只显示监听(默认不显示)｜-B 只显示已绑定未激活的TCP｜-o 显示定时器｜-e 详细(uid/inode/cookie)｜-m 显示socket内存｜-p 显示进程(需root)｜-T 显示线程(隐含-p)｜-i 显示内部TCP信息(ts/sack/ecn/cong)｜--tos 显示ToS与优先级｜--cgroup 显示cgroup｜--tipcinfo TIPC内部信息｜-K 强制关闭socket(仅IPv4/6)｜-s 汇总统计(不解析列表)｜-E 持续显示被销毁的socket｜-Z 显示进程安全上下文｜-z 显示socket上下文｜-N NSNAME 切换命名空间｜-b 显示BPF过滤器(需管理员)｜-4/-6/-0 只显示IPv4/IPv6/PACKET｜-t/-u/-d/-w/-x/-S 显示TCP/UDP/DCCP/RAW/Unix/SCTP｜--tipc/--vsock/--xdp｜-M 显示MPTCP｜-f FAMILY 按地址族｜-A QUERY 要dump的socket表(逗号分隔，可 ! 排除)｜-D FILE 只dump原始TCP信息到文件｜-F FILE 从文件读过滤｜--bpf-maps/--bpf-map-id 美化打印BPF本地数据。\n\n【过滤器】ss -t state established 只看已建立｜state listening 只看监听｜sport = :22 源端口｜dport = :443 目标端口｜dst 10.0.0.1 目标地址｜'( dport = :80 or dport = :443 )' 组合。TCP状态名：established/syn-sent/syn-recv/fin-wait-1/fin-wait-2/time-wait/closed/close-wait/last-ack/listening/closing；聚合：all/connected/synchronized。\n\n【坑】不加 -a/-l 时监听socket默认不显示(ss -t 看不到监听端口，要用 ss -tl)；-p 看进程需 root；不加 -n 会做服务名反解，慢且端口显示成 ssh/https，排障建议总是加 -n；-K 会直接掐断连接(破坏性)。\n\n【监听socket的特殊含义】Recv-Q 是 accept 队列积压，Send-Q 是 backlog 上限。\n\n【macOS 差异】macOS 没有 ss：看监听用 netstat -an | grep LISTEN，带进程用 lsof -nP -iTCP -sTCP:LISTEN，看端口占用用 lsof -nP -i:PORT。",
+    "purpose": "查看监听端口与所有连接；查端口被谁占用；统计各状态连接数(TIME_WAIT/ESTABLISHED)；看 socket 收发队列与内存；排查连接堆积",
+    "category": "network",
+    "tags": [
+      "ss",
+      "端口",
+      "连接",
+      "netstat替代",
+      "TIME_WAIT",
+      "监听"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-tulnp 最常用(TCP+UDP监听+进程+数字)｜-tnp 所有TCP连接｜-s 汇总｜-tlnp 'sport = :8080' 查占用｜-tn state time-wait",
+        "required": false,
+        "default": "-tulnp",
+        "example": "-tnp"
+      },
+      {
+        "name": "filter",
+        "label": "过滤",
+        "description": "state 状态｜sport/dport 端口｜src/dst 地址｜可加引号组合",
+        "required": false,
+        "default": "",
+        "example": "state established"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ ss -tulnp\nNetid State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\ntcp   LISTEN 0      128          0.0.0.0:22        0.0.0.0:*     users:((\"sshd\",pid=812,fd=3))\ntcp   LISTEN 0      511          0.0.0.0:80        0.0.0.0:*     users:((\"nginx\",pid=1024,fd=6))\nudp   UNCONN 0      0            0.0.0.0:68        0.0.0.0:*     users:((\"dhclient\",pid=700,fd=6))\n$ ss -s\nTotal: 231\nTCP:   12 (estab 3, closed 4, orphaned 0, timewait 4)",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "netstat 网络状态（旧，已废弃）",
+    "command": "netstat {{options}}",
+    "description": "net-tools 套件成员，已被 ss + ip 取代，但仍在老系统与脚本中广泛存在。手册共 21 项。\n\n【选项】-r/--route 显示内核路由表｜-g/--groups 显示组播成员｜-i/--interfaces 显示接口及收发错误计数(等价 ifconfig -s)｜-M/--masquerade 显示被masquerade的连接｜-s/--statistics 各协议SNMP汇总统计｜-v 详细｜-W 不截断地址｜-n 数字地址不解析｜--numeric-hosts 只不解析主机名｜--numeric-ports 只不解析端口名｜--numeric-users 只不解析用户ID｜-A Family/--protocol 指定地址族(inet/inet6/unix/ipx/ax25/netrom/econet/ddp/bluetooth)｜-c 每秒持续打印｜-e 显示额外信息(可重复)｜-o 显示网络定时器｜-p 显示PID与程序名(不完全可信)｜-l 只显示监听｜-a 显示监听+非监听｜-F 从FIB打印路由(默认)｜-C 从路由缓存打印(内核3.6后已移除缓存)｜-t/-u/-w/-x 显示TCP/UDP/RAW/Unix socket。\n\n【坑】netstat 已废弃，新系统可能默认未装(net-tools 包)，排障优先用 ss；-p 的进程信息不可信(无权限或socket已移交内核时显示 -)；不加 -n 会做大量DNS反解，反向解析慢的环境会卡很久；大量连接时遍历 /proc 很慢(这正是 ss 取代它的原因)；-C 在 Linux 3.6+ 已无意义。\n\n【macOS 差异】macOS 自带 netstat，但与 Linux 版选项不一致：macOS 用 -b/-d/-m/-g/-s，没有 -t/-u/-p；看监听要 netstat -an | grep LISTEN，看进程要 lsof -i；-rn 输出格式也不同。",
+    "purpose": "兼容老系统/老脚本的网络查看；看监听端口与连接；看路由表、接口统计、协议统计",
+    "category": "network",
+    "tags": [
+      "netstat",
+      "net-tools",
+      "端口",
+      "连接",
+      "已废弃"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-tulnp 监听+进程｜-an 所有连接｜-rn 路由表｜-i 接口统计｜-s 协议统计｜-c 持续刷新",
+        "required": false,
+        "default": "-tulnp",
+        "example": "-an"
+      },
+      {
+        "name": "filter",
+        "label": "过滤",
+        "description": "通常配合 grep，如 grep :80 / grep ESTABLISHED",
+        "required": false,
+        "default": "",
+        "example": "grep LISTEN"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ netstat -tulnp | head\nActive Internet connections (only servers)\nProto Recv-Q Send-Q Local Address   Foreign Address  State    PID/Program name\ntcp        0      0 0.0.0.0:22      0.0.0.0:*        LISTEN   812/sshd\ntcp        0      0 0.0.0.0:80      0.0.0.0:*        LISTEN   1024/nginx\n$ netstat -rn\nKernel IP routing table\nDestination  Gateway      Genmask        Flags Metric Iface\n0.0.0.0      192.168.1.1  0.0.0.0        UG    100    eth0",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "tcpdump 抓包",
+    "command": "tcpdump {{options}} {{filter}}",
+    "description": "libpcap 的命令行前端，网络排障的「显微镜」。手册共 95 项。\n\n【选项】-A 每包以ASCII打印(去链路层头)｜-b BGP AS号用asdot｜-B buffer_size 内核捕获缓冲(KiB)｜-c count 收到count个包退出｜--count 读文件时只打印包数｜-C file_size 写文件超此大小(百万字节)则轮转｜-d/-dd/-ddd dump编译后的过滤代码(可读/C数组/十进制)｜-D/--list-interfaces 列出可抓包接口｜-e 打印链路层头(MAC)｜-E 解密IPsec ESP｜-f 外部IPv4地址用数字｜-F file 从文件读过滤表达式｜-g/--ip-oneline 详细模式下IP头后不换行｜-G rotate_seconds 每N秒轮转-w文件(文件名含strftime格式)｜-h 帮助｜--version 版本｜-H 检测802.11s mesh头｜-i interface 指定接口｜-I/--monitor-mode 接口进monitor模式(仅802.11)｜--immediate-mode 立即模式｜-j/--time-stamp-type 设时间戳类型｜-J 列出支持的时间戳类型｜--time-stamp-precision/--micro/--nano 时间戳精度｜-K 不校验IP/TCP/UDP校验和｜-l 行缓冲stdout｜-L 列出数据链路类型｜--lengths 打印捕获长度与原始长度｜-m module 加载SMI MIB｜-M secret TCP-MD5共享密钥｜-n 不把地址/端口转名字｜-N 不打印主机名域名限定｜-# 行首打印包序号｜-O 不运行过滤代码优化器｜-p 不进入混杂模式｜--print 即使-w存盘也打印解析结果｜--print-sampling=nth 每第nth个包打印｜-Q direction 抓包方向(in/out/inout)｜-q 快速输出｜-r file 从文件读包｜-S 打印绝对TCP序号｜-s snaplen 每包抓snaplen字节(默认262144)｜--skip count 跳过前count个包｜-T type 按指定类型解释(aodv/carp/domain/pgm/ptp)｜-t 不打时间戳｜-tt unix时间戳｜-ttt 与上一行差值｜-tttt 日期+时分秒｜-ttttt 与第一行差值｜-u 未解码NFS句柄｜-U 包缓冲输出｜-v/-vv/-vvv 详细度递增｜-V file 从文件读文件名列表｜-w file 原始包写文件(不解析)｜-W filecount 配合-C/-G限制文件数并循环覆盖｜-x/-xx 十六进制打印(去/含链路层头)｜-X/-XX 十六进制+ASCII(去/含链路层头)｜-y datalinktype 设数据链路类型｜-z postrotate-command 轮转后执行命令(如 -z gzip)｜-Z user 打开设备后降权到user。\n\n【过滤表达式 BPF】port 80｜host 10.0.0.1｜src 10.0.0.1 and dst port 443｜'tcp[13] == 2' 只看SYN｜'udp port 53'｜'not port 22'｜'ether host 00:11:22:33:44:55'。\n\n【坑】-s 默认截断长度(老版本68字节会截断应用层，抓全包用 -s 0)；抓包需 root 或 CAP_NET_RAW；生产环境务必 -w 存盘再分析(直接终端解析会丢包)；-w 写文件是缓冲的，抓完要 Ctrl-C 正常退出让缓冲落盘(实时消费加 -U)；过滤表达式一定要加引号，否则 > | ( 被shell解释。\n\n【macOS 差异】macOS 自带 tcpdump(BSD版)，核心选项一致，但接口名是 en0/en1/lo0 而非 eth0；-I(monitor)支持更好。",
+    "purpose": "抓包分析协议交互；排查连接失败/重传/丢包；看 HTTP/DNS/TLS 明文握手；离线 pcap 分析；配合 -w/-r 做取证",
+    "category": "network",
+    "tags": [
+      "tcpdump",
+      "抓包",
+      "pcap",
+      "BPF",
+      "排障",
+      "libpcap"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-i 接口｜-nn 不解析｜-w 存盘｜-r 读盘｜-c 数量｜-A ASCII｜-X 十六进制+ASCII｜-s 0 抓全包｜-e 带MAC",
+        "required": false,
+        "default": "-i any -nn",
+        "example": "-i eth0 -nn -c 100"
+      },
+      {
+        "name": "filter",
+        "label": "过滤表达式",
+        "description": "BPF 语法：port/host/src/dst 及 and/or/not；务必加引号",
+        "required": false,
+        "default": "port 80",
+        "example": "port 80 and host 1.2.3.4"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ sudo tcpdump -i eth0 -nn -c 3 port 80\n12:00:01.123 IP 10.0.0.5.54321 > 93.184.216.34.80: Flags [S], seq 100\n12:00:01.140 IP 93.184.216.34.80 > 10.0.0.5.54321: Flags [S.], seq 200 ack 101\n12:00:01.141 IP 10.0.0.5.54321 > 93.184.216.34.80: Flags [.], ack 1\n3 packets captured",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "nc 网络调试/端口扫描/传数据",
+    "command": "nc {{options}} {{host}} {{port}}",
+    "description": "netcat，网络瑞士军刀。此处以 OpenBSD netcat 为准(Linux 发行版常用，也是 macOS 自带版本)。\n\n【选项】-4/-6 只用IPv4/IPv6｜-b 允许广播｜-C 发送时把LF转CRLF｜-D 开socket调试｜-d 不从stdin读｜-F 把第一个连上的socket用sendmsg传给stdout后退出(配合-X)｜-h 帮助｜-I length 设TCP接收缓冲｜-i interval 每行收发间休眠interval秒｜-k 连接结束后继续监听(需-l)｜-l 监听模式(不能与-x/-z同用，-w超时被忽略)｜-M ttl 设出包TTL｜-m minttl 丢弃TTL低于minttl的入包｜-N 输入EOF后shutdown() socket｜-n 不做域名解析｜-O length 设TCP发送缓冲｜-P proxy_username 向代理提供用户名(仅HTTP CONNECT)｜-p source_port 指定源端口｜-q seconds stdin EOF后等N秒退出(负数=永久等，非负隐含-N)｜-r 源/目的端口随机｜-S 启用RFC2385 TCP MD5签名｜-s sourceaddr 指定源地址｜-T keyword 设TOS/traffic class｜-t 对RFC854 DO/WILL回DON'T/WON'T(脚本化telnet)｜-U 用Unix域socket(@开头为抽象命名空间)｜-u 用UDP｜-V rtable 设路由表｜-v 详细｜-W recvlimit 收recvlimit个包后终止｜-w timeout 连接/空闲超时秒(对-l无效)｜-X proxy_protocol 代理协议(4/4A/5/connect，默认SOCKS5)｜-x proxy_address[:port] 经代理连接(不能与-lsuU同用)｜-Z DCCP模式｜-z 只扫描不发数据。\n\n【常用】nc -zv host 2181 测端口｜nc -zv host 20-30 扫端口范围｜nc -l 1234 监听｜nc -N host 1234 连接｜nc -lk 1234 持续监听｜printf 'GET / HTTP/1.0\\r\\n\\r\\n' | nc host 80 手打HTTP｜tar czf - dir | nc -l 9999 传目录｜nc -U /tmp/sock Unix域socket。\n\n【坑】-w 对监听模式无效，监听会一直等；默认 nc 在 stdin EOF 后不立即退出，可能挂住，用 -N 或 -q 0 强制关闭；不同实现的 nc(OpenBSD/GNU netcat/nmap-ncat)选项差异极大，脚本里最好显式判断版本；-z 扫描属主动探测会触发IDS；-k 必须配合 -l；nc 传输无加密无校验，跨公网传数据请走 scp/rsync/ssh。\n\n【macOS 差异】macOS 自带 OpenBSD netcat，选项与本表一致，但部分版本监听要求 -p；Linux 上可能是 GNU netcat 或 nmap-ncat，用法不同。",
+    "purpose": "测试端口是否开放、扫端口范围；临时监听/传输数据；手工构造 HTTP/SMTP 等明文协议请求；做 SOCKS/HTTP 代理跳板",
+    "category": "network",
+    "tags": [
+      "nc",
+      "netcat",
+      "端口扫描",
+      "监听",
+      "网络调试",
+      "传数据"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-z 只扫描｜-v 详细｜-w 超时｜-l 监听｜-k 持续监听｜-N EOF后关闭｜-u UDP｜-U Unix套接字｜-x 代理",
+        "required": false,
+        "default": "-zv",
+        "example": "-zv -w 2"
+      },
+      {
+        "name": "host",
+        "label": "目标",
+        "description": "域名或 IP；-l 监听模式下可省略",
+        "required": true,
+        "default": "",
+        "example": "10.0.0.5"
+      },
+      {
+        "name": "port",
+        "label": "端口",
+        "description": "单个端口、服务名或范围(nn-mm)；-l 模式指定监听端口",
+        "required": true,
+        "default": "",
+        "example": "2181"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ nc -zv 10.0.0.5 22\nConnection to 10.0.0.5 22 port [tcp/ssh] succeeded!\n$ nc -zv 10.0.0.5 2181\nnc: connect to 10.0.0.5 port 2181 (tcp) failed: Connection refused\n$ printf 'GET / HTTP/1.0\\r\\n\\r\\n' | nc example.com 80\nHTTP/1.1 200 OK\nContent-Type: text/html",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "telnet 端口测试（明文）",
+    "command": "telnet {{options}} {{host}} {{port}}",
+    "description": "古老的远程登录协议，明文传输。现代主要用途是测端口连通性(telnet host port)。\n\n【选项，GNU inetutils 2.8】-4/--ipv4 只用IPv4｜-6/--ipv6 只用IPv6｜-8/--binary 8位数据传输｜-a/--login 尝试自动登录｜-b/--bind=ADDRESS 绑定本地地址｜-c/--no-rc 不读 .telnetrc｜-d/--debug 开调试｜-e/--escape=CHAR 指定转义字符｜-E/--no-escape 不使用转义字符｜-K/--no-login 不自动登录｜-l/--user=USER 以USER自动登录｜-L/--binary-output 输出用8位传输｜-n/--trace=FILE 追踪信息写FILE｜-r/--rlogin 使用类似rlogin界面｜-?/--help 帮助｜--usage 简短用法｜-V/--version 版本。\n\n【坑】telnet 是明文协议，登录凭据会裸奔，绝不要用它登录生产服务器(登录用 ssh)；现代用途只剩测端口：连上看到 banner 即端口开放，Connection refused 表示端口关，一直挂着表示被防火墙丢包；退出方式：先按 Ctrl-] 进命令模式再输 quit 回车(Ctrl-C 在部分实现里不生效)；很多系统默认不装 telnet(安全原因)，测端口更推荐 nc -zv 或 curl -v telnet://host:port；部分发行版的 telnet 是 BSD 版，选项与 GNU 版不同。\n\n【macOS 差异】macOS 老版本自带 telnet(BSD版)，新版已移除，需 brew install telnet。",
+    "purpose": "快速测试某主机某端口是否开放(尤其能看服务 banner)；调试 SMTP/POP3/HTTP 等明文协议",
+    "category": "network",
+    "tags": [
+      "telnet",
+      "端口测试",
+      "明文",
+      "banner",
+      "连通性"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-4/-6 地址族｜-l 用户｜-e 转义字符｜-E 无转义字符｜-8 二进制",
+        "required": false,
+        "default": "",
+        "example": ""
+      },
+      {
+        "name": "host",
+        "label": "目标",
+        "description": "域名或 IP",
+        "required": true,
+        "default": "",
+        "example": "10.0.0.5"
+      },
+      {
+        "name": "port",
+        "label": "端口",
+        "description": "端口号；不填默认 23",
+        "required": true,
+        "default": "",
+        "example": "22"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ telnet 10.0.0.5 22\nTrying 10.0.0.5...\nConnected to 10.0.0.5.\nEscape character is '^]'.\nSSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13\n^]\ntelnet> quit\nConnection closed.",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "dig / nslookup DNS 查询",
+    "command": "dig {{options}} {{name}} {{type}}",
+    "description": "dig 是 BIND 9 的 DNS 工具箱(输出详细、脚本友好)，nslookup 是老式交互式查询器(BIND 9 仍附带)。\n\n【dig 命令行选项】-4/-6 地址族｜-b address[#port] 绑定源地址｜-c class 查询类别(IN/CH/HS)｜-f file 从文件批量读查询(批处理)｜-h 用法｜-k keyfile TSIG密钥文件｜-m 内存调试｜-p port 非标准端口｜-q name 指定查询域名｜-r 不读 ~/.digrc｜-t type 查询类型(A/AAAA/MX/NS/SOA/TXT)｜-u 耗时用微秒｜-v 版本｜-x addr 反向查询(PTR)｜-y [hmac:]name:key TSIG(命令行明文，不推荐)。\n\n【dig +queryopt 常用】+short 只输出结果｜+noall 隐藏所有段(常配 +answer)｜+answer/+authority/+additional/+comments/+stats/+question 各段显示开关｜+recurse/+norecurse 是否请求递归｜+tcp 用TCP｜+dnssec 请求DNSSEC｜+trace 从根逐级追踪｜+search 用搜索列表｜+aaflag/+adflag/+cdflag/+rdflag/+tcflag 各DNS标志位｜+bufsize/+edns/+ednsflags/+ednsopt EDNS控制｜+cookie DNS Cookie｜+identify 显示应答服务器地址｜+subnet EDNS Client Subnet｜+keepopen/+keepalive 保持连接｜+tls/+https/+http DoT/DoH｜+timeout=N/+tries=N 超时重试｜+ttlid/+ttlunits TTL显示｜+multiline/+rrcomments 多行/注释｜+yaml/+split 输出格式。\n\n【nslookup 用法】非交互：nslookup NAME [SERVER]、nslookup -query=mx NAME、nslookup -timeout=10 NAME。交互命令：host/server/lserver/exit/set keyword[=value]；root/finger/ls/view/help/? 在 BIND 9 版均未实现。set 关键字：all｜class(cl)｜nodebug(deb)｜nod2｜domain｜search/nosearch｜port(po)｜querytype/type(q/ty)｜recurse(norec)｜ndots｜retry｜timeout｜vc/novc｜fail/nofail。\n\n【坑】dig 不带参数时查的是 . 的 NS 而非本机；+trace 会直接向根/各级服务器发查询(输出量大且耗时)；nslookup 输出格式随版本变化，不适合脚本解析，脚本请用 dig +short；-y 在命令行明文传 TSIG 密钥会被 ps 看到，应改用 -k；反向查询只对 PTR 有效，很多 IP 无 PTR 返回 NXDOMAIN 属正常；改了记录没生效先确认是不是缓存(直接问权威可绕过)。\n\n【macOS 差异】macOS 自带 dig/nslookup/host；另可用 dscacheutil -q host -a name X 与 scutil --dns；macOS 解析器由 mDNSResponder 管理，/etc/resolv.conf 不一定反映真实配置。",
+    "purpose": "查询 A/AAAA/MX/NS/TXT 等记录；反向解析 IP；换 DNS 服务器对比解析结果；逐级追踪解析路径；排查域名解析异常",
+    "category": "network",
+    "tags": [
+      "dig",
+      "nslookup",
+      "DNS",
+      "解析",
+      "MX",
+      "反向查询"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "+short 只要结果｜+noall +answer 精简｜@8.8.8.8 指定DNS｜-x 反向查询｜+trace 逐级追踪｜+tcp 强制TCP｜+dnssec",
+        "required": false,
+        "default": "+short",
+        "example": "+noall +answer"
+      },
+      {
+        "name": "name",
+        "label": "域名",
+        "description": "要查询的域名；-x 时填 IP",
+        "required": true,
+        "default": "",
+        "example": "baidu.com"
+      },
+      {
+        "name": "type",
+        "label": "类型",
+        "description": "A/AAAA/MX/NS/TXT/SOA/CNAME/PTR/ANY；默认 A",
+        "required": false,
+        "default": "A",
+        "example": "MX"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ dig +short baidu.com\n110.242.68.66\n39.156.66.10\n$ dig MX baidu.com +noall +answer\nbaidu.com.  7200  IN  MX  10 mx.baidu.com.\n$ dig -x 8.8.8.8 +short\ndns.google.\n$ dig +trace example.com | head\n.  518400  IN  NS  a.root-servers.net.\n...",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "traceroute 路由追踪",
+    "command": "traceroute {{options}} {{host}}",
+    "description": "利用逐步增大 TTL 让沿途路由器回 ICMP 超时，从而绘出到目标的路径。手册共 34 项。\n\n【选项】--help 帮助｜-4/-6 强制IPv4/IPv6｜-I/--icmp 用ICMP ECHO探测｜-T/--tcp 用TCP SYN探测｜-d/--debug socket层调试｜-F/--dont-fragment 不分片探测包(IPv4还会设DF位)｜-f first_ttl 起始TTL(默认1)｜-g gateway 源路由经过指定网关｜-i interface 指定发送接口｜-m max_ttl 最大跳数(默认30)｜-N squeries 并发探测包数(默认16)｜-n 不反解主机名｜-p port 目的端口基准(UDP递增/TCP固定)｜-t tos 设TOS/traffic class｜-l flow_label IPv6流标签｜-w max[,here,near] 等待响应时间(默认5.0s)｜-q nqueries 每跳探测包数(默认3)｜-r 绕过路由表直连｜-s source_addr 指定源地址｜-z sendwait 探测最小间隔(>10为毫秒，否则秒)｜-e/--extensions 显示ICMP扩展(RFC4884)｜-A/--as-path-lookups AS路径查询｜-V 版本｜--sport=port 指定源端口(隐含-N 1 -w 5)｜--fwmark=mark 设防火墙标记｜-M method/--module 指定追踪方法(default/icmp/tcp)｜-O option 方法专用选项｜-U/--udp 用UDP(固定目的端口默认53)｜-UL 用UDPLITE｜-D/--dccp 用DCCP｜-P protocol 用指定协议原始包(默认253)｜--mtu 发现路径MTU(隐含-F -N 1)｜--back 打印反向跳数。\n\n【坑】很多防火墙丢UDP，默认UDP模式常显示 * * *，换 -I(ICMP) 或 -T(TCP SYN) 往往能穿透；* * * 不代表故障，可能只是某跳路由器不响应探测(常见于骨干网)；-T 探测要选开放端口(如 -p 443)否则最后一跳也显示不通；每跳默认发3个包(-q 3)；--mtu 会显著变慢；-g(源路由)在现代网络几乎全被禁用；网络路径动态变化，两次结果不同是正常的。\n\n【macOS 差异】macOS 自带 traceroute(BSD版)，默认用UDP，选项子集不同：没有 -A/-D/-e/-M/-O/-P/-UL/--back/--fwmark/--mtu/--sport；macOS 的 -I/-T 可用；mtr 需自行安装。",
+    "purpose": "定位到目标经过哪些路由器、哪一跳开始丢包或高延迟；排查跨运营商/跨地域链路问题；探测路径 MTU",
+    "category": "network",
+    "tags": [
+      "traceroute",
+      "路由追踪",
+      "跳数",
+      "网络路径",
+      "排障"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-I ICMP探测｜-T TCP SYN探测｜-n 不反解｜-m 最大跳数｜-q 每跳包数｜-w 等待时间｜--mtu 探MTU｜-A 显示AS号",
+        "required": false,
+        "default": "-n",
+        "example": "-T -p 443"
+      },
+      {
+        "name": "host",
+        "label": "目标",
+        "description": "域名或 IP",
+        "required": true,
+        "default": "",
+        "example": "baidu.com"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ traceroute -T -p 443 -n baidu.com\ntraceroute to baidu.com (110.242.68.66), 30 hops max, 60 byte packets\n 1  192.168.1.1  1.234 ms  1.100 ms  1.050 ms\n 2  100.64.0.1   3.456 ms  3.200 ms  3.100 ms\n 3  * * *\n 4  110.242.68.66  12.345 ms  12.100 ms  12.000 ms",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "scp 远程复制",
+    "command": "scp {{options}} {{src}} {{dst}}",
+    "description": "基于 SSH 的文件复制(OpenSSH 9.0 起默认改用 SFTP 协议传输)。手册共 23 项。\n\n【选项】-3 两台远端之间经本地中转(默认直接互传)｜-4/-6 地址族｜-A 允许转发ssh-agent｜-B 批处理模式(不询问密码)｜-C 启用压缩｜-c cipher 选加密算法｜-D sftp_server_path 直连本地SFTP服务器程序(调试用)｜-F ssh_config 指定ssh配置文件｜-i identity_file 指定私钥｜-J destination 经跳板机连接｜-l limit 限速(Kbit/s)｜-O 用旧SCP协议(非SFTP)｜-o ssh_option 传ssh配置项｜-P port 远端端口(大写P，因-p已被占用)｜-p 保留修改/访问时间与权限位｜-q 安静模式｜-R 两台远端之间由源主机发起连接执行｜-r 递归复制目录(会跟随符号链接)｜-S program 指定加密连接程序｜-T 关闭严格文件名检查｜-v 详细调试输出｜-X sftp_option 指定SFTP协议选项(nrequests=/buffer=)。\n\n【常用】scp a.txt user@host:/tmp/ 上传｜scp user@host:/tmp/a.txt ./ 下载｜scp -r dir/ user@host:/data/ 递归上传｜scp -P 2222 -i ~/.ssh/id_ed25519 a.txt user@host:/tmp/｜scp -C -l 8000 big.iso user@host:/data/ 压缩+限速｜scp -J jump@bastion a.txt user@host:/tmp/ 经跳板机｜scp -3 host1:/a host2:/b 两远端互传。\n\n【坑】-P 是大写(端口)，小写 -p 是「保留时间戳」，这是最常见的笔误；OpenSSH 9.0+ 默认用SFTP协议，某些老服务器不支持SFTP需加 -O 回退；-r 会跟随符号链接，可能把链接指向的大目录一并复制；scp 不支持断点续传，大文件中断要重头来(需续传请用 rsync)；目标路径末尾有无 / 语义不同。\n\n【macOS 差异】macOS 自带 OpenSSH 版 scp，用法一致，新版同样默认 SFTP 协议。",
+    "purpose": "本机与远程之间上传/下载文件或目录；跨跳板机复制；限速/压缩传输；跨两台远端主机中转复制",
+    "category": "ssh",
+    "tags": [
+      "scp",
+      "远程复制",
+      "上传",
+      "下载",
+      "ssh",
+      "SFTP"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-r 递归目录｜-P 端口(大写)｜-i 私钥｜-C 压缩｜-l 限速Kbit/s｜-J 跳板机｜-p 保留时间戳｜-O 用旧SCP协议",
+        "required": false,
+        "default": "-r",
+        "example": "-P 2222 -i ~/.ssh/id_ed25519"
+      },
+      {
+        "name": "src",
+        "label": "源",
+        "description": "本地路径或 user@host:/path",
+        "required": true,
+        "default": "",
+        "example": "a.txt"
+      },
+      {
+        "name": "dst",
+        "label": "目标",
+        "description": "本地路径或 user@host:/path",
+        "required": true,
+        "default": "",
+        "example": "user@host:/tmp/"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ scp -r dist/ user@10.0.0.5:/var/www/\nindex.html                          100%  2048     2.0KB/s   00:01\napp.js                              100% 51200    10.0MB/s   00:00\n$ scp user@10.0.0.5:/var/log/app.log ./\napp.log                             100% 1024KB   20.0MB/s   00:00",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "rsync 增量同步",
+    "command": "rsync {{options}} {{src}} {{dst}}",
+    "description": "用「滚动校验和」算法只传差异部分，是备份与镜像的首选。手册共 337 个选项。\n\n【通用/输出】-v 增加详细度｜--info=FLAGS 细粒度信息｜--debug=FLAGS 细粒度调试｜--stderr=e|a|c stderr模式｜-q 抑制非错误信息｜--no-motd 抑制daemon MOTD｜--stats 传输统计｜-h 人类可读｜--progress 进度｜-P 等价 --partial --progress｜-i 输出每个更新的变更摘要｜--out-format 自定义格式｜--log-file/--log-file-format 日志｜-8 高字节不转义｜--outbuf=N|L|B 输出缓冲。\n\n【传输行为】-a/--archive 归档模式(= -rlptgoD)｜-r 递归｜-R 相对路径名｜--no-implied-dirs｜-d 传目录不递归｜--mkpath 建缺失路径｜-n 演练不做改动｜-W 整文件复制(不用增量)｜-c 按校验和判断｜-u 跳过接收端更新的文件｜--inplace 原地更新｜--append 追加到较短文件｜-I 不跳过大小时间相同的文件｜--size-only 只按大小｜--modify-window 时间比较精度｜-x 不跨文件系统｜-B 固定校验块大小｜--max-size/--min-size 大小过滤｜--partial/--partial-dir 保留部分文件｜--delay-updates 最后落位｜--timeout/--contimeout 超时｜--stop-after/--stop-at 定时停止｜--fsync 写后fsync｜-S 稀疏文件｜--preallocate 预分配｜--bwlimit 限带宽｜--protocol 强制旧协议。\n\n【权限/属性】-p 权限｜-E 可执行位｜--chmod 调整权限｜-t 修改时间｜-U 访问时间｜-N 创建时间｜-O 目录不保留时间｜-J 链接不保留时间｜-o 属主(需root)｜-g 属组｜--devices/--specials/-D 设备/特殊文件｜-A ACL｜-X 扩展属性｜--numeric-ids 不做名称映射｜--usermap/--groupmap/--chown 映射。\n\n【链接】-l 符号链接当链接复制｜-L 转成引用目标｜--copy-unsafe-links｜--safe-links｜--munge-links｜-k 指向目录的链接转目录｜-K 接收端符号链接目录当目录｜-H 保留硬链接。\n\n【备份/删除/比较】-b 备份被覆盖文件｜--backup-dir/--suffix｜--delete 删除目标端多余文件｜--del 等价 --delete-during｜--delete-before/during/delay/after 删除时机｜--delete-excluded 连被排除的也删｜--max-delete 上限｜--force 强删非空目录｜--ignore-errors｜--ignore-missing-args/--delete-missing-args｜--existing/--ignore-existing｜--remove-source-files 同步后删源｜-m 剪掉空目录链｜--compare-dest/--copy-dest/--link-dest 与DIR比较/复制/硬链接｜-y 找相似文件。\n\n【过滤/压缩/远程】-z 压缩｜--compress-choice/--compress-level/--compress-threads｜--skip-compress｜-C CVS排除｜-f 过滤规则｜-F 等价 dir-merge /.rsync-filter｜--exclude/--exclude-from｜--include/--include-from｜--files-from｜-0 NUL分隔｜-e/--rsh 指定远程shell｜--rsync-path｜-s/--secluded-args｜--blocking-io｜--address/--port/--sockopts｜-M 只发远端的选项｜--password-file｜--list-only｜--write-batch/--read-batch 批处理｜--iconv 字符集转换｜-4/-6 地址族｜--daemon。\n\n【坑】结尾斜杠决定语义：rsync -a src dst 会把 src 目录本身放进 dst(变成 dst/src)，rsync -a src/ dst 才是同步内容，这是最经典的坑；--delete 是 destructive，会删掉目标端源里没有的文件，用前必须先 -n 演练，方向写反(rsync -a --delete /empty/ /data/)会清空数据；-a 隐含 -rlptgoD 但不含 -A/-X/-U/-N/-H；-z 在快速局域网反而拖慢；--partial(或-P)才保留中断的部分文件，默认中断会删掉；--inplace 传输中断会留下损坏文件。\n\n【macOS 差异】macOS 自带 rsync 2.6.9(2006年)，缺少 --info/--debug/-N(crtimes)/--mkpath/--stop-after 等大量新选项，且 -X/-A 语义陈旧；备份关键数据建议 brew install rsync 并调用 /opt/homebrew/bin/rsync。macOS 文件系统默认大小写不敏感，--delete 时要注意大小写差异可能误删。",
+    "purpose": "本地/远程增量同步与镜像；备份(配合 --link-dest 做硬链接快照)；发布部署(只传变更)；大规模文件迁移；限制带宽的跨网传输",
+    "category": "network",
+    "tags": [
+      "rsync",
+      "增量同步",
+      "备份",
+      "镜像",
+      "部署",
+      "delete"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-av 归档+详细｜-avz 加压缩｜--delete 删多余(危险)｜-n 演练｜-P 进度+续传｜--exclude 排除｜--bwlimit 限速｜--link-dest 硬链接备份",
+        "required": false,
+        "default": "-avz",
+        "example": "-avz --delete"
+      },
+      {
+        "name": "src",
+        "label": "源",
+        "description": "本地路径或 [user@]host:path；结尾 / 表示同步「内容」而非「目录本身」",
+        "required": true,
+        "default": "",
+        "example": "src/"
+      },
+      {
+        "name": "dst",
+        "label": "目标",
+        "description": "本地路径或 [user@]host:path",
+        "required": true,
+        "default": "",
+        "example": "user@host:/data/"
+      }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ rsync -avz --delete src/ user@10.0.0.5:/data/\nsending incremental file list\ndeleting old.txt\napp.js\n        51200 100%   10.00MB/s    0:00:00 (xfr#1, to-chk=3/5)\nsent 51,420 bytes  received 118 bytes  34,358.67 bytes/sec\ntotal size is 1,024,000  speedup is 19.87",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  },
+  {
+    "id": 0,
+    "title": "ssh 远程登录/隧道",
+    "command": "ssh {{options}} {{user}}@{{host}}",
+    "description": "OpenSSH 客户端。手册共 52 项。\n\n【选项】-4/-6 地址族｜-A 启用ssh-agent转发(有风险)｜-a 禁用转发｜-B bind_interface 连接前绑定接口地址｜-b bind_address 用本机指定源地址｜-C 请求压缩｜-c cipher_spec 加密算法列表｜-D [bind:]port 动态端口转发(本地SOCKS代理)｜-E log_file 调试日志写文件｜-e escape_char 转义字符(默认~)｜-F configfile 指定配置文件｜-f 执行命令前转后台(隐含-n)｜-G 打印求值后的配置并退出｜-g 允许远端连本地转发端口｜-I pkcs11 PKCS#11共享库｜-i identity_file 指定私钥｜-J destination 经跳板机(ProxyJump)｜-K 启用GSSAPI认证与凭据转发｜-k 禁用GSSAPI凭据转发｜-L [bind:]port:host:hostport 本地端口转发｜-l login_name 远端登录用户名｜-M master模式(连接复用)｜-m mac_spec MAC算法列表｜-N 不执行远端命令(仅转发)｜-n 把stdin重定向到/dev/null｜-O ctl_cmd 控制复用master(check/forward/cancel/proxy/exit)｜-o option 传配置项｜-P tag 指定tag名｜-p port 远端端口｜-Q query_option 查询支持的算法｜-q 安静｜-R [bind:]port:host:hostport 远程端口转发｜-S ctl_path 连接复用控制socket路径｜-s 请求子系统(如sftp)｜-T 禁用伪终端分配｜-t 强制分配伪终端(可重复)｜-V 版本｜-v 详细调试(可重复最多3次)｜-W host:port 把stdin/stdout转发到host:port(隐含-N -T)｜-w local_tun[:remote_tun] 隧道设备转发(tun)｜-X 启用X11转发｜-x 禁用X11转发｜-Y 启用可信X11转发｜-y 日志走syslog。\n\n【端口转发三种模式】本地转发 -L 8080:localhost:80 把本地8080转到远端80｜远程转发 -R 8080:localhost:80 把远端8080转到本地80｜动态转发 -D 1080 本地SOCKS5代理，流量走远端出。\n\n【常用】ssh user@host 登录｜ssh -p 2222 user@host｜ssh -i ~/.ssh/id_ed25519 user@host｜ssh user@host 'uptime; df -h' 执行命令｜ssh -J jump@bastion user@host 经跳板机｜ssh -L 8080:db.internal:3306 user@host 隧道访问内网DB｜ssh -R 9090:localhost:3000 user@host 远程转发｜ssh -D 1080 user@host SOCKS5代理｜ssh -N -L 8080:localhost:80 user@host 只转发｜ssh -Q cipher 查算法｜ssh -G user@host 查看生效配置。\n\n【坑】-L 默认只监听127.0.0.1，要让别人连需 -g 或写 0.0.0.0(有暴露风险)；-R 远程转发默认也只绑远端回环，要让外部访问需远端 sshd_config 里 GatewayPorts yes；-A(agent转发)有风险，远端root可借用你的密钥，别转发到不可信主机；-D 动态转发不加密出口流量只是让流量从远端出去；-N 与 -f 常配合做后台隧道但 -f 要求能非交互认证；连接复用(-M/-S/ControlMaster)能加速但控制socket权限要设好；StrictHostKeyChecking=no 会跳过主机指纹校验(仅测试用)；服务器重装后指纹变了会拒绝连接，需 ssh-keygen -R host 清除旧记录。\n\n【macOS 差异】macOS 自带 OpenSSH 客户端(较新)，用法一致；ssh-agent 集成方式不同(需 ssh-add --apple-use-keychain)。",
+    "purpose": "远程登录与执行命令；经跳板机访问内网；建立端口转发隧道访问内网服务；搭 SOCKS 代理；调试 SSH 连接与算法协商",
+    "category": "ssh",
+    "tags": [
+      "ssh",
+      "远程登录",
+      "隧道",
+      "端口转发",
+      "跳板机",
+      "SOCKS"
+    ],
+    "params": [
+      {
+        "name": "options",
+        "label": "选项",
+        "description": "-p 端口｜-i 私钥｜-J 跳板机｜-L 本地转发｜-R 远程转发｜-D 动态SOCKS｜-N 只转发｜-v 调试｜-o 配置项",
+        "required": false,
+        "default": "",
+        "example": "-p 2222 -i ~/.ssh/id_ed25519"
+      },
+      {
+        "name": "user",
+        "label": "用户",
+        "description": "远端登录用户名；省略则用本机当前用户名",
+        "required": false,
+        "default": "root",
+        "example": "ubuntu"
+      },
+      {
+        "name": "host",
+        "label": "主机",
+        "description": "域名或 IP",
+        "required": true,
+        "default": "",
+        "example": "10.0.0.5"
+      }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ ssh user@10.0.0.5 'uptime; df -h /'\n 12:00:01 up 45 days,  3:21,  2 users,  load average: 0.15, 0.10, 0.05\nFilesystem      Size  Used Avail Use% Mounted on\n/dev/vda1        40G   18G   21G  47% /\n$ ssh -L 8080:db.internal:3306 -N user@10.0.0.5   # 本地8080 -> 内网DB3306",
+    "usageCount": 0,
+    "lastUsedAt": null,
+    "isPinned": false,
+    "createdAt": 0,
+    "updatedAt": 0
+  }
+]
