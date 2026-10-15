@@ -1,0 +1,735 @@
++ ../mawk -F, '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.018 -3875.32
+
+real	0m10.637s
+user	0m9.217s
+sys	0m1.420s
++ ../mawk '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.26983e+21 9.02202e+21
+
+real	0m55.317s
+user	0m53.213s
+sys	0m2.104s
++ ../mawk '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.018 -3875.32
+
+real	0m10.538s
+user	0m9.094s
+sys	0m1.444s
++ ../gawk -b -F, '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.018 -3875.32
+
+real	0m11.579s
+user	0m10.326s
+sys	0m1.252s
++ ../gawk -b '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.018 -3875.32
+
+real	0m11.515s
+user	0m10.223s
+sys	0m1.292s
++ ../gawk -b '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6269827758986837884928 9022023868854687498240
+
+real	0m23.464s
+user	0m21.540s
+sys	0m1.924s
++ ../bin/tsv-summarize -H --sum 6,18 ../all_train.tsv
+f4_sum	f16_sum
+-735.018072245	-3875.32465696
+
+real	0m3.906s
+user	0m2.907s
+sys	0m0.999s
++ ../bin/tsv-summarize -H --sum 4,5 ../TREE_GRM_ESTN.tsv
+PLT_CN_sum	TRE_CN_sum
+6.26982775899e+21	9.02202386885e+21
+
+real	0m7.943s
+user	0m6.562s
+sys	0m1.380s
++ ../frawk -bllvm -icsv '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.510s
+user	0m4.315s
+sys	0m1.196s
++ ../frawk -bllvm -icsv '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m26.286s
+user	0m24.206s
+sys	0m2.080s
++ ../frawk -bllvm '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.950s
+user	0m3.782s
+sys	0m1.167s
++ ../frawk -bllvm '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m15.081s
+user	0m13.229s
+sys	0m1.852s
++ ../frawk -bllvm -icsv -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.453s
+user	0m7.694s
+sys	0m1.184s
++ ../frawk -bllvm -icsv -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827759013924e21 9.022023868851398e21
+
+real	0m9.943s
+user	0m34.083s
+sys	0m4.557s
++ ../frawk -bllvm '-F\t' -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446388 -3875.3246569558305
+
+real	0m3.786s
+user	0m8.004s
+sys	0m2.156s
++ ../frawk -bllvm '-F\t' -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827759013735e21 9.022023868851358e21
+
+real	0m8.532s
+user	0m24.952s
+sys	0m5.542s
++ ../frawk -bcranelift -icsv '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.554s
+user	0m4.395s
+sys	0m1.160s
++ ../frawk -bcranelift -icsv '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m26.655s
+user	0m24.535s
+sys	0m2.120s
++ ../frawk -bcranelift '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.041s
+user	0m3.857s
+sys	0m1.184s
++ ../frawk -bcranelift '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m16.079s
+user	0m14.183s
+sys	0m1.896s
++ ../frawk -bcranelift -icsv -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.3246569558305
+
+real	0m4.199s
+user	0m8.690s
+sys	0m2.186s
++ ../frawk -bcranelift -icsv -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827759013798e21 9.022023868851545e21
+
+real	0m10.241s
+user	0m34.847s
+sys	0m4.877s
++ ../frawk -bcranelift '-F\t' -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446387 -3875.3246569558305
+
+real	0m3.820s
+user	0m8.648s
+sys	0m2.553s
++ ../frawk -bcranelift '-F\t' -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827759014277e21 9.022023868851451e21
+
+real	0m8.453s
+user	0m24.915s
+sys	0m5.736s
++ set +x
++ ../mawk -F, '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.018 -3875.32
+
+real	0m10.502s
+user	0m9.590s
+sys	0m0.912s
++ ../mawk '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.26983e+21 9.02202e+21
+
+real	0m56.625s
+user	0m54.920s
+sys	0m1.704s
++ ../mawk '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.018 -3875.32
+
+real	0m10.638s
+user	0m9.257s
+sys	0m1.381s
++ ../gawk -b -F, '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.018 -3875.32
+
+real	0m11.476s
+user	0m10.184s
+sys	0m1.292s
++ ../gawk -b '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.018 -3875.32
+
+real	0m11.377s
+user	0m10.396s
+sys	0m0.980s
++ ../gawk -b '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6269827758986837884928 9022023868854687498240
+
+real	0m23.289s
+user	0m21.604s
+sys	0m1.684s
++ ../bin/tsv-summarize -H --sum 6,18 ../all_train.tsv
+f4_sum	f16_sum
+-735.018072245	-3875.32465696
+
+real	0m3.621s
+user	0m2.925s
+sys	0m0.696s
++ ../bin/tsv-summarize -H --sum 4,5 ../TREE_GRM_ESTN.tsv
+PLT_CN_sum	TRE_CN_sum
+6.26982775899e+21	9.02202386885e+21
+
+real	0m7.532s
+user	0m6.344s
+sys	0m1.188s
++ ../frawk -bllvm -icsv '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.394s
+user	0m4.345s
+sys	0m1.049s
++ ../frawk -bllvm -icsv '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m27.100s
+user	0m25.312s
+sys	0m1.788s
++ ../frawk -bllvm '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.629s
+user	0m3.705s
+sys	0m0.924s
++ ../frawk -bllvm '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m14.760s
+user	0m13.372s
+sys	0m1.388s
++ ../frawk -bllvm -icsv -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.608s
+user	0m7.833s
+sys	0m1.360s
++ ../frawk -bllvm -icsv -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827759014481e21 9.022023868852137e21
+
+real	0m10.041s
+user	0m34.255s
+sys	0m4.643s
++ ../frawk -bllvm '-F\t' -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.078s
+user	0m6.962s
+sys	0m1.165s
++ ../frawk -bllvm '-F\t' -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827759021503e21 9.022023868851774e21
+
+real	0m8.531s
+user	0m21.981s
+sys	0m3.300s
++ ../frawk -bcranelift -icsv '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.508s
+user	0m4.408s
+sys	0m1.100s
++ ../frawk -bcranelift -icsv '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m26.344s
+user	0m24.734s
+sys	0m1.608s
++ ../frawk -bcranelift '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.823s
+user	0m3.971s
+sys	0m0.853s
++ ../frawk -bcranelift '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m16.453s
+user	0m14.837s
+sys	0m1.616s
++ ../frawk -bcranelift -icsv -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446388 -3875.3246569558305
+
+real	0m5.633s
+user	0m11.932s
+sys	0m4.638s
++ ../frawk -bcranelift -icsv -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827759014384e21 9.022023868851343e21
+
+real	0m9.793s
+user	0m33.709s
+sys	0m4.409s
++ ../frawk -bcranelift '-F\t' -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446391 -3875.324656955831
+
+real	0m4.865s
+user	0m9.891s
+sys	0m2.851s
++ ../frawk -bcranelift '-F\t' -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827759013953e21 9.022023868851465e21
+
+real	0m8.732s
+user	0m25.668s
+sys	0m5.760s
++ set +x
++ ../mawk -F, '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.018 -3875.32
+
+real	0m10.807s
+user	0m9.419s
+sys	0m1.388s
++ ../mawk '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.26983e+21 9.02202e+21
+
+real	0m54.904s
+user	0m52.972s
+sys	0m1.932s
++ ../mawk '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.018 -3875.32
+
+real	0m10.891s
+user	0m9.487s
+sys	0m1.404s
++ ../gawk -b -F, '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.018 -3875.32
+
+real	0m11.603s
+user	0m10.383s
+sys	0m1.220s
++ ../gawk -b '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.018 -3875.32
+
+real	0m11.528s
+user	0m10.124s
+sys	0m1.404s
++ ../gawk -b '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6269827758986837884928 9022023868854687498240
+
+real	0m23.603s
+user	0m21.555s
+sys	0m2.048s
++ ../bin/tsv-summarize -H --sum 6,18 ../all_train.tsv
+f4_sum	f16_sum
+-735.018072245	-3875.32465696
+
+real	0m3.904s
+user	0m2.908s
+sys	0m0.996s
++ ../bin/tsv-summarize -H --sum 4,5 ../TREE_GRM_ESTN.tsv
+PLT_CN_sum	TRE_CN_sum
+6.26982775899e+21	9.02202386885e+21
+
+real	0m7.916s
+user	0m6.443s
+sys	0m1.472s
++ ../frawk -bllvm -icsv '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.408s
+user	0m4.252s
+sys	0m1.156s
++ ../frawk -bllvm -icsv '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m26.386s
+user	0m24.406s
+sys	0m1.980s
++ ../frawk -bllvm '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.918s
+user	0m3.666s
+sys	0m1.253s
++ ../frawk -bllvm '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m15.191s
+user	0m13.323s
+sys	0m1.868s
++ ../frawk -bllvm -icsv -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.459s
+user	0m7.742s
+sys	0m1.149s
++ ../frawk -bllvm -icsv -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827759013811e21 9.022023868851094e21
+
+real	0m10.243s
+user	0m34.803s
+sys	0m4.762s
++ ../frawk -bllvm '-F\t' -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446387 -3875.32465695583
+
+real	0m4.165s
+user	0m9.158s
+sys	0m2.925s
++ ../frawk -bllvm '-F\t' -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827759013439e21 9.022023868851608e21
+
+real	0m8.868s
+user	0m25.275s
+sys	0m5.951s
++ ../frawk -bcranelift -icsv '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.325s
+user	0m4.455s
+sys	0m0.871s
++ ../frawk -bcranelift -icsv '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m26.074s
+user	0m24.327s
+sys	0m1.748s
++ ../frawk -bcranelift '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.000s
+user	0m3.876s
+sys	0m1.124s
++ ../frawk -bcranelift '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m15.710s
+user	0m13.854s
+sys	0m1.857s
++ ../frawk -bcranelift -icsv -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.383s
+user	0m7.584s
+sys	0m1.179s
++ ../frawk -bcranelift -icsv -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827759013341e21 9.022023868851547e21
+
+real	0m10.167s
+user	0m34.950s
+sys	0m4.598s
++ ../frawk -bcranelift '-F\t' -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.330s
+user	0m7.165s
+sys	0m1.490s
++ ../frawk -bcranelift '-F\t' -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827759014257e21 9.022023868851532e21
+
+real	0m8.753s
+user	0m25.085s
+sys	0m5.825s
++ set +x
++ ../mawk -F, '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.018 -3875.32
+
+real	0m10.397s
+user	0m9.272s
+sys	0m1.124s
++ ../mawk '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.26983e+21 9.02202e+21
+
+real	0m55.892s
+user	0m54.092s
+sys	0m1.800s
++ ../mawk '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.018 -3875.32
+
+real	0m10.711s
+user	0m9.335s
+sys	0m1.376s
++ ../gawk -b -F, '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.018 -3875.32
+
+real	0m11.525s
+user	0m10.180s
+sys	0m1.344s
++ ../gawk -b '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.018 -3875.32
+
+real	0m11.351s
+user	0m10.435s
+sys	0m0.916s
++ ../gawk -b '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6269827758986837884928 9022023868854687498240
+
+real	0m23.127s
+user	0m21.727s
+sys	0m1.400s
++ ../bin/tsv-summarize -H --sum 6,18 ../all_train.tsv
+f4_sum	f16_sum
+-735.018072245	-3875.32465696
+
+real	0m3.638s
+user	0m2.934s
+sys	0m0.704s
++ ../bin/tsv-summarize -H --sum 4,5 ../TREE_GRM_ESTN.tsv
+PLT_CN_sum	TRE_CN_sum
+6.26982775899e+21	9.02202386885e+21
+
+real	0m7.551s
+user	0m6.471s
+sys	0m1.081s
++ ../frawk -bllvm -icsv '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.432s
+user	0m4.240s
+sys	0m1.192s
++ ../frawk -bllvm -icsv '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m26.020s
+user	0m24.251s
+sys	0m1.768s
++ ../frawk -bllvm '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.626s
+user	0m3.758s
+sys	0m0.868s
++ ../frawk -bllvm '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m14.707s
+user	0m13.186s
+sys	0m1.521s
++ ../frawk -bllvm -icsv -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.3246569558305
+
+real	0m4.240s
+user	0m9.080s
+sys	0m2.138s
++ ../frawk -bllvm -icsv -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827759014742e21 9.022023868851727e21
+
+real	0m10.550s
+user	0m34.950s
+sys	0m5.491s
++ ../frawk -bllvm '-F\t' -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446396 -3875.324656955831
+
+real	0m3.540s
+user	0m8.338s
+sys	0m2.031s
++ ../frawk -bllvm '-F\t' -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827759021295e21 9.022023868851681e21
+
+real	0m8.063s
+user	0m21.028s
+sys	0m3.006s
++ ../frawk -bcranelift -icsv '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.322s
+user	0m4.402s
+sys	0m0.921s
++ ../frawk -bcranelift -icsv '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m25.969s
+user	0m24.393s
+sys	0m1.576s
++ ../frawk -bcranelift '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.769s
+user	0m3.881s
+sys	0m0.888s
++ ../frawk -bcranelift '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m15.268s
+user	0m13.814s
+sys	0m1.444s
++ ../frawk -bcranelift -icsv -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.3246569558305
+
+real	0m5.236s
+user	0m10.900s
+sys	0m3.469s
++ ../frawk -bcranelift -icsv -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.26982775901369e21 9.022023868850863e21
+
+real	0m10.513s
+user	0m35.128s
+sys	0m5.320s
++ ../frawk -bcranelift '-F\t' -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446387 -3875.324656955831
+
+real	0m4.745s
+user	0m10.112s
+sys	0m2.980s
++ ../frawk -bcranelift '-F\t' -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827759013973e21 9.022023868851593e21
+
+real	0m8.362s
+user	0m25.066s
+sys	0m5.291s
++ set +x
++ ../mawk -F, '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.018 -3875.32
+
+real	0m10.687s
+user	0m9.299s
+sys	0m1.388s
++ ../mawk '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.26983e+21 9.02202e+21
+
+real	0m55.353s
+user	0m53.288s
+sys	0m2.064s
++ ../mawk '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.018 -3875.32
+
+real	0m10.637s
+user	0m9.184s
+sys	0m1.452s
++ ../gawk -b -F, '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.018 -3875.32
+
+real	0m11.634s
+user	0m10.462s
+sys	0m1.172s
++ ../gawk -b '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.018 -3875.32
+
+real	0m11.607s
+user	0m10.423s
+sys	0m1.185s
++ ../gawk -b '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6269827758986837884928 9022023868854687498240
+
+real	0m23.579s
+user	0m21.814s
+sys	0m1.764s
++ ../bin/tsv-summarize -H --sum 6,18 ../all_train.tsv
+f4_sum	f16_sum
+-735.018072245	-3875.32465696
+
+real	0m3.922s
+user	0m2.895s
+sys	0m1.028s
++ ../bin/tsv-summarize -H --sum 4,5 ../TREE_GRM_ESTN.tsv
+PLT_CN_sum	TRE_CN_sum
+6.26982775899e+21	9.02202386885e+21
+
+real	0m7.942s
+user	0m6.293s
+sys	0m1.649s
++ ../frawk -bllvm -icsv '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.514s
+user	0m4.407s
+sys	0m1.108s
++ ../frawk -bllvm -icsv '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m26.363s
+user	0m24.455s
+sys	0m1.909s
++ ../frawk -bllvm '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.920s
+user	0m3.752s
+sys	0m1.168s
++ ../frawk -bllvm '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m15.015s
+user	0m13.195s
+sys	0m1.820s
++ ../frawk -bllvm -icsv -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446391 -3875.3246569558305
+
+real	0m3.960s
+user	0m8.975s
+sys	0m2.486s
++ ../frawk -bllvm -icsv -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827759013947e21 9.022023868851279e21
+
+real	0m10.611s
+user	0m35.291s
+sys	0m5.532s
++ ../frawk -bllvm '-F\t' -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.157s
+user	0m7.065s
+sys	0m1.224s
++ ../frawk -bllvm '-F\t' -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827759014199e21 9.022023868851379e21
+
+real	0m9.323s
+user	0m26.328s
+sys	0m6.275s
++ ../frawk -bcranelift -icsv '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.777s
+user	0m4.601s
+sys	0m1.176s
++ ../frawk -bcranelift -icsv '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m26.604s
+user	0m24.495s
+sys	0m2.108s
++ ../frawk -bcranelift '-F\t' '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m5.063s
+user	0m3.943s
+sys	0m1.120s
++ ../frawk -bcranelift '-F\t' '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.269827758986838e21 9.022023868854687e21
+
+real	0m15.736s
+user	0m13.924s
+sys	0m1.812s
++ ../frawk -bcranelift -icsv -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.csv
+-735.0180722446391 -3875.3246569558305
+
+real	0m5.033s
+user	0m10.277s
+sys	0m2.789s
++ ../frawk -bcranelift -icsv -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.csv
+6.26982775901447e21 9.022023868851241e21
+
+real	0m10.151s
+user	0m34.761s
+sys	0m4.639s
++ ../frawk -bcranelift '-F\t' -pr '{sum1 += $6; sum2 += $18;} END { print sum1,sum2}' ../all_train.tsv
+-735.0180722446389 -3875.324656955831
+
+real	0m4.104s
+user	0m6.950s
+sys	0m1.252s
++ ../frawk -bcranelift '-F\t' -pr '{sum1 += $4; sum2 += $5;} END { print sum1,sum2}' ../TREE_GRM_ESTN.tsv
+6.26982775902127e21 9.022023868851702e21
+
+real	0m8.404s
+user	0m21.895s
+sys	0m3.159s
++ set +x

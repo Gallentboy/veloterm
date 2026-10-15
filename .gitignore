@@ -39,3 +39,6 @@ dist/
 .cline/
 .trae/
 .worktrees/
+binaries/
+# vendor 仓库本地构建产物（源码进库，target 不进）
+src-tauri/vendor/*/target/

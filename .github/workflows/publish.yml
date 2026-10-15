@@ -73,6 +73,12 @@ jobs:
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # 编译 coreutils 多呼叫二进制（uutils/coreutils + 自研 grep/sed/which）
+      # 到 src-tauri/binaries/ 供 Tauri externalBin 打进安装包（--target 须与构建矩阵一致）；
+      # 安装后应用启动时在 tools/ 下创建硬链接短名入口（ls.exe/grep.exe/…）
+      - name: Build coreutils binary
+        run: node scripts/build-tools.mjs --target x86_64-pc-windows-msvc
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

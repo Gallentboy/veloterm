@@ -9,10 +9,11 @@
     "preview": "rsbuild preview",
     "typecheck": "tsc -b .",
     "version:sync": "node scripts/sync-version.mjs",
+    "tools:build": "node scripts/build-tools.mjs",
     "tauri": "tauri",
     "veloterm:dev": "tauri dev",
-    "veloterm:build": "tauri build",
-    "veloterm:build:mac-arm": "tauri build --target aarch64-apple-darwin --bundles app"
+    "veloterm:build": "node scripts/build-tools.mjs && tauri build",
+    "veloterm:build:mac-arm": "node scripts/build-tools.mjs --target aarch64-apple-darwin && tauri build --target aarch64-apple-darwin --bundles app"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.3",
