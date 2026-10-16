@@ -664,6 +664,26 @@ export function TerminalSession({
       requestFocus();
     }
 
+    /**
+     * 写本终端并（联动生效时）镜像给其余勾选终端。
+     *
+     * 快捷键拦截路径（Ctrl+C 等）必须走这里而不是裸 transport.write：拦截后
+     * 手动写的字节不经过 xterm 的 onData，而镜像逻辑只挂在 onData/onBinary 上，
+     * 裸写会导致「联动开着但 Ctrl+C 只中断了自己」。
+     *
+     * 仅用于等价于用户键入的输入；程序化注入（就绪钩子命令）不走此路——
+     * 它本就只应作用于本终端。
+     */
+    const writeInputAndMirror = (bytes: Uint8Array) => {
+      const tid = terminalIdRef.current ?? terminalSessionRegistry.getTerminalId(sessionId);
+      if (tid === null) return;
+      void transport.write({ id: tid, data: bytes });
+      const targets = broadcastTargetsRef.current;
+      if (targets.length > 1 && targets.includes(sessionId)) {
+        void mirrorInputToSessions(transport, targets, sessionId, bytes);
+      }
+    };
+
     // 拦截与适配终端专属快捷键：
     // 1. Ctrl+C: 在终端中是标准的 SIGINT 中断信号（如终止 top / 终止当前进程）
     //    无论是否有文本选区，均直接向 PTY 写入 0x03 (ETX)，绝不能被复制逻辑拦截！
@@ -690,10 +710,8 @@ export function TerminalSession({
         e.preventDefault();
         e.stopPropagation();
         term.clearSelection();
-        const tid = entry.terminalId ?? terminalSessionRegistry.getTerminalId(sessionId);
-        if (tid !== null) {
-          void transport.write({ id: tid, data: new Uint8Array([3]) });
-        }
+        // 经 writeInputAndMirror：联动开启时 0x03 同步发往其余勾选终端
+        writeInputAndMirror(new Uint8Array([3]));
         return false;
       }
 
@@ -884,26 +902,17 @@ export function TerminalSession({
 
         // 将用户输入统一编码为 Uint8Array（对应后端 Vec<u8>）发送；
         // 联动模式下同时镜像给其余目标终端（只发输入不注入输出，回显由各自
-        // pty 完成，接收方 onData 不会被程序化写入触发，无回环）
+        // pty 完成，接收方 onData 不会被程序化写入触发，无回环）。
+        // 走 writeInputAndMirror 统一入口：快捷键拦截路径（Ctrl+C）共用同一逻辑
         registryDisposers.push(
           term.onData((data) => {
-            const bytes = encodeTerminalInput(data);
-            void transport.write({ id, data: bytes });
-            const targets = broadcastTargetsRef.current;
-            if (targets.length > 1 && targets.includes(sessionId)) {
-              void mirrorInputToSessions(transport, targets, sessionId, bytes);
-            }
+            writeInputAndMirror(encodeTerminalInput(data));
           }),
         );
 
         registryDisposers.push(
           term.onBinary((binary) => {
-            const bytes = encodeBinaryString(binary);
-            void transport.write({ id, data: bytes });
-            const targets = broadcastTargetsRef.current;
-            if (targets.length > 1 && targets.includes(sessionId)) {
-              void mirrorInputToSessions(transport, targets, sessionId, bytes);
-            }
+            writeInputAndMirror(encodeBinaryString(binary));
           }),
         );
 

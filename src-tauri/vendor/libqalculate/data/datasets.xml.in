@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<QALCULATE version="2.8.3">
+  <category>
+    <title>Data Sets</title>
+    <dataset>
+      <!-- Data set for chemical elements -->
+      <title>!datasets!Elements</title>
+      <datafile>elements.xml</datafile>
+      <copyright>This data uses material from the Wikipedia, under the Creative Commons Attribution-ShareAlike License</copyright>
+      <names>r:atom</names>
+      <object_argument>
+        <!-- Object argument for chemical elements data set-->
+        <title>!datasets!Element</title>
+      </object_argument>
+      <property>
+        <title>Symbol</title>
+        <type>text</type>
+        <key>true</key>
+        <names>r:symbol</names>
+      </property>
+      <property>
+        <!-- Chemical elements number -->
+        <title>!datasets!Number</title>
+        <type>number</type>
+        <key>true</key>
+        <!-- Chemical elements number -->
+        <names>!datasets!r:number</names>
+      </property>
+      <property>
+        <title>Name</title>
+        <type>text</type>
+        <key>true</key>
+        <names>r:name</names>
+      </property>
+      <property>
+        <title>Classification</title>
+        <description>A number representing an element group:
+1 Alkali Metal
+2 Alkaline-Earth Metal
+3 Lanthanide
+4 Actinide
+5 Transition Metal
+6 Metal
+7 Metalloid
+8 Polyatomic Non-Metal
+9 Diatomic Non-Metal
+10 Noble Gas
+11 Unknown chemical properties</description>
+        <type>number</type>
+        <names>r:class</names>
+        <hidden>true</hidden>
+      </property>
+      <property>
+        <title>Atomic Mass</title>
+        <description>The property uses standard atomic weight, when determined, or the mass number.</description>
+        <type>number</type>
+        <unit>u</unit>
+        <approximate>true</approximate>
+        <names>r:mass,r:weight</names>
+      </property>
+      <property>
+        <title>Boiling Point</title>
+        <type>number</type>
+        <unit>K</unit>
+        <approximate>true</approximate>
+        <names>r:boiling</names>
+      </property>
+      <property>
+        <title>Melting Point</title>
+        <type>number</type>
+        <unit>K</unit>
+        <approximate>true</approximate>
+        <names>r:melting</names>
+      </property>
+      <property>
+        <title>Density</title>
+        <description>Density at STP (gases) or near room temperature</description>
+        <type>number</type>
+        <unit>g/cm^3</unit>
+        <approximate>true</approximate>
+        <names>r:density</names>
+      </property>
+      <property>
+        <title>X Position</title>
+        <type>number</type>
+        <hidden>true</hidden>
+        <names>r:x_pos</names>
+      </property>
+      <property>
+        <title>Y Position</title>
+        <type>number</type>
+        <hidden>true</hidden>
+        <names>r:y_pos</names>
+      </property>
+    </dataset>
+    <dataset>
+      <title>Planets</title>
+      <datafile>planets.xml</datafile>
+      <copyright>This data uses material from the Wikipedia articles&#10;
+"Earth" (http://www.wikipedia.org/wiki/Earth),
+"Jupiter" (http://www.wikipedia.org/wiki/Jupiter),
+"Mars" (http://www.wikipedia.org/wiki/Mars),
+"Mercury (planet)" (http://www.wikipedia.org/wiki/Mercury_(planet)),
+"Neptune" (http://www.wikipedia.org/wiki/Neptune),
+"Pluto" (http://www.wikipedia.org/wiki/Pluto),
+"Saturn" (http://www.wikipedia.org/wiki/Saturn),
+"Uranus" (http://www.wikipedia.org/wiki/Uranus), and
+"Venus" (http://en.wikipedia.org/wiki/Venus), under Creative Commons Attribution-ShareAlike License</copyright>
+      <names>r:planet</names>
+      <object_argument>
+        <title>Planet</title>
+      </object_argument>
+      <property>
+        <title>Name</title>
+        <type>text</type>
+        <key>true</key>
+        <names>r:name</names>
+      </property>
+      <property>
+        <title>Orbital Period (Year)</title>
+        <type>number</type>
+        <unit>d</unit>
+        <approximate>true</approximate>
+        <!-- Orbital period for planet -->
+        <names>!datasets!r:year</names>
+      </property>
+      <property>
+        <title>Average Orbital Speed</title>
+        <type>number</type>
+        <unit>km/s</unit>
+        <approximate>true</approximate>
+        <names>r:speed</names>
+      </property>
+      <property>
+        <title>Eccentricity</title>
+        <type>number</type>
+        <approximate>true</approximate>
+        <names>r:eccentricity</names>
+      </property>
+      <property>
+        <title>Inclination (to ecliptic)</title>
+        <type>number</type>
+        <approximate>true</approximate>
+        <names>r:inclination</names>
+      </property>
+      <property>
+        <title>Number of Satellites</title>
+        <type>number</type>
+        <names>r:satellites</names>
+      </property>
+      <property>
+        <!-- Planet mass -->
+        <title>!datasets!Mass</title>
+        <type>number</type>
+        <unit>kg</unit>
+        <approximate>true</approximate>
+        <names>r:mass</names>
+      </property>
+      <property>
+        <title>Mean Density</title>
+        <type>number</type>
+        <unit>g/cm^3</unit>
+        <approximate>true</approximate>
+        <names>r:density</names>
+      </property>
+      <property>
+        <title>Surface Area</title>
+        <type>number</type>
+        <unit>km^2</unit>
+        <approximate>true</approximate>
+        <!-- Surface area of planet -->
+        <names>!datasets!r:area</names>
+      </property>
+      <property>
+        <title>Equatorial Gravity</title>
+        <type>number</type>
+        <unit>m/s^2</unit>
+        <approximate>true</approximate>
+        <names>r:gravity</names>
+      </property>
+      <property>
+        <title>Mean Surface Temperature</title>
+        <type>number</type>
+        <unit>K</unit>
+        <approximate>true</approximate>
+        <names>r:temperature</names>
+      </property>
+      <property>
+        <title>Mean Radius</title>
+        <type>number</type>
+        <unit>km</unit>
+        <approximate>true</approximate>
+        <names>r:radius</names>
+      </property>
+    </dataset>
+  </category>
+</QALCULATE>
+

@@ -11,7 +11,11 @@
 //! tar-rs（tar，CLI 壳在 tar_impl.rs）、eza（eza/tree）、
 //! wget-rs（wget，rustls）、openssl 与 telnet（仅 Windows：vcpkg 静态库 FFI、
 //! PuTTY 源码内嵌，见 vendor/openssl-app 与 vendor/putty-telnet）、
-//! yq（仅 Windows：Go 源码 vendor/yq + yqffi.dll 运行时加载 FFI，见 yq_impl.rs）；
+//! yq（仅 Windows：Go 源码 vendor/yq + yqffi.dll 运行时加载 FFI，见 yq_impl.rs）、
+//! qalc（仅 Windows：libqalculate 源码 vendor/libqalculate + MinGW 构建的
+//! qalcffi.dll 运行时加载 FFI，见 qalc_impl.rs）、
+//! urlencode / urldecode（仅 Windows：crates.io urlencoding 库封装，见
+//! urlcoding_impl.rs）；
 //! which / ps / top 为自研（unix_extras.rs / ps.rs / top.rs）。
 //!
 //! 安装侧：主程序启动时在 `tools/` 下为本二进制创建硬链接短名入口
@@ -20,9 +24,11 @@
 
 mod coreutils;
 mod ps;
+mod qalc_impl;
 mod tar_impl;
 mod top;
 mod unix_extras;
+mod urlcoding_impl;
 mod yq_impl;
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, ProcessStatus, System, UpdateKind};

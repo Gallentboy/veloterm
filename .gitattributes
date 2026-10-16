@@ -4,3 +4,13 @@
 # 亦按 LF 文本设计——强制按 LF 检出与存储，杜绝 autocrlf 污染。
 # （jq 树内 decNumber 等 C 源以 CRLF 存库，C 编译不受影响，不在此规则范围。）
 src-tauri/vendor/jq/src/builtin.jq text eol=lf
+
+# vendor/libqalculate 是 autotools 树：configure / config.guess / install-sh
+# 等 shell 脚本与 Makefile.in 的 sed 规则、po 文本、definitions.c 生成管道
+# 全部按 LF 文本设计——Windows runner 的 autocrlf 检出成 CRLF 会让
+# configure 直接跑挂（与 jq 的 builtin.jq 同一类坑，整树强制 LF）。
+# 上游 dist tarball 本就以 LF 发布，无二进制文件。
+src-tauri/vendor/libqalculate/** text eol=lf
+# 例外：po*/*.gmo 是 gettext 编译产物的二进制文件，绝不能被 text 规则
+# 做 CRLF→LF 规范化（--disable-nls 下虽不使用，进库的也必须是原样字节）
+src-tauri/vendor/libqalculate/**/*.gmo binary
