@@ -67,8 +67,8 @@ stderr 的 parse error 被吞（终端表现为完全无输出）、`jq ... > fi
 tty 正常输出走 jv_print.c 的 `WriteConsoleW` 不经 stdio 不受影响；
 `-b/--binary` 的 `_O_BINARY` 分支不变）。
 
-`src/main.c`（第 8 处，**临时诊断插桩，定位后移除**）：`VELOTERM_JQ_TIMING=1`
-时在退出前向 stderr 输出分层数据。第一版只打 in-main 分段
+`src/main.c`（第 8 处，**诊断插桩 + 退出路径回归门禁，保留**）：
+`VELOTERM_JQ_TIMING=1` 时在退出前向 stderr 输出分层数据。第一版只打 in-main 分段
 （init/argparse/compile/exec+output/cleanup，QueryPerformanceCounter）；实测
 `-n 1+1` 的 in-main 仅 ~2ms，而进程真实寿命（内核 StartTime→ExitTime，三种
 计时口径一致）~450ms、`--version` 全程仅 ~33ms——缺口在 umain 之外，故扩展为：
@@ -79,7 +79,10 @@ tty 正常输出走 jv_print.c 的 `WriteConsoleW` 不经 stdio 不受影响；
 - 退出路径二分：`VELOTERM_JQ_EXIT_MODE=quick`（`_exit`，跳过 atexit 与 stdio
   冲刷）/ `terminate`（`TerminateProcess`，再跳过 CRT 与加载器收尾）；
 - `VELOTERM_JQ_EXIT_AFTER=compile`（编译后即退，隔离 exec 段）。
-外层驱动见 `scripts/diagnose-jq-timing.ps1`（test-jq.yml 车道自动执行）。
+定位成果：正是靠它发现 `-n 1+1` 的退出码恒为 0xC0000374（见下一处补丁）。
+外层驱动见 `scripts/diagnose-jq-timing.ps1`（test-jq.yml 车道自动执行，并据此
+做退出路径回归门禁：出现崩溃退出码或正常退出比 TerminateProcess 慢 50ms 以上即
+失败）。默认不设环境变量时探针完全静默，不影响正常使用。
 
 `src/jv.c`（第 9 处，**退出期堆损坏根因，长期保留**）：上游 Heimdal 风格的
 WIN32 TSD shim（`pthread_setspecific`）在「替换旧值」前会调用旧值的析构器，
