@@ -30,15 +30,17 @@ jobs:
       FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
       VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
     steps:
-      - uses: actions/checkout@v4
+      # action 主版本随 runner 运行时升级（node20 已弃用，会被强制跑在 node24 上
+      # 并打弃用告警；checkout/setup-node v7、pnpm/action-setup v6 原生 node24）
+      - uses: actions/checkout@v7
 
       - name: setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 11
 
       - name: setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: 'pnpm'
