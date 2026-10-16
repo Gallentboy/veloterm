@@ -32,6 +32,42 @@ fn file_name_of(remote_path: &str) -> &str {
     remote_path.rsplit('/').next().unwrap_or(remote_path)
 }
 
+/// SFTP 远端错误的展示格式化（client 调用：open/create/metadata/rename/…）。
+///
+/// russh-sftp 的 Display 是 `"{状态码名}: {服务器消息}"`，而 OpenSSH sftp-server
+/// 的消息文本通常与状态码名同文（如 "Permission denied: Permission denied"）。
+/// 此处：消息为空或与状态码名忽略大小写同文时只保留一份；自定义 sftp
+/// 服务器的不同文详细消息保留 `"{码名}: {消息}"`；非 Status 错误
+/// （IO/Timeout 等）原样输出。
+pub(crate) fn sftp_error_message(e: russh_sftp::client::error::Error) -> String {
+    use russh_sftp::client::error::Error;
+    match &e {
+        Error::Status(status) => {
+            let code = status.status_code.to_string();
+            let message = status.error_message.trim();
+            if message.is_empty() || message.eq_ignore_ascii_case(&code) {
+                code
+            } else {
+                format!("{code}: {message}")
+            }
+        }
+        _ => e.to_string(),
+    }
+}
+
+/// 远端流式 IO 错误（read/write/seek）的字符串去重：库把 [`sftp_error_message》
+/// 所面对的那份重复 Display 整串塞进了 `io::Error` 的 message（其 file.rs 的
+/// `io::Error::new(ErrorKind::Other, e.to_string())`），无法解构回 Status，
+/// 按 `"X: X"` 首尾同文折叠。仅用于远端流式错误，本地 fs 错误不适用。
+pub(crate) fn dedup_sftp_status_text(text: &str) -> String {
+    if let Some((head, tail)) = text.split_once(": ")
+        && head.eq_ignore_ascii_case(tail.trim())
+    {
+        return head.to_string();
+    }
+    text.to_string()
+}
+
 /// 生成与目标文件同目录的临时文件路径：`<dir>/.veloterm.tmp.<uuid>`。
 pub(crate) fn sibling_temp_path(remote_path: &str) -> String {
     let temp_name = format!(".veloterm.tmp.{}", Uuid::new_v4());
@@ -72,7 +108,9 @@ pub(crate) async fn commit_temp_file(
         if let Err(retry_err) = client.rename(temp, target).await {
             let _ = client.remove_file(temp).await;
             return Err(format!(
-                "Failed to rename temp file onto '{target}': {first_err}; retry after remove: {retry_err}"
+                "Failed to rename temp file onto '{target}': {}; retry after remove: {}",
+                sftp_error_message(first_err),
+                sftp_error_message(retry_err)
             ));
         }
     }
@@ -96,7 +134,7 @@ pub async fn sftp_read_file(
     let meta = client
         .metadata(&remote_path)
         .await
-        .map_err(|e| format!("Failed to stat remote file '{remote_path}': {e}"))?;
+        .map_err(|e| format!("Failed to stat remote file '{remote_path}': {}", sftp_error_message(e)))?;
     let t_stat = t1.elapsed();
     let size = meta.len();
     if size > MAX_EDITABLE_FILE_SIZE_BYTES {
@@ -108,7 +146,7 @@ pub async fn sftp_read_file(
     let mut remote_file = client
         .open(&remote_path)
         .await
-        .map_err(|e| format!("Failed to open remote file '{remote_path}': {e}"))?;
+        .map_err(|e| format!("Failed to open remote file '{remote_path}': {}", sftp_error_message(e)))?;
     let t_open = t2.elapsed();
 
     let mut probe = vec![0u8; SNIFF_PROBE_BYTES.min(size as usize)];
@@ -120,7 +158,12 @@ pub async fn sftp_read_file(
         let n = remote_file
             .read(chunk)
             .await
-            .map_err(|e| format!("Failed to read remote file probe: {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to read remote file probe: {}",
+                    dedup_sftp_status_text(&e.to_string())
+                )
+            })?;
         if n == 0 {
             break;
         }
@@ -141,7 +184,12 @@ pub async fn sftp_read_file(
         let n = remote_file
             .read(&mut buffer)
             .await
-            .map_err(|e| format!("Failed to read remote file '{remote_path}': {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to read remote file '{remote_path}': {}",
+                    dedup_sftp_status_text(&e.to_string())
+                )
+            })?;
         if n == 0 {
             break;
         }
@@ -185,15 +233,25 @@ pub async fn sftp_write_file(
     let mut temp_file = client
         .create(&temp_path)
         .await
-        .map_err(|e| format!("Failed to create temp file '{temp_path}': {e}"))?;
+        .map_err(|e| format!("Failed to create temp file '{temp_path}': {}", sftp_error_message(e)))?;
     temp_file
         .write_all(content.as_bytes())
         .await
-        .map_err(|e| format!("Failed to write temp file '{temp_path}': {e}"))?;
+        .map_err(|e| {
+            format!(
+                "Failed to write temp file '{temp_path}': {}",
+                dedup_sftp_status_text(&e.to_string())
+            )
+        })?;
     temp_file
         .shutdown()
         .await
-        .map_err(|e| format!("Failed to flush temp file '{temp_path}': {e}"))?;
+        .map_err(|e| {
+            format!(
+                "Failed to flush temp file '{temp_path}': {}",
+                dedup_sftp_status_text(&e.to_string())
+            )
+        })?;
 
     // 2. 尽力保留原文件权限（原文件不存在或 setstat 不受支持时忽略）
     if let Ok(origin_meta) = client.metadata(&remote_path).await
@@ -257,5 +315,76 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("\"content\":\"hello\""));
         assert!(json.contains("\"size\":5"));
+    }
+
+    /// 构造 SFTP status 错误（protocol::Status 字段全 pub）
+    fn status_error(
+        code: russh_sftp::protocol::StatusCode,
+        message: &str,
+    ) -> russh_sftp::client::error::Error {
+        russh_sftp::client::error::Error::Status(russh_sftp::protocol::Status {
+            id: 0,
+            status_code: code,
+            error_message: message.to_string(),
+            language_tag: String::new(),
+        })
+    }
+
+    #[test]
+    fn sftp_error_message_dedups_same_text_status() {
+        // OpenSSH 常态：消息文本与状态码名同文（忽略大小写）→ 只留一份
+        assert_eq!(
+            sftp_error_message(status_error(
+                russh_sftp::protocol::StatusCode::PermissionDenied,
+                "Permission denied",
+            )),
+            "Permission denied"
+        );
+        assert_eq!(
+            sftp_error_message(status_error(
+                russh_sftp::protocol::StatusCode::NoSuchFile,
+                "no such file",
+            )),
+            "No such file"
+        );
+    }
+
+    #[test]
+    fn sftp_error_message_keeps_distinct_detail() {
+        // 自定义 sftp 服务器的不同文详细消息保留
+        assert_eq!(
+            sftp_error_message(status_error(
+                russh_sftp::protocol::StatusCode::PermissionDenied,
+                "quota exceeded on /home",
+            )),
+            "Permission denied: quota exceeded on /home"
+        );
+        // 空消息 → 只留码名
+        assert_eq!(
+            sftp_error_message(status_error(
+                russh_sftp::protocol::StatusCode::Failure,
+                "  ",
+            )),
+            "Failure"
+        );
+        // 非 Status 变体原样
+        assert_eq!(
+            sftp_error_message(russh_sftp::client::error::Error::Timeout),
+            "Timeout"
+        );
+    }
+
+    #[test]
+    fn dedup_status_text_folds_same_text_pair() {
+        assert_eq!(
+            dedup_sftp_status_text("Permission denied: Permission denied"),
+            "Permission denied"
+        );
+        // 不同文 / 无分隔符 → 原样
+        assert_eq!(
+            dedup_sftp_status_text("Failure: custom detail"),
+            "Failure: custom detail"
+        );
+        assert_eq!(dedup_sftp_status_text("No such file"), "No such file");
     }
 }
