@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 构建 coreutils 多呼叫二进制并复制到 Tauri externalBin 目录（仅 Windows 需要），
-// 同时产出随包 resources 分发的两个 FFI DLL：yqffi.dll（Go）与
-// qalcffi.dll（libqalculate，MSYS2 MinGW64 构建）。
+// 同时产出随包 resources 分发的三个 FFI DLL：yqffi.dll 与 fzfffi.dll（Go）
+// 以及 qalcffi.dll（libqalculate，MSYS2 MinGW64 构建）。
 // Tauri v2 的 externalBin 要求文件名带 target triple 后缀：
 //   src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe
 // 安装后 Tauri 会去掉 triple 后缀放到主程序同级目录（coreutils.exe），
@@ -45,13 +45,14 @@ if (!target) {
 
 console.log(`[build-tools] target: ${target}`);
 
-// --only <段>：局部构建（coreutils / yq / qalc）。tools-ci 的快速反馈通道用
+// --only <段>：局部构建（coreutils / yq / fzf / qalc）。tools-ci 的快速反馈通道用
 // `--only qalc` 只产 qalcffi.dll——该段只依赖 MSYS2（不需要 cargo 全量编译、
-// Go 与 vcpkg OpenSSL），反馈环最短。不传时全量构建（publish 路径），行为不变
+// Go 与 vcpkg OpenSSL），反馈环最短；yq/fzf 段同构（只依赖 Go）。不传时全量
+// 构建（publish 路径），行为不变
 const onlyFlag = args.indexOf('--only');
 const only = onlyFlag !== -1 && args[onlyFlag + 1] ? args[onlyFlag + 1] : '';
-if (only && !['coreutils', 'yq', 'qalc'].includes(only)) {
-  console.error(`[build-tools] 未知 --only 段：${only}（可选 coreutils/yq/qalc）`);
+if (only && !['coreutils', 'yq', 'fzf', 'qalc'].includes(only)) {
+  console.error(`[build-tools] 未知 --only 段：${only}（可选 coreutils/yq/fzf/qalc）`);
   process.exit(1);
 }
 if (only) {
@@ -128,21 +129,18 @@ if (only === 'coreutils') {
   process.exit(0);
 }
 
-// ── yq（Go）：coreutils 的 yq 命令经 yqffi.dll 动态导入 ────────────────────
+// ── yq / fzf（Go）：coreutils 的 yq、fzf 命令分别经 yqffi.dll / fzfffi.dll 动态导入 ─
 // Go 官方不支持 MSVC 链接 c-archive（golang/go#74189），静态链入 coreutils.exe
-// 不可能；buildmode=c-shared 的 DLL 是唯一形态（分发臂见 crates/coreutils
-// 的 yq_impl.rs，运行时按 exe 同目录/上级目录定位）。产物为普通文件名
-// yqffi.dll，经 tauri.windows.conf.json 的 resources 随包放在安装根目录。
-// 版本锁在 vendor/yq/VELOTERM_VERSION（与 openssl-src 的双源纪律一致），
-// 通过 ldflags 注入 cmd.GitDescribe 让 `yq --version` 打出真实版本。
-if (!only || only === 'yq') {
-  const yqSrc = join(srcTauri, 'vendor', 'yq');
-  const yqVersion = readFileSync(join(yqSrc, 'VELOTERM_VERSION'), 'utf8').trim();
-  console.log(`[build-tools] yq ${yqVersion}: go build -buildmode=c-shared`);
+// 不可能；buildmode=c-shared 的 DLL 是唯一形态（分发臂见 crates/coreutils 的
+// yq_impl.rs / fzf_impl.rs，运行时按 exe 同目录/上级目录定位）。产物为普通文件名
+// yqffi.dll / fzfffi.dll，经 tauri.windows.conf.json 的 resources 随包放在安装根
+// 目录。版本锁在各 vendor 目录的 VELOTERM_VERSION（与 openssl-src 的双源纪律
+// 一致），通过 ldflags 注入让 `yq --version` / `fzf --version` 打出真实版本。
+if (!only || only === 'yq' || only === 'fzf') {
   try {
     execSync('go version', { stdio: 'ignore' });
   } catch {
-    console.error('[build-tools] 未找到 go 工具链（yqffi.dll 构建必需）：请安装 Go ≥ 1.24 或将其加入 PATH');
+    console.error('[build-tools] 未找到 go 工具链（yqffi.dll/fzfffi.dll 构建必需）：请安装 Go ≥ 1.24 或将其加入 PATH');
     process.exit(1);
   }
   // c-shared 需要 cgo：CGO_ENABLED=1 + gcc。windows-latest 镜像通常自带 MinGW
@@ -175,11 +173,16 @@ if (!only || only === 'yq') {
   }
   if (!ensureGccOnPath()) {
     console.error(
-      '[build-tools] 未找到 gcc（cgo 编译 yqffi.dll 必需）：windows-latest 通常自带 MinGW，' +
+      '[build-tools] 未找到 gcc（cgo 编译 yqffi.dll/fzfffi.dll 必需）：windows-latest 通常自带 MinGW，' +
         '若镜像变化请安装 MinGW-w64 或把其 bin 目录加入 PATH',
     );
     process.exit(1);
   }
+}
+if (!only || only === 'yq') {
+  const yqSrc = join(srcTauri, 'vendor', 'yq');
+  const yqVersion = readFileSync(join(yqSrc, 'VELOTERM_VERSION'), 'utf8').trim();
+  console.log(`[build-tools] yq ${yqVersion}: go build -buildmode=c-shared`);
   execSync(
     `go build -buildmode=c-shared -tags veloterm_ffi -trimpath ` +
       `-ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${yqVersion}" ` +
@@ -189,6 +192,28 @@ if (!only || only === 'yq') {
   console.log(`[build-tools] yqffi.dll (${yqVersion}) -> ${join(outDir, 'yqffi.dll')}`);
 }
 if (only === 'yq') {
+  console.log('[build-tools] 完成');
+  process.exit(0);
+}
+
+// ── fzf（junegunn/fzf，Go）：同 yq 的 c-shared 形态（veloterm_ffi.go 复刻
+// 上游 main() 的分支逻辑并导出 veloterm_fzf_main，见 vendor/fzf 树内注释）。
+// fzf 是交互式 TUI：DLL 在宿主 coreutils.exe 进程内直跑，stdin/stdout 是
+// 从 cmd 继承的 ConPTY 句柄，交互渲染/按键直接落在 veloterm 终端上；
+// revision 置空让 `fzf --version` 打出与官方二进制一致的裸版本号
+if (!only || only === 'fzf') {
+  const fzfSrc = join(srcTauri, 'vendor', 'fzf');
+  const fzfVersion = readFileSync(join(fzfSrc, 'VELOTERM_VERSION'), 'utf8').trim();
+  console.log(`[build-tools] fzf ${fzfVersion}: go build -buildmode=c-shared`);
+  execSync(
+    `go build -buildmode=c-shared -tags veloterm_ffi -trimpath ` +
+      `-ldflags "-s -w -X main.version=${fzfVersion} -X main.revision=" ` +
+      `-o "${join(outDir, 'fzfffi.dll')}" .`,
+    { cwd: fzfSrc, stdio: 'inherit', env: { ...process.env, CGO_ENABLED: '1' } },
+  );
+  console.log(`[build-tools] fzfffi.dll (${fzfVersion}) -> ${join(outDir, 'fzfffi.dll')}`);
+}
+if (only === 'fzf') {
   console.log('[build-tools] 完成');
   process.exit(0);
 }
