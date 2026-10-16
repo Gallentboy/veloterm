@@ -1,0 +1,41 @@
+# 目标（单一）：qalcffi.dll 的 debug 快速构建（libqalculate 的 MSYS2 autotools
+# 段，-O0 -g 提速；编译期/链接期/静态自包含断言与 release 配置等价暴露）。
+# 只依赖 MSYS2——不需要 Rust/vcpkg OpenSSL/Go，几分钟级出结果。
+# 触发：推 tag（验证完删除）——
+#   git tag test_qalc && git push origin test_qalc
+#   git push origin :refs/tags/test_qalc
+# 也支持 workflow_dispatch 手动触发。
+name: 'test-qalc'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_qalc*'
+
+jobs:
+  build-qalc:
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install MSYS2 packages for qalc (Windows)
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm make gettext mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-libxml2 mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr"
+
+      - name: Build qalcffi.dll only (debug)
+        env:
+          CFLAGS: '-O0 -g'
+          CXXFLAGS: '-O0 -g'
+        run: node scripts/build-tools.mjs --only qalc
+
+      - name: Upload qalcffi artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: qalcffi-windows-x64
+          path: src-tauri/binaries/qalcffi.dll
+          if-no-files-found: error
+          retention-days: 7
