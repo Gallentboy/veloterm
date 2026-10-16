@@ -22,7 +22,7 @@
 | 前端类型 | `pnpm run typecheck` | 零错误 |
 | 前端构建 | `pnpm run build` | 成功 |
 | Rust 编译 | `cargo check --workspace --all-targets`（在 `src-tauri/`） | 零错误 |
-| Rust 测试 | `cargo test --workspace` | 全绿（app 67 + coreutils 45 + tools-catalog 1 为当前基线） |
+| Rust 测试 | `cargo test --workspace` | 全绿（app 67 + coreutils 46 + tools-catalog 1 为当前基线） |
 | Lint | `cargo clippy --workspace --all-targets` | 自有代码零警告 |
 
 冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑（jq-app / bc-app 同此约定）。
@@ -43,7 +43,7 @@
 
 - **app 不依赖任何工具 crate**——uutils/ripgrep/openssl-app/putty-telnet/jq-app/bc-app 的依赖图只进 `crates/coreutils`。这是「主程序瘦身 + 增量构建互不牵连」的前提：改 UI 只重链 app，改工具只重链 coreutils。
 - **tools-catalog 保持零依赖**——命令名清单是 app（建硬链接）与 coreutils（argv0 分发白名单）的单一事实来源；任何依赖都会经它传染给主程序。
-- `vendor/` 被 workspace `exclude`：vendor 内 coreutils/sed/ripgrep/sd 自带 workspace（onefetch 亦自带 workspace，根清单 members 为 ascii/image/manifest 三个 path 子 crate），其余为无继承键的独立清单；不 exclude 则 uucore 的 `edition.workspace` 会误朝根清单取值而报错。
+- `vendor/` 被 workspace `exclude`：vendor 内 coreutils/sed/ripgrep/sd 自带 workspace（onefetch 亦自带 workspace，根清单 members 为 ascii/image/manifest 三个 path 子 crate；dog 同样自带 workspace，members 为 dns/dns-transport 两个 path 子 crate），其余为无继承键的独立清单；不 exclude 则 uucore 的 `edition.workspace` 会误朝根清单取值而报错。
 - 裸 `cargo build` / `cargo test` 只作用于根包 app；工具链必须显式 `-p coreutils`。
 
 ### Windows 工具链（BusyBox 模式）
@@ -53,6 +53,7 @@
 - **bc 是 jq-app 的同型简化版**：vendor/bc（gavinhoward/bc 7.1.0，BSD-2-Clause）+ vendor/bc-app sys-crate，cc 现场编译静态链入，`-Dmain=veloterm_bc_main` 改名后 FFI 直调（main.c 按 argv[0] 首字符分发 bc/dc，恒传 "bc"）。上游自带官方 MSVC 工程零修补；4 个 strgen 生成物（lib/lib2/help×2）由 build.rs 的 Rust 复刻渲染（与宿主 strgen byte-diff 验证）；仅链 bcrypt。升级 bc：换 vendor 源码 + 同步 build.rs 的 `BC_VERSION` 与 vendor/bc/VERSION.txt（build.rs 启动时校验双源一致）+ 复核 vs/bc.vcxproj 的宏集合。
 - **data-encoding 家族（base32hex/base64url/hex/hexupper）是纯 Rust 的 Windows 专属命令**：编解码内核为 crates.io 的 data-encoding（与 uutils 家族既有依赖共享同一份，不走 vendor 树以免同版本双份编译），GNU 风格 CLI 壳在 `crates/coreutils/src/encodings_impl.rs`（`-d/-i/-w/[FILE]`，解码无条件容忍 `\r\n`，对齐 GNU base64）。门控方式与 openssl/yq 相反：仅 tools-catalog 的 Windows 清单门控，实现与分发臂跨平台编译——macOS 单测全量覆盖行为，`data_encoding_family_dispatch` 直连 run_uutils 验证接线。base32/base64/basenc 已由 uutils 跨平台提供，不重复收录。
 - **zoxide 是 eza 同型的 vendor 纯 Rust 应用命令**：vendor/zoxide（ajeetdsouza/zoxide 0.10.0）整树入源，静态链入 coreutils.exe（非 DLL、无 build-tools 段、无 CI 依赖安装）。两处本地修补：① 新增 `src/lib.rs` 承接原 main.rs 的模块声明与主逻辑，暴露 `zoxide_main_from`（可注入入口，clap 错误 `e.print()` + 返回退出码、不 `process::exit`，同 eza 的 `eza_main_from`）；② 上游 build.rs 把补全脚本生成到**包目录**（非 OUT_DIR），作为路径依赖构建会写脏 vendor 树，已去完成化并删 [build-dependencies]。门控同 data-encoding 家族：仅 Windows 清单，分发臂跨平台编译，`zoxide_dispatch_and_behavior` 在 macOS 直接覆盖 add→query 数据库闭环（测试必须显式设 `_ZO_EXCLUDE_DIRS`：上游默认排除 $HOME，Windows 的 TEMP 在用户目录内，不设会排除掉测试目录）。升级：换 vendor 源码 + 复核两处补丁仍适用。上游不支持 cmd.exe 钩子（templates 无 cmd），本地 cmd 里 `z` 直跳需 doskey 适配（未做），PowerShell 内 `zoxide init powershell` 可用。
+- **dog（命令行 DNS 客户端，dig 的现代化替代）是 eza/zoxide 同型的 vendor 纯 Rust 应用命令**：vendor/dog（ogham/dog，锁 master tip 721440b，包版本 0.2.0-pre——上游 2021-10 起停更、0.2.0 未发版，唯一 tag v0.1.0 缺 master 的 Windows 名字服务器探测改进，故锁 commit 而非 tag）整树入源，静态链入 coreutils.exe，非 DLL、无 build-tools 段、无 CI 依赖安装；自带 dns / dns-transport 两个 path 子 crate（树内 [workspace]，随 vendor exclude 隔离，onefetch 同型）。三处本地修补：① 新增 `src/lib.rs` 承接原 main.rs 的模块声明与主逻辑，暴露 `dog_main_from`（可注入入口；上游 `Options::getopts` 期望不含 argv[0] 的参数表，入口内部 skip(1)；全部 `process::exit` 改为返回退出码：0 成功 / 1 网络错误 / 2 Short 模式无结果 / 3 参数错误 / 4 系统配置错误）；② 根清单补 `[lib]` 目标（上游仅 bin，无 lib 无法作为 path 依赖）；③ build.rs 去 git 化——上游 pre-release/debug 构建把 `git rev-parse` 哈希与编译日期（经 build-dep `datetime`）嵌进版本串，非密封构建且取到的是外层 veloterm 仓库哈希，已删 datetime 与该分支，所有构建统一 release 形态版本串。TLS/DoT/DoH 默认特性走 native-tls（macOS security-framework / Windows schannel，两平台均无 OpenSSL 依赖；security-framework 已被 tauri 栈预置，lock 零重复编译；with_rustls 特性依赖 2019 年的 rustls 0.19，勿启用）。门控同 zoxide 家族：仅 Windows 清单，分发臂跨平台编译，`dog_dispatch_and_behavior` 在 macOS 覆盖 --version/--help/参数错误（退出码 3）与回环 TCP 拒连（退出码 1；output.rs 的 print 对空响应除 Short 模式外恒返回 true）；真实 DNS 解析由上游 xtests 覆盖，Windows 的系统默认名字服务器发现（ipconfig 0.2，winapi 栈，仅 Windows 编译）只能靠 Windows 真机/CI 回归。升级：换 vendor 源码 + 复核三处补丁仍适用。
 - 硬链接安装在应用启动钩子（`src/tools/hardlinks.rs`，仅 Windows 编译）完成：幂等判据是**文件身份**（Unix inode 对；Windows 退化为大小 + mtime），不是文件大小——同体积升级曾因此误判。
 - 依赖 uutils 家族统一走 vendor 的 uucore 0.12.0（各 vendor 清单已重定向），避免 lock 出现双版本。
 - 新增命令：改 `tools-catalog` 清单 → `crates/coreutils/src/coreutils.rs` 加分发臂 → 补 command_table_consistency 与 version sweep 的预期（平台不对称的命令要么条件化 skip，要么如 data-encoding 家族把实现做成跨平台编译、仅清单门控，则无需 skip）。
