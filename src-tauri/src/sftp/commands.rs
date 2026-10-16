@@ -4,7 +4,7 @@ use tauri::State;
 use tauri::ipc::Channel;
 use tokio::io::AsyncSeekExt;
 
-use super::file_ops::{commit_temp_file, remote_dir_of, sibling_temp_path};
+use super::file_ops::{commit_temp_file, dedup_sftp_status_text, remote_dir_of, sftp_error_message, sibling_temp_path};
 use super::manager::{
     close_sftp, connect_sftp, evict_sftp_session, get_or_connect_sftp, register_temp_dir,
     resolve_host_chain,
@@ -119,7 +119,12 @@ pub async fn sftp_list_dir(
     let entries = client
         .read_dir(&normalized_path)
         .await
-        .map_err(|e| format!("Failed to read remote directory '{normalized_path}': {e}"))?;
+        .map_err(|e| {
+            format!(
+                "Failed to read remote directory '{normalized_path}': {}",
+                sftp_error_message(e)
+            )
+        })?;
 
     let mut items = Vec::new();
     for entry in entries {
@@ -207,7 +212,10 @@ pub async fn sftp_download_file(
         Err(e) => {
             evict_failed_session(&state, kind, FailureSide::Source, &session_id, &session_id).await;
             remove_cancel_token(&state, task_id).await;
-            return Err(format!("Failed to open remote file '{remote_path}': {e}"));
+            return Err(format!(
+                "Failed to open remote file '{remote_path}': {}",
+                sftp_error_message(e)
+            ));
         }
     };
 
@@ -216,7 +224,10 @@ pub async fn sftp_download_file(
         Err(e) => {
             evict_failed_session(&state, kind, FailureSide::Source, &session_id, &session_id).await;
             remove_cancel_token(&state, task_id).await;
-            return Err(format!("Failed to stat remote file '{remote_path}': {e}"));
+            return Err(format!(
+                "Failed to stat remote file '{remote_path}': {}",
+                sftp_error_message(e)
+            ));
         }
     };
 
@@ -270,7 +281,10 @@ pub async fn sftp_download_file(
     {
         evict_failed_session(&state, kind, FailureSide::Source, &session_id, &session_id).await;
         remove_cancel_token(&state, task_id).await;
-        return Err(format!("Failed to seek remote file: {e}"));
+        return Err(format!(
+            "Failed to seek remote file: {}",
+            dedup_sftp_status_text(&e.to_string())
+        ));
     }
     if offset > 0 {
         log::info!("[SFTP] Download task {task_id} resuming from offset {offset}");
@@ -320,7 +334,10 @@ pub async fn sftp_download_file(
             // 远端读失败：剔除死连接，保留本地断点
             evict_failed_session(&state, kind, FailureSide::Source, &session_id, &session_id).await;
             remove_cancel_token(&state, task_id).await;
-            Err(format!("Failed to read from remote file: {e}"))
+            Err(format!(
+                "Failed to read from remote file: {}",
+                dedup_sftp_status_text(&e.to_string())
+            ))
         }
         Err(PumpError::Write(e)) => {
             // 本地写失败：无需剔除远端连接，保留远端可重试
@@ -398,7 +415,10 @@ pub async fn sftp_upload_file(
         if let Err(e) = file.seek(SeekFrom::Start(offset)).await {
             evict_failed_session(&state, kind, FailureSide::Target, &session_id, &session_id).await;
             remove_cancel_token(&state, task_id).await;
-            return Err(format!("Failed to seek temp file to resume offset: {e}"));
+            return Err(format!(
+                "Failed to seek temp file to resume offset: {}",
+                dedup_sftp_status_text(&e.to_string())
+            ));
         }
         file
     } else {
@@ -408,7 +428,10 @@ pub async fn sftp_upload_file(
                 evict_failed_session(&state, kind, FailureSide::Target, &session_id, &session_id)
                     .await;
                 remove_cancel_token(&state, task_id).await;
-                return Err(format!("Failed to create temp file '{temp_path}': {e}"));
+                return Err(format!(
+                    "Failed to create temp file '{temp_path}': {}",
+                    sftp_error_message(e)
+                ));
             }
         }
     };
@@ -479,7 +502,10 @@ pub async fn sftp_upload_file(
             // 远端写失败：剔除死连接，保留临时断点
             evict_failed_session(&state, kind, FailureSide::Target, &session_id, &session_id).await;
             remove_cancel_token(&state, task_id).await;
-            Err(format!("Failed to write to remote file: {e}"))
+            Err(format!(
+                "Failed to write to remote file: {}",
+                dedup_sftp_status_text(&e.to_string())
+            ))
         }
     }
 }
@@ -536,7 +562,10 @@ pub async fn sftp_copy_file(
             )
             .await;
             remove_cancel_token(&state, task_id).await;
-            return Err(format!("Failed to open source file '{source_path}': {e}"));
+            return Err(format!(
+                "Failed to open source file '{source_path}': {}",
+                sftp_error_message(e)
+            ));
         }
     };
 
@@ -553,7 +582,10 @@ pub async fn sftp_copy_file(
             )
             .await;
             remove_cancel_token(&state, task_id).await;
-            return Err(format!("Failed to stat source file '{source_path}': {e}"));
+            return Err(format!(
+                "Failed to stat source file '{source_path}': {}",
+                sftp_error_message(e)
+            ));
         }
     };
     let total_size = meta.len();
@@ -607,7 +639,10 @@ pub async fn sftp_copy_file(
             )
             .await;
             remove_cancel_token(&state, task_id).await;
-            return Err(format!("Failed to seek temp file to resume offset: {e}"));
+            return Err(format!(
+                "Failed to seek temp file to resume offset: {}",
+                dedup_sftp_status_text(&e.to_string())
+            ));
         }
         file
     } else {
@@ -623,7 +658,10 @@ pub async fn sftp_copy_file(
                 )
                 .await;
                 remove_cancel_token(&state, task_id).await;
-                return Err(format!("Failed to create temp file '{temp_path}': {e}"));
+                return Err(format!(
+                    "Failed to create temp file '{temp_path}': {}",
+                    sftp_error_message(e)
+                ));
             }
         }
     };
@@ -639,7 +677,10 @@ pub async fn sftp_copy_file(
         )
         .await;
         remove_cancel_token(&state, task_id).await;
-        return Err(format!("Failed to seek source file to resume offset: {e}"));
+        return Err(format!(
+            "Failed to seek source file to resume offset: {}",
+            dedup_sftp_status_text(&e.to_string())
+        ));
     }
     if offset > 0 {
         log::info!("[SFTP] Copy task {task_id} resuming from offset {offset}");
