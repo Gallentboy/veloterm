@@ -471,9 +471,15 @@ pthread_setspecific(pthread_key_t key, void *value)
 
     assert(key < values.values_num);
 
-    if (values.values[key] != NULL && dtor != NULL && dtor != DEAD_KEY)
-        dtor(values.values[key]);
-
+    /* veloterm 修补（第 9 处，堆损坏根因）：删除上游 Heimdal 实现在「替换旧值」
+     * 前调用其析构器的行为。POSIX 语义下 pthread_setspecific 只替换值，析构器
+     * 仅在线程退出路径被调用——而 jq 的退出清理恰是「自己先 free、再
+     * setspecific(key, NULL) 清槽」（jv.c 的 jv_tsd_dec_ctx_fini 与
+     * jv_dtoa_tsd.c 的 jv_tsd_dtoa_ctx_fini），保留该调用即对同一指针二次 free：
+     * MSVC 静态 CRT 下实测进程以 0xC0000374（STATUS_HEAP_CORRUPTION）退出，
+     * Windows 错误报告（WER）随后做崩溃事后处理，用户机表现为「jq 输出数字后
+     * 退出慢 ~450ms」（`--version` 不建 dec/dtoa 上下文，故不受影响；跳过
+     * atexit 的退出模式也干净）。MinGW 构建走真 pthread 分支，不触发。 */
     values.values[key] = value;
     return 0;
 }

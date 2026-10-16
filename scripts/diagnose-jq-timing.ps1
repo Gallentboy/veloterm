@@ -42,6 +42,25 @@ $log = New-Object System.Collections.Generic.List[string]
 function Say([string]$s) { Write-Host $s; $script:log.Add([string]$s) }
 function Head([string]$s) { Say ''; Say ('==== ' + $s + ' ====') }
 
+# 退出码格式化：.NET 的 X 格式对负 Int32 输出其二进制补码形态
+# （-1073740940 -> C0000374），无需 uint32 转换（PS 5.1 下 0xFFFFFFFF 是
+# Int32 = -1，-band 后转 uint32 会抛 InvalidArgument）。
+function Format-ExitCode($code) {
+    if ($null -eq $code) { return 'n/a' }
+    $hex = '{0:X8}' -f $code
+    $name = switch ($hex) {
+        '00000000' { 'OK' }
+        'C0000374' { 'STATUS_HEAP_CORRUPTION' }
+        'C0000005' { 'STATUS_ACCESS_VIOLATION' }
+        'C0000409' { 'STATUS_STACK_BUFFER_OVERRUN' }
+        'C00000FD' { 'STATUS_STACK_OVERFLOW' }
+        'C000013A' { 'STATUS_CONTROL_C_EXIT' }
+        default    { '' }
+    }
+    if ($name) { return ('0x' + $hex + ' ' + $name) }
+    return ('0x' + $hex)
+}
+
 # ---------------------------------------------------------------- locate exe
 if (-not $Coreutils) {
     $cands = @()
@@ -175,7 +194,7 @@ function Measure-Segments([string]$name, [string[]]$jqArgs, [hashtable]$extraEnv
         if ($null -eq $life) { $life = 0 }
         $preMain += $pm; $inMain += $inm; $uptimes += $um; $lives += [math]::Round($life, 1)
         $peakWs += $pw; $priv += $pv; $cpuMs += $cp
-        $codes += $(if ($null -ne $code) { ('0x{0:X8}' -f [uint32]([int64]$code -band [int64]0xFFFFFFFF)) } else { 'n/a' })
+        $codes += (Format-ExitCode $code)
         $childCpus += $(if ($null -ne $childCpu) { [math]::Round($childCpu, 1) } else { 0 })
         $childPeaks += $(if ($null -ne $childPeak) { [math]::Round($childPeak, 1) } else { 0 })
     }
@@ -338,6 +357,32 @@ How to read (columns pre_main / in_main / post_probe / life):
       heap usage) is the differentiator, not jq logic.
 '@
 
+# ---------------------------------------------------------------- regression gate
+# 崩溃退出码（如 0xC0000374 STATUS_HEAP_CORRUPTION）或正常退出路径明显慢于
+# terminate 路径，都说明退出期仍有缺陷（历史问题：TSD shim 二次 free 致 WER
+# 事后处理，用户机每次 jq -n 1+1 多耗 ~450ms）。这两条在诊断车道硬失败，
+# 避免回归悄悄溜过。
+Head 'regression gate'
+$gateFail = $false
+$crashRows = @($segRows | Where-Object { $_.exitcodes -match 'STATUS_' })
+if ($crashRows.Count -gt 0) {
+    foreach ($r in $crashRows) {
+        Say ("  FAIL: '{0}' exited with crash code {1}" -f $r.Case, $r.exitcodes)
+    }
+    $gateFail = $true
+}
+$norm = $segRows | Where-Object { $_.Case -eq 'jq -n 1+1' } | Select-Object -First 1
+$term = $segRows | Where-Object { $_.Case -eq 'jq -n 1+1 exit-mode=terminate' } | Select-Object -First 1
+if ($norm -and $term) {
+    $delta = $norm.post_probe - $term.post_probe
+    Say ("  exit-path delta (normal post_probe - terminate post_probe) = {0} ms" -f $delta)
+    if ($delta -gt 50) {
+        Say '  FAIL: normal exit path is >50ms slower than TerminateProcess (teardown defect)'
+        $gateFail = $true
+    }
+}
+if (-not $gateFail) { Say '  PASS: no crash exit codes, exit path within budget' }
+
 $outFile = Join-Path $work 'diagnose-jq-timing.result.txt'
 ($log -join "`r`n") | Out-File -FilePath $outFile -Encoding utf8
 Say ("saved: {0}" -f $outFile)
@@ -345,3 +390,4 @@ if ($env:GITHUB_STEP_SUMMARY) {
     ("`r`n## diagnose-jq-timing`r`n`r`n" + ($log -join "`r`n")) |
         Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 }
+if ($gateFail) { exit 1 }
