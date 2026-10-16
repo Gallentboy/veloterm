@@ -37,6 +37,12 @@ wget-rs = { path = "../../vendor/wget-rs" }
 # （lib.rs 可注入入口，eza 同型）。命令仅注册进 Windows 清单，依赖跨平台
 # 编译，macOS 本机单测可直接覆盖行为（同 data-encoding / urlencoding 家族形态）
 zoxide = { path = "../../vendor/zoxide" }
+# dog（ogham/dog，纯 Rust DNS 客户端，dig 的现代化替代）：vendor 源码静态
+# 链入（lib.rs 可注入入口，eza/zoxide 同型）。命令仅注册进 Windows 清单，
+# 依赖跨平台编译（TLS 走 native-tls：macOS security-framework / Windows
+# schannel，无 OpenSSL 依赖），macOS 本机单测直接覆盖行为
+# （同 data-encoding / urlencoding / zoxide 家族形态）
+dog = { path = "../../vendor/dog" }
 rust-parallel = { path = "../../vendor/rust-parallel" }
 # onefetch（o2sh/onefetch 3.0.0，纯 Rust：gix/tokei/askalono，git 仓库信息
 # 面板）——vendor 树自带 cargo workspace（ascii/image/manifest 三个 path
