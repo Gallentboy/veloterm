@@ -3,8 +3,10 @@ import type { LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/hosts/formFields';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { SettingOptionGroup, SettingsSection, SettingRow } from '@/components/settings';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useAppVersion } from '@/hooks/useAppVersion';
 import { AiProviderDialog } from '@/components/ai/AiProviderDialog';
 import { deleteAiProvider, listAiProviders, type AiProvider } from '@/services/aiService';
@@ -58,8 +60,9 @@ export function SettingsScreen() {
   const [logLevel, setLogLevelState] = useState<LogLevel>('info');
   const [logFilePath, setLogFilePath] = useState<string | null>(null);
   const [knownHosts, setKnownHosts] = useState<KnownHostEntry[]>([]);
-  const [pendingRemoveHostId, setPendingRemoveHostId] = useState<number | null>(null);
-  const [confirmClearAll, setConfirmClearAll] = useState(false);
+  // 删除确认弹窗目标（工程约定：删除必须弹窗确认，严禁两次点击式或无确认直接删）
+  const [pendingRemoveHost, setPendingRemoveHost] = useState<KnownHostEntry | null>(null);
+  const [confirmClearAllOpen, setConfirmClearAllOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -84,28 +87,12 @@ export function SettingsScreen() {
     await logger.info(`[Frontend Logger] info verification log after setting level=${nextLevel}`);
   };
 
-  const handleRemoveKnownHost = async (id: number) => {
-    if (pendingRemoveHostId !== id) {
-      setPendingRemoveHostId(id);
-      setConfirmClearAll(false);
-      return;
-    }
-    setPendingRemoveHostId(null);
-    const removed = await removeKnownHost(id);
-    if (removed) {
-      setKnownHosts((current) => current.filter((item) => item.id !== id));
-    }
+  const handleRemoveKnownHost = (entry: KnownHostEntry) => {
+    setPendingRemoveHost(entry);
   };
 
-  const handleClearAllKnownHosts = async () => {
-    if (!confirmClearAll) {
-      setConfirmClearAll(true);
-      setPendingRemoveHostId(null);
-      return;
-    }
-    setConfirmClearAll(false);
-    await clearKnownHosts();
-    setKnownHosts([]);
+  const handleClearAllKnownHosts = () => {
+    setConfirmClearAllOpen(true);
   };
 
   const logLevelDescription = logFilePath
@@ -116,8 +103,8 @@ export function SettingsScreen() {
     <div
       className="flex h-full justify-center overflow-y-auto px-5 py-8 select-none"
       onClick={() => {
-        setPendingRemoveHostId(null);
-        setConfirmClearAll(false);
+        setPendingRemoveHost(null);
+        setConfirmClearAllOpen(false);
       }}
     >
       <div className="flex h-fit w-full max-w-xl flex-col gap-6">
@@ -165,13 +152,13 @@ export function SettingsScreen() {
           <SettingRow title={t('settings.knownHosts')} desc={t('settings.knownHostsDesc')}>
             {knownHosts.length > 0 ? (
               <Button
-                variant={confirmClearAll ? 'destructive' : 'outline'}
+                variant="outline"
                 onClick={(e) => {
                   e.stopPropagation();
-                  void handleClearAllKnownHosts();
+                  handleClearAllKnownHosts();
                 }}
               >
-                {confirmClearAll ? t('settings.knownHostsConfirmClear') : t('settings.knownHostsClearAll')}
+                {t('settings.knownHostsClearAll')}
               </Button>
             ) : null}
           </SettingRow>
@@ -179,14 +166,12 @@ export function SettingsScreen() {
           {knownHosts.length > 0 ? (
             <div className="flex max-h-60 flex-col overflow-y-auto border-t border-border/50">
               {knownHosts.map((entry) => {
-                const isPendingDelete = pendingRemoveHostId === entry.id;
                 return (
                   <div
                     key={entry.id}
                     onClick={(e) => e.stopPropagation()}
                     className={cn(
                       'group flex items-center justify-between gap-3 px-4 py-2 transition-colors hover:bg-surface-hover',
-                      isPendingDelete && 'bg-destructive/5',
                     )}
                   >
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -202,28 +187,21 @@ export function SettingsScreen() {
                         {entry.key_base64}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      title={
-                        isPendingDelete
-                          ? t('settings.knownHostsConfirmRemove')
-                          : t('settings.knownHostsRemove')
-                      }
-                      aria-label={
-                        isPendingDelete
-                          ? t('settings.knownHostsConfirmRemove')
-                          : t('settings.knownHostsRemove')
-                      }
-                      onClick={() => void handleRemoveKnownHost(entry.id)}
-                      className={cn(
-                        'inline-flex size-6 shrink-0 items-center justify-center rounded-md transition-colors',
-                        isPendingDelete
-                          ? 'text-destructive hover:bg-destructive/10'
-                          : 'text-foreground-subtle opacity-0 group-hover:opacity-100 hover:bg-hover hover:text-destructive',
-                      )}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
+                    <ControlHintTooltip title={t('settings.knownHostsRemove')} side="left">
+                      <button
+                        type="button"
+                        aria-label={t('settings.knownHostsRemove')}
+                        onClick={() => handleRemoveKnownHost(entry)}
+                        // 行 hover 才显示按钮；门控必须在按钮上——
+                        // ControlHintTooltip 的 className 作用于弹出面板而非包裹层
+                        className={cn(
+                          'inline-flex size-6 shrink-0 items-center justify-center rounded-md transition-colors',
+                          'text-foreground-subtle opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-hover hover:text-destructive',
+                        )}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </ControlHintTooltip>
                   </div>
                 );
               })}
@@ -300,6 +278,40 @@ export function SettingsScreen() {
           }}
         />
       ) : null}
+
+      {/* 已知主机单条移除确认（工程约定：删除必须弹窗确认） */}
+      <ConfirmDialog
+        open={pendingRemoveHost !== null}
+        title={t('common.confirmDeleteTitle')}
+        description={t('settings.knownHostsRemoveDesc', {
+          host: pendingRemoveHost ? `${pendingRemoveHost.host}:${pendingRemoveHost.port}` : '',
+        })}
+        detail={pendingRemoveHost?.key_base64}
+        onConfirm={() => {
+          const target = pendingRemoveHost;
+          setPendingRemoveHost(null);
+          if (target) {
+            void removeKnownHost(target.id).then((removed) => {
+              if (removed) {
+                setKnownHosts((current) => current.filter((item) => item.id !== target.id));
+              }
+            });
+          }
+        }}
+        onCancel={() => setPendingRemoveHost(null)}
+      />
+
+      {/* 清空全部已知主机确认 */}
+      <ConfirmDialog
+        open={confirmClearAllOpen}
+        title={t('common.confirmDeleteTitle')}
+        description={t('settings.knownHostsClearDesc', { count: knownHosts.length })}
+        onConfirm={() => {
+          setConfirmClearAllOpen(false);
+          void clearKnownHosts().then(() => setKnownHosts([]));
+        }}
+        onCancel={() => setConfirmClearAllOpen(false)}
+      />
     </div>
   );
 }

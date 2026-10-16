@@ -4,10 +4,15 @@ import { GroupFormDialog } from '@/components/hosts/GroupFormDialog';
 import { HostFormDialog, type HostFormResult } from '@/components/hosts/HostFormDialog';
 import { GroupTreeRow, HostTreeRow } from '@/components/hosts/HostTree';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useHostsStore } from '@/hosts/HostsProvider';
 import type { GroupNode, HostNode } from '@/hosts/types';
 
-type HostDialogState = { mode: 'create' } | { mode: 'edit'; node: HostNode } | null;
+type HostDialogState =
+  | { mode: 'create' }
+  | { mode: 'edit'; node: HostNode }
+  | { mode: 'duplicate'; node: HostNode }
+  | null;
 type GroupDialogState =
   | { mode: 'create'; parentId: number | null }
   | { mode: 'edit'; node: GroupNode }
@@ -43,34 +48,46 @@ export function HostsScreen({
 
   const [hostDialog, setHostDialog] = useState<HostDialogState>(null);
   const [groupDialog, setGroupDialog] = useState<GroupDialogState>(null);
-  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  // 删除确认弹窗目标（工程约定：删除必须弹窗确认，严禁两次点击式或无确认直接删）
+  const [deleteTarget, setDeleteTarget] = useState<
+    | { kind: 'host'; id: number; name: string; subtitle: string }
+    | { kind: 'group'; id: number; name: string }
+    | null
+  >(null);
 
   const handleDeleteHost = (id: number) => {
-    // 两段式确认：第一次点标记，第二次点真正删除
-    setPendingDeleteId((current) => {
-      if (current === id) {
-        removeHost(id);
-        return null;
-      }
-      return id;
+    const host = hosts.find((item) => item.id === id);
+    if (!host) return;
+    setDeleteTarget({
+      kind: 'host',
+      id,
+      name: host.name,
+      subtitle: `${host.username || '—'}@${host.host}:${host.port}`,
     });
   };
 
   const handleDeleteGroup = (id: number) => {
-    // 主机页内也允许直接删分组（只解除关联，主机保留）
-    setPendingDeleteId((current) => {
-      if (current === id) {
-        removeGroup(id);
-        return null;
-      }
-      return id;
-    });
+    // 主机页内也允许直接删分组（只解除关联，主机保留）；后果说明在弹窗里展示
+    const group = groups.find((item) => item.id === id);
+    if (!group) return;
+    setDeleteTarget({ kind: 'group', id, name: group.name });
+  };
+
+  const handleDeleteConfirm = () => {
+    if (!deleteTarget) return;
+    if (deleteTarget.kind === 'host') {
+      removeHost(deleteTarget.id);
+    } else {
+      removeGroup(deleteTarget.id);
+    }
+    setDeleteTarget(null);
   };
 
   const handleSaveHost = (result: HostFormResult) => {
     if (hostDialog?.mode === 'edit') {
       updateHost(hostDialog.node.id, result);
     } else {
+      // create 与 duplicate 都落库为新主机（复制=预填态的新建，不影响原主机）
       createHost(result);
     }
     setHostDialog(null);
@@ -92,10 +109,9 @@ export function HostsScreen({
           group={group}
           depth={depth}
           expanded={isExpanded(group.id)}
-          pendingDeleteId={pendingDeleteId}
           onToggle={toggleExpanded}
           onEdit={(target) => {
-            setPendingDeleteId(null);
+            setDeleteTarget(null);
             setGroupDialog({ mode: 'edit', node: target });
           }}
           onDelete={handleDeleteGroup}
@@ -111,11 +127,14 @@ export function HostsScreen({
                   host={host}
                   jumpHostName={jumpHost?.name}
                   depth={depth + 1}
-                  pendingDeleteId={pendingDeleteId}
-                  onConnect={onConnectHost}
+                          onConnect={onConnectHost}
                   onOpenSftp={onOpenSftp}
+                  onDuplicate={(target) => {
+                    setDeleteTarget(null);
+                    setHostDialog({ mode: 'duplicate', node: target });
+                  }}
                   onEdit={(target) => {
-                    setPendingDeleteId(null);
+                    setDeleteTarget(null);
                     setHostDialog({ mode: 'edit', node: target });
                   }}
                   onDelete={handleDeleteHost}
@@ -131,7 +150,7 @@ export function HostsScreen({
   const hasAnything = groups.length > 0 || hosts.length > 0;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden" onClick={() => setPendingDeleteId(null)}>
+    <div className="flex h-full flex-col overflow-hidden" onClick={() => setDeleteTarget(null)}>
       {/* 工具栏 */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-4 py-2">
         <span className="text-ui-sm text-foreground-subtle select-none">
@@ -142,7 +161,7 @@ export function HostsScreen({
             variant="outline"
             size="lg"
             onClick={() => {
-              setPendingDeleteId(null);
+              setDeleteTarget(null);
               setGroupDialog({ mode: 'create', parentId: null });
             }}
           >
@@ -151,7 +170,7 @@ export function HostsScreen({
           <Button
             size="lg"
             onClick={() => {
-              setPendingDeleteId(null);
+              setDeleteTarget(null);
               setHostDialog({ mode: 'create' });
             }}
           >
@@ -174,11 +193,14 @@ export function HostsScreen({
                   host={host}
                   jumpHostName={jumpHost?.name}
                   depth={0}
-                  pendingDeleteId={pendingDeleteId}
-                  onConnect={onConnectHost}
+                          onConnect={onConnectHost}
                   onOpenSftp={onOpenSftp}
+                  onDuplicate={(target) => {
+                    setDeleteTarget(null);
+                    setHostDialog({ mode: 'duplicate', node: target });
+                  }}
                   onEdit={(target) => {
-                    setPendingDeleteId(null);
+                    setDeleteTarget(null);
                     setHostDialog({ mode: 'edit', node: target });
                   }}
                   onDelete={handleDeleteHost}
@@ -198,7 +220,8 @@ export function HostsScreen({
 
       {hostDialog ? (
         <HostFormDialog
-          node={hostDialog.mode === 'edit' ? hostDialog.node : null}
+          node={hostDialog.mode === 'edit' || hostDialog.mode === 'duplicate' ? hostDialog.node : null}
+          isDuplicate={hostDialog.mode === 'duplicate'}
           hosts={hosts}
           groups={groups}
           onSave={handleSaveHost}
@@ -215,6 +238,25 @@ export function HostsScreen({
           onClose={() => setGroupDialog(null)}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={t('common.confirmDeleteTitle')}
+        description={
+          deleteTarget?.kind === 'group' ? (
+            <span>
+              {t('common.confirmDelete', { name: deleteTarget.name })}
+              <br />
+              {t('groups.deleteDesc')}
+            </span>
+          ) : (
+            t('common.confirmDelete', { name: deleteTarget?.name ?? '' })
+          )
+        }
+        detail={deleteTarget?.kind === 'host' ? deleteTarget.subtitle : undefined}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }
