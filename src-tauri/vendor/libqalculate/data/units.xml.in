@@ -1,0 +1,5060 @@
+<?xml version="1.0" encoding="utf-8"?>
+<QALCULATE version="5.7.0">
+  <category>
+    <!-- Unit category -->
+    <title>!units!Length</title>
+    <unit type="base">
+      <system>SI</system>
+      <title>Meter</title>
+      <names>ar:m,meter,p:meters,metre,p:metres</names>
+      <use_with_prefixes max="3">true</use_with_prefixes>
+    </unit>
+    <unit type="composite">
+      <title>Kilometer</title>
+      <names translatable="no">r:km_c</names>
+      <part>
+        <unit>m</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Decimeter</title>
+      <names translatable="no">r:dm_c</names>
+      <part>
+        <unit>m</unit>
+        <prefix>-1</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Centimeter</title>
+      <names translatable="no">r:cm_c</names>
+      <part>
+        <unit>m</unit>
+        <prefix>-2</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Millimeter</title>
+      <names translatable="no">r:mm_c</names>
+      <part>
+        <unit>m</unit>
+        <prefix>-3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Micrometer</title>
+      <names translatable="no">r:um_c</names>
+      <part>
+        <unit>m</unit>
+        <prefix>-6</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Nanometer</title>
+      <names translatable="no">r:nm_c</names>
+      <part>
+        <unit>m</unit>
+        <prefix>-9</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Micron</title>
+      <names>r:micron,p:microns</names>
+      <base>
+        <unit>um_c</unit>
+        <relation>1</relation>
+        <exponent>1</exponent>
+        <mix>-1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Nautical Mile</title>
+      <names>r:nautical_mile,p:nautical_miles,a:nmi</names>
+      <base>
+        <unit>m</unit>
+        <relation>1852</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Ångström</title>
+      <names>aru:Å,aou:Å,u:ångström,angstrom</names>
+      <use_with_prefixes>true</use_with_prefixes>
+      <base>
+        <unit>m</unit>
+        <relation>1E-10</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>U.S. Survey Inch</title>
+      <system>US Survey</system>
+      <names>as:in_US,aor:US_in,US_inch,p:US_inches</names>
+      <base>
+        <unit>m</unit>
+        <relation>100/3937</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Inch</title>
+      <system>Imperial/US</system>
+      <names>ar:in,inch,p:inches</names>
+      <base>
+        <unit>m</unit>
+        <relation>0.0254</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Hand</title>
+      <system>Imperial/US</system>
+      <names>r:hand,p:hands</names>
+      <base>
+        <unit>in</unit>
+        <relation>4</relation>
+        <exponent>1</exponent>
+        <mix>2</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Foot</title>
+      <system>Imperial/US</system>
+      <names>ar:ft,foot,p:feet</names>
+      <base>
+        <unit>hand</unit>
+        <relation>3</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>U.S. Survey Foot</title>
+      <system>US Survey</system>
+      <names>as:ft_US,aor:US_ft,US_foot,p:US_feet</names>
+      <base>
+        <unit>US_in</unit>
+        <relation>12</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Link</title>
+      <system>Imperial/US</system>
+      <names>ar:li,link,p:links</names>
+      <base>
+        <unit>in</unit>
+        <relation>7.92</relation>
+        <exponent>1</exponent>
+        <mix>3</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Yard</title>
+      <system>Imperial/US</system>
+      <names>ar:yd,yard,p:yards</names>
+      <base>
+        <unit>ft</unit>
+        <relation>3</relation>
+        <exponent>1</exponent>
+        <mix min="12">1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Rod (pole/perch)</title>
+      <system>Imperial/US</system>
+      <names>ar:rd,rod,p:rods</names>
+      <base>
+        <unit>ft</unit>
+        <relation>16.5</relation>
+        <exponent>1</exponent>
+        <mix>2</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>U.S. Survey Rod</title>
+      <system>US Survey</system>
+      <names>as:rd_US,aor:US_rd,US_rod,p:US_rods</names>
+      <base>
+        <unit>US_ft</unit>
+        <relation>16.5</relation>
+        <exponent>1</exponent>
+        <mix>2</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Fathom</title>
+      <system>Imperial/US</system>
+      <names>r:fathom,p:fathoms</names>
+      <base>
+        <unit>yd</unit>
+        <relation>2</relation>
+        <exponent>1</exponent>
+        <mix>2</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Chain</title>
+      <system>Imperial/US</system>
+      <names>ar:ch,chain,p:chains</names>
+      <base>
+        <unit>li</unit>
+        <relation>100</relation>
+        <exponent>1</exponent>
+        <mix>2</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Furlong</title>
+      <system>Imperial/US</system>
+      <names>ar:fur,furlong,p:furlongs</names>
+      <base>
+        <unit>ch</unit>
+        <relation>10</relation>
+        <exponent>1</exponent>
+        <mix>2</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Mile</title>
+      <system>Imperial/US</system>
+      <names>ar:mi,mile,p:miles</names>
+      <base>
+        <unit>yd</unit>
+        <relation>1760</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>U.S. Survey Mile</title>
+      <system>US Survey</system>
+      <names>as:mi_US,aor:US_mi,US_mile,p:US_miles</names>
+      <base>
+        <unit>US_ft</unit>
+        <relation>5280</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Thou/mil (1/1000 in)</title>
+      <system>Imperial/US</system>
+      <names>r:thou,mil,po:mils</names>
+      <base>
+        <unit>in</unit>
+        <relation>0.001</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Astronomical Unit</title>
+      <names>a-cr:au,astronomical_unit,p:astronomical_units</names>
+      <base>
+        <unit>m</unit>
+        <relation>149597870700</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Light Year</title>
+      <names>ar:ly,lightyear,p:lightyears</names>
+      <base>
+        <unit>m</unit>
+        <relation>9460730472580800</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Light Second</title>
+      <names>r:light_second,p:light_seconds</names>
+      <base>
+        <unit>ly</unit>
+        <relation>1/31557600</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Light Minute</title>
+      <names>r:light_minute,p:light_minutes</names>
+      <base>
+        <unit>light_second</unit>
+        <relation>60</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Light Hour</title>
+      <names>r:light_hour,p:light_hours</names>
+      <base>
+        <unit>light_minute</unit>
+        <relation>60</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Parsec</title>
+      <names>ar:pc,parsec,p:parsecs</names>
+      <use_with_prefixes>true</use_with_prefixes>
+      <base>
+        <unit>AU</unit>
+        <relation>648000/pi</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Solar Radius (nominal)</title>
+      <names>r:solar_radius,au:R_☉</names>
+      <base>
+        <unit>m</unit>
+        <relation>695700000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Pied du roi (French Royal Foot)</title>
+      <names>r:pied_du_roi,p:pieds_du_roi</names>
+      <base>
+        <unit>m</unit>
+        <relation>9000/27706</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Pouce (French Royal Inch)</title>
+      <names>r:pouce,p:pouces</names>
+      <base>
+        <unit>pied_du_roi</unit>
+        <relation>1/12</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Ligne</title>
+      <names>r:ligne,p:lignes</names>
+      <base>
+        <unit>pouce</unit>
+        <relation>1/12</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Toise</title>
+      <names>r:toise,p:toises</names>
+      <base>
+        <unit>pied_du_roi</unit>
+        <relation>6</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Planck Length</title>
+      <names translatable="no">r:planck_length,as:l_P</names>
+      <system>Planck</system>
+      <base>
+        <unit>m</unit>
+        <relation>sqrt(planck2pi*newtonian_constant/c^3)</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Bohr (Atomic Unit of Length)</title>
+      <names translatable="no">rs:bohr_unit,as:a_0unit</names>
+      <system>Atomic</system>
+      <base>
+        <unit>m</unit>
+        <relation>bohr_radius</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Electronvolt Distance</title>
+      <names translatable="no">planck_c_p_eV</names>
+      <part>
+        <unit>planck_unit</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>c_unit</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>eV</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title translatable="no">Planck per Electron Mass Light Speed</title>
+      <names translatable="no">planck_p_electron_c</names>
+      <system>Natural</system>
+      <hidden>true</hidden>
+      <part>
+        <unit>planck_unit</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>electron_unit</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+      <part>
+        <unit>c_unit</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Natural Unit of Length</title>
+      <names translatable="no">ars:l_N,aus:ƛ_unit</names>
+      <system>Natural</system>
+      <base>
+        <unit>planck_p_electron_c</unit>
+        <relation>1</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Rack Unit</title>
+      <system>Imperial/US</system>
+      <names>a:U,r:rack_unit,p:rack_units,a:RU</names>
+      <base>
+        <unit>in</unit>
+        <relation>1.75</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+  </category>
+  <category>
+    <!-- Unit category -->
+    <title>!units!Angle</title>
+    <category>
+      <title>Plane Angle</title>
+      <unit type="base">
+        <system>SI</system>
+        <title>Radian</title>
+        <names>ar:rad,radian,p:radians</names>
+        <use_with_prefixes>false</use_with_prefixes>
+      </unit>
+      <unit type="alias">
+        <!--angle unit-->
+        <title>Degree</title>
+        <names>ar:deg,au:°,degree,p:degrees</names>
+        <use_with_prefixes>false</use_with_prefixes>
+        <base>
+          <unit>rad</unit>
+          <relation>pi/180</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Gradian (Gon)</title>
+        <names>ar:gra,gradian,p:gradians,gon,p:gons</names>
+        <use_with_prefixes>false</use_with_prefixes>
+        <base>
+          <unit>rad</unit>
+          <relation>pi/200</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Arcminute</title>
+        <names>ar:arcmin,arcminute,p:arcminutes</names>
+        <base>
+          <unit>deg</unit>
+          <relation>1/60</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Arcsecond</title>
+        <names>ar:arcsec,arcsecond,p:arcseconds</names>
+        <base>
+          <unit>arcmin</unit>
+          <relation>1/60</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Turn</title>
+        <names>a:tr,r:turn,p:turns,a:pla,a:rev,revolution,p:revolutions,a:cyc,cycle,p:cycles</names>
+        <base>
+          <unit>deg</unit>
+          <relation>360</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Solid Angle</title>
+      <unit type="composite">
+        <title translatable="no">Square Degree</title>
+        <names translatable="no">r:sqdeg</names>
+        <part>
+          <unit>deg</unit>
+          <prefix>0</prefix>
+          <exponent>2</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Steradian</title>
+        <names>ar:sr,steradian,p:steradians</names>
+        <base>
+          <unit>rad</unit>
+          <relation>1</relation>
+          <exponent>2</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Angular Acceleration</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Radians per Second Squared</title>
+        <names translatable="no">r:rad_p_sqs</names>
+        <part>
+          <unit>rad</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Angular Velocity</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Radians per Second</title>
+        <names translatable="no">r:rad_p_s</names>
+        <part>
+          <unit>rad</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Revolutions per Minute</title>
+        <names translatable="no">r:turn_p_min</names>
+        <part>
+          <unit>turn</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>min</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Revolutions per Minute (RPM)</title>
+        <names>ar:rpm</names>
+        <base>
+          <unit>turn_p_min</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <!-- Unit category -->
+    <title>!units!Mass</title>
+    <unit type="base">
+      <system>SI</system>
+      <title>Gram</title>
+      <names>ar:g,gram,p:grams</names>
+      <use_with_prefixes max="3" default="3">true</use_with_prefixes>
+    </unit>
+    <unit type="composite">
+      <system>SI</system>
+      <title>Kilogram</title>
+      <names translatable="no">r:kg_c</names>
+      <part>
+        <unit>g</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Hectogram</title>
+      <names translatable="no">r:hg_c</names>
+      <part>
+        <unit>g</unit>
+        <prefix>2</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Metric Ton (Tonne)</title>
+      <names>ar:t,tonne,p:tonnes,ton,p:tons</names>
+      <use_with_prefixes min="0">true</use_with_prefixes>
+      <base>
+        <unit>g</unit>
+        <relation>1000000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Grain</title>
+      <system>Troy</system>
+      <names>ar:gr,grain,p:grains</names>
+      <base>
+        <unit>g</unit>
+        <relation>0.06479891</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Pennyweight</title>
+      <system>Troy</system>
+      <names>ar:pwt,pennyweight,p:pennyweights</names>
+      <base>
+        <unit>gr</unit>
+        <relation>24</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Ounce (troy)</title>
+      <system>Troy</system>
+      <names>ars:oz_t,troy_ounce,p:troy_ounces</names>
+      <base>
+        <unit>pwt</unit>
+        <relation>20</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Pound (troy)</title>
+      <system>Troy</system>
+      <names>ars:lb_t,troy_pound,p:troy_pounds</names>
+      <base>
+        <unit>oz_t</unit>
+        <relation>12</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Dram</title>
+      <system>Imperial/US</system>
+      <names>ar:dr,dram,p:drams</names>
+      <base>
+        <unit>g</unit>
+        <relation>1.7718451953125</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Ounce</title>
+      <system>Imperial/US</system>
+      <names>ar:oz,ounce,p:ounces</names>
+      <base>
+        <unit>dr</unit>
+        <relation>16</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Pound</title>
+      <system>Imperial/US</system>
+      <names>ar:lb,aou:℔,pound,p:pounds</names>
+      <base>
+        <unit>oz</unit>
+        <relation>16</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Short Hundredweight (Cental)</title>
+      <system>US</system>
+      <names>ar:cwt,hundredweight,cental,p:hundredweights,centals</names>
+      <base>
+        <unit>lb</unit>
+        <relation>100</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Long Hundredweight</title>
+      <system>Imperial</system>
+      <names>ar:l_cwt,long_hundredweight,p:long_hundredweights</names>
+      <base>
+        <unit>lb</unit>
+        <relation>112</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Short Ton</title>
+      <system>US</system>
+      <names>ar:s_ton,short_ton,p:short_tons</names>
+      <base>
+        <unit>lb</unit>
+        <relation>2000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Long Ton</title>
+      <system>Imperial</system>
+      <names>ar:l_ton,long_ton,p:long_tons</names>
+      <base>
+        <unit>lb</unit>
+        <relation>2240</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Stone</title>
+      <system>Imperial</system>
+      <names>r:stone,p:stones</names>
+      <base>
+        <unit>lb</unit>
+        <relation>14</relation>
+        <exponent>1</exponent>
+        <mix>2</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Carat</title>
+      <names>r:carat,p:carats</names>
+      <base>
+        <unit>g</unit>
+        <relation>0.2</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Pfund</title>
+      <names>r:pfund</names>
+      <base>
+        <unit>g</unit>
+        <relation>500</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Zentner</title>
+      <names>r:zentner</names>
+      <base>
+        <unit>pfund</unit>
+        <relation>100</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Planck Mass</title>
+      <names translatable="no">r:planck_mass,as:m_P</names>
+      <system>Planck</system>
+      <base>
+        <unit>g</unit>
+        <relation>sqrt(planck2pi*c/newtonian_constant)*1000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Atomic/Natural Unit of Mass</title>
+      <names translatable="no">rs:electron_unit,as:m_eunit</names>
+      <system>Atomic/Natural</system>
+      <base>
+        <unit>g</unit>
+        <relation>electron_mass*1000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Electronvolt Mass</title>
+      <names translatable="no">eV_p_sqc</names>
+      <part>
+        <unit>eV</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>c_unit</unit>
+        <prefix>0</prefix>
+        <exponent>-2</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Atomic Mass Unit</title>
+      <names>ar:u,a:AMU,atomic_mass_unit,p:atomic_mass_units</names>
+      <base>
+        <unit>g</unit>
+        <relation>atomic_mass_constant*1000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Dalton</title>
+      <names>ar:Da,dalton,p:daltons</names>
+      <use_with_prefixes>true</use_with_prefixes>
+      <base>
+        <unit>g</unit>
+        <relation>atomic_mass_constant*1000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Kilodalton</title>
+      <names translatable="no">r:kDa_c</names>
+      <part>
+        <unit>Da</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Solar Mass</title>
+      <names>r:solar_mass,au:M_☉</names>
+      <base>
+        <unit>g</unit>
+        <relation>1.988470(70)E33</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Slug</title>
+      <names>r:slug,p:slugs</names>
+      <base>
+        <unit>g</unit>
+        <relation>8896443230521/609600000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <category>
+      <title>Density</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Kilogram per Cubic Meter</title>
+        <names translatable="no">r:kg_p_cum</names>
+        <part>
+          <unit>g</unit>
+          <prefix>3</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-3</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Gram per Cubic Decimeter</title>
+        <names translatable="no">r:g_p_cudm</names>
+        <part>
+          <unit>g</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>-1</prefix>
+          <exponent>-3</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Gram per Cubic Centimeter</title>
+        <names translatable="no">r:g_p_cucm</names>
+        <part>
+          <unit>g</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>-2</prefix>
+          <exponent>-3</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Atomic Mass</title>
+      <unit type="composite">
+        <title>Gram per Mole</title>
+        <names translatable="no">r:g_p_mol</names>
+        <part>
+          <unit>g</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>mol</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Mass Fraction</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Kilogram per Kilogram</title>
+        <names translatable="no">r:kg_p_kg</names>
+        <part>
+          <unit>g</unit>
+          <prefix>3</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>g</unit>
+          <prefix>3</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <title>Time</title>
+    <unit type="base">
+      <system>SI</system>
+      <title>Second</title>
+      <names>ar:s,second,p:seconds</names>
+      <use_with_prefixes max="0">true</use_with_prefixes>
+    </unit>
+    <unit type="alias">
+      <title>Minute</title>
+      <names>ar:min,minute,p:minutes</names>
+      <base>
+        <unit>s</unit>
+        <relation>60</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Hour</title>
+      <names>ar:h,hour,p:hours,a:hr,a:hrs</names>
+      <base>
+        <unit>min</unit>
+        <relation>60</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Day</title>
+      <names>ar:d,day,p:days</names>
+      <base>
+        <unit>h</unit>
+        <relation>24</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Week</title>
+      <names>r:week,p:weeks</names>
+      <base>
+        <unit>d</unit>
+        <relation>7</relation>
+        <exponent>1</exponent>
+        <mix>2</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Fortnight</title>
+      <names>r:fortnight,p:fortnights</names>
+      <base>
+        <unit>week</unit>
+        <relation>2</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Julian Year</title>
+      <names>r:year,p:years,as:a_j,a:yr,annus</names>
+      <description>Acts as calendar years when added to or subtracted from dates, but as exactly 365.25 days when converted to other units. Use the yearfrac() function, instead of subtraction, to calculate the exact number of calendar years between two dates.</description>
+      <base>
+        <unit>d</unit>
+        <relation>365.25</relation>
+        <exponent>1</exponent>
+        <mix>2</mix>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Mean Gregorian Year</title>
+      <names>ars:a_g,gregorian_year,p:gregorian_years</names>
+      <base>
+        <unit>d</unit>
+        <relation>365.2425</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Mean Tropical Year</title>
+      <names>ars:a_t,tropical_year,p:tropical_years</names>
+      <base>
+        <unit>d</unit>
+        <relation>365.24219</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Month</title>
+      <names>r:month,p:months</names>
+      <base>
+        <unit>d</unit>
+        <relation>30.4375</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Planck Time</title>
+      <names translatable="no">r:planck_time,as:t_P</names>
+      <system>Planck</system>
+      <base>
+        <unit>s</unit>
+        <relation>sqrt(planck2pi*newtonian_constant/c^5)</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Atomic Unit of Time</title>
+      <names translatable="no">planck_p_Ha</names>
+      <system>Atomic</system>
+      <part>
+        <unit>planck_unit</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>Ha</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Natural Unit of Time</title>
+      <names translatable="no">planck_p_electron_sqc</names>
+      <system>Natural</system>
+      <part>
+        <unit>planck_unit</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>electron_unit</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+      <part>
+        <unit>c_unit</unit>
+        <prefix>0</prefix>
+        <exponent>-2</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Electronvolt Time</title>
+      <names translatable="no">planck_p_eV</names>
+      <part>
+        <unit>planck_unit</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>eV</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <category>
+      <!-- Unit category -->
+      <title>!units!Frequency</title>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Hertz</title>
+        <names>ar:Hz,hertz</names>
+        <base>
+          <unit>s</unit>
+          <relation>1</relation>
+          <exponent>-1</exponent>
+        </base>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <title>Electricity</title>
+    <category>
+      <title>Electric Current</title>
+      <unit type="base">
+        <system>SI</system>
+        <title>Ampere</title>
+        <names>ar:A,ampere,p:amperes,a-c:amp</names>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Abampere</title>
+        <names>r:abampere,a:abA,p:abamperes,a:Bi,biot</names>
+        <base>
+          <unit>A</unit>
+          <relation>10</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Current Density</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Ampere per Square Meter</title>
+        <names translatable="no">r:A_p_sqm</names>
+        <part>
+          <unit>A</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Electric Charge</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Ampere Second</title>
+        <names translatable="no">r:A_s</names>
+        <part>
+          <unit>A</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Coulomb</title>
+        <names>ar:C,coulomb,p:coulombs</names>
+        <base>
+          <unit>A_s</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Abcoulomb</title>
+        <names>r:abcoulomb,p:abcoulombs,a:abC,a:aC</names>
+        <base>
+          <unit>C</unit>
+          <relation>10</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Statcoulomb (Franklin)</title>
+        <names>r:statcoulomb,p:statcoulombs,a:statC,franklin,a:Fr,p:franklins,a:esu</names>
+        <base>
+          <unit>C</unit>
+          <relation>1/2997924580</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Planck Charge</title>
+        <names translatable="no">r:planck_charge,as:q_P</names>
+        <system>Planck</system>
+        <base>
+          <unit>C</unit>
+          <relation>sqrt(4pi*electric_constant*planck2pi*c)</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Atomic Unit of Charge</title>
+        <names translatable="no">ars:e_unit,as:q_A</names>
+        <system>Atomic</system>
+        <base>
+          <unit>C</unit>
+          <relation>1.602176634E-19</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Electric Charge Density</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Coulomb per Cubic Meter</title>
+        <names translatable="no">r:C_p_cum</names>
+        <part>
+          <unit>C</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-3</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Electric Dipole Moment</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Coulomb Meter</title>
+        <names translatable="no">r:C_m</names>
+        <part>
+          <unit>C</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <system>CGS</system>
+        <title translatable="no">Statcoulomb Centimeter</title>
+        <hidden>true</hidden>
+        <names translatable="no">r:statcoulomb_cm</names>
+        <part>
+          <unit>statcoulomb</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>-2</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Debye</title>
+        <names>ar:D,debye,p:debyes</names>
+        <base>
+          <unit>statcoulomb_cm</unit>
+          <relation>1E-18</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Electric Flux Density</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Coulomb per Square Meter</title>
+        <names translatable="no">r:C_p_sqm</names>
+        <part>
+          <unit>C</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Electric Potential</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Watt per Ampere</title>
+        <names translatable="no">r:W_p_A</names>
+        <part>
+          <unit>W</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>A</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Volt</title>
+        <names>ar:V,volt,p:volts</names>
+        <base>
+          <unit>W_p_A</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Statvolt</title>
+        <names>r:statvolt,p:statvolts,a:statV</names>
+        <base>
+          <unit>V</unit>
+          <relation>299.792458</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Abvolt</title>
+        <names>r:abvolt,p:abvolts,a:abV</names>
+        <base>
+          <unit>V</unit>
+          <relation>1E-8</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <title>Atomic Unit of Electric Potential</title>
+        <names translatable="no">Ha_p_e</names>
+        <system>Atomic</system>
+        <part>
+          <unit>Ha</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>e_unit</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Capacitance</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Coulomb per Volt</title>
+        <names translatable="no">r:C_p_V</names>
+        <part>
+          <unit>C</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>V</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Farad</title>
+        <names>ar:F,farad,p:farads</names>
+        <base>
+          <unit>C_p_V</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Electrical Elastance</title>
+      <unit type="composite">
+        <title>Volt per Coulomb</title>
+        <names translatable="no">r:V_p_C</names>
+        <part>
+          <unit>V</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>C</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+	<system>SI</system>
+        <title>Reciprocal Farad</title>
+        <names translatable="no">r:recF</names>
+        <part>
+          <unit>F</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Daraf</title>
+        <names>r:daraf,p:darafs</names>
+        <base>
+          <unit>recF</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Electric Resistance</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Volt per Ampere</title>
+        <names translatable="no">r:V_p_A</names>
+        <part>
+          <unit>V</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>A</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Ohm</title>
+        <names>au:Ω,r:ohm,p:ohms,auio:Ω</names>
+        <base>
+          <unit>V_p_A</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Abohm</title>
+        <names>r:abohm,p:abohms,au:abΩ</names>
+        <base>
+          <unit>ohm</unit>
+          <relation>1E-9</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Statohm</title>
+        <names>r:statohm,p:statohms,au:statΩ</names>
+        <base>
+          <unit>ohm</unit>
+          <relation>8.9875517873681764E11</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Electric Conductance</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Ampere per Volt</title>
+        <names translatable="no">r:A_p_V</names>
+        <part>
+          <unit>A</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>V</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Siemens</title>
+        <names>ar:S,siemens,auio:℧</names>
+        <base>
+          <unit>A_p_V</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Electric Field Strength</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Volt per Meter</title>
+        <names translatable="no">r:V_p_m</names>
+        <part>
+          <unit>V</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Newton per Coulomb</title>
+        <names translatable="no">r:N_p_C</names>
+        <part>
+          <unit>N</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>C</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Atomic Unit of Electric Field</title>
+        <names translatable="no">Ha_p_e_bohr</names>
+        <system>Atomic</system>
+        <part>
+          <unit>Ha</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>e_unit</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+        <part>
+          <unit>bohr_unit</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Permittivity</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Farad per Meter</title>
+        <names translatable="no">r:F_p_m</names>
+        <part>
+          <unit>F</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Inductance</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Weber per Ampere</title>
+        <names translatable="no">r:Wb_p_A</names>
+        <part>
+          <unit>Wb</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>A</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Henry</title>
+        <names>ar:H,henry,p:henrys</names>
+        <base>
+          <unit>Wb_p_A</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Abhenry</title>
+        <names>r:abhenry,p:abhenrys,a:abH</names>
+        <base>
+          <unit>H</unit>
+          <relation>1E-9</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Permeability</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Henry per Meter</title>
+        <names translatable="no">r:H_p_m</names>
+        <part>
+          <unit>H</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <title>Temperature</title>
+    <unit type="base">
+      <system>SI</system>
+      <title>Kelvin</title>
+      <names>ar:K,aou:K,kelvin,p:kelvins</names>
+    </unit>
+    <unit type="alias">
+      <system>SI</system>
+      <title>Degree Celsius</title>
+      <names>ar:oC,au:°C,au:℃,r:celsius,p:celsius,centigrade,p:centigrades</names>
+      <use_with_prefixes>false</use_with_prefixes>
+      <base>
+        <unit>K</unit>
+        <relation>\x + 273.15</relation>
+        <inverse_relation>\x - 273.15</inverse_relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Degree Rankine</title>
+      <system>Imperial/US</system>
+      <names>ar:oR,a:oRa,au:°R,au:°Ra,r:rankine</names>
+      <base>
+        <unit>K</unit>
+        <relation>5/9</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Degree Fahrenheit</title>
+      <system>Imperial/US</system>
+      <names>ar:oF,au:°F,au:℉,r:fahrenheit</names>
+      <base>
+        <unit>K</unit>
+        <relation>(\x+459.67)*5/9</relation>
+        <inverse_relation>(\x*9/5)-459.67</inverse_relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Planck Temperature</title>
+      <names translatable="no">r:planck_temperature,as:T_P</names>
+      <system>Planck</system>
+      <base>
+        <unit>K</unit>
+        <relation>sqrt((planck2pi*c^5)/newtonian_constant)/boltzmann</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Electronvolt Temperature</title>
+      <names translatable="no">eV_p_kB</names>
+      <part>
+        <unit>eV</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>boltzmann_unit</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+  </category>
+  <category>
+    <title>Substance</title>
+    <unit type="base">
+      <system>SI</system>
+      <title>Mole</title>
+      <names>ar:mol,mole,p:moles</names>
+    </unit>
+    <unit type="alias">
+      <title>Einstein (one mole of photons)</title>
+      <names>r:einstein,p:einsteins</names>
+      <base>
+       <unit>mol</unit>
+       <relation>1</relation>
+       <exponent>1</exponent>
+      </base>
+    </unit>
+    <category>
+      <title>Molar Flux</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Mole per Square Meter Second</title>
+        <names translatable="no">r:mol_p_sqm_p_s</names>
+        <part>
+          <unit>mol</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Micromole per Square Meter Second</title>
+        <names translatable="no">r:micromol_p_sqm_p_s</names>
+        <part>
+          <unit>mol</unit>
+          <prefix>-6</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Einstein per Square Meter Second</title>
+        <names translatable="no">r:einstein_p_sqm_p_s</names>
+        <part>
+          <unit>einstein</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Microeinstein per Square Meter Second</title>
+        <names translatable="no">r:microeinstein_p_sqm_p_s</names>
+        <part>
+          <unit>einstein</unit>
+          <prefix>-6</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Substance Concentration</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Mole per Cubic Meter</title>
+        <names translatable="no">r:mol_p_cum</names>
+        <part>
+          <unit>mol</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-3</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Mole per Liter</title>
+        <names translatable="no">r:mol_p_L</names>
+        <part>
+          <unit>mol</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>L</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Mole per Cubic Decimeter</title>
+        <names translatable="no">r:mol_p_cudm</names>
+        <part>
+          <unit>mol</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>-1</prefix>
+          <exponent>-3</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Molar</title>
+        <names>r:molar</names>
+        <base>
+          <unit>mol_p_L</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+        <use_with_prefixes max="-3">true</use_with_prefixes>
+      </unit>
+    </category>
+    <category>
+      <title>Catalytic Activity</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Reciprocal Seconds Mole</title>
+        <names translatable="no">r:recs_mol</names>
+        <part>
+          <unit>mol</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Katal</title>
+        <names>ar:kat,katal,p:katals</names>
+        <base>
+          <unit>recs_mol</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Catalytic Concentration</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Katal per Cubic Meter</title>
+        <names translatable="no">r:kat_p_cum</names>
+        <part>
+          <unit>kat</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-3</exponent>
+        </part>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <title>Light</title>
+    <category>
+      <title>Luminous Intensity</title>
+      <unit type="base">
+        <system>SI</system>
+        <title>Candela</title>
+        <names>ar:cd,candela,p:candelas</names>
+      </unit>
+    </category>
+    <category>
+      <title>Luminance</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Candela per Square Meter</title>
+        <names translatable="no">r:cd_p_sqm</names>
+        <part>
+          <unit>cd</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Stilb</title>
+        <names>ar:sb,stilb,p:stilbs</names>
+        <base>
+          <unit>cd_p_sqm</unit>
+          <relation>10000</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Lambert</title>
+        <names>r:lambert,p:lamberts</names>
+        <base>
+          <unit>cd_p_sqm</unit>
+          <relation>10000/pi</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Foot-Lambert</title>
+        <names>r:foot_lambert,p:foot_lamberts</names>
+        <base>
+          <unit>lambert</unit>
+          <relation>1/929.0304</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Luminous Flux</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Candela Steradian</title>
+        <names translatable="no">r:cd_sr</names>
+        <part>
+          <unit>cd</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>sr</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Lumen</title>
+        <names>ar:lm,lumen,p:lumens</names>
+        <base>
+          <unit>cd_sr</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Illuminance</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Lumen per Square Meter</title>
+        <names translatable="no">r:lm_p_sqm</names>
+        <part>
+          <unit>lm</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Lumen per Square Foot</title>
+        <names translatable="no">r:lm_p_sqft</names>
+        <part>
+          <unit>lm</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>ft</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Lux</title>
+        <names>ar:lx,lux</names>
+        <base>
+          <unit>lm_p_sqm</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Foot-Candle</title>
+        <system>Imperial/US</system>
+        <names>ar:fc,foot_candle,p:foot_candles</names>
+        <base>
+          <unit>lm_p_sqft</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Phot</title>
+        <names>ar:ph,phot,p:phots</names>
+        <base>
+          <unit>lx</unit>
+          <relation>10000</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Radiant Intensity</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Watt per Steradian</title>
+        <names translatable="no">r:W_p_sr</names>
+        <part>
+          <unit>W</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>sr</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Irradiance</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Watt per Square Meter</title>
+        <names translatable="no">r:W_p_sqm</names>
+        <part>
+          <unit>W</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <system>CGS</system>
+        <title>Erg per Square Centimeter Second</title>
+        <names translatable="no">r:erg_p_sqcm_p_s</names>
+        <part>
+          <unit>erg</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>-2</prefix>
+          <exponent>-2</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Radiance</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Watt per Square Meter Steradian</title>
+        <names translatable="no">r:W_p_sqm_sr</names>
+        <part>
+          <unit>W</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>sr</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <title>Area</title>
+    <unit type="composite">
+      <system>SI</system>
+      <title>Square Meter</title>
+      <names translatable="no">r:sqm</names>
+      <part>
+        <unit>m</unit>
+        <prefix>0</prefix>
+        <exponent>2</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Square Kilometer</title>
+      <names translatable="no">r:sqkm</names>
+      <part>
+        <unit>m</unit>
+        <prefix>3</prefix>
+        <exponent>2</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Are</title>
+      <names>ar:a,are,p:ares</names>
+      <base>
+        <unit>m</unit>
+        <relation>100</relation>
+        <exponent>2</exponent>
+      </base>
+      <use_with_prefixes default="2">true</use_with_prefixes>
+    </unit>
+    <unit type="alias">
+      <title>Circular Mil</title>
+      <system>US</system>
+      <names>r:cmil,p:cmils</names>
+      <base>
+        <unit>mil</unit>
+        <relation>pi/4</relation>
+        <exponent>2</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Thousand of Circular Mil</title>
+      <system>US</system>
+      <names translatable="no">r:kcmil,MCM</names>
+      <base>
+        <unit>cmil</unit>
+        <relation>1000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Hectare</title>
+      <names>ar:ha,hectare,p:hectares</names>
+      <base>
+        <unit>a</unit>
+        <relation>100</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Decare</title>
+      <names>a:da,r:decare,p:decares</names>
+      <base>
+        <unit>a</unit>
+        <relation>10</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Barn</title>
+      <names>ar:b,barn,p:barns</names>
+      <base>
+        <unit>m</unit>
+        <relation>1E-28</relation>
+        <exponent>2</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Rood</title>
+      <system>Imperial</system>
+      <names>r:rood,p:roods</names>
+      <base>
+        <unit>yd</unit>
+        <relation>1210</relation>
+        <exponent>2</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Acre</title>
+      <system>Imperial</system>
+      <names>r:acre,p:acres</names>
+      <base>
+        <unit>ch</unit>
+        <relation>10</relation>
+        <exponent>2</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Section</title>
+      <system>US Survey</system>
+      <names>r:section,p:sections</names>
+      <base>
+        <unit>US_mi</unit>
+        <relation>1</relation>
+        <exponent>2</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Township</title>
+      <system>US Survey</system>
+      <names>r:township,p:townships</names>
+      <base>
+        <unit>section</unit>
+        <relation>36</relation>
+        <exponent>1</exponent>
+        <mix>1</mix>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Square Foot</title>
+      <system>Imperial/US</system>
+      <names translatable="no">r:sqft</names>
+      <part>
+        <unit>ft</unit>
+        <prefix>0</prefix>
+        <exponent>2</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Square Inch</title>
+      <system>Imperial/US</system>
+      <names translatable="no">r:sqin</names>
+      <part>
+        <unit>in</unit>
+        <prefix>0</prefix>
+        <exponent>2</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Square Mile</title>
+      <system>Imperial/US</system>
+      <names translatable="no">r:sqmi</names>
+      <part>
+        <unit>mi</unit>
+        <prefix>0</prefix>
+        <exponent>2</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Darcy</title>
+      <system>CGS</system>
+      <names translatable="no">r:darcy,p:darcys</names>
+      <base>
+        <unit>sqm</unit>
+        <relation>1/1.01325E12</relation>
+        <exponent>1</exponent>
+      </base>
+      <use_with_prefixes default="-3">true</use_with_prefixes>
+    </unit>
+    <unit type="composite">
+      <title>Millidarcy</title>
+      <system>CGS</system>
+      <names translatable="no">r:millidarcy</names>
+      <part>
+        <unit>darcy</unit>
+        <prefix>-3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+  </category>
+  <category>
+    <title>Volume</title>
+    <unit type="composite">
+      <system>SI</system>
+      <title>Cubic Meter</title>
+      <names translatable="no">r:cum</names>
+      <part>
+        <unit>m</unit>
+        <prefix>0</prefix>
+        <exponent>3</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Liter</title>
+      <names>ar:L,ar:l,aou:ℓ,liter,p:liters,litre,p:litres</names>
+      <use_with_prefixes max="0">true</use_with_prefixes>
+      <base>
+        <unit>m</unit>
+        <relation>0.001</relation>
+        <exponent>3</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Milliliter</title>
+      <names translatable="no">r:ml_c</names>
+      <part>
+        <unit>L</unit>
+        <prefix>-3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Centiliter</title>
+      <names translatable="no">r:cl_c</names>
+      <part>
+        <unit>L</unit>
+        <prefix>-2</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Deciliter</title>
+      <names translatable="no">r:dl_c</names>
+      <part>
+        <unit>L</unit>
+        <prefix>-1</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Cubic Inch</title>
+      <system>Imperial/US</system>
+      <names translatable="no">r:cuin</names>
+      <part>
+        <unit>in</unit>
+        <prefix>0</prefix>
+        <exponent>3</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <system>SI</system>
+      <title>Cubic Centimeter</title>
+      <names translatable="no">r:cucm</names>
+      <part>
+        <unit>m</unit>
+        <prefix>-2</prefix>
+        <exponent>3</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <hidden>true</hidden>
+      <title>Cubic Centimeter (cc)</title>
+      <names>a-r:cc,ao-r:CC</names>
+      <base>
+        <unit>cucm</unit>
+        <relation>1</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <category>
+      <title>Fuel Economy</title>
+      <unit type="composite">
+        <title>Liter per Kilometer</title>
+        <names translatable="no">r:l_p_km</names>
+        <part>
+          <unit>L</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>3</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Kilometer per Liter</title>
+        <names translatable="no">r:km_p_l</names>
+        <part>
+          <unit>m</unit>
+          <prefix>3</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>L</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Miles per Gallon</title>
+        <system>US</system>
+        <names translatable="no">r:mile_p_gal</names>
+        <part>
+          <unit>mi</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>gal</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Miles per Gallon</title>
+        <system>US</system>
+        <names>a-cr:mpg</names>
+        <base>
+          <unit>mile_p_gal</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Cooking</title>
+      <unit type="alias">
+        <title>Teaspoon</title>
+        <names>r:teaspoon,a:tsp,p:teaspoons</names>
+        <base>
+          <unit>L</unit>
+          <relation>0.005</relation>
+          <exponent>1</exponent>
+          <mix>1</mix>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Dessertspoon</title>
+        <names>r:dessertspoon,p:dessertspoons</names>
+        <base>
+          <unit>teaspoon</unit>
+          <relation>2</relation>
+          <exponent>1</exponent>
+          <mix>2</mix>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Tablespoon</title>
+        <names>r:tablespoon,a:tbsp,p:tablespoons</names>
+        <base>
+          <unit>teaspoon</unit>
+          <relation>3</relation>
+          <exponent>1</exponent>
+          <mix>1</mix>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Teaspoon</title>
+        <system>US</system>
+        <names>r:US_teaspoon,as:tsp_US,p:US_teaspoons</names>
+        <base>
+          <unit>fl_oz</unit>
+          <relation>1/6</relation>
+          <exponent>1</exponent>
+          <mix>1</mix>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Dessertspoon</title>
+        <system>US</system>
+        <names>r:US_dessertspoon,p:US_dessertspoons</names>
+        <base>
+          <unit>US_teaspoon</unit>
+          <relation>2</relation>
+          <exponent>1</exponent>
+          <mix>2</mix>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Tablespoon</title>
+        <system>US</system>
+        <names>r:US_tablespoon,as:tbsp_US,p:US_tablespoons</names>
+        <base>
+          <unit>US_teaspoon</unit>
+          <relation>3</relation>
+          <exponent>1</exponent>
+          <mix>1</mix>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Cup (U.S. Legal)</title>
+        <names>r-c:cup,p-c:cups</names>
+        <base>
+          <unit>L</unit>
+          <relation>0.24</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Cup</title>
+        <system>US</system>
+        <names>ras:cup_US,US_cup,p:US_cups</names>
+        <base>
+          <unit>US_tablespoon</unit>
+          <relation>16</relation>
+          <exponent>1</exponent>
+          <mix>1</mix>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Imperial Capacity</title>
+      <unit type="alias">
+        <title>Imperial Fluid Ounce</title>
+        <system>Imperial</system>
+        <names>as:fl_oz_UK,aor:UK_fl_oz,imperial_fluid_ounce,p:imperial_fluid_ounces</names>
+        <base>
+          <unit>L</unit>
+          <relation>0.0284130625</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Imperial Gill</title>
+        <system>Imperial</system>
+        <names>as:gi_UK,aor:UK_gi,imperial_gill,p:imperial_gills</names>
+        <base>
+          <unit>UK_fl_oz</unit>
+          <relation>5</relation>
+          <exponent>1</exponent>
+          <mix>2</mix>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Imperial Pint</title>
+        <system>Imperial</system>
+        <names>as:pt_UK,aor:UK_pt,imperial_pint,p:imperial_pints</names>
+        <base>
+          <unit>UK_gi</unit>
+          <relation>4</relation>
+          <exponent>1</exponent>
+          <mix>1</mix>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Imperial Quart</title>
+        <system>Imperial</system>
+        <names>as:qt_UK,aor:UK_qt,imperial_quart,p:imperial_quarts</names>
+        <base>
+          <unit>UK_pt</unit>
+          <relation>2</relation>
+          <exponent>1</exponent>
+          <mix>2</mix>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Imperial Gallon</title>
+        <system>Imperial</system>
+        <names>as:gal_UK,aor:UK_gal,imperial_gallon,p:imperial_gallons</names>
+        <base>
+          <unit>UK_qt</unit>
+          <relation>4</relation>
+          <exponent>1</exponent>
+          <mix>1</mix>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Imperial Minim</title>
+        <system>Imperial</system>
+        <names>r:imperial_minim,p:imperial_minims</names>
+        <base>
+          <unit>UK_fl_oz</unit>
+          <relation>1/480</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Imperial Fluid Scruple</title>
+        <system>Imperial</system>
+        <names>r:imperial_fluid_scruple,p:imperial_fluid_scruples,ro:imperial_fluid_scuple</names>
+        <base>
+          <unit>imperial_minim</unit>
+          <relation>20</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Imperial Fluid Drachm</title>
+        <system>Imperial</system>
+        <names>as:fl_dr_UK,aor:UK_fl_dr,imperial_fluid_drachm,p:imperial_fluid_drachms</names>
+        <base>
+          <unit>imperial_fluid_scruple</unit>
+          <relation>3</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Imperial Bushel</title>
+        <system>Imperial</system>
+        <names>as:bu_UK,aor:UK_bu,imperial_bushel,p:imperial_bushels</names>
+        <base>
+          <unit>UK_gal</unit>
+          <relation>8</relation>
+          <exponent>1</exponent>
+          <mix>1</mix>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>U.S. Capacity</title>
+      <unit type="alias">
+        <title>U.S. Fluid Ounce</title>
+        <system>US</system>
+        <names>ar:fl_oz,fluid_ounce,p:fluid_ounces</names>
+        <base>
+          <unit>in</unit>
+          <relation>231/128</relation>
+          <exponent>3</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Gill</title>
+        <system>US</system>
+        <names>ar:gi,gill,p:gills</names>
+        <base>
+          <unit>fl_oz</unit>
+          <relation>4</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Liquid Pint</title>
+        <system>US</system>
+        <names>ar:liq_pt,liquid_pint,p:liquid_pints</names>
+        <base>
+          <unit>gi</unit>
+          <relation>4</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Liquid Quart</title>
+        <system>US</system>
+        <names>ar:liq_qt,liquid_quart,p:liquid_quarts</names>
+        <base>
+          <unit>liq_pt</unit>
+          <relation>2</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Minim</title>
+        <system>US</system>
+        <names>r:minim,p:minims</names>
+        <base>
+          <unit>fl_oz</unit>
+          <relation>1/480</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Fluid Drachm</title>
+        <system>US</system>
+        <names>ar:fl_dr,fluid_drachm,p:fluid_drachms</names>
+        <base>
+          <unit>minim</unit>
+          <relation>60</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Dry Pint</title>
+        <system>US</system>
+        <names>ar:dry_pt,dry_pint,p:dry_pints</names>
+        <base>
+          <unit>in</unit>
+          <relation>33.6003125</relation>
+          <exponent>3</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Dry Quart</title>
+        <system>US</system>
+        <names>ar:dry_qt,dry_quart,p:dry_quarts</names>
+        <base>
+          <unit>dry_pt</unit>
+          <relation>2</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Peck</title>
+        <system>US</system>
+        <names>ar:pk,peck,p:pecks</names>
+        <base>
+          <unit>dry_qt</unit>
+          <relation>8</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Bushel</title>
+        <system>US</system>
+        <names>ar:bu,bushel,p:bushels</names>
+        <base>
+          <unit>pk</unit>
+          <relation>4</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Gallon</title>
+        <system>US</system>
+        <names>ar:gal,gallon,p:gallons</names>
+        <base>
+          <unit>liq_qt</unit>
+          <relation>4</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>U.S. Barrel (oil)</title>
+        <system>US</system>
+        <names>ar:bbl,barrel,p:barrels</names>
+        <base>
+          <unit>gal</unit>
+          <relation>42</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <title>Acre-Foot</title>
+        <system>US</system>
+        <names translatable="no">r:acre_ft</names>
+        <part>
+          <unit>acre</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>ft</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Specific Volume</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Cubic Meter per Kilogram</title>
+        <names translatable="no">r:cum_p_kg</names>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>3</exponent>
+        </part>
+        <part>
+          <unit>g</unit>
+          <prefix>3</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Volumetric Flow Rate</title>
+      <unit type="composite">
+        <title>Liter per Second</title>
+        <names translatable="no">r:l_p_s</names>
+        <part>
+          <unit>L</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Liter per Minute</title>
+        <names translatable="no">r:l_p_min</names>
+        <part>
+          <unit>L</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>min</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Liter per Hour</title>
+        <names translatable="no">r:l_p_h</names>
+        <part>
+          <unit>L</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>h</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Cubic Meter per Second</title>
+        <system>SI</system>
+        <names translatable="no">r:cum_p_s</names>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>3</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Cubic Centimeter per Minute</title>
+        <system>SI</system>
+        <names translatable="no">r:cucm_p_min</names>
+        <part>
+          <unit>m</unit>
+          <prefix>-2</prefix>
+          <exponent>3</exponent>
+        </part>
+        <part>
+          <unit>min</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <hidden>true</hidden>
+        <title translatable="no">Cumecs</title>
+        <names translatable="no">r:cumec,p:cumecs</names>
+        <base>
+          <unit>cum_p_s</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Sverdrup</title>
+        <names>r:sverdrup</names>
+        <base>
+          <unit>cum_p_s</unit>
+          <relation>1000000</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <title>Cubic Foot per Minute</title>
+        <system>Imperial/US</system>
+        <names translatable="no">r:cuf_p_min</names>
+        <part>
+          <unit>ft</unit>
+          <prefix>0</prefix>
+          <exponent>3</exponent>
+        </part>
+        <part>
+          <unit>min</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Cubic Foot per Minute (CFM)</title>
+        <system>Imperial/US</system>
+        <names>a-cr:cfm</names>
+        <base>
+          <unit>cuf_p_min</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <title>Cubic Foot per Second</title>
+        <system>Imperial/US</system>
+        <names translatable="no">r:cuf_p_s</names>
+        <part>
+          <unit>ft</unit>
+          <prefix>0</prefix>
+          <exponent>3</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Cubic Foot per Second (CFS)</title>
+        <system>Imperial/US</system>
+        <names>a-cr:cfs</names>
+        <base>
+          <unit>cuf_p_s</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Gallons per Minute</title>
+        <system>US</system>
+        <names translatable="no">r:gal_p_min</names>
+        <part>
+          <unit>gal</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>min</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Gallons per Minute (U.S.)</title>
+        <system>US</system>
+        <names>a-cr:gpm</names>
+        <base>
+          <unit>gal_p_min</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Gallons per Hour</title>
+        <system>US</system>
+        <names translatable="no">r:gal_p_h</names>
+        <part>
+          <unit>gal</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>h</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Gallons per Hour (U.S.)</title>
+        <system>US</system>
+        <names>a-cr:gph</names>
+        <base>
+          <unit>gal_p_h</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <title>Gallons per Second (U.S.)</title>
+        <system>US</system>
+        <names translatable="no">r:gal_p_s</names>
+        <part>
+          <unit>gal</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title translatable="no">Acre-Foot per Day</title>
+        <system>US</system>
+        <names translatable="no">r:acre_ft_p_d</names>
+        <part>
+          <unit>acre</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>ft</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>d</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <title>Speed</title>
+    <unit type="composite">
+      <system>SI</system>
+      <title>Meter per Second</title>
+      <names translatable="no">r:m_p_s</names>
+      <part>
+        <unit>m</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>s</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Kilometer per Hour</title>
+      <names translatable="no">r:km_p_h</names>
+      <part>
+        <unit>m</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>h</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Kilometer per Hour (kph)</title>
+      <hidden>true</hidden>
+      <names>a-c-r:kph,a-c-r:kmph</names>
+      <base>
+        <unit>km_p_h</unit>
+        <relation>1</relation>
+        <exponent>1</exponent>
+        <mix>-1</mix>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Nautical Mile per Hour</title>
+      <names translatable="no">r:nautical_mile_p_h</names>
+      <part>
+        <unit>nautical_mile</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>h</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Knot</title>
+      <names>r:knot,p:knots</names>
+      <base>
+        <unit>nautical_mile_p_h</unit>
+        <relation>1</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <hidden>true</hidden>
+      <title translatable="no">Miles per Hour</title>
+      <system>Imperial/US</system>
+      <names translatable="no">r:mile_p_h</names>
+      <part>
+        <unit>mi</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>h</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Miles per Hour</title>
+      <system>Imperial/US</system>
+      <names>a-cr:mph</names>
+      <base>
+        <unit>mile_p_h</unit>
+        <relation>1</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Minutes per Kilometer</title>
+      <names translatable="no">r:min_p_km</names>
+      <part>
+        <unit>min</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>m</unit>
+        <prefix>3</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Minutes per Mile</title>
+      <names translatable="no">r:min_p_mile</names>
+      <part>
+        <unit>min</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>mi</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Speed of Light (Natural Unit of Velocity)</title>
+      <names translatable="no">ars:c_unit</names>
+      <base>
+        <unit>m_p_s</unit>
+        <relation>299792458</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Atomic Unit of Velocity</title>
+      <names translatable="no">bohr_Ha_p_planck</names>
+      <system>Atomic</system>
+      <part>
+        <unit>bohr_unit</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>Ha</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>planck_unit</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <category>
+      <title>Acceleration</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Meter per Second Squared</title>
+        <names translatable="no">r:m_p_sqs</names>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Galileo</title>
+        <names>ar:Gal,galileo,p:galileos</names>
+        <base>
+          <unit>m_p_sqs</unit>
+          <relation>1/100</relation>
+          <exponent>1</exponent>
+        </base>
+        <use_with_prefixes>true</use_with_prefixes>
+      </unit>
+      <unit type="alias">
+        <title>Standard Gravity (unit)</title>
+        <names>is:standard_gravity_unit,r:gee,p:gees</names>
+        <base>
+          <unit>m_p_sqs</unit>
+          <relation>9.80665</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <category>
+        <title>Acceleration Change</title>
+        <unit type="composite">
+          <system>SI</system>
+          <title>Meter per Second Cubed (Jerk)</title>
+          <names translatable="no">r:m_p_scu</names>
+          <part>
+            <unit>m</unit>
+            <prefix>0</prefix>
+            <exponent>1</exponent>
+          </part>
+          <part>
+            <unit>s</unit>
+            <prefix>0</prefix>
+            <exponent>-3</exponent>
+          </part>
+        </unit>
+        <unit type="composite">
+          <title>Standard Gravity per Second</title>
+          <names translatable="no">r:gee_p_s</names>
+          <part>
+            <unit>gee</unit>
+            <prefix>0</prefix>
+            <exponent>1</exponent>
+          </part>
+          <part>
+            <unit>s</unit>
+            <prefix>0</prefix>
+            <exponent>-1</exponent>
+          </part>
+        </unit>
+        <unit type="composite">
+          <title>Meter per Second to the Fourth (Snap)</title>
+          <names translatable="no">r:m_p_sfourth</names>
+          <part>
+            <unit>m</unit>
+            <prefix>0</prefix>
+            <exponent>1</exponent>
+          </part>
+          <part>
+            <unit>s</unit>
+            <prefix>0</prefix>
+            <exponent>-4</exponent>
+          </part>
+        </unit>
+        <unit type="composite">
+          <title>Meter per Second to the Fifth (Crackle)</title>
+          <names translatable="no">r:m_p_sfifth</names>
+          <part>
+            <unit>m</unit>
+            <prefix>0</prefix>
+            <exponent>1</exponent>
+          </part>
+          <part>
+            <unit>s</unit>
+            <prefix>0</prefix>
+            <exponent>-5</exponent>
+          </part>
+        </unit>
+        <unit type="composite">
+          <title>Meter per Second to the Sixth (Pop)</title>
+          <names translatable="no">r:m_p_ssixth</names>
+          <part>
+            <unit>m</unit>
+            <prefix>0</prefix>
+            <exponent>1</exponent>
+          </part>
+          <part>
+            <unit>s</unit>
+            <prefix>0</prefix>
+            <exponent>-6</exponent>
+          </part>
+        </unit>
+      </category>
+    </category>
+  </category>
+  <category>
+    <title>Magnetism</title>
+    <category>
+      <title>Wave Number</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Reciprocal Meter</title>
+        <names translatable="no">r:recm</names>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Kayser</title>
+        <names>r:kayser,p:kaysers</names>
+        <base>
+          <unit>recm</unit>
+          <relation>100</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Magnetic Field Strength</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Ampere per Meter</title>
+        <names translatable="no">r:A_p_m</names>
+        <part>
+          <unit>A</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Oersted</title>
+        <names>ar:Oe,oersted,p:oersteds</names>
+        <base>
+          <unit>A_p_m</unit>
+          <relation>1000/(4*pi)</relation>
+          <exponent>1</exponent>
+        </base>
+        <use_with_prefixes>true</use_with_prefixes>
+      </unit>
+    </category>
+    <category>
+      <title>Magnetic Flux</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Volt Seconds</title>
+        <names translatable="no">r:V_s</names>
+        <part>
+          <unit>V</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Weber</title>
+        <names>ar:Wb,weber,p:webers</names>
+        <base>
+          <unit>V_s</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Maxwell</title>
+        <names>ar:Mx,maxwell,p:maxwells</names>
+        <base>
+          <unit>Wb</unit>
+          <relation>1E-8</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Magnetic Flux Density</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Weber per Square Meter</title>
+        <names translatable="no">r:Wb_p_sqm</names>
+        <part>
+          <unit>Wb</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Tesla</title>
+        <names>ar:T,tesla,p:teslas</names>
+        <base>
+          <unit>Wb_p_sqm</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Gauss</title>
+        <names>r:gauss</names>
+        <base>
+          <unit>T</unit>
+          <relation>0.0001</relation>
+          <exponent>1</exponent>
+        </base>
+        <use_with_prefixes>true</use_with_prefixes>
+      </unit>
+      <unit type="composite">
+        <title>Atomic Unit of Magnetic Flux Density</title>
+        <names translatable="no">planck_p_e_sqbohr</names>
+        <system>Atomic</system>
+        <part>
+          <unit>planck_unit</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>e_unit</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+        <part>
+          <unit>bohr_unit</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Magnetic Dipole Moment</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Ampere Square Meter</title>
+        <names translatable="no">r:A_sqm</names>
+        <part>
+          <unit>A</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>2</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Atomic Unit of Magnetic Dipole Moment</title>
+        <names translatable="no">e_planck_p_electron</names>
+        <system>Atomic</system>
+        <part>
+          <unit>e_unit</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>planck_unit</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>electron_unit</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <title>Force</title>
+    <unit type="composite">
+      <hidden>true</hidden>
+      <title translatable="no">Meter Kilogram per Second Squared</title>
+      <names translatable="no">r:m_kg_p_sqs</names>
+      <part>
+        <unit>m</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>g</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>s</unit>
+        <prefix>0</prefix>
+        <exponent>-2</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <system>SI</system>
+      <title>Newton</title>
+      <names>ar:N,newton,p:newtons</names>
+      <base>
+        <unit>m_kg_p_sqs</unit>
+        <relation>1</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <system>CGS</system>
+      <title>Dyne</title>
+      <names>ar:dyn,dyne,p:dynes</names>
+      <base>
+        <unit>N</unit>
+        <relation>1E-5</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <system>Imperial</system>
+      <title>Pound-force</title>
+      <names>ar:lbf,pound_force</names>
+      <base>
+        <unit>N</unit>
+        <relation>4.4482216152605</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <system>Imperial</system>
+      <title>Ounce-force</title>
+      <names>ar:ozf,ounce_force</names>
+      <base>
+        <unit>lbf</unit>
+        <relation>0.0625</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <hidden>true</hidden>
+      <title translatable="no">Pound Foot per Second Squared</title>
+      <names translatable="no">r:lb_ft_p_sqs</names>
+      <part>
+        <unit>lb</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>ft</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>s</unit>
+        <prefix>0</prefix>
+        <exponent>-2</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <system>Imperial</system>
+      <title>Poundal</title>
+      <names>r:poundal,p:poundals,a:pdl</names>
+      <base>
+        <unit>lb_ft_p_sqs</unit>
+        <relation>1</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Pond (Gram-Force)</title>
+      <names>r:pond,p:ponds,a:gf</names>
+      <use_with_prefixes>true</use_with_prefixes>
+      <base>
+        <unit>N</unit>
+        <relation>0.00980665</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Kilopond (Kilogram-Force)</title>
+      <names translatable="no">r:kpond_c</names>
+      <part>
+        <unit>pond</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Atomic Unit of Force</title>
+      <names translatable="no">Ha_p_bohr</names>
+      <system>Atomic</system>
+      <part>
+        <unit>Ha</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>bohr_unit</unit>
+        <prefix>0</prefix>
+        <exponent>-1</exponent>
+      </part>
+    </unit>
+    <category>
+      <title>Moment of Force</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Newton Meter</title>
+        <names translatable="no">r:N_m</names>
+        <part>
+          <unit>N</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Momentum</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Kilogram Meter per Second</title>
+        <names translatable="no">r:kg_m_p_s</names>
+        <part>
+          <unit>g</unit>
+          <prefix>3</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Electronvolt Momentum</title>
+        <names translatable="no">eV_p_c</names>
+        <part>
+          <unit>eV</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>c_unit</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Natural Unit of Momentum</title>
+        <names translatable="no">electron_c</names>
+        <system>Natural</system>
+        <part>
+          <unit>electron_unit</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>c_unit</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Atomic Unit of Momentum</title>
+        <names translatable="no">planck_p_bohr</names>
+        <system>Atomic</system>
+        <part>
+          <unit>planck_unit</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>bohr_unit</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Pressure</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Newton per Square Meter</title>
+        <names translatable="no">r:N_p_sqm</names>
+        <part>
+          <unit>N</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title translatable="no">Pound-force per Square Inch</title>
+        <system>Imperial/US</system>
+        <hidden>true</hidden>
+        <names translatable="no">r:lbf_p_sqin</names>
+        <part>
+          <unit>lbf</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>in</unit>
+          <prefix>0</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Pascal</title>
+        <names>ar:Pa,pascal,p:pascals</names>
+        <base>
+          <unit>N_p_sqm</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <title>Kilogram-force per Square Centimetre</title>
+        <names translatable="no">r:kpond_p_sqcm</names>
+        <part>
+          <unit>pond</unit>
+          <prefix>3</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>-2</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Pound-force per Square Inch (psi)</title>
+        <system>Imperial/US</system>
+        <names>a-cr:psi</names>
+        <base>
+          <unit>lbf_p_sqin</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Kilopound-force per Square Inch (ksi)</title>
+        <system>Imperial/US</system>
+        <names>a-cr:ksi</names>
+        <base>
+          <unit>psi</unit>
+          <relation>1000</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Bar</title>
+        <names>r:bar,p:bars</names>
+        <use_with_prefixes>true</use_with_prefixes>
+        <base>
+          <unit>Pa</unit>
+          <relation>100000</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Atmosphere</title>
+        <names>ar:atm,atmosphere,p:atmospheres</names>
+        <base>
+          <unit>Pa</unit>
+          <relation>101325</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Torr</title>
+        <names>ar:Torr,torr,p:torrs</names>
+        <base>
+          <unit>atm</unit>
+          <relation>1/760</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Meter of Mercury</title>
+        <names>ar:mHg</names>
+        <hidden>true</hidden>
+        <base>
+          <unit>atm</unit>
+          <relation>1000/760</relation>
+          <exponent>1</exponent>
+        </base>
+        <use_with_prefixes default="-3">true</use_with_prefixes>
+      </unit>
+      <unit type="alias">
+        <title>Millimeter of Mercury</title>
+        <names>ar:mmHg</names>
+        <base>
+          <unit>mHg</unit>
+          <relation>0.001</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Inch of Mercury</title>
+        <names>ar:inHg</names>
+        <base>
+          <unit>mmHg</unit>
+          <relation>25.4</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <title>Millitorr</title>
+        <names translatable="no">r:mTorr_c</names>
+        <part>
+          <unit>Torr</unit>
+          <prefix>-3</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <system>CGS</system>
+        <title translatable="no">Dyne per Square Centimetre</title>
+        <names translatable="no">r:dyn_p_sqcm</names>
+        <hidden>true</hidden>
+        <part>
+          <unit>dyn</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>-2</prefix>
+          <exponent>-2</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Barye</title>
+        <names>ar:Ba,barye</names>
+        <base>
+          <unit>dyn_p_sqcm</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Meter of Water</title>
+        <names>ar:mWC,a:mwg,au:mH₂O</names>
+        <base>
+          <unit>Pa</unit>
+          <relation>9806.65</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <title>Millimeter of Water</title>
+        <names translatable="no">mmWC_c</names>
+        <part>
+          <unit>mWC</unit>
+          <prefix>-3</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Centimeter of Water</title>
+        <names translatable="no">cmWC_c</names>
+        <part>
+          <unit>mWC</unit>
+          <prefix>-2</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Inch of Water</title>
+        <names>ar:inWC,a:iwg,au:inH₂O</names>
+        <base>
+          <unit>mWC</unit>
+          <relation>0.0254</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Dynamic Viscosity</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Pascal Second</title>
+        <names translatable="no">r:Pa_s</names>
+        <part>
+          <unit>Pa</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Poise</title>
+        <names>ar:P,poise,p:poises</names>
+        <base>
+          <unit>Pa_s</unit>
+          <relation>0.1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <system>CGS</system>
+        <title>Centipoise</title>
+        <names translatable="no">r:cP_c</names>
+        <part>
+          <unit>P</unit>
+          <prefix>-2</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Kinematic Viscosity</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Square Meter per Second</title>
+        <names translatable="no">r:sqm_p_s</names>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>2</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Stokes</title>
+        <names>ar:St,stokes</names>
+        <base>
+          <unit>sqm_p_s</unit>
+          <relation>0.0001</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <system>CGS</system>
+        <title>Centistokes</title>
+        <names translatable="no">r:cSt_c</names>
+        <part>
+          <unit>St</unit>
+          <prefix>-2</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Surface Tension</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Newton per Meter</title>
+        <names translatable="no">r:N_p_m</names>
+        <part>
+          <unit>N</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <title>Energy</title>
+    <unit type="alias">
+      <system>SI</system>
+      <title>Joule</title>
+      <names>ar:J,joule,p:joules</names>
+      <base>
+        <unit>N_m</unit>
+        <relation>1</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Kilojoule</title>
+      <names translatable="no">r:kJ_c</names>
+      <part>
+        <unit>J</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Watt Hour</title>
+      <names translatable="no">r:W_h</names>
+      <part>
+        <unit>W</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>h</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Kilowatt Hour</title>
+      <names translatable="no">r:kW_h</names>
+      <part>
+        <unit>W</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>h</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Calorie (international table)</title>
+      <names>ars:cal_IT</names>
+      <base>
+        <unit>J</unit>
+        <relation>4.1868</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Calorie (thermochemical)</title>
+      <names>airs:cal_th,a:cal,c:calorie,cp:calories</names>
+      <base>
+        <unit>J</unit>
+        <relation>4.184</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Kilocalorie</title>
+      <names translatable="no">r:kcal_c</names>
+      <part>
+        <unit>cal_th</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Calorie (capital C)</title>
+      <names>cr:Calorie,cp:Calories</names>
+      <base>
+        <unit>cal_th</unit>
+        <relation>1000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Gram of TNT</title>
+      <names>a-cr:gTNT,gramTNT</names>
+      <base>
+        <unit>cal_th</unit>
+        <relation>1000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Ton of TNT</title>
+      <names>a-cr:tTNT,tonTNT</names>
+      <base>
+        <unit>gTNT</unit>
+        <relation>1000000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Calorie (15 degrees Celsius)</title>
+      <names>ars:cal_fifteen</names>
+      <base>
+        <unit>J</unit>
+        <relation uncertainty="0.0005">4.1855</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Calorie (mean)</title>
+      <names>ars:cal_mean</names>
+      <base>
+        <unit>J</unit>
+        <relation approximate="true">4.19002</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <hidden>true</hidden>
+      <title>Calorie (IUNS)</title>
+      <names>ars:cal_IUNS</names>
+      <base>
+        <unit>J</unit>
+        <relation>4.182</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>British Thermal Unit (IT)</title>
+      <names>ar:Btu</names>
+      <base>
+        <unit>cal_IT</unit>
+        <relation>45359237/180000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Therm (IT)</title>
+      <names>r:therm,p:therms,a:thm</names>
+      <base>
+        <unit>Btu</unit>
+        <relation>100000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Therm (ISO)</title>
+      <names>r:therm_ISO,p:therms_ISO,a:thm_ISO</names>
+      <base>
+        <unit>J</unit>
+        <relation>105506000</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Therm (U.S.)</title>
+      <names>r:therm_US,p:therms_US,a:thm_US</names>
+      <base>
+        <unit>J</unit>
+        <relation>105480400</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Thermie</title>
+      <names>r:thermie,p:thermies,a:th</names>
+      <base>
+        <unit>cal_IT</unit>
+        <relation>1E6</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Electronvolt</title>
+      <names>ar:eV,electronvolt,p:electronvolts</names>
+      <use_with_prefixes>true</use_with_prefixes>
+      <base>
+        <unit>J</unit>
+        <relation>1.602176634E-19</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <system>CGS</system>
+      <title>Erg</title>
+      <names>r:erg,p:ergs</names>
+      <base>
+        <unit>J</unit>
+        <relation>1E-7</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Foe</title>
+      <names>r:foe,p:foes</names>
+      <base>
+        <unit>erg</unit>
+        <relation>1E51</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <system>Imperial</system>
+      <title>Foot-Pound Force</title>
+      <names translatable="no">r:ft_lbf</names>
+      <part>
+        <unit>ft</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>lbf</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="alias">
+      <title>Hartree (Atomic Unit of Energy)</title>
+      <names translatable="no">ar:Ha,as:E_h,hartree</names>
+      <system>Atomic</system>
+      <base>
+        <unit>J</unit>
+        <relation>2*rydberg*planck*c</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Rydberg (unit)</title>
+      <names translatable="no">ar:Ry,s:rydberg_unit</names>
+      <base>
+        <unit>Ha</unit>
+        <relation>0.5</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Natural Unit of Energy</title>
+      <names translatable="no">electron_sqc</names>
+      <system>Natural</system>
+      <part>
+        <unit>electron_unit</unit>
+        <prefix>0</prefix>
+        <exponent>1</exponent>
+      </part>
+      <part>
+        <unit>c_unit</unit>
+        <prefix>0</prefix>
+        <exponent>2</exponent>
+      </part>
+    </unit>
+    <category>
+      <title>Specific Energy</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Joule per Kilogram</title>
+        <names translatable="no">r:J_p_kg</names>
+        <part>
+          <unit>J</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>g</unit>
+          <prefix>3</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <title>Kilocalerie per Gram</title>
+        <names translatable="no">r:kcal_p_g</names>
+        <part>
+          <unit>cal_th</unit>
+          <prefix>3</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>g</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Power</title>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Joule per Second</title>
+        <names translatable="no">r:J_p_s</names>
+        <part>
+          <unit>J</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Watt</title>
+        <names>ar:W,watt,p:watts</names>
+        <base>
+          <unit>J_p_s</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Horse Power</title>
+        <names>ar:hp,horsepower,p:horsepowers</names>
+        <base>
+          <unit>W</unit>
+          <relation>745.699987158227022</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Pferdestärke</title>
+        <names>ar:PS,u:pferdestärke</names>
+        <base>
+          <unit>W</unit>
+          <relation>735.49875</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Decibel Milliwatt</title>
+        <names>ar:dBm</names>
+        <base>
+          <unit>W</unit>
+          <relation>10^((\x-30)/10)</relation>
+          <inverse_relation>10*log(\x,10)+30</inverse_relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Decibel Watt</title>
+        <names>ar:dBW</names>
+        <base>
+          <unit>W</unit>
+          <relation>10^(\x/10)</relation>
+          <inverse_relation>10*log(\x,10)</inverse_relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <system>CGS</system>
+        <title>Erg per Second</title>
+        <names translatable="no">r:erg_p_s</names>
+        <part>
+          <unit>erg</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Solar Luminosity (nominal)</title>
+        <names>r:solar_luminosity,au:L_☉</names>
+        <base>
+          <unit>W</unit>
+          <relation>3.828E26</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <hidden>true</hidden>
+        <title translatable="no">Btu per Hour</title>
+        <names translatable="no">r:Btu_p_h</names>
+        <part>
+          <unit>Btu</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>h</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Ton of Refrigeration</title>
+        <names>r:ton_refrigaration,ac:TOR</names>
+        <base>
+          <unit>Btu_p_h</unit>
+          <relation>12000</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Entropy</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Joule per Kelvin</title>
+        <names translatable="no">r:J_p_K</names>
+        <part>
+          <unit>J</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>K</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Boltzmann (unit)</title>
+        <names translatable="no">rs:boltzmann_unit,as:k_Bunit</names>
+        <base>
+          <unit>J_p_K</unit>
+          <relation>1.380649E-23</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Specific Entropy</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Joule per Kilogram Kelvin</title>
+        <names translatable="no">r:J_p_kg_K</names>
+        <part>
+          <unit>J</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>g</unit>
+          <prefix>3</prefix>
+          <exponent>-1</exponent>
+        </part>
+        <part>
+          <unit>K</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Thermal Conductivity</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Watt per Meter Kelvin</title>
+        <names translatable="no">r:W_p_m_K</names>
+        <part>
+          <unit>W</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+        <part>
+          <unit>K</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Energy Density</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Joule per Cubic Meter</title>
+        <names translatable="no">r:J_p_cum</names>
+        <part>
+          <unit>J</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>m</unit>
+          <prefix>0</prefix>
+          <exponent>-3</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Molar Energy</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Joule per Mole</title>
+        <names translatable="no">r:J_p_mol</names>
+        <part>
+          <unit>J</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>mol</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Molar Entropy</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Joule per Mole Kelvin</title>
+        <names translatable="no">r:J_p_mol_K</names>
+        <part>
+          <unit>J</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>mol</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+        <part>
+          <unit>K</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Action</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Joule Second</title>
+        <names translatable="no">r:J_s</names>
+        <part>
+          <unit>J</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Reduced Planck (Atomic/Natural Unit of Action)</title>
+        <names translatable="no">rs:planck_unit,aus:&#x210f;_unit</names>
+        <system>Atomic/Natural</system>
+        <base>
+          <unit>J_s</unit>
+          <relation>3.313035075E-34/pi</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <title>Radioactivity</title>
+    <unit type="alias">
+      <system>SI</system>
+      <title>Becquerel</title>
+      <names>ar:Bq,becquerel,p:becquerels</names>
+      <base>
+        <unit>s</unit>
+        <relation>1</relation>
+        <exponent>-1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Curie</title>
+      <names>ar:Ci,curie,p:curies</names>
+      <base>
+        <unit>Bq</unit>
+        <relation>3.7E10</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Rutherford</title>
+      <names>ar:Rd,rutherford,p:rutherfords</names>
+      <base>
+        <unit>Bq</unit>
+        <relation>1E6</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <category>
+      <title>Absorbed Dose</title>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Gray</title>
+        <names>ar:Gy,gray,p:grays</names>
+        <base>
+          <unit>J_p_kg</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <title>Rad</title>
+        <names>rs:rad_radioactivity</names>
+        <base>
+          <unit>Gy</unit>
+          <relation>1/100</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <title>Erg per Gram</title>
+        <names translatable="no">r:erg_p_g</names>
+        <part>
+          <unit>erg</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>g</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Dose Equivalent</title>
+      <unit type="alias">
+        <system>SI</system>
+        <title>Sievert</title>
+        <names>ar:Sv,sievert,p:sieverts</names>
+        <base>
+          <unit>J_p_kg</unit>
+          <relation>1</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="alias">
+        <system>CGS</system>
+        <title>Roentgen Equivalent Man (Rem)</title>
+        <names>ros:rem_radioactivity,a:rem</names>
+        <base>
+          <unit>Sv</unit>
+          <relation>1/100</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+      <unit type="composite">
+        <system>CGS</system>
+        <title>Millirem</title>
+        <names translatable="no">r:mrem_c</names>
+        <part>
+          <unit>rem_radioactivity</unit>
+          <prefix>-3</prefix>
+          <exponent>1</exponent>
+        </part>
+      </unit>
+    </category>
+    <category>
+      <title>Exposure</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Coulomb per Kilogram</title>
+        <names translatable="no">r:C_p_kg</names>
+        <part>
+          <unit>C</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>g</unit>
+          <prefix>3</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="alias">
+        <title>Roentgen</title>
+        <names>ar:R,roentgen,r&#x00f6;ntgen,p:roentgens,p:r&#x00f6;ntgens</names>
+        <base>
+          <unit>C_p_kg</unit>
+          <relation>0.000258</relation>
+          <exponent>1</exponent>
+        </base>
+      </unit>
+    </category>
+    <category>
+      <title>Absorbed Dose Rate</title>
+      <unit type="composite">
+        <system>SI</system>
+        <title>Gray per Second</title>
+        <names translatable="no">r:Gy_p_s</names>
+        <part>
+          <unit>Gy</unit>
+          <prefix>0</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>s</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+      <unit type="composite">
+        <system>CGS</system>
+        <title>Millirem per Hour</title>
+        <names translatable="no">r:mrem_p_h</names>
+        <part>
+          <unit>rem_radioactivity</unit>
+          <prefix>-3</prefix>
+          <exponent>1</exponent>
+        </part>
+        <part>
+          <unit>h</unit>
+          <prefix>0</prefix>
+          <exponent>-1</exponent>
+        </part>
+      </unit>
+    </category>
+  </category>
+  <category>
+    <title>Ratio</title>
+    <unit type="base">
+      <title>Neper</title>
+      <names>ar:Np,neper,p:nepers</names>
+    </unit>
+    <unit type="alias">
+      <title>Bel</title>
+      <names>r:bel,p:bels</names>
+      <base>
+        <unit>Np</unit>
+        <relation>0.5*ln(10)</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Decibel</title>
+      <names>ar:dB,decibel,p:decibels</names>
+      <base>
+        <unit>bel</unit>
+        <relation>0.1</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+  </category>
+  <category>
+    <title>Information</title>
+    <unit type="base">
+      <title>Bit (Binary Digit)</title>
+      <names>r:bit,p:bits,shannon,p:shannons,c:Sh,binary_digit,p:binary_digits</names>
+      <use_with_prefixes min="0">true</use_with_prefixes>
+    </unit>
+    <unit type="alias">
+      <title>Nat</title>
+      <names>r:nat,p:nats</names>
+      <base>
+        <unit>bit</unit>
+        <relation>log2(e)</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Trit (Ternary Digit)</title>
+      <names>r:trit,p:trits,trinary_digit,p:trinary_digits,ternary_digit,p:ternary_digits</names>
+      <base>
+        <unit>bit</unit>
+        <relation>log2(3)</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Octal Digit</title>
+      <names>r:octal_digit,p:octal_digits</names>
+      <base>
+        <unit>bit</unit>
+        <relation>3</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Hartley (Decimal Digit)</title>
+      <names>r:hartley,p:hartleys,a:Hart,dit,p:dits,decimal_digit,p:decimal_digits</names>
+      <base>
+        <unit>bit</unit>
+        <relation>log2(10)</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Byte (8-bit)</title>
+      <names>r:byte,a:B,p:bytes,octet,p:octets,a:o</names>
+      <use_with_prefixes min="0">true</use_with_prefixes>
+      <base>
+        <unit>bit</unit>
+        <relation>8</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Nibble (Hexadecimal Digit)</title>
+      <names>r:nibble,p:nibbles,nybble,p:nybbles,semioctet,p:semioctets,hex_digit,p:hex_digits,hexadecimal_digit,p:hexadecimal_digits</names>
+      <base>
+        <unit>bit</unit>
+        <relation>4</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Tribble</title>
+      <names>r:tribble,p:tribbles</names>
+      <base>
+        <unit>nibble</unit>
+        <relation>3</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Nonet</title>
+      <names>r:nonet,p:nonets</names>
+      <base>
+        <unit>bit</unit>
+        <relation>9</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Declet</title>
+      <names>r:declet,p:declets</names>
+      <base>
+        <unit>bit</unit>
+        <relation>10</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Word (16-bit)</title>
+      <names>r:word,p:words</names>
+      <base>
+        <unit>bit</unit>
+        <relation>16</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="composite">
+      <title>Kilobyte</title>
+      <names translatable="no">r:kbyte_c</names>
+      <part>
+        <unit>byte</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Megabyte</title>
+      <names translatable="no">r:Mbyte_c</names>
+      <part>
+        <unit>byte</unit>
+        <prefix>6</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Gigabyte</title>
+      <names translatable="no">r:Gbyte_c</names>
+      <part>
+        <unit>byte</unit>
+        <prefix>9</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Terabyte</title>
+      <names translatable="no">r:Tbyte_c</names>
+      <part>
+        <unit>byte</unit>
+        <prefix>12</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Petabyte</title>
+      <names translatable="no">r:Pbyte_c</names>
+      <part>
+        <unit>byte</unit>
+        <prefix>15</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Exabyte</title>
+      <names translatable="no">r:Ebyte_c</names>
+      <part>
+        <unit>byte</unit>
+        <prefix>18</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Kibibyte</title>
+      <names translatable="no">r:Kibyte_c</names>
+      <part>
+        <unit>byte</unit>
+        <prefix type="binary">10</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Mebibyte</title>
+      <names translatable="no">r:Mibyte_c</names>
+      <part>
+        <unit>byte</unit>
+        <prefix type="binary">20</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Gibibyte</title>
+      <names translatable="no">r:Gibyte_c</names>
+      <part>
+        <unit>byte</unit>
+        <prefix type="binary">30</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Tebibyte</title>
+      <names translatable="no">r:Tibyte_c</names>
+      <part>
+        <unit>byte</unit>
+        <prefix type="binary">40</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Kilobit</title>
+      <names translatable="no">r:kbit_c</names>
+      <part>
+        <unit>bit</unit>
+        <prefix>3</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Megabit</title>
+      <names translatable="no">r:Mbit_c</names>
+      <part>
+        <unit>bit</unit>
+        <prefix>6</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Gigabit</title>
+      <names translatable="no">r:Gbit_c</names>
+      <part>
+        <unit>bit</unit>
+        <prefix>9</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Terabit</title>
+      <names translatable="no">r:Tbit_c</names>
+      <part>
+        <unit>bit</unit>
+        <prefix>12</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Petabit</title>
+      <names translatable="no">r:Pbit_c</names>
+      <part>
+        <unit>bit</unit>
+        <prefix>15</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Kibibit</title>
+      <names translatable="no">r:Kibit_c</names>
+      <part>
+        <unit>bit</unit>
+        <prefix type="binary">10</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Mebibit</title>
+      <names translatable="no">r:Mibit_c</names>
+      <part>
+        <unit>bit</unit>
+        <prefix type="binary">20</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+    <unit type="composite">
+      <title>Gibibit</title>
+      <names translatable="no">r:Gibit_c</names>
+      <part>
+        <unit>bit</unit>
+        <prefix type="binary">30</prefix>
+        <exponent>1</exponent>
+      </part>
+    </unit>
+  </category>
+  <category>
+    <title>Typography</title>
+    <unit type="alias">
+      <title>PostScript Point (DTP)</title>
+      <description>The PostScript point, or desktop publishing point, is the screen-independent typographic unit commonly used in computer software and for digital printing. It is known as the big point (bp) in TeX.</description>
+      <names>ar:pt,a:pts,point,p:points,as:bp_tex,ao:tex_bp</names>
+      <base>
+        <unit>in</unit>
+        <relation>1/72</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>TeX Point</title>
+      <names>r:tex_point,as:pt_TeX,ao:tex_pt,p:tex_points</names>
+      <base>
+        <unit>in</unit>
+        <relation>1/72.27</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>TeX Scaled Point</title>
+      <names>r:tex_scaled_point,as:sp_TeX,ao:tex_sp,p:tex_scaled_points</names>
+      <base>
+        <unit>tex_point</unit>
+        <relation>1/65536</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>PostScript Pica</title>
+      <names>r:pica,p:picas</names>
+      <base>
+        <unit>pt</unit>
+        <relation>12</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Twip</title>
+      <names>r:twip,p:twips</names>
+      <base>
+        <unit>pt</unit>
+        <relation>1/20</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Agate</title>
+      <names>r:agate,p:agates</names>
+      <base>
+        <unit>pt</unit>
+        <relation>5.5</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Johnson Pica</title>
+      <names>johnson_pica,ro:ata_pica,po:ata_picas</names>
+      <base>
+        <unit>in</unit>
+        <relation>0.166</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>American Point</title>
+      <names>US_point,ro:ata_point,as:pt_US,ao:ata_pt,p:US_points,po:ata_points</names>
+      <base>
+        <unit>ata_pica</unit>
+        <relation>1/12</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>New Didot Point</title>
+      <names>r:new_didot</names>
+      <base>
+        <unit>m</unit>
+        <relation>0.000375</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Didot Point</title>
+      <names>r:didot,a:dd</names>
+      <base>
+        <unit>pouce</unit>
+        <relation>1/72</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+    <unit type="alias">
+      <title>Cicero</title>
+      <names>r:cicero</names>
+      <base>
+        <unit>didot</unit>
+        <relation>12</relation>
+        <exponent>1</exponent>
+      </base>
+    </unit>
+  </category>
+</QALCULATE>

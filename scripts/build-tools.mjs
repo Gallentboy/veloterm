@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// 构建 coreutils 多呼叫二进制并复制到 Tauri externalBin 目录（仅 Windows 需要）。
+// 构建 coreutils 多呼叫二进制并复制到 Tauri externalBin 目录（仅 Windows 需要），
+// 同时产出随包 resources 分发的两个 FFI DLL：yqffi.dll（Go）与
+// qalcffi.dll（libqalculate，MSYS2 MinGW64 构建）。
 // Tauri v2 的 externalBin 要求文件名带 target triple 后缀：
 //   src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe
 // 安装后 Tauri 会去掉 triple 后缀放到主程序同级目录（coreutils.exe），
@@ -11,7 +13,7 @@
 // 用法：node scripts/build-tools.mjs [--target <triple>]
 // 未指定 target 时取 rustc 默认 host triple。
 
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -161,5 +163,115 @@ execSync(
   { cwd: yqSrc, stdio: 'inherit', env: { ...process.env, CGO_ENABLED: '1' } },
 );
 console.log(`[build-tools] yqffi.dll (${yqVersion}) -> ${join(outDir, 'yqffi.dll')}`);
+
+// ── qalc（libqalculate C++）：coreutils 的 qalc 命令经 qalcffi.dll 动态导入 ───
+// libqalculate 是 autotools 体系的 C++ 库（GMP/MPFR/libxml2 硬依赖），上游
+// 无 MSVC 工程且官方 Windows 版即 MinGW 构建——不像 jq（纯 C 自包含）能
+// cc 现场编译链入，只能走 MSYS2 MinGW64 工具链（windows-latest 预装
+// C:\msys64，依赖由 CI 的 pacman 步骤安装）。构建分两步：
+//   1. VPATH 静态构建：src-tauri/qalc-build/（gitignore，不污染 vendor 树）
+//      configure --enable-compiled-definitions 把全部定义 XML 编进二进制
+//      （运行时零数据文件），--without-libcurl/--without-icu/--disable-nls
+//      去掉可选重依赖；
+//   2. 链接 DLL：src/qalc.cc 以 -Dmain=qalc_main 改名单独编译（BusyBox
+//      多呼叫二进制的入口改名手法），与 veloterm_ffi.cc（导出
+//      veloterm_qalc_main）连同静态库一起 -static 链成自包含 qalcffi.dll，
+//      库依赖清单取 configure 生成的 libqalculate.la 的 dependency_libs
+//      （-lgmp -lmpfr -lbcrypt …），libxml2 传递依赖由 pkg-config --static 补齐。
+// 分发臂见 crates/coreutils 的 qalc_impl.rs（与 yqffi 同一套运行时定位约定）。
+const qalcSrc = join(srcTauri, 'vendor', 'libqalculate');
+const qalcVersion = readFileSync(join(qalcSrc, 'VELOTERM_VERSION'), 'utf8').trim();
+console.log(`[build-tools] qalc ${qalcVersion}: MSYS2 MinGW64 autotools 构建`);
+
+// 定位 MSYS2（windows-latest 预装 C:\msys64；MSYS2_ROOT 可覆盖）
+function locateMsys2() {
+  const roots = [];
+  if (process.env.MSYS2_ROOT) roots.push(process.env.MSYS2_ROOT);
+  roots.push('C:\\msys64', 'C:\\tools\\msys64');
+  for (const dir of roots) {
+    if (existsSync(join(dir, 'usr', 'bin', 'bash.exe'))) return dir;
+  }
+  return null;
+}
+const msysRoot = locateMsys2();
+if (!msysRoot) {
+  console.error(
+    '[build-tools] 未找到 MSYS2（qalcffi.dll 构建必需，需 usr/bin/bash.exe）：' +
+      '请安装 MSYS2（默认 C:\\msys64）或设 MSYS2_ROOT 指向其根目录',
+  );
+  process.exit(1);
+}
+const bashExe = join(msysRoot, 'usr', 'bin', 'bash.exe');
+// MSYSTEM=MINGW64 + 登录 shell：/etc/profile 按该变量前置 /mingw64/bin，
+// bash 内的 g++/make/pkg-config 即 x86_64-w64-mingw32 工具链
+const mingwEnv = { ...process.env, MSYSTEM: 'MINGW64' };
+
+// 工具链与依赖探测：编译器 + libxml2/gmp/mpfr 开发包（.pc），缺什么给出
+// 对应 pacman 安装命令（CI 的 Install MSYS2 packages for qalc 步骤负责装）
+const PACMAN_QALC =
+  'pacman -S --needed --noconfirm make gettext mingw-w64-x86_64-gcc ' +
+  'mingw-w64-x86_64-pkg-config mingw-w64-x86_64-libxml2 ' +
+  'mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr';
+try {
+  execFileSync(
+    bashExe,
+    [
+      '-lc',
+      'set -e; command -v g++ make pkg-config >/dev/null; ' +
+        'pkg-config --exists libxml-2.0 gmp mpfr',
+    ],
+    { env: mingwEnv, stdio: 'ignore' },
+  );
+} catch {
+  console.error('[build-tools] MSYS2 MINGW64 环境缺少 qalc 构建依赖，请在 MSYS2 中执行：');
+  console.error(`  ${PACMAN_QALC}`);
+  process.exit(1);
+}
+
+const qalcBuild = join(srcTauri, 'qalc-build');
+// String.raw：脚本里的 sed 转义（\( \1）需原样到达 bash，不能被 JS 模板
+// 字符串的转义处理吃掉
+const qalcScript = String.raw`
+set -e
+SRC=$(cygpath -u '${qalcSrc}')
+BUILD=$(cygpath -u '${qalcBuild}')
+mkdir -p "$BUILD"
+cd "$BUILD"
+# 增量构建：Makefile 已存在（上次构建残留）则跳过 configure
+if [ ! -f Makefile ]; then
+  sh "$SRC/configure" --disable-shared --enable-static --enable-compiled-definitions \
+    --without-libcurl --without-icu --disable-nls --disable-unittests
+fi
+make -j"$(nproc)"
+# qalc 入口改名编译：-Dmain=qalc_main（仅本翻译单元），编译参数对齐
+# src/Makefile.am 的 AM_CPPFLAGS（config.h 在 builddir 根，support.h 经
+# HAVE_CONFIG_H 引入）
+g++ -c -O2 -DHAVE_CONFIG_H -Dmain=qalc_main \
+  -I"$BUILD" -I"$SRC" -I"$SRC/libqalculate" \
+  -DPACKAGE_DATA_DIR='"/qalculate-data"' \
+  $(pkg-config --cflags libxml-2.0) \
+  "$SRC/src/qalc.cc" -o qalc_main.o
+# 静态库产物路径：libtool 版本差异可能在 .libs/ 或目录直下，取实际存在者
+QALIB=libqalculate/.libs/libqalculate.a
+[ -f "$QALIB" ] || QALIB=libqalculate/libqalculate.a
+# 静态库的链接期依赖取 libtool 记录（剥掉 -R/-rpath 运行时路径项），
+# libxml2 的传递依赖（zlib/lzma/iconv…）由 pkg-config --static 补齐
+DEPS=$(sed -n "s/^dependency_libs='\(.*\)'$/\1/p" libqalculate/libqalculate.la \
+  | tr ' ' '\n' | grep -v -e '^-R' -e '^-rpath' | tr '\n' ' ')
+g++ -shared -static -static-libgcc -static-libstdc++ -o qalcffi.dll \
+  "$SRC/veloterm_ffi.cc" qalc_main.o "$QALIB" \
+  $DEPS $(pkg-config --static --libs libxml-2.0)
+# 自包含断言：objdump 列出 DLL 依赖（ldd 在 MSYS2 基础包不保证存在，
+# objdump 随 binutils 必在），除 Windows 系统库外不得有 MinGW/MSYS 动态库
+DLLS=$(objdump -p qalcffi.dll | sed -n 's/\s*DLL Name: //p')
+echo "$DLLS"
+if echo "$DLLS" | grep -Eiq 'mingw|msys-|libstdc|libgcc|winpthread|xml2|gmp|mpfr|zlib|lzma|iconv|zstd'; then
+  echo '[build-tools] qalcffi.dll 存在未静态化的 MinGW/MSYS 依赖（见上）' >&2
+  exit 1
+fi
+`;
+execFileSync(bashExe, ['-lc', qalcScript], { env: mingwEnv, stdio: 'inherit' });
+cpSync(join(qalcBuild, 'qalcffi.dll'), join(outDir, 'qalcffi.dll'));
+console.log(`[build-tools] qalcffi.dll (${qalcVersion}) -> ${join(outDir, 'qalcffi.dll')}`);
 
 console.log('[build-tools] 完成');

@@ -132,11 +132,11 @@ pub const PLATFORM_COMMANDS: &[&str] = &[
 ];
 
 /// Windows 专属命令（uutils feat_os_windows 额外项 + vcpkg 静态链接的 openssl CLI +
-/// 源码内嵌 PuTTY 的 telnet + vendor 源码现场编译的 jq CLI + yqffi.dll 动态导入的 yq +
-/// urlencoding 库封装的 urlencode/urldecode）
+/// 源码内嵌 PuTTY 的 telnet + vendor 源码现场编译的 jq CLI + yqffi/qalcffi.dll
+/// 动态导入的 yq 与 qalc + urlencoding 库封装的 urlencode/urldecode）
 #[cfg(target_os = "windows")]
 pub const PLATFORM_COMMANDS: &[&str] = &[
-    "jq", "openssl", "stdbuf", "telnet", "urldecode", "urlencode", "yq",
+    "jq", "openssl", "qalc", "stdbuf", "telnet", "urldecode", "urlencode", "yq",
 ];
 
 /// 其余平台（本项目不存在，仅保证常量无条件可用）
