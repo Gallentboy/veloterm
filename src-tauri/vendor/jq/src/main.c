@@ -14,6 +14,7 @@
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
+#include <process.h>
 #include <processenv.h>
 #include <shellapi.h>
 #include <wchar.h>
@@ -292,6 +293,65 @@ static void stderr_cb(void *data, jv input) {
 #ifdef WIN32
 int umain(int argc, char* argv[]);
 
+/* veloterm 诊断插桩辅助（临时手段，定位后移除）：当前系统时间（100ns，
+   FILETIME 纪元）。优先 GetSystemTimePreciseAsFileTime（Win8+，~100ns 精度；
+   动态解析以免抬高 _WIN32_WINNT 要求），缺失时回退 GetSystemTimeAsFileTime
+   （~15.6ms 粒度，仅作兜底）。 */
+static ULONGLONG vt_now_100ns(void) {
+  typedef VOID (WINAPI *vt_precise_fn)(LPFILETIME);
+  static vt_precise_fn fn;
+  static int resolved;
+  FILETIME ft;
+  if (!resolved) {
+    resolved = 1;
+    fn = (vt_precise_fn)(void *)GetProcAddress(GetModuleHandleA("kernel32.dll"),
+                                               "GetSystemTimePreciseAsFileTime");
+  }
+  if (fn != NULL)
+    fn(&ft);
+  else
+    GetSystemTimeAsFileTime(&ft);
+  return ((ULONGLONG)ft.dwHighDateTime << 32) | (ULONGLONG)ft.dwLowDateTime;
+}
+
+/* veloterm 诊断插桩辅助：进程内存快照。PROCESS_MEMORY_COUNTERS_EX 在此本地
+   定义（避开 psapi.h 对 _WIN32_WINNT 的门控），函数体经 kernel32 的
+   K32GetProcessMemoryInfo 动态解析（不给链接器引入 psapi.lib）。 */
+typedef struct vt_pmcex {
+  DWORD  cb;
+  DWORD  PageFaultCount;
+  SIZE_T PeakWorkingSetSize;
+  SIZE_T WorkingSetSize;
+  SIZE_T QuotaPeakPagedPoolUsage;
+  SIZE_T QuotaPagedPoolUsage;
+  SIZE_T QuotaPeakNonPagedPoolUsage;
+  SIZE_T QuotaNonPagedPoolUsage;
+  SIZE_T PagefileUsage;
+  SIZE_T PeakPagefileUsage;
+  SIZE_T PrivateUsage;
+} vt_pmcex;
+
+static int vt_mem_snapshot(vt_pmcex *out) {
+  typedef BOOL (WINAPI *vt_mem_fn)(HANDLE, vt_pmcex *, DWORD);
+  static vt_mem_fn fn;
+  static int resolved;
+  memset(out, 0, sizeof(*out));
+  out->cb = sizeof(*out);
+  if (!resolved) {
+    resolved = 1;
+    fn = (vt_mem_fn)(void *)GetProcAddress(GetModuleHandleA("kernel32.dll"),
+                                           "K32GetProcessMemoryInfo");
+    if (fn == NULL) {
+      HMODULE psapi = LoadLibraryA("psapi.dll");
+      if (psapi != NULL)
+        fn = (vt_mem_fn)(void *)GetProcAddress(psapi, "GetProcessMemoryInfo");
+    }
+  }
+  if (fn == NULL)
+    return 0;
+  return fn(GetCurrentProcess(), out, sizeof(*out)) ? 1 : 0;
+}
+
 int wmain(int argc, wchar_t* wargv[]) {
   size_t arg_sz;
   char **argv = alloca(argc * sizeof(wchar_t*));
@@ -321,11 +381,21 @@ int main(int argc, char* argv[]) {
 
 #ifdef WIN32
   /* veloterm 诊断插桩（临时手段，定位后移除）：VELOTERM_JQ_TIMING=1 时在
-     退出前向 stderr 输出分段耗时——用于定位本构建与官方 MinGW 构建在
-     「带程序参数」路径上 ~450ms 差异的具体阶段（CI 实测：--version 28ms、
-     -n 1+1 465ms，官方 MinGW 同版本同机 ~40ms） */
+     退出前向 stderr 输出分层数据——in-main 分段 + 进程绝对时间线
+     （pre_main=进程创建→umain 入口 / uptime=进程创建→探针点）+ 内存与 CPU
+     快照。背景：MSVC 构建 `-n 1+1` 的 in-main 探针仅 ~2ms，而进程真实寿命
+     ~450ms（`--version` 全程仅 ~33ms），缺口在 umain 之外（进程创建/退出两段），
+     需把这两段纳入同一时间线定位。
+     VELOTERM_JQ_EXIT_MODE=quick|terminate 用于退出路径二分：
+       quick     = _exit()（跳过 atexit 处理器与 stdio 冲刷）
+       terminate = TerminateProcess（再跳过 CRT/加载器收尾，只剩内核回收地址空间）
+     VELOTERM_JQ_EXIT_AFTER=compile 用于「编译后即退」对照：验证开销是否随
+     编译期内存增长（而非执行/清理路径）出现。 */
   static LARGE_INTEGER vt_freq, vt_marks[5];
   static int vt_on;
+  static int vt_exit_mode;            /* 0=normal / 1=quick(_exit) / 2=terminate */
+  static ULONGLONG vt_creation_100ns; /* 进程创建时刻（FILETIME 100ns 纪元） */
+  static ULONGLONG vt_entry_100ns;    /* umain 入口时刻（同源） */
 #endif
 
 #ifdef HAVE_SETLOCALE
@@ -345,7 +415,20 @@ int main(int argc, char* argv[]) {
   fflush(stderr);
   vt_on = getenv("VELOTERM_JQ_TIMING") != NULL &&
           QueryPerformanceFrequency(&vt_freq) != 0;
-  if (vt_on) QueryPerformanceCounter(&vt_marks[0]);
+  if (vt_on) {
+    FILETIME vt_ct, vt_et, vt_kt, vt_ut;
+    const char *vt_mode = getenv("VELOTERM_JQ_EXIT_MODE");
+    QueryPerformanceCounter(&vt_marks[0]);
+    vt_entry_100ns = vt_now_100ns();
+    if (GetProcessTimes(GetCurrentProcess(), &vt_ct, &vt_et, &vt_kt, &vt_ut))
+      vt_creation_100ns = ((ULONGLONG)vt_ct.dwHighDateTime << 32) | (ULONGLONG)vt_ct.dwLowDateTime;
+    if (vt_mode != NULL) {
+      if (strcmp(vt_mode, "quick") == 0)
+        vt_exit_mode = 1;
+      else if (strcmp(vt_mode, "terminate") == 0)
+        vt_exit_mode = 2;
+    }
+  }
   /* veloterm 修补：删除上游对 stdout/stderr 的 `_O_TEXT | _O_U8TEXT` 设置。
      _O_U8TEXT 是 UCRT 的宽字符 UTF-8 模式，窄字符输出函数（fprintf/fwrite——
      jq 的全部错误输出与「重定向到管道/文件」的输出即此类）写该模式流属非法
@@ -731,6 +814,11 @@ int main(int argc, char* argv[]) {
     ret = JQ_ERROR_COMPILE;
     goto out;
   }
+#ifdef WIN32
+  /* veloterm 诊断：编译后即退（对照实验，验证开销是否随编译期内存增长出现） */
+  if (vt_on && getenv("VELOTERM_JQ_EXIT_AFTER") != NULL)
+    goto out;
+#endif
 
   if (options & DUMP_DISASM) {
     jq_dump_disassembly(jq, 0);
@@ -809,6 +897,12 @@ out:
     LARGE_INTEGER vt_end;
     double vt_ms[6];
     int vt_i;
+    ULONGLONG vt_now, vt_pre_main = 0, vt_uptime = 0;
+    double vt_ws = 0.0, vt_peak_ws = 0.0, vt_private = 0.0;
+    double vt_cpu_user = 0.0, vt_cpu_kernel = 0.0;
+    DWORD vt_handles = 0;
+    vt_pmcex vt_mem;
+    FILETIME vt_ct, vt_et, vt_kt, vt_ut;
     QueryPerformanceCounter(&vt_end);
     vt_ms[0] = (vt_marks[1].QuadPart - vt_marks[0].QuadPart) * 1000.0 / vt_freq.QuadPart;
     vt_ms[1] = (vt_marks[2].QuadPart - vt_marks[1].QuadPart) * 1000.0 / vt_freq.QuadPart;
@@ -816,15 +910,53 @@ out:
     vt_ms[3] = (vt_marks[4].QuadPart - vt_marks[3].QuadPart) * 1000.0 / vt_freq.QuadPart;
     vt_ms[4] = (vt_end.QuadPart - vt_marks[4].QuadPart) * 1000.0 / vt_freq.QuadPart;
     vt_ms[5] = (vt_end.QuadPart - vt_marks[0].QuadPart) * 1000.0 / vt_freq.QuadPart;
+    /* 绝对时间线：把「进程创建→入口」与「入口→探针点」也量化，
+       两者之差即退出路径 + 进程消亡的开销（由外层脚本用进程寿命对照）。 */
+    vt_now = vt_now_100ns();
+    if (vt_creation_100ns != 0) {
+      if (vt_entry_100ns >= vt_creation_100ns)
+        vt_pre_main = (vt_entry_100ns - vt_creation_100ns) / 10000ULL;
+      if (vt_now >= vt_creation_100ns)
+        vt_uptime = (vt_now - vt_creation_100ns) / 10000ULL;
+    }
+    memset(&vt_mem, 0, sizeof(vt_mem));
+    if (vt_mem_snapshot(&vt_mem)) {
+      vt_ws = vt_mem.WorkingSetSize / 1048576.0;
+      vt_peak_ws = vt_mem.PeakWorkingSetSize / 1048576.0;
+      vt_private = vt_mem.PrivateUsage / 1048576.0;
+    }
+    if (GetProcessTimes(GetCurrentProcess(), &vt_ct, &vt_et, &vt_kt, &vt_ut)) {
+      vt_cpu_user = (((ULONGLONG)vt_ut.dwHighDateTime << 32) | vt_ut.dwLowDateTime) / 10000.0;
+      vt_cpu_kernel = (((ULONGLONG)vt_kt.dwHighDateTime << 32) | vt_kt.dwLowDateTime) / 10000.0;
+    }
+    GetProcessHandleCount(GetCurrentProcess(), &vt_handles);
     fprintf(stderr, "[veloterm-jq-timing] init=%.1fms argparse=%.1fms compile=%.1fms "
-                    "exec+output=%.1fms cleanup=%.1fms total=%.1fms\n",
-            vt_ms[0], vt_ms[1], vt_ms[2], vt_ms[3], vt_ms[4], vt_ms[5]);
+                    "exec+output=%.1fms cleanup=%.1fms total=%.1fms | "
+                    "pre_main=%llums uptime=%llums ws=%.1fMB peak_ws=%.1fMB private=%.1fMB "
+                    "cpu=%.1fms(u %.1f/k %.1f) handles=%lu exit_mode=%d\n",
+            vt_ms[0], vt_ms[1], vt_ms[2], vt_ms[3], vt_ms[4], vt_ms[5],
+            (unsigned long long)vt_pre_main, (unsigned long long)vt_uptime,
+            vt_ws, vt_peak_ws, vt_private,
+            vt_cpu_user + vt_cpu_kernel, vt_cpu_user, vt_cpu_kernel,
+            (unsigned long)vt_handles, vt_exit_mode);
     for (vt_i = 0; vt_i < 5; vt_i++) {
       if (vt_marks[vt_i].QuadPart == 0) {
         fprintf(stderr, "[veloterm-jq-timing] NOTE: 提前退出路径，部分分段未覆盖\n");
         break;
       }
     }
+  }
+#endif
+
+#ifdef WIN32
+  /* veloterm 诊断：退出路径二分（VELOTERM_JQ_EXIT_MODE=quick|terminate）。
+     放在正常退出分发之前，仅探针启用时生效。 */
+  if (vt_on && vt_exit_mode != 0) {
+    int vt_code = ret > 0 ? ret : 0;
+    if (vt_exit_mode == 2)
+      TerminateProcess(GetCurrentProcess(), (UINT)vt_code);
+    else
+      _exit(vt_code);
   }
 #endif
 

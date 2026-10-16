@@ -68,10 +68,18 @@ tty 正常输出走 jv_print.c 的 `WriteConsoleW` 不经 stdio 不受影响；
 `-b/--binary` 的 `_O_BINARY` 分支不变）。
 
 `src/main.c`（第 8 处，**临时诊断插桩，定位后移除**）：`VELOTERM_JQ_TIMING=1`
-时在退出前向 stderr 输出分段耗时（init/argparse/compile/exec+output/cleanup，
-QueryPerformanceCounter）。背景：MSVC 构建在「带程序参数」路径比官方 MinGW
-构建慢 ~430ms（`jq -n 1+1` 465ms vs 官方同版本 40ms；`--version` 双方同速），
-此插桩用于把耗时定位到具体阶段。
+时在退出前向 stderr 输出分层数据。第一版只打 in-main 分段
+（init/argparse/compile/exec+output/cleanup，QueryPerformanceCounter）；实测
+`-n 1+1` 的 in-main 仅 ~2ms，而进程真实寿命（内核 StartTime→ExitTime，三种
+计时口径一致）~450ms、`--version` 全程仅 ~33ms——缺口在 umain 之外，故扩展为：
+- `pre_main`（进程创建→umain 入口，GetProcessTimes 创建时刻 + 精确系统时间差）
+  与 `uptime`（进程创建→探针点），二者与脚本侧进程寿命对照即可拆出退出段；
+- 内存/CPU 快照（ws / peak_ws / private / cpu / handles，K32GetProcessMemoryInfo
+  动态解析，不给链接器引入 psapi.lib）；
+- 退出路径二分：`VELOTERM_JQ_EXIT_MODE=quick`（`_exit`，跳过 atexit 与 stdio
+  冲刷）/ `terminate`（`TerminateProcess`，再跳过 CRT 与加载器收尾）；
+- `VELOTERM_JQ_EXIT_AFTER=compile`（编译后即退，隔离 exec 段）。
+外层驱动见 `scripts/diagnose-jq-timing.ps1`（test-jq.yml 车道自动执行）。
 
 八处补丁均有中文注释标记。
 
