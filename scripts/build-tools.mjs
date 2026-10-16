@@ -45,6 +45,19 @@ if (!target) {
 
 console.log(`[build-tools] target: ${target}`);
 
+// --only <段>：局部构建（coreutils / yq / qalc）。tools-ci 的快速反馈通道用
+// `--only qalc` 只产 qalcffi.dll——该段只依赖 MSYS2（不需要 cargo 全量编译、
+// Go 与 vcpkg OpenSSL），反馈环最短。不传时全量构建（publish 路径），行为不变
+const onlyFlag = args.indexOf('--only');
+const only = onlyFlag !== -1 && args[onlyFlag + 1] ? args[onlyFlag + 1] : '';
+if (only && !['coreutils', 'yq', 'qalc'].includes(only)) {
+  console.error(`[build-tools] 未知 --only 段：${only}（可选 coreutils/yq/qalc）`);
+  process.exit(1);
+}
+if (only) {
+  console.log(`[build-tools] 局部构建：${only}`);
+}
+
 // 工具集仅随 Windows 安装包分发：macOS/Linux 打包链路无 externalBin 消费方，
 // 跳过以免在 mac 上整套编译 uutils/ripgrep/eza 等 vendor 依赖（本地跑工具
 // 集测试用 cargo test -p coreutils，与本打包脚本无关）
@@ -75,35 +88,45 @@ const exeExt = target.includes('windows') ? '.exe' : '';
 // CI 里 tauri build 带 --target x86_64-pc-windows-msvc，这里保持一致才能命中同一份缓存，
 // 否则整套依赖会被重编两遍。本地未传 --target 时与本地 `tauri build`（也不带）同样一致
 const cargoTargetArgs = explicitTarget ? `--target ${target} ` : '';
-execSync(
-  `cargo build --release ${cargoTargetArgs}-p ${TOOL} --bin ${TOOL}`,
-  { cwd: srcTauri, stdio: 'inherit' },
-);
+if (!only || only === 'coreutils') {
+  execSync(
+    `cargo build --release ${cargoTargetArgs}-p ${TOOL} --bin ${TOOL}`,
+    { cwd: srcTauri, stdio: 'inherit' },
+  );
+}
 
-// 清空并重建 externalBin 目录
-rmSync(outDir, { recursive: true, force: true });
+// 清空并重建 externalBin 目录（--only 局部构建不清空：避免误删其他段的产物）
+if (!only) {
+  rmSync(outDir, { recursive: true, force: true });
+}
 mkdirSync(outDir, { recursive: true });
 
 // cargo 未传 --target 时输出到 target/release（无 triple 子目录）；
 // 传了 --target 时输出到 target/<triple>/release，与上方构建参数对应取用；
 // 本地未传时兼容两处都存在的历史产物
-const plainOut = join(srcTauri, 'target', 'release');
-const tripleOut = join(srcTauri, 'target', target, 'release');
-const cargoOut = explicitTarget
-  ? tripleOut
-  : existsSync(join(tripleOut, TOOL + exeExt))
+if (!only || only === 'coreutils') {
+  const plainOut = join(srcTauri, 'target', 'release');
+  const tripleOut = join(srcTauri, 'target', target, 'release');
+  const cargoOut = explicitTarget
     ? tripleOut
-    : plainOut;
+    : existsSync(join(tripleOut, TOOL + exeExt))
+      ? tripleOut
+      : plainOut;
 
-const src = join(cargoOut, TOOL + exeExt);
-if (!existsSync(src)) {
-  console.error(`[build-tools] 缺少编译产物: ${src}`);
-  process.exit(1);
+  const src = join(cargoOut, TOOL + exeExt);
+  if (!existsSync(src)) {
+    console.error(`[build-tools] 缺少编译产物: ${src}`);
+    process.exit(1);
+  }
+
+  const dest = join(outDir, `${TOOL}-${target}${exeExt}`);
+  cpSync(src, dest);
+  console.log(`[build-tools] ${TOOL} -> ${dest}`);
 }
-
-const dest = join(outDir, `${TOOL}-${target}${exeExt}`);
-cpSync(src, dest);
-console.log(`[build-tools] ${TOOL} -> ${dest}`);
+if (only === 'coreutils') {
+  console.log('[build-tools] 完成');
+  process.exit(0);
+}
 
 // ── yq（Go）：coreutils 的 yq 命令经 yqffi.dll 动态导入 ────────────────────
 // Go 官方不支持 MSVC 链接 c-archive（golang/go#74189），静态链入 coreutils.exe
@@ -112,57 +135,63 @@ console.log(`[build-tools] ${TOOL} -> ${dest}`);
 // yqffi.dll，经 tauri.windows.conf.json 的 resources 随包放在安装根目录。
 // 版本锁在 vendor/yq/VELOTERM_VERSION（与 openssl-src 的双源纪律一致），
 // 通过 ldflags 注入 cmd.GitDescribe 让 `yq --version` 打出真实版本。
-const yqSrc = join(srcTauri, 'vendor', 'yq');
-const yqVersion = readFileSync(join(yqSrc, 'VELOTERM_VERSION'), 'utf8').trim();
-console.log(`[build-tools] yq ${yqVersion}: go build -buildmode=c-shared`);
-try {
-  execSync('go version', { stdio: 'ignore' });
-} catch {
-  console.error('[build-tools] 未找到 go 工具链（yqffi.dll 构建必需）：请安装 Go ≥ 1.24 或将其加入 PATH');
-  process.exit(1);
-}
-// c-shared 需要 cgo：CGO_ENABLED=1 + gcc。windows-latest 镜像通常自带 MinGW
-// 且在 PATH（GitHub 文档不保证，实例间可能变化），找不到时按常见安装位置
-// 探测（choco mingw / msys2 / 手动安装）并前置 PATH，全找不到才报错退出。
-function ensureGccOnPath() {
+if (!only || only === 'yq') {
+  const yqSrc = join(srcTauri, 'vendor', 'yq');
+  const yqVersion = readFileSync(join(yqSrc, 'VELOTERM_VERSION'), 'utf8').trim();
+  console.log(`[build-tools] yq ${yqVersion}: go build -buildmode=c-shared`);
   try {
-    execSync('gcc --version', { stdio: 'ignore' });
-    return 'PATH';
+    execSync('go version', { stdio: 'ignore' });
   } catch {
-    /* 继续探测 */
+    console.error('[build-tools] 未找到 go 工具链（yqffi.dll 构建必需）：请安装 Go ≥ 1.24 或将其加入 PATH');
+    process.exit(1);
   }
-  const candidates = [
-    'C:\\mingw64\\bin',
-    'C:\\tools\\mingw64\\bin',
-    'C:\\ProgramData\\mingw64\\bin',
-    'C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw64\\bin',
-    'C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw32\\bin',
-    'C:\\msys64\\mingw64\\bin',
-    'C:\\tools\\msys64\\mingw64\\bin',
-  ];
-  for (const dir of candidates) {
-    if (existsSync(join(dir, 'gcc.exe'))) {
-      process.env.PATH = `${dir};${process.env.PATH}`;
-      console.log(`[build-tools] PATH 未含 gcc，探测到 ${dir}\\gcc.exe，已前置到 PATH`);
-      return dir;
+  // c-shared 需要 cgo：CGO_ENABLED=1 + gcc。windows-latest 镜像通常自带 MinGW
+  // 且在 PATH（GitHub 文档不保证，实例间可能变化），找不到时按常见安装位置
+  // 探测（choco mingw / msys2 / 手动安装）并前置 PATH，全找不到才报错退出。
+  function ensureGccOnPath() {
+    try {
+      execSync('gcc --version', { stdio: 'ignore' });
+      return 'PATH';
+    } catch {
+      /* 继续探测 */
     }
+    const candidates = [
+      'C:\\mingw64\\bin',
+      'C:\\tools\\mingw64\\bin',
+      'C:\\ProgramData\\mingw64\\bin',
+      'C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw64\\bin',
+      'C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw32\\bin',
+      'C:\\msys64\\mingw64\\bin',
+      'C:\\tools\\msys64\\mingw64\\bin',
+    ];
+    for (const dir of candidates) {
+      if (existsSync(join(dir, 'gcc.exe'))) {
+        process.env.PATH = `${dir};${process.env.PATH}`;
+        console.log(`[build-tools] PATH 未含 gcc，探测到 ${dir}\\gcc.exe，已前置到 PATH`);
+        return dir;
+      }
+    }
+    return null;
   }
-  return null;
-}
-if (!ensureGccOnPath()) {
-  console.error(
-    '[build-tools] 未找到 gcc（cgo 编译 yqffi.dll 必需）：windows-latest 通常自带 MinGW，' +
-      '若镜像变化请安装 MinGW-w64 或把其 bin 目录加入 PATH',
+  if (!ensureGccOnPath()) {
+    console.error(
+      '[build-tools] 未找到 gcc（cgo 编译 yqffi.dll 必需）：windows-latest 通常自带 MinGW，' +
+        '若镜像变化请安装 MinGW-w64 或把其 bin 目录加入 PATH',
+    );
+    process.exit(1);
+  }
+  execSync(
+    `go build -buildmode=c-shared -tags veloterm_ffi -trimpath ` +
+      `-ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${yqVersion}" ` +
+      `-o "${join(outDir, 'yqffi.dll')}" .`,
+    { cwd: yqSrc, stdio: 'inherit', env: { ...process.env, CGO_ENABLED: '1' } },
   );
-  process.exit(1);
+  console.log(`[build-tools] yqffi.dll (${yqVersion}) -> ${join(outDir, 'yqffi.dll')}`);
 }
-execSync(
-  `go build -buildmode=c-shared -tags veloterm_ffi -trimpath ` +
-    `-ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${yqVersion}" ` +
-    `-o "${join(outDir, 'yqffi.dll')}" .`,
-  { cwd: yqSrc, stdio: 'inherit', env: { ...process.env, CGO_ENABLED: '1' } },
-);
-console.log(`[build-tools] yqffi.dll (${yqVersion}) -> ${join(outDir, 'yqffi.dll')}`);
+if (only === 'yq') {
+  console.log('[build-tools] 完成');
+  process.exit(0);
+}
 
 // ── qalc（libqalculate C++）：coreutils 的 qalc 命令经 qalcffi.dll 动态导入 ───
 // libqalculate 是 autotools 体系的 C++ 库（GMP/MPFR/libxml2 硬依赖），上游
@@ -241,7 +270,11 @@ cd "$BUILD"
 # 未变时跳过 configure；升级 vendor/libqalculate 或改参数后必须清目录重配——
 # 沿用旧 Makefile/config.h 会静默产出与预期配置不符的 DLL（CI 是 fresh
 # runner 不受影响，本地 Windows 开发机续跑会踩）
-STAMP_HASH=$(printf '%s' "$SRC/configure@--disable-shared@--enable-static@--enable-compiled-definitions@--without-libcurl@--without-icu@--disable-nls@--disable-unittests" | cksum)
+# 构建标志（tools-ci 快速通道传 -O0 -g 的 debug 配置）参与陈旧配置指纹：
+# 切换 flags 自动清目录重配；configure 自动读取环境里的 CFLAGS/CXXFLAGS
+#（指纹取值由 JS 侧读 process.env 插入——本脚本是 String.raw 模板，shell 的
+# 参数展开写法不能直接写进模板，会被当成 JS 插值解析）
+STAMP_HASH=$(printf '%s' "$SRC/configure@--disable-shared@--enable-static@--enable-compiled-definitions@--without-libcurl@--without-icu@--disable-nls@--disable-unittests@CFLAGS=${process.env.CFLAGS ?? ''}@CXXFLAGS=${process.env.CXXFLAGS ?? ''}" | cksum)
 if [ ! -f Makefile ] || [ "$(cat .veloterm-configure-stamp 2>/dev/null || true)" != "$STAMP_HASH" ]; then
   find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   sh "$SRC/configure" --disable-shared --enable-static --enable-compiled-definitions \
