@@ -81,7 +81,18 @@ tty 正常输出走 jv_print.c 的 `WriteConsoleW` 不经 stdio 不受影响；
 - `VELOTERM_JQ_EXIT_AFTER=compile`（编译后即退，隔离 exec 段）。
 外层驱动见 `scripts/diagnose-jq-timing.ps1`（test-jq.yml 车道自动执行）。
 
-八处补丁均有中文注释标记。
+`src/jv.c`（第 9 处，**退出期堆损坏根因，长期保留**）：上游 Heimdal 风格的
+WIN32 TSD shim（`pthread_setspecific`）在「替换旧值」前会调用旧值的析构器，
+这不是 POSIX 语义（真 pthread 只在「键值随线程退出」时调用析构器）。jq 的退出
+清理恰是「自己先 free、再 setspecific(key, NULL) 清槽」——`jv_tsd_dec_ctx_fini`
+（本文件）与 `jv_tsd_dtoa_ctx_fini`（jv_dtoa_tsd.c）——于是同一指针被二次 free：
+MSVC 静态 CRT 下进程退出期以 0xC0000374（STATUS_HEAP_CORRUPTION）终止，Windows
+错误报告（WER）随后做崩溃事后处理（用户机实测每次 `jq -n 1+1` 退出多耗 ~450ms；
+`--version` 不建 dec/dtoa 上下文故不受影响）。已删除该析构调用（线程退出路径的
+`w32_service_thread_detach` 不受影响，仍按键表调用析构器）。MinGW 构建走真
+pthread 分支，不触发本问题。
+
+九处补丁均有中文注释标记。
 
 ## 构建集合的隐式项（jq-app build.rs 的收录依据）
 
