@@ -43,12 +43,12 @@
 
 - **app 不依赖任何工具 crate**——uutils/ripgrep/openssl-app/putty-telnet/jq-app/bc-app 的依赖图只进 `crates/coreutils`。这是「主程序瘦身 + 增量构建互不牵连」的前提：改 UI 只重链 app，改工具只重链 coreutils。
 - **tools-catalog 保持零依赖**——命令名清单是 app（建硬链接）与 coreutils（argv0 分发白名单）的单一事实来源；任何依赖都会经它传染给主程序。
-- `vendor/` 被 workspace `exclude`：vendor 内 coreutils/sed/ripgrep/sd 自带 workspace，其余为无继承键的独立清单；不 exclude 则 uucore 的 `edition.workspace` 会误朝根清单取值而报错。
+- `vendor/` 被 workspace `exclude`：vendor 内 coreutils/sed/ripgrep/sd 自带 workspace（onefetch 亦自带 workspace，根清单 members 为 ascii/image/manifest 三个 path 子 crate），其余为无继承键的独立清单；不 exclude 则 uucore 的 `edition.workspace` 会误朝根清单取值而报错。
 - 裸 `cargo build` / `cargo test` 只作用于根包 app；工具链必须显式 `-p coreutils`。
 
 ### Windows 工具链（BusyBox 模式）
 
-- 单一 `coreutils.exe` 多呼叫二进制；`rg`/`fd`/`awk` 三个命令的解析器直读自身 argv，**仅硬链接短名模式可用**，子命令模式给出提示。
+- 单一 `coreutils.exe` 多呼叫二进制；`rg`/`fd`/`awk`/`onefetch`/`parallel` 五个命令的解析器直读自身 argv，**仅硬链接短名模式可用**，子命令模式给出提示。onefetch（o2sh/onefetch 3.0.0，纯 Rust：gix + tokei + askalono，升级＝换 vendor 树 + 复核 lib.rs 尾部的 veloterm 入口补丁；build.rs 需 assets/onefetch.ico 与 languages.yaml，license 检测的 resources/license.cache.zstd 为编译期 include_bytes）。
 - **yq（Go）与 qalc（libqalculate C++）是 DLL 例外形态**：Go 官方不支持 MSVC 链接 c-archive（golang/go#74189），libqalculate 则是 autotools 体系的 C++ 库（GMP/MPFR/libxml2 硬依赖，上游无 MSVC 工程、官方 Windows 版即 MinGW 构建），两者都无法像 openssl-app 那样在 MSVC 下静态链入——共同形态是：vendor 源码（`vendor/yq/`、`vendor/libqalculate/`，版本各锁在树内 `VELOTERM_VERSION`）由 `build-tools.mjs` 在 Windows 上产出 DLL（yq：`go build -buildmode=c-shared -tags veloterm_ffi`；qalc：MSYS2 MinGW64 环境 VPATH 构建 + `qalc.cc -Dmain=qalc_main` 改名编译后 `-static` 链自包含 `qalcffi.dll`，定义 XML 经 `--enable-compiled-definitions` 编进二进制、运行时零数据文件），coreutils 的 `yq_impl.rs` / `qalc_impl.rs` 运行时 LoadLibrary 调 C 导出（无链接期依赖，macOS/CI 测试机无需 Go/MSYS2 工具链）；DLL 随包走 resources 放安装根目录，硬链接短名（`tools\yq.exe`、`tools\qalc.exe`）启动时按 exe 同目录→上级目录搜索。升级：换 vendor 源码 + 改 `VELOTERM_VERSION`（qalc 升级还需按树内 README 复核两处 UTF-8 输出补丁）。qalc 的 MinGW 构建依赖由 CI 的 pacman 步骤安装（publish.yml），安装包内的 qalcffi.dll 依赖全静态打入、终端用户不需要 MSYS2。
 - **bc 是 jq-app 的同型简化版**：vendor/bc（gavinhoward/bc 7.1.0，BSD-2-Clause）+ vendor/bc-app sys-crate，cc 现场编译静态链入，`-Dmain=veloterm_bc_main` 改名后 FFI 直调（main.c 按 argv[0] 首字符分发 bc/dc，恒传 "bc"）。上游自带官方 MSVC 工程零修补；4 个 strgen 生成物（lib/lib2/help×2）由 build.rs 的 Rust 复刻渲染（与宿主 strgen byte-diff 验证）；仅链 bcrypt。升级 bc：换 vendor 源码 + 同步 build.rs 的 `BC_VERSION` 与 vendor/bc/VERSION.txt（build.rs 启动时校验双源一致）+ 复核 vs/bc.vcxproj 的宏集合。
 - **data-encoding 家族（base32hex/base64url/hex/hexupper）是纯 Rust 的 Windows 专属命令**：编解码内核为 crates.io 的 data-encoding（与 uutils 家族既有依赖共享同一份，不走 vendor 树以免同版本双份编译），GNU 风格 CLI 壳在 `crates/coreutils/src/encodings_impl.rs`（`-d/-i/-w/[FILE]`，解码无条件容忍 `\r\n`，对齐 GNU base64）。门控方式与 openssl/yq 相反：仅 tools-catalog 的 Windows 清单门控，实现与分发臂跨平台编译——macOS 单测全量覆盖行为，`data_encoding_family_dispatch` 直连 run_uutils 验证接线。base32/base64/basenc 已由 uutils 跨平台提供，不重复收录。

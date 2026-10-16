@@ -8,6 +8,7 @@
 //! 全集）、uutils/grep、uutils/sed、uutils/findutils（find/xargs）、
 //! uutils/diffutils（diff/cmp/sdiff）、ripgrep（rg）、fd-find（fd）、chmln/sd（sd）、
 //! frawk（awk，Cranelift JIT）、rust-parallel（parallel，tokio 并行执行器）、
+//! onefetch（onefetch，git 仓库信息面板，gix/tokei 纯 Rust 栈）、
 //! tar-rs（tar，CLI 壳在 tar_impl.rs）、eza（eza/tree）、
 //! data-encoding（base32hex/base64url/hex/hexupper，CLI 壳在 encodings_impl.rs，
 //! 仅注册进 Windows 清单）、
