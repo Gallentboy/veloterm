@@ -380,12 +380,13 @@ int main(int argc, char* argv[]) {
   int options = 0;
 
 #ifdef WIN32
-  /* veloterm 诊断插桩（临时手段，定位后移除）：VELOTERM_JQ_TIMING=1 时在
-     退出前向 stderr 输出分层数据——in-main 分段 + 进程绝对时间线
-     （pre_main=进程创建→umain 入口 / uptime=进程创建→探针点）+ 内存与 CPU
-     快照。背景：MSVC 构建 `-n 1+1` 的 in-main 探针仅 ~2ms，而进程真实寿命
-     ~450ms（`--version` 全程仅 ~33ms），缺口在 umain 之外（进程创建/退出两段），
-     需把这两段纳入同一时间线定位。
+  /* veloterm 诊断插桩：VELOTERM_JQ_TIMING=1 时在退出前向 stderr 输出分层数据
+     ——in-main 分段 + 进程绝对时间线（pre_main=进程创建→umain 入口 /
+     uptime=进程创建→探针点）+ 内存与 CPU 快照。当前用途是 test-jq.yml 的
+     退出路径回归门禁（scripts/diagnose-jq-timing.ps1 驱动）：曾用它定位到
+     「jq 输出数字后退出慢 ~450ms」的根因——进程以 0xC0000374
+     （STATUS_HEAP_CORRUPTION）退出，WER 崩溃事后处理吃掉这段时间（详见
+     jv.c 第 9 处补丁）。in-main 本身一直只有 ~2ms。
      VELOTERM_JQ_EXIT_MODE=quick|terminate 用于退出路径二分：
        quick     = _exit()（跳过 atexit 处理器与 stdio 冲刷）
        terminate = TerminateProcess（再跳过 CRT/加载器收尾，只剩内核回收地址空间）
