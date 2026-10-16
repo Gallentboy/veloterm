@@ -58,7 +58,10 @@ pacman 步骤安装：gcc / make / pkg-config / libxml2 / gmp / mpfr）：
 1. `PUTS_UNICODE` / `FPUTS_UNICODE`：改为直接 `puts` / `fputs` 按字节
    写出。上游在 Windows 下对含 Unicode 的输出走 `fputws` 宽字符通道
    （CRT 在重定向到管道时按本地代码页转码）或 iconv 转 ANSI 代码页，
-   两者在 VeloTerm 的 UTF-8 终端（xterm/ConPTY）里都会乱码。
+   两者在 VeloTerm 的 UTF-8 终端（xterm/ConPTY）里都会乱码。宏体必须
+   保持上游「带 else 的完整 if 语句」形态（`if(true) {puts(x);} else {}`）
+   ——qalc.cc 全文件 345 个调用点混用带/不带分号两种写法，裸表达式形态
+   `puts(x)` 会在无分号调用点报 `expected ';'`（CI 实测 qalc.o 编译失败）。
 2. `utf8_encoding` 探测：跳过 locale 探测恒为 true，让输出使用
    Unicode 数学符号（×、÷、−、≈ …）。
 
