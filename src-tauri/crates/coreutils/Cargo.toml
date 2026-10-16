@@ -43,6 +43,10 @@ data-encoding = "2.11.1"
 # 的传递依赖——lock 不新增条目）：urlencode/urldecode 的编解码内核（CLI 壳在
 # src/urlcoding_impl.rs）。同 data-encoding 家族：仅清单门控，依赖跨平台编译
 urlencoding = "2"
+# bat（sharkdp/bat 0.26.1，语法高亮 cat）：feature 取舍与 vendor 修补的依据
+# 见 vendor/bat-app/Cargo.toml（纯 Rust 后端 fancy-regex，无 libgit2/oniguruma/
+# minus 依赖）
+bat-app = { path = "../../vendor/bat-app" }
 
 uucore = { path = "../../vendor/coreutils/src/uucore", features = ["openssl"] }
 uu_arch = { path = "../../vendor/coreutils/src/uu/arch" }
