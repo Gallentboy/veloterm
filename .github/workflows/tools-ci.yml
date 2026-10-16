@@ -1,0 +1,103 @@
+# tools-ci：仅构建内置工具链（coreutils.exe + yqffi.dll + qalcffi.dll）的
+# 快速反馈工作流——复用 publish.yml 的依赖准备步骤（vcpkg OpenSSL 二进制缓存、
+# MSYS2 qalc 依赖），跳过前端安装与 Tauri 打包/NSIS/release 段。
+# 工具链是 Windows 专属编译问题（jq/bc/qalc/openssl/yq 与 coreutils 分发臂）
+# 的高发区，publish 全程 15 分钟级、这里裁到一半以下，迭代修复时先看本工作流。
+# 注意：与 publish.yml 共用同一份 vcpkg NuGet 二进制缓存与 rust-cache 配置，
+# 缓存互热；publish.yml 仍是最终出包的真值门禁。
+name: 'tools-ci'
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release
+    paths:
+      - 'src-tauri/**'
+      - 'scripts/build-tools.mjs'
+      - '.github/workflows/tools-ci.yml'
+
+jobs:
+  build-tools:
+    permissions:
+      contents: read
+      # vcpkg 二进制缓存推送/拉取 GitHub Packages（NuGet feed）所需
+      packages: write
+    runs-on: windows-latest
+    env:
+      # 与 publish.yml 完全一致：vcpkg 二进制缓存走 GitHub Packages NuGet 源
+      USERNAME: Gallentboy
+      FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
+      VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
+    steps:
+      - uses: actions/checkout@v7
+
+      # build-tools.mjs 只用 Node 内建模块（child_process/fs/path/url），
+      # 跑在 runner 预装 Node 上即可，无需 setup-node/pnpm（那两步属前端段）
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      # 以下四步与 publish.yml 逐字对齐（NuGet 源注册 / OpenSSL 安装 / 环境变量 /
+      # 版本校验），差异细节的来龙去脉见 publish.yml 内注释
+      - name: Add NuGet source for vcpkg binary cache (GitHub Packages)
+        shell: pwsh
+        run: |
+          $vcpkgExe = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" } else { "C:\vcpkg\vcpkg.exe" }
+          $nuget = (& $vcpkgExe fetch nuget | Select-Object -Last 1)
+          & $nuget sources add `
+            -Source "$env:FEED_URL" `
+            -StorePasswordInClearText `
+            -Name GitHubPackages `
+            -UserName "$env:USERNAME" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
+
+      - name: Install OpenSSL for SQLCipher (Windows)
+        working-directory: src-tauri
+        shell: pwsh
+        env:
+          VCPKG_BUILD_TYPE: release
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
+          git config --global --add safe.directory "$vcpkgRoot"
+          git -C "$vcpkgRoot" fetch origin master
+          if ($LASTEXITCODE -ne 0) { Write-Host "git fetch 补历史失败（exit $LASTEXITCODE），继续安装：当前镜像通常已含 baseline 历史" }
+          vcpkg install "--x-install-root=$vcpkgRoot\installed"
+
+      - name: Set OpenSSL env (Windows)
+        shell: pwsh
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
+          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      - name: Verify vcpkg OpenSSL version (Windows)
+        shell: pwsh
+        run: |
+          $header = Get-Content "$env:OPENSSL_INCLUDE_DIR\openssl\opensslv.h" -Raw
+          $installed = [regex]::Match($header, 'OPENSSL_VERSION_TEXT\s+"OpenSSL\s+([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+          $locked = (Get-Content src-tauri/vendor/openssl-src/VELOTERM_VERSION -Raw).Trim()
+          $manifest = (Get-Content src-tauri/vcpkg.json -Raw | ConvertFrom-Json).overrides | Where-Object { $_.name -eq 'openssl' } | Select-Object -ExpandProperty version
+          $manifestUpstream = ($manifest -split '#')[0]
+          Write-Host "vcpkg 实装: $installed / 源码锁死: $locked / manifest override: $manifest"
+          if ($locked -ne $manifestUpstream) { throw "双源不一致：VELOTERM_VERSION=$locked 但 vcpkg.json override=$manifest，升级时两处必须同步修改" }
+          if ($installed -ne $locked) { throw "版本不一致：实装 $installed ≠ 锁死 $locked。请按 src-tauri/vendor/openssl-src/README.md 升级锁版本（apps + include/internal + VELOTERM_VERSION + vcpkg.json override）" }
+
+      - name: Install MSYS2 packages for qalc (Windows)
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm make gettext mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-libxml2 mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr"
+
+      - name: Build coreutils binary
+        run: node scripts/build-tools.mjs --target x86_64-pc-windows-msvc
