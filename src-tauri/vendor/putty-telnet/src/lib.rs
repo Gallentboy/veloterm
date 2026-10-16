@@ -39,10 +39,13 @@ mod imp {
             .into_iter()
             .map(|a| CString::new(a.to_string_lossy().into_owned()).unwrap_or_default())
             .collect();
-        let ptrs: Vec<*const c_char> = argv.iter().map(|s| s.as_ptr()).collect();
-        // SAFETY：ptrs 与其指向的 CString 在 FFI 调用期间全程存活；
-        // putty_telnet_main 只读 argc/argv，不在返回后继续持有指针。
-        unsafe { putty_telnet_main(ptrs.len() as c_int, ptrs.as_ptr()) }
+        // C 约定 argv[argc] == NULL：补哨兵，防 C 层参数遍历越界读
+        // （与 openssl-app 的修复一致）
+        let mut ptrs: Vec<*const c_char> = argv.iter().map(|s| s.as_ptr()).collect();
+        ptrs.push(std::ptr::null());
+        // SAFETY：ptrs（含末尾 NULL 哨兵）与其指向的 CString 在 FFI 调用期间
+        // 全程存活；putty_telnet_main 只读 argc/argv，不在返回后继续持有指针。
+        unsafe { putty_telnet_main((ptrs.len() - 1) as c_int, ptrs.as_ptr()) }
     }
 }
 
