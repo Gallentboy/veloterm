@@ -7,7 +7,8 @@
 //! 命令实现全部来自工程 vendor 源码：uutils/coreutils 0.12.0（GNU coreutils
 //! 全集）、uutils/grep、uutils/sed、uutils/findutils（find/xargs）、
 //! uutils/diffutils（diff/cmp/sdiff）、ripgrep（rg）、fd-find（fd）、chmln/sd（sd）、
-//! frawk（awk，Cranelift JIT）、tar-rs（tar，CLI 壳在 tar_impl.rs）、eza（eza/tree）、
+//! frawk（awk，Cranelift JIT）、rust-parallel（parallel，tokio 并行执行器）、
+//! tar-rs（tar，CLI 壳在 tar_impl.rs）、eza（eza/tree）、
 //! wget-rs（wget，rustls）、openssl 与 telnet（仅 Windows：vcpkg 静态库 FFI、
 //! PuTTY 源码内嵌，见 vendor/openssl-app 与 vendor/putty-telnet）、
 //! yq（仅 Windows：Go 源码 vendor/yq + yqffi.dll 运行时加载 FFI，见 yq_impl.rs）；
