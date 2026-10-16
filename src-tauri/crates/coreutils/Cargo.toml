@@ -33,6 +33,10 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 eza = { path = "../../vendor/eza" }
 palette_derive = "=0.7.5"
 wget-rs = { path = "../../vendor/wget-rs" }
+# bat（sharkdp/bat 0.26.1，语法高亮 cat）：feature 取舍与 vendor 修补的依据
+# 见 vendor/bat-app/Cargo.toml（纯 Rust 后端 fancy-regex，无 libgit2/oniguruma/
+# minus 依赖）
+bat-app = { path = "../../vendor/bat-app" }
 
 uucore = { path = "../../vendor/coreutils/src/uucore", features = ["openssl"] }
 uu_arch = { path = "../../vendor/coreutils/src/uu/arch" }
