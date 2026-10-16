@@ -255,8 +255,10 @@ add_library(veloterm_linear STATIC
     "${NMAP_ROOT}/liblinear/newton.cpp"
 )
 
-# ── nmap 主体（官方 nmap.vcxproj 的源清单；入口用 veloterm_ffi.cc） ──────────
-add_library(nmapffi SHARED
+# ── nmap 主体（官方 nmap.vcxproj 的源清单；入口单独，见下） ──────────────────
+# 抽成 OBJECT 库：nmapffi.dll 与 nmap-runner.exe 共享同一批目标文件，仅入口
+# 不同（DLL 用 veloterm_ffi.cc 的改名入口，runner 用上游 main.cc 的原生 main）。
+add_library(veloterm_nmap_core OBJECT
     "${NMAP_ROOT}/charpool.cc"
     "${NMAP_ROOT}/FingerPrintResults.cc"
     "${NMAP_ROOT}/FPEngine.cc"
@@ -308,14 +310,13 @@ add_library(nmapffi SHARED
     "${NMAP_ROOT}/nse_zlib.cc"
     # Windows 专用初始化（官方在 nmap.vcxproj 里单列 mswin32/winfix.cc）
     "${NMAP_ROOT}/mswin32/winfix.cc"
-    # VeloTerm FFI 入口（替代 main.cc）
-    "${CMAKE_CURRENT_SOURCE_DIR}/../veloterm_ffi.cc"
 )
 
 # 入口文件 #include "main.cc"（相对路径），需 nmap 根为 include 基准
-target_include_directories(nmapffi PRIVATE "${NMAP_ROOT}")
+target_include_directories(veloterm_nmap_core PRIVATE "${NMAP_ROOT}")
 
-target_link_libraries(nmapffi PRIVATE
+# 共享链接依赖（DLL 与 runner 同源）
+set(VELOTERM_NMAP_LIBS
     veloterm_nbase
     veloterm_nsock
     veloterm_netutil
@@ -336,13 +337,19 @@ target_link_libraries(nmapffi PRIVATE
     delayimp
 )
 
+# ── nmapffi.dll：veloterm_nmap_core + FFI 入口 ──────────────────────────────
+add_library(nmapffi SHARED
+    "${CMAKE_CURRENT_SOURCE_DIR}/../veloterm_ffi.cc"
+    $<TARGET_OBJECTS:veloterm_nmap_core>
+)
+target_link_libraries(nmapffi PRIVATE ${VELOTERM_NMAP_LIBS})
+
 # 延迟加载 packet.dll / wpcap.dll：没装 Npcap 时 DLL 仍可加载，运行期由
 # winfix.cc 的 SEH 探测把 have_pcap 置 false 并降级 connect 扫描（官方行为）
 target_link_options(nmapffi PRIVATE
     "/DELAYLOAD:packet.dll"
     "/DELAYLOAD:wpcap.dll"
 )
-
 set_target_properties(nmapffi PROPERTIES
     OUTPUT_NAME "nmapffi"
     PREFIX ""
@@ -354,26 +361,12 @@ set_target_properties(nmapffi PROPERTIES
 # 上游 main.cc 原样编成控制台 exe：用于 ① 跑 --script-updatedb 生成
 # scripts/script.db（NSE 运行期索引，nmap-data/ 的一部分）；② 无 Npcap 环境的
 # 构建期冒烟（--version 与 -sT connect 扫描，正好回归 /DELAYLOAD 降级路径）。
-# 与 nmapffi 同源同库，仅入口不同（main.cc 的 main 不参与 DLL 构建）。
+# 与 nmapffi 共享 veloterm_nmap_core，仅入口不同。
 add_executable(nmap-runner
     "${NMAP_ROOT}/main.cc"
+    $<TARGET_OBJECTS:veloterm_nmap_core>
 )
-target_link_libraries(nmap-runner PRIVATE
-    veloterm_nbase
-    veloterm_nsock
-    veloterm_netutil
-    veloterm_lua
-    veloterm_linear
-    pcre2-8-static
-    zlibstatic
-    dnet
-    "${NPCAP_SDK_DIR}/Lib/x64/wpcap.lib"
-    "${NPCAP_SDK_DIR}/Lib/x64/Packet.lib"
-    "${OPENSSL_DIR}/lib/libssl.lib"
-    "${OPENSSL_DIR}/lib/libcrypto.lib"
-    ws2_32 iphlpapi advapi32 shell32 user32 gdi32 crypt32
-    delayimp
-)
+target_link_libraries(nmap-runner PRIVATE ${VELOTERM_NMAP_LIBS})
 target_link_options(nmap-runner PRIVATE
     "/DELAYLOAD:packet.dll"
     "/DELAYLOAD:wpcap.dll"
