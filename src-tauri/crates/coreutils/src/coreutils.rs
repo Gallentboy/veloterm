@@ -247,6 +247,11 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // （运行时加载，见 qalc_impl.rs；MinGW 构建，无 MSVC 链接路径）
         #[cfg(target_os = "windows")]
         "qalc" => crate::qalc_impl::qalc_cmd_main(it),
+        // 仅 Windows：nmap（C/C++ autotools）经 nmapffi.dll 的 C 导出
+        // （运行时加载，见 nmap_impl.rs；MinGW 构建，NMAPDIR 指向随包
+        // nmap-data/，Packet.dll 延迟导入——未装 Npcap 时降级 connect 扫描）
+        #[cfg(target_os = "windows")]
+        "nmap" => crate::nmap_impl::nmap_cmd_main(it),
         // zoxide（ajeetdsouza/zoxide，纯 Rust）：vendor 源码静态链入（lib.rs
         // 可注入入口，eza 同型）。同 data-encoding / urlcoding 家族：仅注册进
         // Windows 命令清单，分发臂跨平台编译，macOS 单测直接经 run_uutils
@@ -419,12 +424,13 @@ mod tests {
     fn all_commands_dispatch_version_sweep() {
         let expect_one = ["test", "false", "which"];
         let mut skip = vec!["cmp", "diff", "sd", "wget"];
-        // yq/fzf/qalc 仅在 Windows 命令表里，且依赖打包产物 DLL（运行时加载），
+        // yq/fzf/qalc/nmap 仅在 Windows 命令表里，且依赖打包产物 DLL（运行时加载），
         // cargo test 环境不保证存在 —— 跳过（真实行为由安装包冒烟覆盖）
         if cfg!(target_os = "windows") {
             skip.push("yq");
             skip.push("fzf");
             skip.push("qalc");
+            skip.push("nmap");
         }
         let all = all_commands();
         let mut visited = 0usize;

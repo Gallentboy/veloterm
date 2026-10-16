@@ -19,6 +19,9 @@
 //! 加载 FFI，交互式模糊查找器，见 fzf_impl.rs）、
 //! qalc（仅 Windows：libqalculate 源码 vendor/libqalculate + MinGW 构建的
 //! qalcffi.dll 运行时加载 FFI，见 qalc_impl.rs）、
+//! nmap（仅 Windows：nmap 源码 vendor/nmap + MinGW 构建的 nmapffi.dll
+//! 运行时加载 FFI，数据文件树随包放安装根 nmap-data/，见 nmap_impl.rs；
+//! 完整原始包扫描能力需用户自装 Npcap，未装时降级 connect 扫描）、
 //! urlencode / urldecode（仅 Windows：crates.io urlencoding 库封装，见
 //! urlcoding_impl.rs）、
 //! zoxide（仅 Windows：ajeetdsouza/zoxide 源码 vendor/zoxide 纯 Rust 静态链入，
@@ -32,6 +35,7 @@
 mod coreutils;
 mod encodings_impl;
 mod fzf_impl;
+mod nmap_impl;
 mod ps;
 mod qalc_impl;
 mod tar_impl;

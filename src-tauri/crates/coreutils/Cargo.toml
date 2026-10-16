@@ -178,8 +178,9 @@ uu_who = { path = "../../vendor/coreutils/src/uu/who" }
 uu_stdbuf = { path = "../../vendor/coreutils/src/uu/stdbuf" }
 
 # 仅 Windows：openssl CLI、telnet CLI、bc/jq CLI（vendor 源码 cc 现场编译）
-# 与 yq/fzf/qalc（yq、fzf 是 Go 源码分别经 yqffi.dll/fzfffi.dll，libqalculate 经
-# qalcffi.dll 运行时加载，见 src/yq_impl.rs、src/fzf_impl.rs 与 src/qalc_impl.rs）
+# 与 yq/fzf/qalc/nmap（yq、fzf 是 Go 源码分别经 yqffi.dll/fzfffi.dll，libqalculate
+# 与 nmap 分别经 qalcffi.dll/nmapffi.dll 运行时加载，见 src/yq_impl.rs、
+# src/fzf_impl.rs、src/qalc_impl.rs 与 src/nmap_impl.rs）
 [target.'cfg(windows)'.dependencies]
 bc-app = { path = "../../vendor/bc-app" }
 openssl-app = { path = "../../vendor/openssl-app" }
