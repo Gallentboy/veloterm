@@ -21,7 +21,8 @@
 //! （encodings_impl.rs）实现，仅注册进 Windows 清单（见 tools-catalog）；
 //! which 为 unix_extras.rs 自研；urlencode/urldecode 由 urlcoding_impl.rs
 //! 基于 crates.io 的 urlcoding 库自研（仅进 Windows 清单，同 data-encoding
-//! 家族的门控形态）。
+//! 家族的门控形态）；zoxide 由 vendor 源码（ajeetdsouza/zoxide）静态链入
+//! （lib.rs 可注入入口，eza 同型，仅进 Windows 清单）。
 //! chcon/runcon 依赖 SELinux，不集成。
 
 use std::ffi::OsString;
@@ -233,6 +234,11 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // （运行时加载，见 qalc_impl.rs；MinGW 构建，无 MSVC 链接路径）
         #[cfg(target_os = "windows")]
         "qalc" => crate::qalc_impl::qalc_cmd_main(it),
+        // zoxide（ajeetdsouza/zoxide，纯 Rust）：vendor 源码静态链入（lib.rs
+        // 可注入入口，eza 同型）。同 data-encoding / urlcoding 家族：仅注册进
+        // Windows 命令清单，分发臂跨平台编译，macOS 单测直接经 run_uutils
+        // 验证接线与行为（见 zoxide_dispatch_and_behavior）
+        "zoxide" => zoxide::zoxide_main_from(it),
         // 不可达：run_command 已按 all_commands 白名单拦截
         _ => {
             eprintln!("coreutils: unimplemented command '{name}'");
@@ -599,6 +605,46 @@ mod tests {
                 "{name} 分发异常"
             );
         }
+    }
+
+    /// zoxide 接线与行为：命令仅注册进 Windows 清单（同 data-encoding /
+    /// urlcoding 家族），绕过清单直接验证分发臂 → zoxide::zoxide_main_from
+    /// 的通路；行为侧做 add → query 数据库闭环（_ZO_DATA_DIR /
+    /// _ZO_EXCLUDE_DIRS 指向临时目录：后者必须显式设成不匹配任何路径的
+    /// glob，上游默认排除 $HOME，而 Windows 的 TEMP 在用户目录内，不设会
+    /// 把测试目录整个排除掉）。shell 钩子（zoxide init）的真实行为由上游
+    /// 测试覆盖；注意上游不支持 cmd.exe 集成。
+    #[test]
+    fn zoxide_dispatch_and_behavior() {
+        let s = |v: &[&str]| -> Vec<OsString> { v.iter().map(OsString::from).collect() };
+
+        // --version 走 clap DisplayVersion，打印后返回 0（不杀测试进程）；
+        // 非法参数走 clap usage 错误，退出码 2
+        assert_eq!(run_uutils("zoxide", &s(&["--version"])), 0);
+        assert_eq!(run_uutils("zoxide", &s(&["--veloterm-invalid-flag"])), 2);
+
+        let dir = tempdir("zoxide");
+        let data_dir = dir.join("data");
+        let target = dir.join("projects");
+        fs::create_dir_all(&target).unwrap();
+        unsafe {
+            std::env::set_var("_ZO_DATA_DIR", data_dir.as_os_str());
+            std::env::set_var("_ZO_EXCLUDE_DIRS", "__veloterm_no_exclude__");
+        }
+
+        let target_s = target.to_string_lossy().into_owned();
+        assert_eq!(run_uutils("zoxide", &s(&["add", target_s.as_str()])), 0);
+        // 命中 → 0；未命中 → 1（上游 no match found 语义）
+        assert_eq!(run_uutils("zoxide", &s(&["query", "projects"])), 0);
+        assert_eq!(run_uutils("zoxide", &s(&["query", "zzz-no-match"])), 1);
+        // 数据库文件确已落在 _ZO_DATA_DIR（上游固定文件名 db.zo）
+        assert!(data_dir.join("db.zo").exists());
+
+        unsafe {
+            std::env::remove_var("_ZO_DATA_DIR");
+            std::env::remove_var("_ZO_EXCLUDE_DIRS");
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
