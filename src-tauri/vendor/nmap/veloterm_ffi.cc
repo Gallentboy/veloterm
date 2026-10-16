@@ -12,7 +12,10 @@
  * nmapffi.dll 的构建形态见本目录 README.md 的许可小节。
  */
 
-#include <windows.h>
+/* 不在此 include <windows.h>：nmap 的 nbase_winunix.h 会先 #define
+ * _WINSOCKAPI_ / WIN32_LEAN_AND_MEAN 再引 winsock2.h；若先拉进 windows.h
+ * （内含旧 winsock.h）会导致 ws2def.h 的 sockaddr 重定义（CI 实测
+ * C2011/C2143）。入口本身不需要 windows.h。 */
 
 /* 改名 main.cc 的 main（ BusyBox 多呼叫二进制的入口改名手法；main.cc 内
  * 无其他名为 main 的符号，预处理替换安全）。必须在 include 之前定义。 */

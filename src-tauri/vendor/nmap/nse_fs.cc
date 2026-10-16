@@ -34,6 +34,9 @@
 #include "nmap_error.h"
 #include "NmapOps.h"
 
+/* VeloTerm patch：dir_data.hFile 改用 intptr_t（见其注释），显式引 stdint.h */
+#include <stdint.h>
+
 #ifdef _WIN32
 #include <direct.h>
 #include <sys/utime.h>
@@ -61,7 +64,11 @@
 typedef struct dir_data {
   int  closed;
 #ifdef _WIN32
-  long hFile;
+  /* VeloTerm patch：上游声明为 long（LLP64 下仅 32 位），但 MSVC 的
+   * _findfirst() 在 x64 返回 intptr_t（64 位句柄）——存进 long 会截断，
+   * 后续 _findnext 拿到无效句柄→访问违例（0xC0000005）。官方 Windows 构建
+   * 只有 Win32 平台故未暴露；本工程出 x64 DLL，必须用 intptr_t。 */
+  intptr_t hFile;
   char pattern[MAX_PATH+1];
 #else
   DIR *dir;
@@ -161,8 +168,8 @@ static int dir_iter (lua_State *L) {
   dir_data *d = (dir_data *)luaL_checkudata (L, 1, DIR_METATABLE);
   luaL_argcheck (L, d->closed == 0, 1, "closed directory");
 #ifdef _WIN32
-  if (d->hFile == 0L) { /* first entry */
-    if ((d->hFile = _findfirst (d->pattern, &c_file)) == -1L) {
+  if (d->hFile == 0) { /* first entry */
+    if ((d->hFile = _findfirst (d->pattern, &c_file)) == -1) {
       lua_pushnil (L);
       lua_pushstring (L, strerror (errno));
       d->closed = 1;
@@ -172,7 +179,7 @@ static int dir_iter (lua_State *L) {
       return 1;
     }
   } else { /* next entry */
-    if (_findnext (d->hFile, &c_file) == -1L) {
+    if (_findnext (d->hFile, &c_file) == -1) {
       /* no more entries => close directory */
       _findclose (d->hFile);
       d->closed = 1;
@@ -225,7 +232,7 @@ static int dir_iter_factory (lua_State *L) {
   lua_setmetatable (L, -2);
   d->closed = 0;
 #ifdef _WIN32
-  d->hFile = 0L;
+  d->hFile = 0;
   if (strlen(path) > MAX_PATH-2)
     luaL_error (L, "path too long: %s", path);
   else
