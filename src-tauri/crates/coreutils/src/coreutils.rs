@@ -16,7 +16,8 @@
 //! sd（chmln/sd）、awk（frawk，Cranelift JIT）、parallel（rust-parallel，tokio
 //! 并行执行器，GNU parallel 风格接口）、tree/eza（eza）、wget（wget-rs，
 //! rustls）；tar 由 tar-rs 库 + 自研 CLI 壳（tar_impl.rs）实现；
-//! which 为 unix_extras.rs 自研。
+//! which 为 unix_extras.rs 自研；urlencode/urldecode（仅 Windows）由
+//! urlcoding_impl.rs 基于 crates.io 的 urlencoding 库自研。
 //! chcon/runcon 依赖 SELinux，不集成。
 
 use std::ffi::OsString;
@@ -205,6 +206,12 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // 仅 Windows：源码内嵌 PuTTY 的 telnet（C 层 GNU 参数解析）
         #[cfg(target_os = "windows")]
         "telnet" => putty_telnet::telnet_cmd_main(it),
+        // 仅 Windows：urlencoding 库（kornelski/rust_urlencoding，crates.io
+        // 纯 Rust）封装的百分号编解码 CLI（见 urlcoding_impl.rs）
+        #[cfg(target_os = "windows")]
+        "urldecode" => crate::urlcoding_impl::urldecode_cmd_main(it),
+        #[cfg(target_os = "windows")]
+        "urlencode" => crate::urlcoding_impl::urlencode_cmd_main(it),
         // 仅 Windows：yq（Go）经 yqffi.dll 的 C 导出（运行时加载，见 yq_impl.rs）
         #[cfg(target_os = "windows")]
         "yq" => crate::yq_impl::yq_cmd_main(it),
