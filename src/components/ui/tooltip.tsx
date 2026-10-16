@@ -1,15 +1,24 @@
 import { useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { useTooltipPlacement, type TooltipAlign, type TooltipSide } from '@/hooks/useTooltipPlacement';
 import { cn } from '@/lib/utils';
+
+export type { TooltipSide, TooltipAlign };
 
 export interface TooltipProps {
   content: ReactNode;
   children: ReactNode;
-  side?: 'top' | 'bottom' | 'left' | 'right';
-  align?: 'center' | 'start' | 'end';
+  /** 期望出现侧；空间不足自动翻到对侧，两侧都放不下时视口夹取（见 useTooltipPlacement） */
+  side?: TooltipSide;
+  align?: TooltipAlign;
   className?: string;
   delay?: number;
 }
 
+/**
+ * 通用 tooltip：portal 到 document.body + fixed 定位 + 空间不足自动翻转
+ * （useTooltipPlacement），摆脱祖先 overflow 裁剪与固定方向弹出被视口挡住的问题。
+ */
 export function Tooltip({
   content,
   children,
@@ -36,48 +45,39 @@ export function Tooltip({
     setVisible(false);
   };
 
-  let posClass = '';
-  if (side === 'bottom') {
-    posClass =
-      align === 'end'
-        ? 'top-full right-0 mt-1.5'
-        : align === 'start'
-          ? 'top-full left-0 mt-1.5'
-          : 'top-full left-1/2 -translate-x-1/2 mt-1.5';
-  } else if (side === 'top') {
-    posClass =
-      align === 'end'
-        ? 'bottom-full right-0 mb-1.5'
-        : align === 'start'
-          ? 'bottom-full left-0 mb-1.5'
-          : 'bottom-full left-1/2 -translate-x-1/2 mb-1.5';
-  } else if (side === 'left') {
-    posClass = 'right-full top-1/2 -translate-y-1/2 mr-1.5';
-  } else {
-    posClass = 'left-full top-1/2 -translate-y-1/2 ml-1.5';
-  }
+  const { anchorRef, tooltipRef, style } = useTooltipPlacement<HTMLDivElement>(
+    visible,
+    side,
+    align,
+  );
 
   return (
     <div
-      className="relative inline-flex items-center"
+      ref={anchorRef}
+      className="inline-flex items-center"
       onMouseEnter={show}
       onMouseLeave={hide}
       onFocus={show}
       onBlur={hide}
     >
       {children}
-      {visible && content && (
-        <div
-          role="tooltip"
-          className={cn(
-            'pointer-events-none absolute z-[60] whitespace-nowrap rounded-md px-2 py-1 text-ui-xs font-normal text-foreground bg-popover/95 border border-border/80 shadow-md backdrop-blur-xs transition-opacity duration-150 animate-in fade-in select-none',
-            posClass,
-            className,
-          )}
-        >
-          {content}
-        </div>
-      )}
+      {visible &&
+        content &&
+        createPortal(
+          <div
+            ref={tooltipRef}
+            role="tooltip"
+            // 首帧测量前隐藏，避免 fixed 坐标未定时的 (0,0) 闪烁
+            style={style ?? { visibility: 'hidden' }}
+            className={cn(
+              'pointer-events-none z-[80] whitespace-nowrap rounded-md px-2 py-1 text-ui-xs font-normal text-foreground bg-popover/95 border border-border/80 shadow-md backdrop-blur-xs transition-opacity duration-150 animate-in fade-in select-none',
+              className,
+            )}
+          >
+            {content}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
