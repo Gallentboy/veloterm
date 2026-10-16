@@ -68,10 +68,21 @@
 /* Without this, Windows will give us all sorts of crap about using functions
    like strcpy() even if they are done safely */
 #define _CRT_SECURE_NO_DEPRECATE 1
+/* VeloTerm patch：上游写死 i686（官方 Windows 构建只有 Win32）。本工程出
+ * x64 DLL，按实际架构区分——仅影响 `nmap --version` 的 Platform 展示与
+ * OS 指纹匹配字符串，无功能差异。 */
+#if defined(_M_X64) || defined(__x86_64__)
+#define NMAP_PLATFORM "x86_64-pc-windows-windows"
+#else
 #define NMAP_PLATFORM "i686-pc-windows-windows"
+#endif
 
 #define HAVE_OPENSSL 1
-#define HAVE_LIBSSH2 1
+/* VeloTerm patch：不集成 libssh2（其需单独 CMake 构建 + OpenSSL 集成，
+ * 成本高于收益；NSE 的 ssh 相关脚本会报 unavailable，其余不受影响）。
+ * nmap.cc 用 `#if HAVE_LIBSSH2`、nse_main.cc 用 `#ifdef HAVE_LIBSSH2`，
+ * 不定义即自动跳过；nse_libssh2.cc 亦不编入（见 veloterm-win/CMakeLists.txt）。 */
+/* #define HAVE_LIBSSH2 1 */
 #define HAVE_LIBZ 1
 /* Since MSVC 2010, stdint.h is included as part of C99 compatibility */
 #define HAVE_STDINT_H 1
@@ -81,7 +92,9 @@
 #define DNET_INCLUDED 1
 #define HAVE_DNET_LIB_VERSION 1
 #define PCRE_INCLUDED 1
-#define LIBSSH2_INCLUDED 1
+/* VeloTerm patch：同 HAVE_LIBSSH2（LIBSSH2_INCLUDED 仅在 HAVE_LIBSSH2 的
+ * 分支里被 nmap.cc 使用，一并去掉避免误导） */
+/* #define LIBSSH2_INCLUDED 1 */
 #define ZLIB_INCLUDED 1
 
 #endif /* NMAP_WINCONFIG_H */

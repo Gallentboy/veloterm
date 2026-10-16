@@ -1,8 +1,9 @@
-# 目标（单一）：nmapffi.dll + nmap-data/ 的 debug 快速构建（nmap 的 MSYS2
-# autotools 段，-O0 -g 提速；编译期/链接期/静态自包含断言与 release 配置
-# 等价暴露）。只依赖 MSYS2（较 qalc 段另加 cmake/ninja/openssl/unzip）——
-# 不需要 Rust/vcpkg OpenSSL/Go；段内 runner 冒烟（--version / -sT 127.0.0.1）
-# 在无 Npcap 的 runner 上正好回归 Packet.dll 延迟导入 + winfix 降级补丁路径。
+# 目标（单一）：nmapffi.dll + nmap-data/ 的构建（nmap 的 MSVC + CMake 段，
+# 见 src-tauri/vendor/nmap/veloterm-win/CMakeLists.txt 与 scripts/build-tools.mjs
+# 的 nmap 段）。只依赖 CMake/VS 与 OpenSSL 静态库（vcpkg 二进制缓存，与
+# publish.yml 同源）——不需要 MSYS2/Go/Rust。
+# 段内 runner 冒烟（--version / -sT 127.0.0.1）在无 Npcap 的 runner 上正好
+# 回归 /DELAYLOAD + winfix 降级路径。
 # 触发：推 tag（验证完删除）——
 #   git tag test_nmap && git push origin test_nmap
 #   git push origin :refs/tags/test_nmap
@@ -19,19 +20,54 @@ jobs:
   build-nmap:
     permissions:
       contents: read
+      packages: write
     runs-on: windows-latest
+    env:
+      # vcpkg 二进制缓存（GitHub Packages NuGet 源），与 publish.yml 同一份
+      # feed——缓存已由 publish 预热，此处为秒级恢复；未命中则本地编译
+      USERNAME: Gallentboy
+      FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
+      VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install MSYS2 packages for nmap (Windows)
+      - name: Add NuGet source for vcpkg binary cache (GitHub Packages)
         shell: pwsh
         run: |
-          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm make gettext unzip mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-openssl"
+          $vcpkgExe = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" } else { "C:\vcpkg\vcpkg.exe" }
+          $nuget = (& $vcpkgExe fetch nuget | Select-Object -Last 1)
+          & $nuget sources add `
+            -Source "$env:FEED_URL" `
+            -StorePasswordInClearText `
+            -Name GitHubPackages `
+            -UserName "$env:USERNAME" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
 
-      - name: Build nmapffi.dll only (debug)
+      - name: Install OpenSSL static (Windows)
+        working-directory: src-tauri
+        shell: pwsh
         env:
-          CFLAGS: '-O0 -g'
-          CXXFLAGS: '-O0 -g'
+          VCPKG_BUILD_TYPE: release
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          git config --global --add safe.directory "$vcpkgRoot"
+          git -C "$vcpkgRoot" fetch origin master
+          if ($LASTEXITCODE -ne 0) { Write-Host "git fetch 补历史失败（exit $LASTEXITCODE），继续安装" }
+          vcpkg install "--x-install-root=$vcpkgRoot\installed"
+
+      - name: Set OpenSSL env (Windows)
+        shell: pwsh
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      - name: Build nmapffi.dll only
         run: node scripts/build-tools.mjs --only nmap
 
       - name: Upload nmapffi artifact
