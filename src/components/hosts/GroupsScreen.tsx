@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { GroupFormDialog } from '@/components/hosts/GroupFormDialog';
 import { GroupTreeRow } from '@/components/hosts/HostTree';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useHostsStore } from '@/hosts/HostsProvider';
 import type { GroupNode } from '@/hosts/types';
 
@@ -18,17 +19,15 @@ export function GroupsScreen() {
     useHostsStore();
 
   const [groupDialog, setGroupDialog] = useState<GroupDialogState>(null);
-  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  // 删除确认弹窗目标（工程约定：删除必须弹窗确认）
+  const [deleteGroup, setDeleteGroup] = useState<GroupNode | null>(null);
 
   const handleDelete = (id: number) => {
-    // 两段式确认；删分组连带子分组，但主机只解除关联不删除
-    setPendingDeleteId((current) => {
-      if (current === id) {
-        removeGroup(id);
-        return null;
-      }
-      return id;
-    });
+    // 删分组连带子分组，但主机只解除关联不删除；后果说明在弹窗里展示
+    const target = groups.find((item) => item.id === id);
+    if (target) {
+      setDeleteGroup(target);
+    }
   };
 
   const handleSave = (result: { name: string; parentId: number | null }) => {
@@ -47,16 +46,15 @@ export function GroupsScreen() {
           group={group}
           depth={depth}
           expanded={isExpanded(group.id)}
-          pendingDeleteId={pendingDeleteId}
           showAddChild
           onToggle={toggleExpanded}
           onEdit={(target) => {
-            setPendingDeleteId(null);
+            setDeleteGroup(null);
             setGroupDialog({ mode: 'edit', node: target });
           }}
           onDelete={handleDelete}
           onAddChild={(pid) => {
-            setPendingDeleteId(null);
+            setDeleteGroup(null);
             setGroupDialog({ mode: 'create', parentId: pid });
           }}
         />
@@ -65,7 +63,7 @@ export function GroupsScreen() {
     ));
 
   return (
-    <div className="flex h-full flex-col overflow-hidden" onClick={() => setPendingDeleteId(null)}>
+    <div className="flex h-full flex-col overflow-hidden" onClick={() => setDeleteGroup(null)}>
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-4 py-2">
         <span className="text-ui-sm text-foreground-subtle select-none">
           {t('groups.summary', { total: groups.length })}
@@ -74,7 +72,7 @@ export function GroupsScreen() {
           variant="outline"
           size="lg"
           onClick={() => {
-            setPendingDeleteId(null);
+            setDeleteGroup(null);
             setGroupDialog({ mode: 'create', parentId: null });
           }}
         >
@@ -104,6 +102,25 @@ export function GroupsScreen() {
           onClose={() => setGroupDialog(null)}
         />
       ) : null}
+
+      <ConfirmDialog
+        open={deleteGroup !== null}
+        title={t('common.confirmDeleteTitle')}
+        description={
+          <span>
+            {t('common.confirmDelete', { name: deleteGroup?.name ?? '' })}
+            <br />
+            {t('groups.deleteDesc')}
+          </span>
+        }
+        onConfirm={() => {
+          if (deleteGroup) {
+            removeGroup(deleteGroup.id);
+          }
+          setDeleteGroup(null);
+        }}
+        onCancel={() => setDeleteGroup(null)}
+      />
     </div>
   );
 }

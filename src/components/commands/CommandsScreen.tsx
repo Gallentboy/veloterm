@@ -5,7 +5,9 @@ import { useTranslation } from 'react-i18next';
 import { CommandFormDialog } from '@/components/commands/CommandFormDialog';
 import { CommandParamDialog } from '@/components/commands/CommandParamDialog';
 import { ImportPreviewDialog } from '@/components/commands/ImportPreviewDialog';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useAnchoredPanel } from '@/hooks/useAnchoredPanel';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { cn } from '@/lib/utils';
@@ -50,9 +52,11 @@ interface CommandCardProps {
   record: CommandRecord;
   onEdit: (record: CommandRecord) => void;
   onRun: (record: CommandRecord) => void;
+  /** 请求删除（由父屏弹窗确认，工程约定：删除必须弹窗） */
+  onDelete: (record: CommandRecord) => void;
 }
 
-function CommandCard({ record, onEdit, onRun }: CommandCardProps) {
+function CommandCard({ record, onEdit, onRun, onDelete }: CommandCardProps) {
   const { t } = useTranslation();
   const placeholders = extractPlaceholders(record.command);
 
@@ -82,15 +86,16 @@ function CommandCard({ record, onEdit, onRun }: CommandCardProps) {
       </span>
 
       <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={() => onRun(record)}
-          aria-label={t('commands.run')}
-          title={t('commands.run')}
-        >
-          <Play className="size-3.5 text-success" />
-        </Button>
+        <ControlHintTooltip title={t('commands.run')} side="top">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => onRun(record)}
+            aria-label={t('commands.run')}
+          >
+            <Play className="size-3.5 text-success" />
+          </Button>
+        </ControlHintTooltip>
         <Button
           variant="ghost"
           size="icon-sm"
@@ -102,7 +107,7 @@ function CommandCard({ record, onEdit, onRun }: CommandCardProps) {
         <Button
           variant="ghost"
           size="icon-sm"
-          onClick={() => void commandStore.remove(record.id)}
+          onClick={() => onDelete(record)}
           aria-label={t('common.delete')}
         >
           <Trash2 className="size-3.5 text-destructive" />
@@ -126,6 +131,8 @@ export function CommandsScreen() {
   const [editRecord, setEditRecord] = useState<CommandRecord | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
   const [runRecord, setRunRecord] = useState<CommandRecord | null>(null);
+  // 删除确认弹窗目标（工程约定：删除必须弹窗确认，严禁无确认直接删）
+  const [pendingDelete, setPendingDelete] = useState<CommandRecord | null>(null);
   const [feedback, setFeedback] = useState<ToolbarFeedback | null>(null);
   const feedbackTimer = useRef<number | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -301,6 +308,7 @@ export function CommandsScreen() {
               record={record}
               onEdit={handleEdit}
               onRun={handleRun}
+              onDelete={setPendingDelete}
             />
           ))
         )}
@@ -358,6 +366,22 @@ export function CommandsScreen() {
         result={importResult}
         onClose={() => setImportResult(null)}
         onImported={handleImported}
+      />
+
+      {/* 删除确认弹窗（工程约定：删除必须弹窗确认） */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={t('common.confirmDeleteTitle')}
+        description={t('common.confirmDelete', { name: pendingDelete?.title ?? '' })}
+        detail={pendingDelete?.command}
+        onConfirm={() => {
+          const target = pendingDelete;
+          setPendingDelete(null);
+          if (target) {
+            void commandStore.remove(target.id);
+          }
+        }}
+        onCancel={() => setPendingDelete(null)}
       />
     </div>
   );

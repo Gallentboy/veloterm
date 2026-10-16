@@ -34,6 +34,9 @@ export interface HostFormResult {
 interface HostFormDialogProps {
   /** 编辑时传入已有节点；新建为 null */
   node: HostNode | null;
+  /** 复制模式：node 仅作为预填初值（全部字段照搬），保存由父层落库为新主机，
+   *  标题与编辑区分，避免误以为是改原主机 */
+  isDuplicate?: boolean;
   hosts: HostNode[];
   groups: GroupNode[];
   onSave: (result: HostFormResult) => void;
@@ -53,7 +56,7 @@ const HOST_KEY_POLICIES: Array<{ mode: SshHostKeyVerificationMode; labelKey: str
 ];
 
 /** 主机新建/编辑对话框：主机名 + 地址/端口/用户名 + 三种认证方式 + 跳板机/公钥策略/旧版算法兼容 + 所属分组（多选）。 */
-export function HostFormDialog({ node, hosts, groups, onSave, onClose }: HostFormDialogProps) {
+export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSave, onClose }: HostFormDialogProps) {
   const { t } = useTranslation();
   const [name, setName] = useState(node?.name ?? '');
   const [host, setHost] = useState(node?.host ?? '');
@@ -170,7 +173,7 @@ export function HostFormDialog({ node, hosts, groups, onSave, onClose }: HostFor
 
   return (
     <Modal
-      title={node ? t('hosts.form.editTitle') : t('hosts.form.newTitle')}
+      title={isDuplicate ? t('hosts.form.duplicateTitle') : node ? t('hosts.form.editTitle') : t('hosts.form.newTitle')}
       onClose={onClose}
       // 双栏并排：默认 420px 单栏会让字段纵向堆得过长，加宽到 760px 分左右两列
       className="w-[760px]"
