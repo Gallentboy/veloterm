@@ -197,6 +197,10 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // 仅 Windows：vcpkg 静态库 + 现场编译的 OpenSSL CLI（FFI argc/argv）
         #[cfg(target_os = "windows")]
         "openssl" => openssl_app::openssl_cmd_main(it),
+        // 仅 Windows：vendor 源码（jqlang/jq 1.7.1 + 捆绑 oniguruma）现场编译的
+        // jq CLI；FFI 直调 umain（UTF-8 char** 入口，见 vendor/jq-app）
+        #[cfg(target_os = "windows")]
+        "jq" => jq_app::jq_cmd_main(it),
         // 仅 Windows：源码内嵌 PuTTY 的 telnet（C 层 GNU 参数解析）
         #[cfg(target_os = "windows")]
         "telnet" => putty_telnet::telnet_cmd_main(it),

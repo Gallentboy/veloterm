@@ -1,0 +1,18 @@
+# ── jq-app sys-crate ─────────────────────────────────────────────────────────
+# 把 jq CLI（jqlang/jq 1.7.1，源码在工程内 vendor/jq）现场编译并静态链接进
+# Rust。纯 C 自包含（含捆绑的 oniguruma 6.9.8），零系统库依赖（仅 shlwapi），
+# 与 openssl-app 不同：不需要 vcpkg / cmake / perl，Windows runner 零额外安装。
+# 非 Windows 平台不编译任何 C 代码，jq_cmd_main 是打印提示并返回 2 的桩。
+# 布局与取舍依据见 vendor/jq/README.md 与 build.rs 头注释。
+[package]
+name = "jq-app"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "jq CLI (jqlang/jq 1.7.1) 静态编入：仅 Windows，vendor 源码 + cc 现场编译"
+license = "MIT"
+publish = false
+
+[build-dependencies]
+# 与主工程 Cargo.lock 中一致（cc 1.x），用于编译 jq + decNumber + oniguruma 源
+cc = "1"

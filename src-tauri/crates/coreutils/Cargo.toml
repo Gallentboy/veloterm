@@ -148,10 +148,11 @@ uu_who = { path = "../../vendor/coreutils/src/uu/who" }
 [target.'cfg(any(unix, windows))'.dependencies]
 uu_stdbuf = { path = "../../vendor/coreutils/src/uu/stdbuf" }
 
-# 仅 Windows：openssl CLI 与 telnet CLI
+# 仅 Windows：openssl CLI、telnet CLI 与 jq CLI（vendor 源码 cc 现场编译）
 [target.'cfg(windows)'.dependencies]
 openssl-app = { path = "../../vendor/openssl-app" }
 putty-telnet = { path = "../../vendor/putty-telnet" }
+jq-app = { path = "../../vendor/jq-app" }
 
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }
