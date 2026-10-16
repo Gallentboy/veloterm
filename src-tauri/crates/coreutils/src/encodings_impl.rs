@@ -105,6 +105,16 @@ pub fn enc_main<I: IntoIterator<Item = OsString>>(args: I) -> i32 {
     run_spec(spec, &argv, &mut stdin, &mut stdout)
 }
 
+/// GNU 风格的 -w COLS 校验：仅非空十进制数字串（拒绝 `+5` / ` 5` / `1_0`
+/// 等 `usize::parse` 会放行的形态，GNU 同样报 invalid wrap size），长度
+/// 上限 9 位防天文数字
+fn parse_wrap(value: &str) -> Option<usize> {
+    if value.is_empty() || value.len() > 9 || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    value.parse::<usize>().ok()
+}
+
 /// 解析参数并执行（生产走 stdin/stdout；单测注入游标）。
 /// 返回进程退出码，错误信息自行打印到 stderr。
 fn run_spec(spec: &EncSpec, argv: &[String], stdin: &mut dyn Read, out: &mut dyn Write) -> i32 {
@@ -148,9 +158,9 @@ fn run_spec(spec: &EncSpec, argv: &[String], stdin: &mut dyn Read, out: &mut dyn
                             }
                         },
                     };
-                    match value.parse::<usize>() {
-                        Ok(w) => wrap = Some(w),
-                        Err(_) => {
+                    match parse_wrap(&value) {
+                        Some(w) => wrap = Some(w),
+                        None => {
                             eprintln!("{}: invalid wrap size: '{value}'", spec.name);
                             return 1;
                         }
@@ -197,9 +207,9 @@ fn run_spec(spec: &EncSpec, argv: &[String], stdin: &mut dyn Read, out: &mut dyn
                             }
                         }
                     };
-                    match value.parse::<usize>() {
-                        Ok(w) => wrap = Some(w),
-                        Err(_) => {
+                    match parse_wrap(&value) {
+                        Some(w) => wrap = Some(w),
+                        None => {
                             eprintln!("{}: invalid wrap size: '{value}'", spec.name);
                             return 1;
                         }
@@ -320,7 +330,8 @@ fn read_err(e: io::Error) -> Fail {
 }
 
 /// 流式编码：按明文块对齐截断每轮读入（余数滚入下一轮，避免中途补填充），
-/// 折行在输出侧按任意列宽进行。
+/// 折行在输出侧按任意列宽进行——列计数增量输出（O(1) 内存，`-w` 极大值
+/// 也不会把整行堆进缓冲）。
 fn encode_stream(
     base: &data_encoding::Encoding,
     wrap: usize,
@@ -330,8 +341,8 @@ fn encode_stream(
     let block = encode_block(base);
     let mut buf = vec![0u8; IO_CHUNK + block];
     let mut enc = Vec::new();
-    let mut line = Vec::new();
     let mut rest = 0usize;
+    let mut col = 0usize; // 当前行已输出列数（wrap > 0 时用于插换行）
     loop {
         let ilen = input.read(&mut buf[rest..]).map_err(read_err)?;
         let next = if ilen == 0 {
@@ -346,15 +357,17 @@ fn encode_stream(
             if wrap == 0 {
                 write_out(out, &enc)?;
             } else {
-                line.extend_from_slice(&enc);
-                let mut start = 0usize;
-                while line.len() - start >= wrap {
-                    let end = start + wrap;
-                    write_out(out, &line[start..end])?;
-                    write_out(out, b"\n")?;
-                    start = end;
+                let mut pos = 0usize;
+                while pos < enc.len() {
+                    let take = (wrap - col).min(enc.len() - pos);
+                    write_out(out, &enc[pos..pos + take])?;
+                    pos += take;
+                    col += take;
+                    if col == wrap {
+                        write_out(out, b"\n")?;
+                        col = 0;
+                    }
                 }
-                line.drain(..start);
             }
         }
         if ilen == 0 {
@@ -367,9 +380,8 @@ fn encode_stream(
             buf.copy_within(next..next + rest, 0);
         }
     }
-    // 折行开启时收尾：剩余半行 + 换行（空输入不输出任何内容，同 GNU）
-    if wrap > 0 && !line.is_empty() {
-        write_out(out, &line)?;
+    // 折行开启时收尾：剩余半行补换行（字节已随编随写；空输入不输出，同 GNU）
+    if wrap > 0 && col > 0 {
         write_out(out, b"\n")?;
     }
     Ok(())
@@ -386,6 +398,12 @@ fn decode_stream(
 ) -> Result<(), Fail> {
     let canonical = canonical_table(base);
     let block = decode_block(base);
+    let padding = base.specification().padding.map(|p| p as u8);
+    // 见填充后再遇任何字母表字节即非法（RFC 4648：填充只在末尾）——不看
+    // 读分块时机，确定性拒绝："Zg==Zg==" 无论一次到达还是分两次 read 到达
+    // 都报错（对齐 GNU/BSD；此前按块解码在分块到达时会静默接受，行为随
+    // OS 读调度漂移）。-i 只作用于非字母表字节，不改变该判定。
+    let mut saw_pad = false;
     let mut raw = vec![0u8; IO_CHUNK];
     let mut pending: Vec<u8> = Vec::with_capacity(IO_CHUNK + block);
     let mut decoded = Vec::new();
@@ -396,6 +414,14 @@ fn decode_stream(
         }
         for &b in &raw[..ilen] {
             if canonical[b as usize] {
+                // 填充后只能跟更多填充（连续填充合法，数量合法性由尾块
+                // decode_mut 判定）；跟非填充的字母表字符即非法
+                if saw_pad && Some(b) != padding {
+                    return Err(Fail::Msg("invalid input".into()));
+                }
+                if Some(b) == padding {
+                    saw_pad = true;
+                }
                 pending.push(b);
             } else if b != b'\r' && b != b'\n' && !ignore_garbage {
                 return Err(Fail::Msg("invalid input".into()));
@@ -435,7 +461,7 @@ fn decode_stream(
 mod tests {
     use super::*;
     use std::fs;
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
     use std::path::PathBuf;
 
     /// 经 run_spec 直跑（绕过 run_command 的平台清单——命令仅注册进 Windows
@@ -580,6 +606,12 @@ mod tests {
         assert_eq!(encode_ok("base64url", &["--wrap", "10"], &plain), w10);
         assert_eq!(encode_ok("base64url", &["-w", "10"], &plain), w10);
 
+        // 极大列宽（O(1) 内存）：输出不足一行，仅尾换行
+        let huge = encode_ok("base64url", &["-w999999999"], &plain);
+        let mut expect_huge = flat.clone();
+        expect_huge.push(b'\n');
+        assert_eq!(huge, expect_huge);
+
         // 空输入：折行开启也不产生输出
         assert!(encode_ok("base64url", &[], b"").is_empty());
     }
@@ -593,6 +625,56 @@ mod tests {
             .flat_map(|line| [line, b"\r\n"].concat())
             .collect();
         assert_eq!(decode_ok("base64url", &["-d"], &crlf), b"hello world, roundtrip!");
+    }
+
+    /// 分段到达的 Read：每次 read 只吐一段（模拟慢速管道生产者）
+    struct SplitRead<'a> {
+        parts: &'a [&'a [u8]],
+        idx: usize,
+    }
+
+    impl Read for SplitRead<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let part = self.parts.get(self.idx).copied().unwrap_or(&[]);
+            self.idx += 1;
+            let n = part.len().min(buf.len());
+            buf[..n].copy_from_slice(&part[..n]);
+            Ok(n)
+        }
+    }
+
+    /// 填充后跟数据：确定性拒绝——无论一次到达还是分两次 read 到达
+    /// （对齐 GNU/BSD；此前的实现分块到达时会静默接受，行为随读调度漂移）
+    #[test]
+    fn decode_rejects_data_after_padding_regardless_of_chunking() {
+        let spec = SPECS.iter().find(|s| s.name == "base64url").unwrap();
+        // 一次到达
+        let mut out = Vec::new();
+        assert!(
+            decode_stream(spec.base, false, &mut Cursor::new(b"Zg==Zg==".to_vec()), &mut out)
+                .is_err()
+        );
+        // 分两次到达（此前会静默接受并输出 "ff"）
+        let mut out = Vec::new();
+        let mut split = SplitRead {
+            parts: &[b"Zg==", b"Zg=="],
+            idx: 0,
+        };
+        assert!(decode_stream(spec.base, false, &mut split, &mut out).is_err());
+        // 合法流不受影响：填充只在最末（尾随换行 tolerated）
+        let mut out = Vec::new();
+        let mut split_ok = SplitRead {
+            parts: &[b"Zm9vYg==", b"\n"],
+            idx: 0,
+        };
+        assert!(decode_stream(spec.base, false, &mut split_ok, &mut out).is_ok());
+        assert_eq!(out, b"foob");
+    }
+
+    /// hex 奇数位解码报错（1.5 字节非整数）
+    #[test]
+    fn decode_hex_odd_length_fails() {
+        assert_eq!(run("hex", &["-d"], b"6").0, 1);
     }
 
     /// -i 与大小写：非字母表字节默认报错、-i 丢弃；permissive hex 双向大小写；
@@ -651,6 +733,10 @@ mod tests {
             assert_eq!(run(spec.name, &["-x"], b"").0, 1);
             assert_eq!(run(spec.name, &["-w", "abc"], b"").0, 1);
             assert_eq!(run(spec.name, &["-w", "-1"], b"").0, 1);
+            // GNU 同样拒绝 `+5`（usize::parse 会放行，需显式只认数字）
+            assert_eq!(run(spec.name, &["-w", "+5"], b"").0, 1);
+            // --wrap 尾参缺失
+            assert_eq!(run(spec.name, &["--wrap"], b"").0, 1);
             assert_eq!(run(spec.name, &["a.txt", "b.txt"], b"").0, 1);
             assert_eq!(run(spec.name, &["/no/such/file"], b"").0, 1);
         }

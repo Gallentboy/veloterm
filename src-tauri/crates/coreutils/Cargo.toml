@@ -39,6 +39,10 @@ rust-parallel = { path = "../../vendor/rust-parallel" }
 # Windows 清单；依赖跨平台编译，macOS 本机单测可直接覆盖行为。走 crates.io 而
 # 非 vendor：uutils 家族本就依赖它，path 依赖会造成同版本双份编译
 data-encoding = "2.11.1"
+# urlencoding（kornelski/rust_urlencoding，纯 Rust 零依赖，已是 tauri 栈 wry
+# 的传递依赖——lock 不新增条目）：urlencode/urldecode 的编解码内核（CLI 壳在
+# src/urlcoding_impl.rs）。同 data-encoding 家族：仅清单门控，依赖跨平台编译
+urlencoding = "2"
 
 uucore = { path = "../../vendor/coreutils/src/uucore", features = ["openssl"] }
 uu_arch = { path = "../../vendor/coreutils/src/uu/arch" }
@@ -157,14 +161,11 @@ uu_stdbuf = { path = "../../vendor/coreutils/src/uu/stdbuf" }
 # 仅 Windows：openssl CLI、telnet CLI、bc/jq CLI（vendor 源码 cc 现场编译）
 # 与 yq/qalc（Go 源码经 yqffi.dll、libqalculate 经 qalcffi.dll 运行时加载，
 # 见 src/yq_impl.rs 与 src/qalc_impl.rs）
-# 及 urlencode/urldecode（crates.io 的 urlencoding 库，kornelski/rust_urlencoding，
-# 纯 Rust 零依赖，已是 tauri 栈 wry 的传递依赖——lock 不新增条目；见 src/urlcoding_impl.rs）
 [target.'cfg(windows)'.dependencies]
 bc-app = { path = "../../vendor/bc-app" }
 openssl-app = { path = "../../vendor/openssl-app" }
 putty-telnet = { path = "../../vendor/putty-telnet" }
 jq-app = { path = "../../vendor/jq-app" }
-urlencoding = "2"
 # yq/qalc 的 DLL 运行时加载（见 yq_impl.rs / qalc_impl.rs：前者是 Go，
 # 后者是 autotools C++，均无 MSVC 链接路径，DLL 动态导入是唯一形态）
 libloading = "0.8"
