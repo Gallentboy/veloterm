@@ -35,7 +35,9 @@ export interface BroadcastResult {
 
 /**
  * 并发扇出执行广播命令到指定的终端会话列表：
- * - 自动补齐换行符（\n）；
+ * - 统一补回车符 \r（xterm Enter 键的原始终端输入：Windows ConPTY/cmd 只认 CR，
+ *   裸 LF 只回显不提交；Unix 行规程 ICRNL 把 CR 转 NL，两端通用，无需平台分支。
+ *   与就绪钩子注入 TerminalSession.tsx 的 `${command}\r` 同一语义）；
  * - 查询每个 session 对应的底层 terminalId 并行推送；
  * - 返回成功与失败状态统计。
  */
@@ -44,7 +46,7 @@ export async function broadcastToSessions(
   sessionIds: number[],
   command: string,
 ): Promise<BroadcastResult> {
-  const finalCommand = command.endsWith('\n') ? command : `${command}\n`;
+  const finalCommand = `${command}\r`;
   const bytes = encodeTerminalInput(finalCommand);
 
   const targets: { sessionId: number; terminalId: number }[] = [];
