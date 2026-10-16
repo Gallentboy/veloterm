@@ -22,7 +22,7 @@
 | 前端类型 | `pnpm run typecheck` | 零错误 |
 | 前端构建 | `pnpm run build` | 成功 |
 | Rust 编译 | `cargo check --workspace --all-targets`（在 `src-tauri/`） | 零错误 |
-| Rust 测试 | `cargo test --workspace` | 全绿（app 66 + coreutils 26 + tools-catalog 1 为当前基线） |
+| Rust 测试 | `cargo test --workspace` | 全绿（app 66 + coreutils 29 + tools-catalog 1 为当前基线） |
 | Lint | `cargo clippy --workspace --all-targets` | 自有代码零警告 |
 
 冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑（jq-app 同此约定）。
@@ -30,7 +30,7 @@
 ## 平台约束（硬性）
 
 - **严禁在 macOS 上交叉编译 Windows 目标**。Windows 包只能由 GitHub Actions 的 windows-latest runner（或真实 Windows 机器）出。`scripts/build-tools.mjs` 已内置两道闸：非 Windows target 跳过、非 Windows 主机请求 Windows target 硬拒。
-- 工具链（openssl-app / putty-telnet / jq-app 的 C 编译、vcpkg 静态库、yq 的 Go c-shared）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。jq-app 与前两者不同：纯 C 自包含（vendor/jq 1.7.1 + 捆绑 oniguruma 6.9.8），零 vcpkg/cmake/perl 依赖，CI 无额外安装步骤。yq 亦零额外依赖：Go 构建只发生在 Windows（build-tools.mjs），macOS/测试机不碰 Go 工具链与 DLL。
+- 工具链（openssl-app / putty-telnet / jq-app 的 C 编译、vcpkg 静态库、yq 的 Go c-shared）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。jq-app 与前两者不同：纯 C 自包含（vendor/jq 1.7.1 + 捆绑 oniguruma 6.9.8），零 vcpkg/cmake/perl 依赖，CI 无额外安装步骤。yq 亦零额外依赖：Go 构建只发生在 Windows（build-tools.mjs），macOS/测试机不碰 Go 工具链与 DLL。urlencode/urldecode（urlcoding_impl.rs）是 Windows 专属命令里唯一的纯 Rust 形态：crates.io `urlencoding` 库（kornelski/rust_urlencoding，已是 wry 传递依赖，lock 零新增）+ cfg 门控，无 vendor、无构建步骤；其参数解析/行拆分管道为无平台差异代码，macOS 门禁直接测。
 - 所有 Windows 专属逻辑用 `#[cfg(target_os = "windows")]` / `[target.'cfg(windows)'.dependencies]` 门控，不留运行时判断。
 
 ## 架构不变量

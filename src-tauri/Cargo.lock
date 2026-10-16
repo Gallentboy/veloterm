@@ -1432,6 +1432,7 @@ dependencies = [
  "sysinfo",
  "tar",
  "tools-catalog",
+ "urlencoding",
  "uu_arch",
  "uu_b2sum",
  "uu_base32",
