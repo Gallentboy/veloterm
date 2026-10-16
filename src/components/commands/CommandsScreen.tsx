@@ -1,12 +1,24 @@
-import { Command, Pencil, Pin, Play, Trash2, TriangleAlert } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, Command, Download, Pencil, Pin, Play, Trash2, TriangleAlert, Upload } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CommandFormDialog } from '@/components/commands/CommandFormDialog';
 import { CommandParamDialog } from '@/components/commands/CommandParamDialog';
+import { ImportPreviewDialog } from '@/components/commands/ImportPreviewDialog';
 import { Button } from '@/components/ui/button';
+import { useAnchoredPanel } from '@/hooks/useAnchoredPanel';
+import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { cn } from '@/lib/utils';
 import { commandStore, useCommands } from '@/services/commandStore';
-import { extractPlaceholders, type CommandRecord } from '@/services/commandService';
+import {
+  exportCommandsToFile,
+  extractPlaceholders,
+  startImportCommands,
+  type CommandRecord,
+  type ExportFileFormat,
+  type ImportApplyResult,
+  type ImportStartResult,
+} from '@/services/commandService';
 
 /** 危险级别徽章 */
 function DangerBadge({ level }: { level: CommandRecord['dangerLevel'] }) {
@@ -100,6 +112,12 @@ function CommandCard({ record, onEdit, onRun }: CommandCardProps) {
   );
 }
 
+/** 工具栏内联反馈（无全局 toast，成功/失败都在按钮旁短暂显示后自动消失） */
+interface ToolbarFeedback {
+  kind: 'success' | 'error';
+  text: string;
+}
+
 /** 常用命令库页面：搜索 + 卡片列表 */
 export function CommandsScreen() {
   const { t } = useTranslation();
@@ -108,10 +126,78 @@ export function CommandsScreen() {
   const [editRecord, setEditRecord] = useState<CommandRecord | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
   const [runRecord, setRunRecord] = useState<CommandRecord | null>(null);
+  const [feedback, setFeedback] = useState<ToolbarFeedback | null>(null);
+  const feedbackTimer = useRef<number | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [importResult, setImportResult] = useState<ImportStartResult | null>(null);
+  const { anchorRef, panelRef, position, measure } = useAnchoredPanel(exportOpen);
+  useDismissOnOutsidePointer(exportOpen, [anchorRef, panelRef], () => setExportOpen(false));
 
   useEffect(() => {
     void commandStore.refresh();
   }, []);
+
+  // 卸载时清理反馈定时器，避免 setState 打到已卸载组件
+  useEffect(() => {
+    return () => {
+      if (feedbackTimer.current !== null) {
+        window.clearTimeout(feedbackTimer.current);
+      }
+    };
+  }, []);
+
+  const showFeedback = (kind: ToolbarFeedback['kind'], text: string, durationMs = 2000) => {
+    if (feedbackTimer.current !== null) {
+      window.clearTimeout(feedbackTimer.current);
+    }
+    setFeedback({ kind, text });
+    feedbackTimer.current = window.setTimeout(() => setFeedback(null), durationMs);
+  };
+
+  const toggleExportMenu = () => {
+    if (exportOpen) {
+      setExportOpen(false);
+      return;
+    }
+    measure();
+    setExportOpen(true);
+  };
+
+  const handleExport = async (format: ExportFileFormat) => {
+    setExportOpen(false);
+    try {
+      const result = await exportCommandsToFile(format);
+      if (!result) return; // 用户在保存对话框取消，静默
+      showFeedback('success', t('commands.io.exportSuccess', { count: result.count }));
+    } catch (err) {
+      showFeedback('error', t('commands.io.exportFailed', { error: String(err) }), 3000);
+    }
+  };
+
+  const handleImportStart = async () => {
+    try {
+      const result = await startImportCommands();
+      if (!result) return; // 用户在打开对话框取消，静默
+      setImportResult(result);
+    } catch (err) {
+      showFeedback('error', t('commands.io.importStartFailed', { error: String(err) }), 3000);
+    }
+  };
+
+  const handleImported = (applied: ImportApplyResult) => {
+    setImportResult(null);
+    void commandStore.refresh();
+    showFeedback(
+      'success',
+      t('commands.io.importResult', {
+        inserted: applied.inserted,
+        updated: applied.updated,
+        skipped: applied.skipped,
+        invalid: applied.invalid,
+      }),
+      4000,
+    );
+  };
 
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
@@ -144,12 +230,46 @@ export function CommandsScreen() {
           {t('commands.title')} · {filtered.length}
         </span>
         <div className="flex items-center gap-2">
+          {feedback ? (
+            <span
+              role="status"
+              className={cn(
+                'min-w-0 truncate text-ui-sm',
+                feedback.kind === 'success' ? 'text-success' : 'text-destructive',
+              )}
+            >
+              {feedback.text}
+            </span>
+          ) : null}
           <input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             placeholder={t('commands.searchPlaceholder')}
             className="h-7 w-48 rounded-md border border-border bg-input px-2.5 text-ui-sm text-foreground outline-none placeholder:text-foreground-subtlest focus:border-border-hover"
           />
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={() => void handleImportStart()}
+          >
+            <Download className="size-3.5" />
+            {t('commands.io.importButton')}
+          </Button>
+          <div ref={anchorRef} className="relative">
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={toggleExportMenu}
+              aria-haspopup="menu"
+              aria-expanded={exportOpen}
+            >
+              <Upload className="size-3.5" />
+              {t('commands.io.exportButton')}
+              <ChevronDown
+                className={cn('size-3.5 text-foreground-subtle transition-transform', exportOpen && 'rotate-180')}
+              />
+            </Button>
+          </div>
           <Button
             variant="outline"
             size="lg"
@@ -205,6 +325,40 @@ export function CommandsScreen() {
           onClose={() => setRunRecord(null)}
         />
       ) : null}
+
+      {/* 导出格式下拉（portal 到 body + fixed，规格同 SelectMenu 弹层） */}
+      {exportOpen && position
+        ? createPortal(
+            <div
+              ref={panelRef}
+              role="menu"
+              aria-label={t('commands.io.exportButton')}
+              style={{ position: 'fixed', top: position.top, left: position.left }}
+              className="z-[80] flex w-max flex-col rounded-lg border border-border bg-menu p-1 shadow-lg"
+            >
+              {(['json', 'vtcmd'] as const).map((format) => (
+                <button
+                  key={format}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void handleExport(format)}
+                  className="flex w-full cursor-default items-center rounded-md px-2.5 py-1.5 text-left text-ui-sm whitespace-nowrap text-foreground transition-colors hover:bg-menu-hover"
+                >
+                  {t(`commands.io.export_${format}`)}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
+
+      {/* 导入预览弹窗 */}
+      <ImportPreviewDialog
+        open={importResult !== null}
+        result={importResult}
+        onClose={() => setImportResult(null)}
+        onImported={handleImported}
+      />
     </div>
   );
 }

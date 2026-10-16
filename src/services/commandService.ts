@@ -56,6 +56,54 @@ export function importCommands(json: string): Promise<number> {
   return invoke<number>('command_import', { json });
 }
 
+/** 导出文件格式：json 明文（可读） / vtcmd 二进制（带校验） */
+export type ExportFileFormat = 'json' | 'vtcmd';
+
+/** 导入冲突处理策略：skip 跳过已存在 / overwrite 覆盖已存在 / duplicate 全部作为副本导入 */
+export type ImportStrategy = 'skip' | 'overwrite' | 'duplicate';
+
+/** command_export_file 结果；用户在保存对话框取消时后端返回 null */
+export interface ExportFileResult {
+  path: string;
+  count: number;
+}
+
+/** 导入预览：dry-run 比对出的 新增 / 冲突 / 无效 三分类 */
+export interface ImportPreview {
+  newCount: number;
+  conflicts: Array<{ uuid: string | null; title: string; command: string }>;
+  invalid: Array<{ index: number; title: string | null; reason: string }>;
+}
+
+/** command_import_start 结果（打开对话框选定文件 + 解析 + 预览）；取消返回 null */
+export interface ImportStartResult {
+  path: string;
+  preview: ImportPreview;
+}
+
+/** command_import_apply 结果 */
+export interface ImportApplyResult {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  invalid: number;
+}
+
+/** 导出命令库到文件（后端弹保存对话框，用户取消返回 null） */
+export function exportCommandsToFile(format: ExportFileFormat): Promise<ExportFileResult | null> {
+  return invoke<ExportFileResult | null>('command_export_file', { format });
+}
+
+/** 导入第一步：后端弹打开对话框并解析预览（用户取消返回 null） */
+export function startImportCommands(): Promise<ImportStartResult | null> {
+  return invoke<ImportStartResult | null>('command_import_start');
+}
+
+/** 导入第二步：按策略落地（path 来自 startImportCommands 返回值） */
+export function applyImportCommands(path: string, strategy: ImportStrategy): Promise<ImportApplyResult> {
+  return invoke<ImportApplyResult>('command_import_apply', { path, strategy });
+}
+
 /** 从命令模板中提取 {{占位符}} 名称列表 */
 export function extractPlaceholders(command: string): string[] {
   const matches = command.match(/\{\{([^}]+)\}\}/g) ?? [];
