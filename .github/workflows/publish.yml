@@ -141,15 +141,18 @@ jobs:
           if ($locked -ne $manifestUpstream) { throw "双源不一致：VELOTERM_VERSION=$locked 但 vcpkg.json override=$manifest，升级时两处必须同步修改" }
           if ($installed -ne $locked) { throw "版本不一致：实装 $installed ≠ 锁死 $locked。请按 src-tauri/vendor/openssl-src/README.md 升级锁版本（apps + include/internal + VELOTERM_VERSION + vcpkg.json override）" }
 
-      - name: install frontend dependencies
-        run: pnpm install --frozen-lockfile
-
       # 编译 coreutils 多呼叫二进制（uutils/coreutils 全集 + vendor 的 grep/sed/
       # findutils/diffutils/ripgrep/fd/sd/frawk/eza/wget/tar；仅 which 为自研）
       # 到 src-tauri/binaries/ 供 Tauri externalBin 打进安装包（--target 须与构建矩阵一致）；
       # 安装后应用启动时在 tools/ 下创建硬链接短名入口（ls.exe/grep.exe/…）
       - name: Build coreutils binary
         run: node scripts/build-tools.mjs --target x86_64-pc-windows-msvc
+
+      # 前端依赖安装排在 coreutils 编译之后：build-tools.mjs 只用 Node 内建模块
+      # （child_process/fs/path/url），不依赖 node_modules——先编工具链，能在耗时
+      # 的依赖安装与打包之前尽早暴露 Windows 专属编译问题（jq/yq/openssl-app）
+      - name: install frontend dependencies
+        run: pnpm install --frozen-lockfile
 
       - uses: tauri-apps/tauri-action@v0
         env:
