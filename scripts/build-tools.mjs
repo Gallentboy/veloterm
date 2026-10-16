@@ -46,15 +46,15 @@ if (!target) {
 
 console.log(`[build-tools] target: ${target}`);
 
-// --only <段>：局部构建（coreutils / yq / fzf / qalc / nmap）。tag 触发的
+// --only <段>：局部构建（coreutils / goffi / qalc / nmap）。tag 触发的
 // test-*.yml 快速反馈车道用
 // `--only qalc` / `--only nmap` 只产对应 DLL——该段只依赖 MSYS2（不需要 cargo
-// 全量编译、Go 与 vcpkg OpenSSL），反馈环最短；yq/fzf 段同构（只依赖 Go）。不传
-// 时全量构建（publish 路径），行为不变
+// 全量编译、Go 与 vcpkg OpenSSL），反馈环最短；goffi 段（yq+fzf 合并 DLL）
+// 只依赖 Go。不传时全量构建（publish 路径），行为不变
 const onlyFlag = args.indexOf('--only');
 const only = onlyFlag !== -1 && args[onlyFlag + 1] ? args[onlyFlag + 1] : '';
-if (only && !['coreutils', 'yq', 'fzf', 'qalc', 'nmap'].includes(only)) {
-  console.error(`[build-tools] 未知 --only 段：${only}（可选 coreutils/yq/fzf/qalc/nmap）`);
+if (only && !['coreutils', 'goffi', 'qalc', 'nmap'].includes(only)) {
+  console.error(`[build-tools] 未知 --only 段：${only}（可选 coreutils/goffi/qalc/nmap）`);
   process.exit(1);
 }
 if (only) {
@@ -144,7 +144,7 @@ if (only === 'coreutils') {
 // --version 都打出真实版本。
 // GOAMD64=v3：以 AVX2 为基线（2013+ Intel/AMD）换取向量化性能，基线以下的
 // CPU 会非法指令崩溃——性能与兼容的权衡，回退只需删掉该环境变量。
-if (!only || only === 'yq' || only === 'fzf') {
+if (!only || only === 'goffi') {
   try {
     execSync('go version', { stdio: 'ignore' });
   } catch {
@@ -191,7 +191,7 @@ if (!only || only === 'yq' || only === 'fzf') {
 // 合并构建：宿主 = vendor/fzf（package main，veloterm_ffi.go 导出 fzf 入口），
 // vendor/go.work 跨模块引 yq 的 cmd 包，fzf 树内 veloterm_goffi.go 导出 yq
 // 入口 + GC 关闭；双 tag 同时激活两个入口文件，单 DLL 双符号
-if (!only || only === 'yq' || only === 'fzf') {
+if (!only || only === 'goffi') {
   const goffiHost = join(srcTauri, 'vendor', 'fzf');
   const yqVersion = readFileSync(join(srcTauri, 'vendor', 'yq', 'VELOTERM_VERSION'), 'utf8').trim();
   const fzfVersion = readFileSync(join(goffiHost, 'VELOTERM_VERSION'), 'utf8').trim();
@@ -205,7 +205,7 @@ if (!only || only === 'yq' || only === 'fzf') {
   );
   console.log(`[build-tools] veloterm_goffi.dll (yq ${yqVersion} + fzf ${fzfVersion}) -> ${join(outDir, 'veloterm_goffi.dll')}`);
 }
-if (only === 'yq' || only === 'fzf') {
+if (only === 'goffi') {
   console.log('[build-tools] 完成');
   process.exit(0);
 }
