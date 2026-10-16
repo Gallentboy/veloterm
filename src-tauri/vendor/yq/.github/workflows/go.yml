@@ -1,0 +1,61 @@
+name: Build
+on: [push, pull_request]
+permissions:
+  contents: read
+
+jobs:
+
+  verify-action-digest:
+    name: Verify action.yml image digest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Verify action.yml digest matches published image
+        run: |
+          PINNED_DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' action.yml | head -1)
+          if [ -z "${PINNED_DIGEST}" ]; then
+            echo "::error::action.yml does not pin the runtime image by digest"
+            exit 1
+          fi
+
+          LATEST_DIGEST=$(docker buildx imagetools inspect docker.io/mikefarah/yq:4-githubaction --format '{{printf "%s" .Manifest.Digest}}')
+
+          echo "action.yml pins:              ${PINNED_DIGEST}"
+          echo "mikefarah/yq:4-githubaction: ${LATEST_DIGEST}"
+
+          if [ "${PINNED_DIGEST}" != "${LATEST_DIGEST}" ]; then
+            echo "::error::action.yml digest does not match the current mikefarah/yq:4-githubaction image"
+            echo "Update the image line in action.yml to:"
+            echo "  docker://mikefarah/yq:4-githubaction@${LATEST_DIGEST}"
+            exit 1
+          fi
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Set up Go
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      with:
+        go-version: '^1.20'
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+    - name: Get dependencies
+      run: |
+        go get -v -t -d ./...
+        if [ -f Gopkg.toml ]; then
+            curl -sSfL https://raw.githubusercontent.com/golang/dep/1f7c19e5f52f49ffb9f956f64c010be14683468b/install.sh | env DEP_RELEASE_TAG=v0.5.4 sh
+            dep ensure
+        fi
+
+    - name: Check the build
+      shell: bash -l {0}
+      run: |
+        export PATH=${PATH}:`go env GOPATH`/bin
+        scripts/devtools.sh
+        make local build

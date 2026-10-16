@@ -1418,6 +1418,7 @@ dependencies = [
  "findutils",
  "flate2",
  "frawk",
+ "libloading 0.8.9",
  "openssl-app",
  "palette_derive",
  "putty-telnet",
