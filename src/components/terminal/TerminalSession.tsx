@@ -24,6 +24,7 @@ import {
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
 import { buildSshErrorPrompt, setAiErrorContext } from '@/services/aiContext';
 import { listCommands, markCommandUsed } from '@/services/commandService';
+import { mirrorInputToSessions } from '@/services/terminalBroadcastService';
 import {
   createTerminalByteChannel,
   encodeBinaryString,
@@ -66,6 +67,8 @@ const TERMINAL_FONT_MIN_PX = 6;
 export interface TerminalSessionProps {
   sessionId: number;
   transport: ITerminalTransport;
+  /** 终端联动目标集合（store 广播状态）：非空且包含本会话时，用户输入实时镜像到其余目标 */
+  broadcastTargets: number[];
   cwd?: string;
   hostId?: number;
   isVisible: boolean;
@@ -98,6 +101,7 @@ export interface TerminalSessionProps {
 export function TerminalSession({
   sessionId,
   transport,
+  broadcastTargets,
   cwd,
   hostId,
   isVisible,
@@ -117,6 +121,11 @@ export function TerminalSession({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const terminalIdRef = useRef<number | null>(null);
   const isVisibleRef = useRef(isVisible);
+  // 联动目标集合的实时快照：onData 在挂载时注册一次，闭包不能捕获旧集合
+  const broadcastTargetsRef = useRef(broadcastTargets);
+  useEffect(() => {
+    broadcastTargetsRef.current = broadcastTargets;
+  }, [broadcastTargets]);
   const isPanelResizingRef = useRef(isPanelResizing);
   const resizeRAFRef = useRef(0);
   const resizeThrottleTimerRef = useRef<number | null>(null);
@@ -873,11 +882,17 @@ export function TerminalSession({
         onShellLabelChangeRef.current?.(sessionId, nextShellLabel);
         entry.onTerminalIdReady?.(id);
 
-        // 将用户输入统一编码为 Uint8Array（对应后端 Vec<u8>）发送
+        // 将用户输入统一编码为 Uint8Array（对应后端 Vec<u8>）发送；
+        // 联动模式下同时镜像给其余目标终端（只发输入不注入输出，回显由各自
+        // pty 完成，接收方 onData 不会被程序化写入触发，无回环）
         registryDisposers.push(
           term.onData((data) => {
             const bytes = encodeTerminalInput(data);
             void transport.write({ id, data: bytes });
+            const targets = broadcastTargetsRef.current;
+            if (targets.length > 1 && targets.includes(sessionId)) {
+              void mirrorInputToSessions(transport, targets, sessionId, bytes);
+            }
           }),
         );
 
@@ -885,6 +900,10 @@ export function TerminalSession({
           term.onBinary((binary) => {
             const bytes = encodeBinaryString(binary);
             void transport.write({ id, data: bytes });
+            const targets = broadcastTargetsRef.current;
+            if (targets.length > 1 && targets.includes(sessionId)) {
+              void mirrorInputToSessions(transport, targets, sessionId, bytes);
+            }
           }),
         );
 

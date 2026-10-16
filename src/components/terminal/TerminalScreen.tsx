@@ -62,6 +62,7 @@ export function TerminalScreen({
     setMaximizedSessionId,
     isBroadcastActive,
     toggleBroadcast,
+    broadcastTargets,
     createSession,
     closeSession,
     activateSession,
@@ -116,7 +117,7 @@ export function TerminalScreen({
 
   // 终端页快捷键（主修饰键 = ⌘/Ctrl）：
   // +T 新建 Tab、+W 关闭当前 Tab、+⇧[ / +⇧] 切换前后 Tab、+F 终端搜索
-  // +⇧G 切换标签/九宫格、+⇧B 切换协同广播、+R 重连断开 Tab、Esc 退出最大化或广播
+  // +⇧G 切换标签/九宫格、+⇧B 切换终端联动、+R 重连断开 Tab、Esc 退出最大化或关闭联动
   useEffect(() => {
     if (!isVisible) return;
 
@@ -131,6 +132,10 @@ export function TerminalScreen({
         }
         if (maximizedSessionId !== null) {
           setMaximizedSessionId(null);
+          return;
+        }
+        if (isBroadcastActive) {
+          toggleBroadcast();
           return;
         }
       }
@@ -213,6 +218,7 @@ export function TerminalScreen({
     activeSession,
     closeSession,
     createSession,
+    isBroadcastActive,
     isVisible,
     maximizedSessionId,
     reconnectSession,
@@ -325,10 +331,10 @@ export function TerminalScreen({
             </span>
           ) : null}
 
-          {/* 协同广播开关按钮 */}
+          {/* 终端联动开关按钮 */}
           {sessions.length > 0 && (
             <ControlHintTooltip
-              title={isBroadcastActive ? `收起协同广播 (${shortcutLabel('B', { shift: true })})` : `开启多终端协同广播 (${shortcutLabel('B', { shift: true })})`}
+              title={isBroadcastActive ? `收起终端联动 (${shortcutLabel('B', { shift: true })})` : `开启多终端实时联动 (${shortcutLabel('B', { shift: true })})`}
               side="bottom"
               align="end"
             >
@@ -343,10 +349,10 @@ export function TerminalScreen({
                     ? 'border-border bg-selected text-foreground hover:bg-selected'
                     : 'border-border/60 text-foreground-subtle hover:text-foreground hover:bg-hover'
                 )}
-                aria-label="协同广播"
+                aria-label="终端联动"
               >
                 <Radio className={cn('size-3.5', isBroadcastActive && 'text-primary animate-pulse')} />
-                <span>{isBroadcastActive ? '广播中' : '广播'}</span>
+                <span>{isBroadcastActive ? '联动中' : '联动'}</span>
               </Button>
             </ControlHintTooltip>
           )}
@@ -432,6 +438,7 @@ export function TerminalScreen({
           activeSessionId={activeSession?.id ?? 0}
           maximizedSessionId={maximizedSessionId}
           transport={transport}
+          broadcastTargets={broadcastTargets}
           isPanelResizing={isPanelResizing}
           isVisible={isVisible}
           onActivateSession={activateSession}
@@ -446,7 +453,8 @@ export function TerminalScreen({
         />
       )}
 
-      {/* 协同广播命令输入栏（吸附于底部） */}
+      {/* 终端联动控制条（吸附于底部）：控制条可见且勾选≥两个目标时，任一目标内
+          的用户输入实时镜像到其余目标（纯输入镜像，无命令输入栏） */}
       {isBroadcastActive && sessions.length > 0 && (
         <BroadcastCommandBar sessions={sessions} onClose={toggleBroadcast} />
       )}

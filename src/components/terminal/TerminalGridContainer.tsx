@@ -13,6 +13,8 @@ export interface TerminalGridContainerProps {
   activeSessionId: number;
   maximizedSessionId: number | null;
   transport: ITerminalTransport;
+  /** 终端联动目标集合（透传给 TerminalSession：非空且含本会话时输入实时镜像） */
+  broadcastTargets: number[];
   isPanelResizing: boolean;
   isVisible: boolean;
   onActivateSession: (sessionId: number) => void;
@@ -52,6 +54,7 @@ export function TerminalGridContainer({
   activeSessionId,
   maximizedSessionId,
   transport,
+  broadcastTargets,
   isPanelResizing,
   isVisible,
   onActivateSession,
@@ -206,6 +209,7 @@ export function TerminalGridContainer({
               <TerminalSession
                 sessionId={session.id}
                 transport={transport}
+                broadcastTargets={broadcastTargets}
                 cwd={session.cwd}
                 hostId={session.hostId}
                 isVisible={isVisible && sessionVisible}
