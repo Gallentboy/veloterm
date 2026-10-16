@@ -31,7 +31,17 @@
 nomem_handler;`——`nomem_handler` 是 jv_alloc.c 的私有类型，jv.c 并未定义，
 MSVC 编译必报 C2079。已改为同节 `#else` 分支同型的
 `static __declspec(thread) struct tls_values values;`（该节后续代码使用的
-正是 `values`）。补丁处有中文注释标记。
+正是 `values`）。
+
+`src/jv_alloc.h`（第 14 行）：`__attribute__((warn_unused_result))` 为 GNU 扩展
+且上游未加编译器守卫，MSVC 解析该行崩坏并级联出假错误（C2143/C2091 等，CI
+实测）。已用 `#ifdef __GNUC__` 包住，GNU 工具链（含 MinGW）行为不变。
+
+`src/util.h`（MIN/MAX 宏）：原实现为语句表达式 + `__typeof__`（GNU 扩展），
+MSVC 不支持。已加 `_MSC_VER` 分支改用等价三元式；当前唯一使用点
+（jv.c 的 `MIN(DEC_MAX_DIGITS, …)`）实参无副作用，不涉多次求值风险。
+
+三处补丁均有中文注释标记。
 
 ## 关键构建事实（jq-app build.rs 的依据，均已对 tarball 逐条核实）
 

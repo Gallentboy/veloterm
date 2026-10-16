@@ -45,16 +45,27 @@ const void *_jq_memmem(const void *haystack, size_t haystacklen,
                        const void *needle, size_t needlelen);
 
 #ifndef MIN
+#ifdef _MSC_VER
+/* veloterm 修补：MSVC 不支持语句表达式与 __typeof__（GNU 扩展），上游未加
+ * 编译器分支。三元式语义等价，仅失去"实参只求值一次"的保证——当前唯一
+ * 使用点（jv.c 的 MIN(DEC_MAX_DIGITS, …)）实参无副作用。 */
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#else
 #define MIN(a,b) \
   ({ __typeof__ (a) _a = (a); \
    __typeof__ (b) _b = (b); \
    _a < _b ? _a : _b; })
 #endif
+#endif
 #ifndef MAX
+#ifdef _MSC_VER
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#else
 #define MAX(a,b) \
   ({ __typeof__ (a) _a = (a); \
    __typeof__ (b) _b = (b); \
    _a > _b ? _a : _b; })
+#endif
 #endif
 
 #include <time.h>

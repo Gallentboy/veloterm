@@ -66,17 +66,30 @@
 //!   `PATH_MAX`（util.c 用，MSVC limits.h 无）；`pthread_once_t` /
 //!   `PTHREAD_ONCE_INIT` / `pthread_once`（jv_thread.h 的 WIN32 分支给了
 //!   mutex 与 key 声明却漏了 once，jv.c/jv_dtoa_tsd.c 无条件使用——用
-//!   INIT_ONCE 补齐）；`<malloc.h>`（main.c 的 wmain 裸调 alloca）。
+//!   INIT_ONCE 补齐）；`<malloc.h>`（main.c 的 wmain 裸调 alloca）；
+//!   `JV_PRINTF_LIKE` / `JV_VPRINTF_LIKE` 空宏（jv.h 只在 `__GNUC__` 下
+//!   定义、129-130 行却无条件使用，MSVC 下未定义会崩坏声明解析）。
 //! - 假 `unistd.h`（main/util/jv_file/lexer 包含；MSVC 无此头）：
 //!   含 `<io.h>` + STDIN/STDOUT/STDERR_FILENO 宏 + isatty/fileno 映射到
 //!   `_isatty`/`_fileno`（open/close/fstat/fdopen 等 POSIX 名 UCRT 头件
 //!   默认 `_CRT_INTERNAL_NONSTDC_NAMES` 下本就声明并导出，无需映射）。
 //! - 假 `sys/time.h`（builtin.c 无条件包含）：struct timeval +
-//!   gettimeofday 声明（实现放 compat .c）。
+//!   gettimeofday 声明（实现放 compat .c）；timeval 按 SDK 的
+//!   `_TIMEVAL_DEFINED` 守卫包住——垫片自己先包含 `<windows.h>`，
+//!   winsock.h 已定义同布局的 timeval，无守卫必报 C2011 重定义。
 //! - 假 `libgen.h`（main.c/linker.c 包含）：dirname 的最小实现（POSIX
 //!   语义，就地修改入参，兼容 `/` 与 `\`）。
-//! - vendor/jq/src/jv.c 一处上游笔误已就地修补（`_MSC_VER` 分支误声明
-//!   jv_alloc.c 的私有类型 nomem_handler），见 vendor/jq/README.md。
+//! - vendor/jq 三处就地修补（均见 vendor/jq/README.md，带中文注释标记）：
+//!   jv.c 上游笔误（`_MSC_VER` 分支误声明 jv_alloc.c 的私有类型
+//!   nomem_handler）；jv_alloc.h 无编译器守卫的
+//!   `__attribute__((warn_unused_result))`；util.h 的 MIN/MAX 宏用 GNU
+//!   语句表达式 + `__typeof__`（MSVC 不支持，加 `_MSC_VER` 三元式分支）。
+//!
+//! # 编译告警
+//!
+//! 两个 cc Build（oniguruma 与 jq 本体）均 `warnings(false)`：MSVC 下 cc-rs
+//! 默认 -W4、GNU 系 -Wall，第三方上游源码会刷出 2500+ 条告警把真实 error
+//! 淹没（CI 实测）。静默只作用于 C 编译，不影响 Rust 侧告警。
 //!
 //! # 链接
 //!
@@ -205,6 +218,11 @@ fn run() -> Result<(), String> {
     // ── 3. 编译捆绑 oniguruma（独立 cc Build：宏与 include 都不与 jq 侧混）──
     let mut onig = cc::Build::new();
     onig.include(&onig_src).include(&onigcfg);
+    // 第三方上游 C 源（oniguruma / jq / decNumber）全部编译告警静默：
+    // cc-rs 对 MSVC 默认 -W4（GNU 系 -Wall），实测刷出 2500+ 条
+    // C4245/C4244/C4100，把真正的 error 埋得看不见。warnings(false)
+    // 由 cc-rs 发对应静默旗标（MSVC -W0 / GNU -w）。
+    onig.warnings(false);
     for f in &onig_sources {
         onig.file(f);
     }
@@ -213,6 +231,8 @@ fn run() -> Result<(), String> {
 
     // ── 4. 编译 jq 本体 + compat ────────────────────────────────────────────
     let mut jq = cc::Build::new();
+    // 同 onig：第三方源全部告警静默（MSVC -W0 / GNU -w）
+    jq.warnings(false);
     // 入口改名：WIN32 下 main.c 只有 wmain/umain，FFI 走 umain（UTF-8 char**）；
     // umain 标识符全树仅 main.c 出现（grep 核实），改名无副作用
     jq.define("umain", "veloterm_jq_main");
@@ -371,6 +391,17 @@ const VELOTERM_JQ_SHIM_H: &str = r#"/* veloterm jq MSVC 顶层垫片（/FI 强�
 #define PATH_MAX 4096
 #endif
 
+/* jv.h 只在 __GNUC__ 下定义 JV_PRINTF_LIKE / JV_VPRINTF_LIKE，但 129-130 行
+ * 无条件用作函数声明的尾巴——MSVC 下未定义会让声明解析崩坏，级联出
+ * "assuming extern returning int" / "cannot convert from 'int' to 'jv'" 一串
+ * 假错误。MSVC 无 printf format 属性，空宏即正确语义（先于 jv.h 生效）。 */
+#ifndef JV_PRINTF_LIKE
+#define JV_PRINTF_LIKE(fmt_arg_num, args_num)
+#endif
+#ifndef JV_VPRINTF_LIKE
+#define JV_VPRINTF_LIKE(fmt_arg_num)
+#endif
+
 #include <windows.h>   /* INIT_ONCE（pthread_once 用） */
 #include <malloc.h>    /* alloca（main.c 的 wmain） */
 
@@ -420,10 +451,17 @@ const FAKE_SYS_TIME_H: &str = r#"/* veloterm 生成：MSVC 无 <sys/time.h>；jq
 
 #include <time.h> /* time_t */
 
+/* struct timeval 与 Windows SDK 冲突（C2011 重定义）：顶层垫片先包含
+ * <windows.h>，其中的 winsock.h 已定义同布局的 timeval——按 SDK 自己的
+ * _TIMEVAL_DEFINED 守卫（并防御 winsock 的包含守卫）包住，谁先定义都只留
+ * 一份；字段布局两者一致（long tv_sec/tv_usec）。 */
+#if !defined(_TIMEVAL_DEFINED) && !defined(_WINSOCKAPI_) && !defined(_WINSOCK2API_)
+#define _TIMEVAL_DEFINED
 struct timeval {
     long tv_sec;
     long tv_usec;
 };
+#endif
 
 int gettimeofday(struct timeval *tv, void *tz);
 
@@ -543,6 +581,24 @@ mod tests {
             assert!(onig.contains(needle), "onig config.h 缺 {needle}");
         }
         assert!(!onig.contains("HAVE_UNISTD_H"), "MSVC 不应声明 HAVE_UNISTD_H");
+    }
+
+    /// MSVC 兼容垫片的关键不变量：timeval 与 SDK 同守卫避免 C2011；
+    /// jv.h 只在 __GNUC__ 下定义的 JV_*_LIKE 宏需垫片补空定义
+    #[test]
+    fn shim_headers_keep_msvc_compat_invariants() {
+        assert!(
+            FAKE_SYS_TIME_H.contains("#if !defined(_TIMEVAL_DEFINED)"),
+            "timeval 必须与 winsock 的 SDK 守卫对齐，避免 C2011 重定义"
+        );
+        assert!(
+            VELOTERM_JQ_SHIM_H.contains("#define JV_PRINTF_LIKE(fmt_arg_num, args_num)"),
+            "JV_PRINTF_LIKE 需在垫片里定义为空宏"
+        );
+        assert!(
+            VELOTERM_JQ_SHIM_H.contains("#define JV_VPRINTF_LIKE(fmt_arg_num)"),
+            "JV_VPRINTF_LIKE 需在垫片里定义为空宏"
+        );
     }
 
     /// 编译集合与上游 Makefile.am 的清单条数（变更 vendor 版本时先改这里）
