@@ -79,17 +79,22 @@
 //!   winsock.h 已定义同布局的 timeval，无守卫必报 C2011 重定义。
 //! - 假 `libgen.h`（main.c/linker.c 包含）：dirname 的最小实现（POSIX
 //!   语义，就地修改入参，兼容 `/` 与 `\`）。
-//! - vendor/jq 三处就地修补（均见 vendor/jq/README.md，带中文注释标记）：
+//! - vendor/jq 四处就地修补（均见 vendor/jq/README.md，带中文注释标记）：
 //!   jv.c 上游笔误（`_MSC_VER` 分支误声明 jv_alloc.c 的私有类型
 //!   nomem_handler）；jv_alloc.h 无编译器守卫的
 //!   `__attribute__((warn_unused_result))`；util.h 的 MIN/MAX 宏用 GNU
-//!   语句表达式 + `__typeof__`（MSVC 不支持，加 `_MSC_VER` 三元式分支）。
+//!   语句表达式 + `__typeof__`（MSVC 不支持，加 `_MSC_VER` 三元式分支）；
+//!   jv_file.c 的 `const int` 数组尺寸实为 VLA（MSVC 不支持，改 enum 常量）。
 //!
 //! # 编译告警
 //!
 //! 两个 cc Build（oniguruma 与 jq 本体）均 `warnings(false)`：MSVC 下 cc-rs
 //! 默认 -W4、GNU 系 -Wall，第三方上游源码会刷出 2500+ 条告警把真实 error
 //! 淹没（CI 实测）。静默只作用于 C 编译，不影响 Rust 侧告警。
+//!
+//! jq 本体另带 `/Zc:preprocessor`（flag_if_supported 探测后添加）：MSVC 传统
+//! 预处理器处理不了 jv.h 的 JV_ARRAY/JV_OBJECT 参数计数宏，各调用点连锁报
+//! C2197；标准一致的预处理器与 GCC 语义对齐，jq 源码本就按此编写。
 //!
 //! # 链接
 //!
@@ -233,6 +238,12 @@ fn run() -> Result<(), String> {
     let mut jq = cc::Build::new();
     // 同 onig：第三方源全部告警静默（MSVC -W0 / GNU -w）
     jq.warnings(false);
+    // MSVC 传统预处理器无法正确处理 jv.h 的 JV_ARRAY / JV_OBJECT 参数计数宏
+    // （“__VA_ARGS__ 后跟候选列表”的 arity 分派被绑定错位，各调用点连锁报
+    // C2197 "too many arguments"）。/Zc:preprocessor 切到与标准一致的预处理器，
+    // 与 GCC 语义对齐——jq 源码本就按此编写；flag_if_supported 让 clang-cl
+    // 等预处理器本就标准一致的编译器自动跳过。
+    jq.flag_if_supported("/Zc:preprocessor");
     // 入口改名：WIN32 下 main.c 只有 wmain/umain，FFI 走 umain（UTF-8 char**）；
     // umain 标识符全树仅 main.c 出现（grep 核实），改名无副作用
     jq.define("umain", "veloterm_jq_main");

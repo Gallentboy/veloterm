@@ -41,7 +41,12 @@ MSVC 编译必报 C2079。已改为同节 `#else` 分支同型的
 MSVC 不支持。已加 `_MSC_VER` 分支改用等价三元式；当前唯一使用点
 （jv.c 的 `MIN(DEC_MAX_DIGITS, …)`）实参无副作用，不涉多次求值风险。
 
-三处补丁均有中文注释标记。
+`src/jv_file.c`（第 45-46 行）：`const int max_utf8_len = 4;` 不是 C 的整型
+常量表达式，`char buf[4096+max_utf8_len]` 实为变长数组（GCC 支持，MSVC 不支持：
+CI 报 C2057/C2466/C2133）。已改 `enum { max_utf8_len = 4 };`，值语义不变
+（仅作数值使用，无取址）。
+
+四处补丁均有中文注释标记。
 
 ## 关键构建事实（jq-app build.rs 的依据，均已对 tarball 逐条核实）
 
