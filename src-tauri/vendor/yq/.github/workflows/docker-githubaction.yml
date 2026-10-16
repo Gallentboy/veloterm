@@ -1,0 +1,107 @@
+name: Release Docker GitHub Action
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  publishGithubActionDocker:
+    environment: dockerhub
+    env:
+      IMAGE_NAME: mikefarah/yq
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        with:
+          version: latest
+
+      - name: Verify Dockerfile base image digest matches yq:4
+        run: |
+          PINNED_DIGEST=$(grep -oE 'sha256:[a-f0-9]{64}' github-action/Dockerfile | head -1)
+          if [ -z "${PINNED_DIGEST}" ]; then
+            echo "::error::Could not find a sha256 digest in github-action/Dockerfile"
+            exit 1
+          fi
+
+          LATEST_DIGEST=$(docker buildx imagetools inspect "${IMAGE_NAME}:4" --format '{{printf "%s" .Manifest.Digest}}')
+
+          echo "Dockerfile pins: ${PINNED_DIGEST}"
+          echo "mikefarah/yq:4 is:  ${LATEST_DIGEST}"
+
+          if [ "${PINNED_DIGEST}" != "${LATEST_DIGEST}" ]; then
+            echo "::error::github-action/Dockerfile digest does not match the current mikefarah/yq:4 image"
+            echo "Update the FROM line in github-action/Dockerfile to:"
+            echo "  FROM mikefarah/yq:4@${LATEST_DIGEST}"
+            exit 1
+          fi
+
+      - name: Resolve version from yq:4
+        run: |
+          IMAGE_VERSION=$(docker run --rm "${IMAGE_NAME}:4" --version | awk '{print $NF}' | sed 's/^v//')
+          if [ -z "${IMAGE_VERSION}" ]; then
+            echo "::error::Could not determine yq version from ${IMAGE_NAME}:4"
+            exit 1
+          fi
+          echo "Resolved yq version: ${IMAGE_VERSION}"
+          echo "IMAGE_VERSION=${IMAGE_VERSION}" >> "${GITHUB_ENV}"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push github-action image
+        working-directory: github-action
+        run: |
+          PLATFORMS="linux/amd64,linux/ppc64le,linux/arm64,linux/arm/v7,linux/s390x"
+
+          echo "Building and pushing github-action image for version ${IMAGE_VERSION}"
+          docker buildx build \
+            --label "org.opencontainers.image.authors=https://github.com/mikefarah/yq/graphs/contributors" \
+            --label "org.opencontainers.image.created=$(date --rfc-3339=seconds)" \
+            --label "org.opencontainers.image.description=yq is a portable command-line data file processor" \
+            --label "org.opencontainers.image.documentation=https://mikefarah.gitbook.io/yq/" \
+            --label "org.opencontainers.image.licenses=MIT" \
+            --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
+            --label "org.opencontainers.image.source=https://github.com/mikefarah/yq" \
+            --label "org.opencontainers.image.title=yq" \
+            --label "org.opencontainers.image.url=https://mikefarah.gitbook.io/yq/" \
+            --label "org.opencontainers.image.version=${IMAGE_VERSION}" \
+            --platform "${PLATFORMS}" \
+            --pull \
+            --push \
+            -t "${IMAGE_NAME}:${IMAGE_VERSION}-githubaction" \
+            -t "${IMAGE_NAME}:4-githubaction" \
+            -t "${IMAGE_NAME}:latest-githubaction" \
+            -t "ghcr.io/${IMAGE_NAME}:${IMAGE_VERSION}-githubaction" \
+            -t "ghcr.io/${IMAGE_NAME}:4-githubaction" \
+            -t "ghcr.io/${IMAGE_NAME}:latest-githubaction" \
+            .
+
+      - name: Report action.yml digest to pin
+        run: |
+          GITHUBACTION_DIGEST=$(docker buildx imagetools inspect "${IMAGE_NAME}:4-githubaction" --format '{{printf "%s" .Manifest.Digest}}')
+          echo "Published ${IMAGE_NAME}:4-githubaction at ${GITHUBACTION_DIGEST}"
+          echo "Update action.yml image to:"
+          echo "  docker://${IMAGE_NAME}:4-githubaction@${GITHUBACTION_DIGEST}"

@@ -17,6 +17,9 @@
   },
   "bundle": {
     "externalBin": ["binaries/coreutils"],
+    "resources": {
+      "binaries/yqffi.dll": "yqffi.dll"
+    },
     "targets": ["nsis"],
     "windows": {
       "nsis": {

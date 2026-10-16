@@ -12,7 +12,7 @@
 // 未指定 target 时取 rustc 默认 host triple。
 
 import { execSync } from 'node:child_process';
-import { cpSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -102,4 +102,30 @@ if (!existsSync(src)) {
 const dest = join(outDir, `${TOOL}-${target}${exeExt}`);
 cpSync(src, dest);
 console.log(`[build-tools] ${TOOL} -> ${dest}`);
+
+// ── yq（Go）：coreutils 的 yq 命令经 yqffi.dll 动态导入 ────────────────────
+// Go 官方不支持 MSVC 链接 c-archive（golang/go#74189），静态链入 coreutils.exe
+// 不可能；buildmode=c-shared 的 DLL 是唯一形态（分发臂见 crates/coreutils
+// 的 yq_impl.rs，运行时按 exe 同目录/上级目录定位）。产物为普通文件名
+// yqffi.dll，经 tauri.windows.conf.json 的 resources 随包放在安装根目录。
+// 版本锁在 vendor/yq/VELOTERM_VERSION（与 openssl-src 的双源纪律一致），
+// 通过 ldflags 注入 cmd.GitDescribe 让 `yq --version` 打出真实版本。
+const yqSrc = join(srcTauri, 'vendor', 'yq');
+const yqVersion = readFileSync(join(yqSrc, 'VELOTERM_VERSION'), 'utf8').trim();
+console.log(`[build-tools] yq ${yqVersion}: go build -buildmode=c-shared`);
+try {
+  execSync('go version', { stdio: 'ignore' });
+} catch {
+  console.error('[build-tools] 未找到 go 工具链（yqffi.dll 构建必需）：请安装 Go ≥ 1.24 或将其加入 PATH');
+  process.exit(1);
+}
+// c-shared 需要 cgo（CGO_ENABLED=1 + PATH 上的 gcc；GitHub windows runner 自带 MinGW）
+execSync(
+  `go build -buildmode=c-shared -tags veloterm_ffi -trimpath ` +
+    `-ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${yqVersion}" ` +
+    `-o "${join(outDir, 'yqffi.dll')}" .`,
+  { cwd: yqSrc, stdio: 'inherit', env: { ...process.env, CGO_ENABLED: '1' } },
+);
+console.log(`[build-tools] yqffi.dll (${yqVersion}) -> ${join(outDir, 'yqffi.dll')}`);
+
 console.log('[build-tools] 完成');

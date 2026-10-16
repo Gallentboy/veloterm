@@ -47,9 +47,10 @@
 ### Windows 工具链（BusyBox 模式）
 
 - 单一 `coreutils.exe` 多呼叫二进制；`rg`/`fd`/`awk` 三个命令的解析器直读自身 argv，**仅硬链接短名模式可用**，子命令模式给出提示。
+- **yq（Go）是唯一例外形态**：Go 官方不支持 MSVC 链接 c-archive（golang/go#74189），无法像 openssl-app 那样静态链入——vendor 源码（`vendor/yq/`，版本锁在 `VELOTERM_VERSION`）经 `build-tools.mjs` 用 `go build -buildmode=c-shared -tags veloterm_ffi` 出 `yqffi.dll`，coreutils 的 `yq_impl.rs` 运行时 LoadLibrary 调 `veloterm_yq_main`（无链接期依赖，macOS/CI 测试机无需 Go 工具链）；DLL 随包走 resources 放安装根目录，硬链接短名 `tools\yq.exe` 启动时按 exe 同目录→上级目录搜索。升级 yq：换 vendor 源码 + 改 `VELOTERM_VERSION`（build-tools 自动读入并经 ldflags 注入版本）。
 - 硬链接安装在应用启动钩子（`src/tools/hardlinks.rs`，仅 Windows 编译）完成：幂等判据是**文件身份**（Unix inode 对；Windows 退化为大小 + mtime），不是文件大小——同体积升级曾因此误判。
 - 依赖 uutils 家族统一走 vendor 的 uucore 0.12.0（各 vendor 清单已重定向），避免 lock 出现双版本。
-- 新增命令：改 `tools-catalog` 清单 → `crates/coreutils/src/coreutils.rs` 加分发臂 → 补 command_table_consistency 与 version sweep 的预期。
+- 新增命令：改 `tools-catalog` 清单 → `crates/coreutils/src/coreutils.rs` 加分发臂 → 补 command_table_consistency 与 version sweep 的预期（平台不对称的命令要条件化 skip，否则 macOS 侧计数对不上）。
 
 ### OpenSSL 锁版本
 

@@ -152,6 +152,9 @@ uu_stdbuf = { path = "../../vendor/coreutils/src/uu/stdbuf" }
 [target.'cfg(windows)'.dependencies]
 openssl-app = { path = "../../vendor/openssl-app" }
 putty-telnet = { path = "../../vendor/putty-telnet" }
+# yq（Go）的 yqffi.dll 运行时加载（见 src/yq_impl.rs：MSVC 无法静态链
+# Go 的 c-archive，DLL 动态导入是 extern 链接的唯一形态）
+libloading = "0.8"
 
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }
