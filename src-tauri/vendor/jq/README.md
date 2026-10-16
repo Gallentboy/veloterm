@@ -51,7 +51,13 @@ CI 报 C2057/C2466/C2133）。已改 `enum { max_utf8_len = 4 };`，值语义不
 （CI 报 LNK2019）。已去 `inline` 改普通外部定义；GNU 侧语义不变（本 TU 已
 包含 jv_dtoa_tsd.h 的非 inline 声明，按 C99 规则本就编出外部定义）。
 
-五处补丁均有中文注释标记。
+`src/util.c`（第 70 行）：上游在 WIN32 下把 `fopen` 覆盖成同名符号（UTF-8
+路径转宽字符后调 `_wfopen`）。动态 CRT 下覆盖的是导入桩、无害；本工程 Windows
+目标静态链接 CRT（`+crt-static` /MT），`libucrt.lib(fopen.obj)` 是真实定义，
+同名即 LNK2005 重定义（CI 实测）。已改名 `veloterm_jq_fopen`（行为不变），
+唯一调用点 `jq_util_input_read_more` 在 WIN32 分支随改。
+
+六处补丁均有中文注释标记。
 
 ## 构建集合的隐式项（jq-app build.rs 的收录依据）
 
