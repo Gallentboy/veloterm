@@ -46,6 +46,9 @@ src-tauri/vendor/*/target/
 src-tauri/vcpkg_installed/
 # qalc（libqalculate）的 MSYS2 autotools VPATH 构建目录（build-tools.mjs 产出）
 src-tauri/qalc-build/
+# nmap 的 MSYS2 MinGW64 构建目录（build-tools.mjs 产出：整树拷贝 in-tree 构建 +
+# Npcap SDK/libpcap CMake/staging）
+src-tauri/nmap-build/
 # 本地第三方源码目录（如 warpgate）：内容不进库；曾被 git add 误记为无 .gitmodules
 # 的 gitlink（幽灵 submodule），actions/checkout 清理时报 fatal: No url found
 thirdpart/

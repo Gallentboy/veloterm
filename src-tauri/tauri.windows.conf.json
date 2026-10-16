@@ -20,7 +20,9 @@
     "resources": {
       "binaries/yqffi.dll": "yqffi.dll",
       "binaries/fzfffi.dll": "fzfffi.dll",
-      "binaries/qalcffi.dll": "qalcffi.dll"
+      "binaries/qalcffi.dll": "qalcffi.dll",
+      "binaries/nmapffi.dll": "nmapffi.dll",
+      "binaries/nmap-data": "nmap-data"
     },
     "targets": ["nsis"],
     "windows": {
