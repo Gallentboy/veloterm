@@ -101,6 +101,11 @@ include_directories(
     "${NMAP_ROOT}/nsock/include"
     "${NMAP_ROOT}/libdnet-stripped/include"
     "${NMAP_ROOT}/liblinear"
+    # zlib 公共头（zlib.h/zconf.h 在源目录，官方 vcxproj 的 `..\libz`）
+    "${NMAP_ROOT}/libz"
+    # pcre2.h 是 CMake 从 src/pcre2.h.in 生成的（官方 vcxproj 的
+    # `build-pcre2\interface`）；子目录构建落在 <build>/pcre2/interface
+    "${CMAKE_BINARY_DIR}/pcre2/interface"
     "${NPCAP_SDK_DIR}/Include"
     "${OPENSSL_DIR}/include"
 )
