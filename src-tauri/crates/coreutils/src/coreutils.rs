@@ -16,6 +16,8 @@
 //! sd（chmln/sd）、awk（frawk，Cranelift JIT）、parallel（rust-parallel，tokio
 //! 并行执行器，GNU parallel 风格接口）、tree/eza（eza）、wget（wget-rs，
 //! rustls）；tar 由 tar-rs 库 + 自研 CLI 壳（tar_impl.rs）实现；
+//! base32hex/base64url/hex/hexupper 由 data-encoding 库 + 自研 CLI 壳
+//! （encodings_impl.rs）实现，仅注册进 Windows 清单（见 tools-catalog）；
 //! which 为 unix_extras.rs 自研；urlencode/urldecode（仅 Windows）由
 //! urlcoding_impl.rs 基于 crates.io 的 urlencoding 库自研。
 //! chcon/runcon 依赖 SELinux，不集成。
@@ -53,7 +55,12 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         "arch" => uu_arch::uumain(it),
         "b2sum" => uu_b2sum::uumain(it),
         "base32" => uu_base32::uumain(it),
+        // data-encoding 家族（GNU 风格 CLI 壳在 encodings_impl.rs）。仅注册进
+        // Windows 命令清单；分发臂跨平台编译，macOS 单测直接经 run_uutils
+        // 验证接线（见 data_encoding_family_dispatch）
+        "base32hex" => crate::encodings_impl::enc_main(it),
         "base64" => uu_base64::uumain(it),
+        "base64url" => crate::encodings_impl::enc_main(it),
         "basename" => uu_basename::uumain(it),
         "basenc" => uu_basenc::uumain(it),
         "cat" => uu_cat::uumain(it),
@@ -82,6 +89,8 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         "fold" => uu_fold::uumain(it),
         "grep" => uu_grep::uumain(it),
         "head" => uu_head::uumain(it),
+        "hex" => crate::encodings_impl::enc_main(it),
+        "hexupper" => crate::encodings_impl::enc_main(it),
         "hostid" => uu_hostid::uumain(it),
         "hostname" => uu_hostname::uumain(it),
         "join" => uu_join::uumain(it),
@@ -560,6 +569,20 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// data-encoding 家族接线：命令仅注册进 Windows 清单（run_command 在
+    /// 其他平台会先被清单拦截），这里绕过清单直接验证分发臂 → enc_main 的
+    /// 通路；真实行为由 encodings_impl 自带的参数化单测覆盖。
+    #[test]
+    fn data_encoding_family_dispatch() {
+        for name in ["base32hex", "base64url", "hex", "hexupper"] {
+            assert_eq!(
+                run_uutils(name, &[OsString::from("--version")]),
+                0,
+                "{name} 分发异常"
+            );
+        }
     }
 
     #[test]

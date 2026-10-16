@@ -9,6 +9,8 @@
 //! uutils/diffutils（diff/cmp/sdiff）、ripgrep（rg）、fd-find（fd）、chmln/sd（sd）、
 //! frawk（awk，Cranelift JIT）、rust-parallel（parallel，tokio 并行执行器）、
 //! tar-rs（tar，CLI 壳在 tar_impl.rs）、eza（eza/tree）、
+//! data-encoding（base32hex/base64url/hex/hexupper，CLI 壳在 encodings_impl.rs，
+//! 仅注册进 Windows 清单）、
 //! wget-rs（wget，rustls）、openssl 与 telnet（仅 Windows：vcpkg 静态库 FFI、
 //! PuTTY 源码内嵌，见 vendor/openssl-app 与 vendor/putty-telnet）、
 //! yq（仅 Windows：Go 源码 vendor/yq + yqffi.dll 运行时加载 FFI，见 yq_impl.rs）、
@@ -23,6 +25,7 @@
 //! 不依赖 Git Bash / MSYS2。
 
 mod coreutils;
+mod encodings_impl;
 mod ps;
 mod qalc_impl;
 mod tar_impl;
