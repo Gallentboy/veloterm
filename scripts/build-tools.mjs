@@ -458,7 +458,7 @@ fi
 # ── 3. nmap 主体：整树拷贝 in-tree 构建（七个子 configure，VPATH 未经
 #    验证）；陈旧配置指纹同 qalc 约定，CFLAGS/CXXFLAGS 变化自动清目录重配
 #    （test-nmap 车道传 -O0 -g） ──
-STAMP_HASH=$(printf '%s' "$SRC/configure@--with-libpcap=stage@--with-wpdpack=shim@--with-openssl=/mingw64@--with-liblua=included@--with-libpcre=included@--with-libz=included@--with-liblinear=included@--without-libssh2@--without-ncat@--without-nping@--without-zenmap@--without-ndiff@LIBS=-lpacket@CFLAGS=${process.env.CFLAGS ?? ''}@CXXFLAGS=${process.env.CXXFLAGS ?? ''}" | cksum)
+STAMP_HASH=$(printf '%s' "$SRC/configure@--with-libpcap=stage@--with-wpdpack=shim@--with-openssl=/mingw64@--with-liblua=included@--with-libpcre=included@--with-libz=included@--with-liblinear=included@--without-libssh2@--without-ncat@--without-nping@--without-zenmap@--without-ndiff@LIBS=-lpacket,-lws2_32,-liphlpapi@CFLAGS=${process.env.CFLAGS ?? ''}@CXXFLAGS=${process.env.CXXFLAGS ?? ''}" | cksum)
 if [ ! -f nmap-src/Makefile ] || [ "$(cat .veloterm-nmap-stamp 2>/dev/null || true)" != "$STAMP_HASH" ]; then
   rm -rf nmap-src
   cp -a "$SRC" nmap-src
@@ -466,14 +466,16 @@ if [ ! -f nmap-src/Makefile ] || [ "$(cat .veloterm-nmap-stamp 2>/dev/null || tr
   if [ -z "$CFLAGS" ]; then CFLAGS="-g -O2"; fi
   if [ -z "$CXXFLAGS" ]; then CXXFLAGS="-g -O2"; fi
   export CFLAGS CXXFLAGS
-  # LIBS=-lpacket + LDFLAGS=-Lshim/lib：libdnet.a 与 winfix.o 的 Packet* 符号
-  # 经 MSVC 导入库 Packet.lib 进最终链接（GNU ld 的 -l 搜索含 packet.lib；
-  # NTFS 大小写不敏感命中 Packet.lib）
+  # LIBS：libdnet.a 与 winfix.o 的 Packet* 符号经 MSVC 导入库 Packet.lib
+  # （GNU ld 的 -l 搜索含 packet.lib；NTFS 大小写不敏感命中）进最终链接；
+  # ws2_32/iphlpapi 是静态 libpcap.a 的系统依赖（上游 MSVC 工程同样链
+  # ws2_32.lib;IPHlpAPI.Lib，autotools 侧从无此配置——探测 pcap_create
+  # 时若未提供即报 no 并退回自编 bundled libpcap，CI 实测）
   ./configure --with-libpcap="$PCAP_STAGE" --with-wpdpack="$BUILD/npcap-shim" \
     --with-openssl=/mingw64 --with-liblua=included --with-libpcre=included \
     --with-libz=included --with-liblinear=included --without-libssh2 \
     --without-ncat --without-nping --without-zenmap --without-ndiff \
-    LIBS="-lpacket" LDFLAGS="-L$BUILD/npcap-shim/lib"
+    LIBS="-lpacket -lws2_32 -liphlpapi" LDFLAGS="-L$BUILD/npcap-shim/lib"
   printf '%s\n' "$STAMP_HASH" > "$BUILD/.veloterm-nmap-stamp"
 else
   cd nmap-src
