@@ -761,8 +761,19 @@ endif()
 
 check_function_exists(strlcpy HAVE_STRLCPY)
 check_function_exists(strlcat HAVE_STRLCAT)
-check_function_exists(asprintf HAVE_ASPRINTF)
-check_function_exists(vasprintf HAVE_VASPRINTF)
+# VeloTerm patch（MinGW）：check_function_exists 走链接期探测，MinGW 的
+# libmingwex 有 asprintf/vasprintf 符号（探测报 found）但头文件仅在
+# _GNU_SOURCE 下声明——portability.h 据此把 pcapint_asprintf 映射到系统
+# asprintf，GCC 14 对隐式声明直接报错（pcap-npf.c 编译失败，CI 实测）。
+# 上游 WIN32 分支本就「假定没有 asprintf」并无条件编入 missing/win_asprintf.c
+# （见下方 PROJECT_SOURCE_LIST_C），探测结果与之一致即可。
+if(WIN32)
+    set(HAVE_ASPRINTF FALSE)
+    set(HAVE_VASPRINTF FALSE)
+else()
+    check_function_exists(asprintf HAVE_ASPRINTF)
+    check_function_exists(vasprintf HAVE_VASPRINTF)
+endif()
 check_function_exists(strtok_r HAVE_STRTOK_R)
 if(NOT WIN32)
     check_function_exists(vsyslog HAVE_VSYSLOG)
