@@ -438,8 +438,8 @@ for (const p of [builtDll, builtRunner]) {
 // 3. 数据文件 staging + script.db 预生成 + 无 Npcap 冒烟
 // 数据文件清单取上游 Makefile.in 的 install-nmap/install-nse 目标
 // （docs/nmap.xsl、docs/nmap.dtd、nmap-services/-os-db/-service-probes/
-// -protocols/-rpc/-mac-prefixes、nse_main.lua、scripts/、nselib/），另补
-// 上游安装清单遗漏的 nmap-payloads（payload.cc 运行期会找的 UDP payload 库）。
+// -protocols/-rpc/-mac-prefixes、nse_main.lua、scripts/、nselib/）。
+// 注：旧版的 nmap-payloads 在 7.992 已不存在（payload 数据内置在 payload.cc）。
 const dataStage = join(nmapBuild, 'nmap-data');
 rmSync(dataStage, { recursive: true, force: true });
 mkdirSync(join(dataStage, 'scripts'), { recursive: true });
@@ -451,7 +451,6 @@ for (const f of [
   'nmap-protocols',
   'nmap-rpc',
   'nmap-mac-prefixes',
-  'nmap-payloads',
   'nse_main.lua',
 ]) {
   cpSync(join(nmapSrc, f), join(dataStage, f));

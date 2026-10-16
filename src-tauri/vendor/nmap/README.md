@@ -58,9 +58,10 @@ Npcap SDK 与 OpenSSL 静态库：
    经 `tauri.windows.conf.json` 的 resources 放安装根目录。
 
 数据文件清单（`nmap-data/`，取上游 `Makefile.in` 的 `install-nmap`/`install-nse`
-目标，另补上游安装清单遗漏的 `nmap-payloads`）：`nmap-services`、`nmap-os-db`、
-`nmap-service-probes`、`nmap-protocols`、`nmap-rpc`、`nmap-mac-prefixes`、
-`nmap-payloads`、`nse_main.lua`、`nmap.xsl`、`nmap.dtd`、`scripts/`、`nselib/`。
+目标）：`nmap-services`、`nmap-os-db`、`nmap-service-probes`、`nmap-protocols`、
+`nmap-rpc`、`nmap-mac-prefixes`、`nse_main.lua`、`nmap.xsl`、`nmap.dtd`、
+`scripts/`、`nselib/`。（旧版的 `nmap-payloads` 在 7.992 已不存在——payload
+数据内置在 `payload.cc`。）
 
 ## 运行时行为
 
