@@ -119,7 +119,41 @@ try {
   console.error('[build-tools] 未找到 go 工具链（yqffi.dll 构建必需）：请安装 Go ≥ 1.24 或将其加入 PATH');
   process.exit(1);
 }
-// c-shared 需要 cgo（CGO_ENABLED=1 + PATH 上的 gcc；GitHub windows runner 自带 MinGW）
+// c-shared 需要 cgo：CGO_ENABLED=1 + gcc。windows-latest 镜像通常自带 MinGW
+// 且在 PATH（GitHub 文档不保证，实例间可能变化），找不到时按常见安装位置
+// 探测（choco mingw / msys2 / 手动安装）并前置 PATH，全找不到才报错退出。
+function ensureGccOnPath() {
+  try {
+    execSync('gcc --version', { stdio: 'ignore' });
+    return 'PATH';
+  } catch {
+    /* 继续探测 */
+  }
+  const candidates = [
+    'C:\\mingw64\\bin',
+    'C:\\tools\\mingw64\\bin',
+    'C:\\ProgramData\\mingw64\\bin',
+    'C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw64\\bin',
+    'C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw32\\bin',
+    'C:\\msys64\\mingw64\\bin',
+    'C:\\tools\\msys64\\mingw64\\bin',
+  ];
+  for (const dir of candidates) {
+    if (existsSync(join(dir, 'gcc.exe'))) {
+      process.env.PATH = `${dir};${process.env.PATH}`;
+      console.log(`[build-tools] PATH 未含 gcc，探测到 ${dir}\\gcc.exe，已前置到 PATH`);
+      return dir;
+    }
+  }
+  return null;
+}
+if (!ensureGccOnPath()) {
+  console.error(
+    '[build-tools] 未找到 gcc（cgo 编译 yqffi.dll 必需）：windows-latest 通常自带 MinGW，' +
+      '若镜像变化请安装 MinGW-w64 或把其 bin 目录加入 PATH',
+  );
+  process.exit(1);
+}
 execSync(
   `go build -buildmode=c-shared -tags veloterm_ffi -trimpath ` +
     `-ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${yqVersion}" ` +
