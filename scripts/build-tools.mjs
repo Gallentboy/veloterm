@@ -12,7 +12,7 @@
 // 未指定 target 时取 rustc 默认 host triple。
 
 import { execSync } from 'node:child_process';
-import { cpSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -102,4 +102,64 @@ if (!existsSync(src)) {
 const dest = join(outDir, `${TOOL}-${target}${exeExt}`);
 cpSync(src, dest);
 console.log(`[build-tools] ${TOOL} -> ${dest}`);
+
+// ── yq（Go）：coreutils 的 yq 命令经 yqffi.dll 动态导入 ────────────────────
+// Go 官方不支持 MSVC 链接 c-archive（golang/go#74189），静态链入 coreutils.exe
+// 不可能；buildmode=c-shared 的 DLL 是唯一形态（分发臂见 crates/coreutils
+// 的 yq_impl.rs，运行时按 exe 同目录/上级目录定位）。产物为普通文件名
+// yqffi.dll，经 tauri.windows.conf.json 的 resources 随包放在安装根目录。
+// 版本锁在 vendor/yq/VELOTERM_VERSION（与 openssl-src 的双源纪律一致），
+// 通过 ldflags 注入 cmd.GitDescribe 让 `yq --version` 打出真实版本。
+const yqSrc = join(srcTauri, 'vendor', 'yq');
+const yqVersion = readFileSync(join(yqSrc, 'VELOTERM_VERSION'), 'utf8').trim();
+console.log(`[build-tools] yq ${yqVersion}: go build -buildmode=c-shared`);
+try {
+  execSync('go version', { stdio: 'ignore' });
+} catch {
+  console.error('[build-tools] 未找到 go 工具链（yqffi.dll 构建必需）：请安装 Go ≥ 1.24 或将其加入 PATH');
+  process.exit(1);
+}
+// c-shared 需要 cgo：CGO_ENABLED=1 + gcc。windows-latest 镜像通常自带 MinGW
+// 且在 PATH（GitHub 文档不保证，实例间可能变化），找不到时按常见安装位置
+// 探测（choco mingw / msys2 / 手动安装）并前置 PATH，全找不到才报错退出。
+function ensureGccOnPath() {
+  try {
+    execSync('gcc --version', { stdio: 'ignore' });
+    return 'PATH';
+  } catch {
+    /* 继续探测 */
+  }
+  const candidates = [
+    'C:\\mingw64\\bin',
+    'C:\\tools\\mingw64\\bin',
+    'C:\\ProgramData\\mingw64\\bin',
+    'C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw64\\bin',
+    'C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw32\\bin',
+    'C:\\msys64\\mingw64\\bin',
+    'C:\\tools\\msys64\\mingw64\\bin',
+  ];
+  for (const dir of candidates) {
+    if (existsSync(join(dir, 'gcc.exe'))) {
+      process.env.PATH = `${dir};${process.env.PATH}`;
+      console.log(`[build-tools] PATH 未含 gcc，探测到 ${dir}\\gcc.exe，已前置到 PATH`);
+      return dir;
+    }
+  }
+  return null;
+}
+if (!ensureGccOnPath()) {
+  console.error(
+    '[build-tools] 未找到 gcc（cgo 编译 yqffi.dll 必需）：windows-latest 通常自带 MinGW，' +
+      '若镜像变化请安装 MinGW-w64 或把其 bin 目录加入 PATH',
+  );
+  process.exit(1);
+}
+execSync(
+  `go build -buildmode=c-shared -tags veloterm_ffi -trimpath ` +
+    `-ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${yqVersion}" ` +
+    `-o "${join(outDir, 'yqffi.dll')}" .`,
+  { cwd: yqSrc, stdio: 'inherit', env: { ...process.env, CGO_ENABLED: '1' } },
+);
+console.log(`[build-tools] yqffi.dll (${yqVersion}) -> ${join(outDir, 'yqffi.dll')}`);
+
 console.log('[build-tools] 完成');
