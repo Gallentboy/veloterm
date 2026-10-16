@@ -44,3 +44,6 @@ binaries/
 src-tauri/vendor/*/target/
 # vcpkg manifest 模式安装产物（CI 用，二进制缓存走 GitHub Packages feed）
 src-tauri/vcpkg_installed/
+# 本地第三方源码目录（如 warpgate）：内容不进库；曾被 git add 误记为无 .gitmodules
+# 的 gitlink（幽灵 submodule），actions/checkout 清理时报 fatal: No url found
+thirdpart/
