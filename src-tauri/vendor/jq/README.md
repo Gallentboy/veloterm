@@ -67,13 +67,35 @@ stderr 的 parse error 被吞（终端表现为完全无输出）、`jq ... > fi
 tty 正常输出走 jv_print.c 的 `WriteConsoleW` 不经 stdio 不受影响；
 `-b/--binary` 的 `_O_BINARY` 分支不变）。
 
-`src/main.c`（第 8 处，**临时诊断插桩，定位后移除**）：`VELOTERM_JQ_TIMING=1`
-时在退出前向 stderr 输出分段耗时（init/argparse/compile/exec+output/cleanup，
-QueryPerformanceCounter）。背景：MSVC 构建在「带程序参数」路径比官方 MinGW
-构建慢 ~430ms（`jq -n 1+1` 465ms vs 官方同版本 40ms；`--version` 双方同速），
-此插桩用于把耗时定位到具体阶段。
+`src/main.c`（第 8 处，**诊断插桩 + 退出路径回归门禁，保留**）：
+`VELOTERM_JQ_TIMING=1` 时在退出前向 stderr 输出分层数据。第一版只打 in-main 分段
+（init/argparse/compile/exec+output/cleanup，QueryPerformanceCounter）；实测
+`-n 1+1` 的 in-main 仅 ~2ms，而进程真实寿命（内核 StartTime→ExitTime，三种
+计时口径一致）~450ms、`--version` 全程仅 ~33ms——缺口在 umain 之外，故扩展为：
+- `pre_main`（进程创建→umain 入口，GetProcessTimes 创建时刻 + 精确系统时间差）
+  与 `uptime`（进程创建→探针点），二者与脚本侧进程寿命对照即可拆出退出段；
+- 内存/CPU 快照（ws / peak_ws / private / cpu / handles，K32GetProcessMemoryInfo
+  动态解析，不给链接器引入 psapi.lib）；
+- 退出路径二分：`VELOTERM_JQ_EXIT_MODE=quick`（`_exit`，跳过 atexit 与 stdio
+  冲刷）/ `terminate`（`TerminateProcess`，再跳过 CRT 与加载器收尾）；
+- `VELOTERM_JQ_EXIT_AFTER=compile`（编译后即退，隔离 exec 段）。
+定位成果：正是靠它发现 `-n 1+1` 的退出码恒为 0xC0000374（见下一处补丁）。
+外层驱动见 `scripts/diagnose-jq-timing.ps1`（test-jq.yml 车道自动执行，并据此
+做退出路径回归门禁：出现崩溃退出码或正常退出比 TerminateProcess 慢 50ms 以上即
+失败）。默认不设环境变量时探针完全静默，不影响正常使用。
 
-八处补丁均有中文注释标记。
+`src/jv.c`（第 9 处，**退出期堆损坏根因，长期保留**）：上游 Heimdal 风格的
+WIN32 TSD shim（`pthread_setspecific`）在「替换旧值」前会调用旧值的析构器，
+这不是 POSIX 语义（真 pthread 只在「键值随线程退出」时调用析构器）。jq 的退出
+清理恰是「自己先 free、再 setspecific(key, NULL) 清槽」——`jv_tsd_dec_ctx_fini`
+（本文件）与 `jv_tsd_dtoa_ctx_fini`（jv_dtoa_tsd.c）——于是同一指针被二次 free：
+MSVC 静态 CRT 下进程退出期以 0xC0000374（STATUS_HEAP_CORRUPTION）终止，Windows
+错误报告（WER）随后做崩溃事后处理（用户机实测每次 `jq -n 1+1` 退出多耗 ~450ms；
+`--version` 不建 dec/dtoa 上下文故不受影响）。已删除该析构调用（线程退出路径的
+`w32_service_thread_detach` 不受影响，仍按键表调用析构器）。MinGW 构建走真
+pthread 分支，不触发本问题。
+
+九处补丁均有中文注释标记。
 
 ## 构建集合的隐式项（jq-app build.rs 的收录依据）
 

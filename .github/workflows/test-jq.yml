@@ -77,6 +77,18 @@ jobs:
       - name: Build coreutils binary
         run: node scripts/build-tools.mjs --only coreutils --target x86_64-pc-windows-msvc
 
+      # jq 分层耗时诊断 + 退出路径回归门禁：把 in-main 探针（VELOTERM_JQ_TIMING）
+      # 与进程寿命的缺口归因到 pre_main / 退出路径 / 内核回收三段，并在退出码出现
+      # 崩溃码（如 0xC0000374 STATUS_HEAP_CORRUPTION）或正常退出路径明显慢于
+      # TerminateProcess 时硬失败。探针扩展见 vendor/jq/src/main.c（pre_main/uptime
+      # + 内存/CPU 快照 + 退出路径二分 VELOTERM_JQ_EXIT_MODE / VELOTERM_JQ_EXIT_AFTER）。
+      # 结果同时进 job summary。
+      - name: Diagnose jq timing (layering probe + exit-path gate)
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/diagnose-jq-timing.ps1 `
+            -Coreutils src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe
+
       - name: Upload coreutils artifact
         uses: actions/upload-artifact@v7
         with:

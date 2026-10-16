@@ -86,7 +86,7 @@
 //!   winsock.h 已定义同布局的 timeval，无守卫必报 C2011 重定义。
 //! - 假 `libgen.h`（main.c/linker.c 包含）：dirname 的最小实现（POSIX
 //!   语义，就地修改入参，兼容 `/` 与 `\`）。
-//! - vendor/jq 六处就地修补（均见 vendor/jq/README.md，带中文注释标记）：
+//! - vendor/jq 就地修补（均见 vendor/jq/README.md，带中文注释标记）：
 //!   jv.c 上游笔误（`_MSC_VER` 分支误声明 jv_alloc.c 的私有类型
 //!   nomem_handler）；jv_alloc.h 无编译器守卫的
 //!   `__attribute__((warn_unused_result))`；util.h 的 MIN/MAX 宏用 GNU
@@ -94,7 +94,9 @@
 //!   jv_file.c 的 `const int` 数组尺寸实为 VLA（MSVC 不支持，改 enum 常量）；
 //!   jv_dtoa_tsd.c 的裸 `inline` 定义在 MSVC 下不产出外部符号（LNK2019，去 inline）；
 //!   util.c 的 WIN32 `fopen` 同名覆盖与静态 CRT 的 fopen.obj 撞名（LNK2005，
-//!   改名 veloterm_jq_fopen，调用点随改）。
+//!   改名 veloterm_jq_fopen，调用点随改）；main.c 的 `_O_U8TEXT` 流模式
+//!   （窄字符输出被静默吞）；main.c 的诊断探针（临时）；jv.c 的 WIN32 TSD
+//!   shim 在替换旧值时调析构器致退出期二次 free（0xC0000374 + WER 延迟）。
 //!
 //! # 编译告警
 //!
