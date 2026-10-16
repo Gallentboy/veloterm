@@ -62,23 +62,12 @@
 
 /* $Id: */
 
-/* VeloTerm patch（MinGW）：上游此文件只进 mswin32 的 MSVC 工程（nmap.sln）
- * 且包含 MSVC 专用配置头 nmap_winconfig.h；autotools/MinGW 构建下本文件由
- * scripts/build-tools.mjs 单独编译并链入 nmapffi.dll（上游 Makefile.in 的
- * OBJS 不含它，不补会在 WIN32 下 undefined reference win_pre_init）。
- * 配置头按编译器分家：MSVC 保持上游行为，MinGW 走 configure 生成的
- * config.h（编译时 -DHAVE_CONFIG_H -I<builddir>）。 */
-#ifdef _MSC_VER
 #include <nmap_winconfig.h>
-#else
-#include "config.h"
-#endif
-/* VeloTerm patch（MinGW）结束 */
-#include "../nmap.h"
-#include "../tcpip.h"
+#include "..\nmap.h"
+#include "..\tcpip.h"
 #include "winfix.h"
-#include "../NmapOps.h"
-#include "../nmap_error.h"
+#include "..\NmapOps.h"
+#include "..\nmap_error.h"
 #include <Packet32.h>
 
 #include <shellapi.h>
@@ -233,7 +222,7 @@ void win_init()
 		o.have_pcap = true;
 		if(o.debugging > 2) printf("Trying to initialize Windows pcap engine\n");
 		
-	/* o.isr00t will be false at this point if the user asked for
+    /* o.isr00t will be false at this point if the user asked for
        --unprivileged. In that case don't bother them with a
        potential UAC dialog when starting Npcap. */
     if (o.isr00t) {
@@ -245,33 +234,22 @@ void win_init()
       }
     }
 
-	init_npcap_dll_path();
-
-/* VeloTerm patch（MinGW）：MSVC 版靠 _MSC_VER 门控的 SEH(__try/__except)
- * + delayimp(__HrLoadAllImportsForDll) 在缺 Npcap 时优雅降级；MinGW 构建下
- * Packet.dll 是 -Wl,--delayload 延迟导入，首次任何 Packet* 调用才会触发
- * 解析，缺 Npcap 时抛出的延迟加载异常在 MinGW gcc 下无法捕获、直接杀宿主
- * 进程（coreutils.exe）。改为先用 LoadLibrary 探测：init_npcap_dll_path 已
- * SetDllDirectory 指向 System32\Npcap，装了 Npcap 即命中（或 WinPcap 兼容
- * 模式下 System32 命中）；两处都失败则直接走 have_pcap=false 的 connect()
- * 降级路径，不再触碰任何 Packet 符号（nmap.cc 侧的 pcap_lib_version 调用
- * 已被 o.have_pcap 门控）。 */
-#ifndef _MSC_VER
-	if (LoadLibraryA("Packet.dll") == NULL) {
-		error("WARNING: Failed to load Packet.dll. Npcap is probably not installed.\n\
-Resorting to connect() mode -- Nmap may not function completely. Install\n\
-Npcap from https://npcap.com to enable raw packet scans.");
-		o.have_pcap = false;
-	}
-#endif
-/* VeloTerm patch（MinGW）结束：仅当探测成功才调用下面两个会触发延迟解析的函数 */
-	if (o.have_pcap) {
+		init_npcap_dll_path();
+		
 		pcap_ver = PacketGetVersion();
 		if (o.debugging)
-			printf("Packet.dll present, library version %s\n", pcap_ver);
+		  printf("Packet.dll present, library version %s\n", pcap_ver);
 
+#ifdef _MSC_VER
+		if(FAILED(__HrLoadAllImportsForDll("wpcap.dll")))
+		{
+			error("WARNING: Failed to load wpcap.dll.  Nmap may not function.\n");
+			o.have_pcap = false;
+		}
+#endif
 		if(o.debugging)
 			printf("wpcap.dll present, library version: %s\n", pcap_lib_version());
+
 	}
 #ifdef _MSC_VER
 	__except (1) {
