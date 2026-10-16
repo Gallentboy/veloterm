@@ -13,8 +13,9 @@
 //! 见 `src-tauri/vendor/coreutils`），分组与 uutils 官方 feature 对齐；
 //! 家族补充：grep/sed（uutils/grep、uutils/sed）、find/xargs（uutils/findutils）、
 //! diff/cmp/sdiff（uutils/diffutils）；现代替代品：rg（ripgrep）、fd（fd-find）、
-//! sd（chmln/sd）、awk（frawk，Cranelift JIT）、tree/eza（eza）、wget（wget-rs，
-//! rustls）；tar 由 tar-rs 库 + 自研 CLI 壳（tar_impl.rs）实现；
+//! sd（chmln/sd）、awk（frawk，Cranelift JIT）、bat（sharkdp/bat 0.26.1，
+//! 语法高亮 cat，syntect/fancy-regex 纯 Rust 后端）、tree/eza（eza）、
+//! wget（wget-rs，rustls）；tar 由 tar-rs 库 + 自研 CLI 壳（tar_impl.rs）实现；
 //! which 为 unix_extras.rs 自研。
 //! chcon/runcon 依赖 SELinux，不集成。
 
@@ -23,7 +24,7 @@ use tools_catalog::{all_commands, is_known_command};
 
 /// 读自身 argv 的内嵌命令（解析器无参数注入接口，仅硬链接 argv[0] 模式
 /// 可用，见 coreutils_main；子命令模式下给出提示）
-const OWN_ARGV_COMMANDS: &[&str] = &["awk", "fd", "rg"];
+const OWN_ARGV_COMMANDS: &[&str] = &["awk", "bat", "fd", "rg"];
 
 /// 从 argv[0] 解析被调用的命令名：取 basename 并去掉 `.exe` 后缀。
 /// 分隔符同时兼容 `/` 与 `\`（macOS 单测里也要能解析 Windows 风格路径，
@@ -267,12 +268,13 @@ pub fn coreutils_main() -> i32 {
     let rest: Vec<OsString> = argv.iter().skip(1).cloned().collect();
 
     if is_known_command(&invoked_as) {
-        // OWN_ARGV 家族（rg/fd/awk）：解析器直接读真实进程 argv（无注入接口）；
+        // OWN_ARGV 家族（rg/fd/awk/bat）：解析器直接读真实进程 argv（无注入接口）；
         // 硬链接短名模式下 argv 恰好就是用户参数，直接执行。
         match invoked_as.as_str() {
             "rg" => return ripgrep::rg_main(),
             "fd" => return fd_find::fd_main(),
             "awk" => return frawk::awk_main(),
+            "bat" => return bat_app::bat_main(),
             _ => {}
         }
         return run_command(&invoked_as, &rest).unwrap_or(1);
