@@ -277,6 +277,17 @@ cd "$BUILD"
 STAMP_HASH=$(printf '%s' "$SRC/configure@--disable-shared@--enable-static@--enable-compiled-definitions@--without-libcurl@--without-icu@--disable-nls@--disable-unittests@CFLAGS=${process.env.CFLAGS ?? ''}@CXXFLAGS=${process.env.CXXFLAGS ?? ''}" | cksum)
 if [ ! -f Makefile ] || [ "$(cat .veloterm-configure-stamp 2>/dev/null || true)" != "$STAMP_HASH" ]; then
   find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  # 静态链 libxml2 的关键：编译期定义 LIBXML_STATIC，让 libqalculate 的目标
+  # 文件引用普通 xml* 符号而非 __imp_xml* dllimport 桩——静态 libxml2.a 只有
+  # 普通符号，缺此定义 -static 链接报上千处 undefined reference（CI 实测，
+  # 上游 make 能过是因为 libtool 默认链的是动态导入库）。CFLAGS/CXXFLAGS
+  # 未设时给 -g -O2（configure 语义：显式设置即全量取代默认）；本脚本是
+  # String.raw 模板，只能用无花括号的 shell 写法
+  if [ -z "$CFLAGS" ]; then CFLAGS="-g -O2"; fi
+  if [ -z "$CXXFLAGS" ]; then CXXFLAGS="-g -O2"; fi
+  CFLAGS="$CFLAGS -DLIBXML_STATIC"
+  CXXFLAGS="$CXXFLAGS -DLIBXML_STATIC"
+  export CFLAGS CXXFLAGS
   sh "$SRC/configure" --disable-shared --enable-static --enable-compiled-definitions \
     --without-libcurl --without-icu --disable-nls --disable-unittests
   printf '%s\n' "$STAMP_HASH" > .veloterm-configure-stamp
@@ -285,7 +296,7 @@ make -j"$(nproc)"
 # qalc 入口改名编译：-Dmain=qalc_main（仅本翻译单元），编译参数对齐
 # src/Makefile.am 的 AM_CPPFLAGS（config.h 在 builddir 根，support.h 经
 # HAVE_CONFIG_H 引入）
-g++ -c -O2 -DHAVE_CONFIG_H -Dmain=qalc_main \
+g++ -c -O2 -DHAVE_CONFIG_H -Dmain=qalc_main -DLIBXML_STATIC \
   -I"$BUILD" -I"$SRC" -I"$SRC/libqalculate" \
   -DPACKAGE_DATA_DIR='"/qalculate-data"' \
   $(pkg-config --cflags libxml-2.0) \
