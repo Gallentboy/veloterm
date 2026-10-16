@@ -30,11 +30,15 @@ mod imp {
             .into_iter()
             .map(|a| CString::new(a.to_string_lossy().into_owned()).unwrap_or_default())
             .collect();
-        let ptrs: Vec<*const c_char> = argv.iter().map(|s| s.as_ptr()).collect();
-        // SAFETY：ptrs 与其指向的 CString 在 FFI 调用期间全程存活；
-        // veloterm_openssl_main 是上游 main，按约定只读 argc/argv，
+        // C 约定 argv[argc] == NULL：必须补哨兵。裸 `openssl` 时上游 main 会
+        // argc-- / argv++ 后取 argv[0]（opt_appname 对 NULL 安全跳过），缺哨兵
+        // 则越界读堆内存 —— 未定义行为（实测表现为卡死/崩溃/乱码帮助）。
+        let mut ptrs: Vec<*const c_char> = argv.iter().map(|s| s.as_ptr()).collect();
+        ptrs.push(std::ptr::null());
+        // SAFETY：ptrs（含末尾 NULL 哨兵）与其指向的 CString 在 FFI 调用期间
+        // 全程存活；veloterm_openssl_main 是上游 main，按约定只读 argc/argv，
         // 不在返回后继续持有指针（win32_utf8argv 默认 no-op，见 openssl.c）。
-        unsafe { veloterm_openssl_main(ptrs.len() as c_int, ptrs.as_ptr()) }
+        unsafe { veloterm_openssl_main((ptrs.len() - 1) as c_int, ptrs.as_ptr()) }
     }
 }
 
