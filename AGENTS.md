@@ -25,12 +25,12 @@
 | Rust 测试 | `cargo test --workspace` | 全绿（app 54 + coreutils 26 + tools-catalog 1 为当前基线） |
 | Lint | `cargo clippy --workspace --all-targets` | 自有代码零警告 |
 
-冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑。
+冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑（jq-app 同此约定）。
 
 ## 平台约束（硬性）
 
 - **严禁在 macOS 上交叉编译 Windows 目标**。Windows 包只能由 GitHub Actions 的 windows-latest runner（或真实 Windows 机器）出。`scripts/build-tools.mjs` 已内置两道闸：非 Windows target 跳过、非 Windows 主机请求 Windows target 硬拒。
-- 工具链（openssl-app / putty-telnet 的 C 编译、vcpkg 静态库）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。
+- 工具链（openssl-app / putty-telnet / jq-app 的 C 编译、vcpkg 静态库）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。jq-app 与前两者不同：纯 C 自包含（vendor/jq 1.7.1 + 捆绑 oniguruma 6.9.8），零 vcpkg/cmake/perl 依赖，CI 无额外安装步骤。
 - 所有 Windows 专属逻辑用 `#[cfg(target_os = "windows")]` / `[target.'cfg(windows)'.dependencies]` 门控，不留运行时判断。
 
 ## 架构不变量
@@ -39,7 +39,7 @@
 
 `src-tauri` 是 workspace 根（根包 = Tauri 主程序 `app`），三个成员职责不可混：
 
-- **app 不依赖任何工具 crate**——uutils/ripgrep/openssl-app/putty-telnet 的依赖图只进 `crates/coreutils`。这是「主程序瘦身 + 增量构建互不牵连」的前提：改 UI 只重链 app，改工具只重链 coreutils。
+- **app 不依赖任何工具 crate**——uutils/ripgrep/openssl-app/putty-telnet/jq-app 的依赖图只进 `crates/coreutils`。这是「主程序瘦身 + 增量构建互不牵连」的前提：改 UI 只重链 app，改工具只重链 coreutils。
 - **tools-catalog 保持零依赖**——命令名清单是 app（建硬链接）与 coreutils（argv0 分发白名单）的单一事实来源；任何依赖都会经它传染给主程序。
 - `vendor/` 被 workspace `exclude`：vendor 内 coreutils/sed/ripgrep/sd 自带 workspace，其余为无继承键的独立清单；不 exclude 则 uucore 的 `edition.workspace` 会误朝根清单取值而报错。
 - 裸 `cargo build` / `cargo test` 只作用于根包 app；工具链必须显式 `-p coreutils`。

@@ -6,7 +6,8 @@
 //! - **coreutils 多呼叫二进制**：按清单做 argv[0] 分发与 usage 列表。
 //!
 //! 若清单留在 coreutils 里，主程序就必须依赖 coreutils → 连带链接 uutils /
-//! ripgrep / openssl-app / putty-telnet 整张依赖图，正是本次拆分要消除的问题。
+//! ripgrep / openssl-app / putty-telnet / jq-app 整张依赖图，正是本次拆分要
+//! 消除的问题。
 //! 故把「有哪些命令」与「命令怎么实现」彻底分开：本 crate 只有字符串表，
 //! 实现全部在 `crates/coreutils`。
 
@@ -131,9 +132,9 @@ pub const PLATFORM_COMMANDS: &[&str] = &[
 ];
 
 /// Windows 专属命令（uutils feat_os_windows 额外项 + vcpkg 静态链接的 openssl CLI +
-/// 源码内嵌 PuTTY 的 telnet）
+/// 源码内嵌 PuTTY 的 telnet + vendor 源码现场编译的 jq CLI）
 #[cfg(target_os = "windows")]
-pub const PLATFORM_COMMANDS: &[&str] = &["openssl", "stdbuf", "telnet"];
+pub const PLATFORM_COMMANDS: &[&str] = &["jq", "openssl", "stdbuf", "telnet"];
 
 /// 其余平台（本项目不存在，仅保证常量无条件可用）
 #[cfg(not(any(unix, target_os = "windows")))]
