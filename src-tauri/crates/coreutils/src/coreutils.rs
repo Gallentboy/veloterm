@@ -18,8 +18,9 @@
 //! rustls）；tar 由 tar-rs 库 + 自研 CLI 壳（tar_impl.rs）实现；
 //! base32hex/base64url/hex/hexupper 由 data-encoding 库 + 自研 CLI 壳
 //! （encodings_impl.rs）实现，仅注册进 Windows 清单（见 tools-catalog）；
-//! which 为 unix_extras.rs 自研；urlencode/urldecode（仅 Windows）由
-//! urlcoding_impl.rs 基于 crates.io 的 urlencoding 库自研。
+//! which 为 unix_extras.rs 自研；urlencode/urldecode 由 urlcoding_impl.rs
+//! 基于 crates.io 的 urlencoding 库自研（仅进 Windows 清单，同 data-encoding
+//! 家族的门控形态）。
 //! chcon/runcon 依赖 SELinux，不集成。
 
 use std::ffi::OsString;
@@ -219,11 +220,10 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // 仅 Windows：源码内嵌 PuTTY 的 telnet（C 层 GNU 参数解析）
         #[cfg(target_os = "windows")]
         "telnet" => putty_telnet::telnet_cmd_main(it),
-        // 仅 Windows：urlencoding 库（kornelski/rust_urlencoding，crates.io
-        // 纯 Rust）封装的百分号编解码 CLI（见 urlcoding_impl.rs）
-        #[cfg(target_os = "windows")]
+        // urlcoding 家族（urlencoding 库，crates.io 纯 Rust）：仅注册进 Windows
+        // 命令清单；分发臂跨平台编译（同 data-encoding 家族，macOS 单测经
+        // run_uutils 验证接线，见 urlcoding_family_dispatch）
         "urldecode" => crate::urlcoding_impl::urldecode_cmd_main(it),
-        #[cfg(target_os = "windows")]
         "urlencode" => crate::urlcoding_impl::urlencode_cmd_main(it),
         // 仅 Windows：yq（Go）经 yqffi.dll 的 C 导出（运行时加载，见 yq_impl.rs）
         #[cfg(target_os = "windows")]
@@ -577,6 +577,20 @@ mod tests {
     #[test]
     fn data_encoding_family_dispatch() {
         for name in ["base32hex", "base64url", "hex", "hexupper"] {
+            assert_eq!(
+                run_uutils(name, &[OsString::from("--version")]),
+                0,
+                "{name} 分发异常"
+            );
+        }
+    }
+
+    /// urlcoding 家族接线：命令仅注册进 Windows 清单（同 data-encoding 家族），
+    /// 绕过清单直接验证分发臂 → urlcoding_impl 的通路；真实行为由
+    /// urlcoding_impl 自带的参数化单测覆盖（含真实库编解码向量）。
+    #[test]
+    fn urlcoding_family_dispatch() {
+        for name in ["urldecode", "urlencode"] {
             assert_eq!(
                 run_uutils(name, &[OsString::from("--version")]),
                 0,

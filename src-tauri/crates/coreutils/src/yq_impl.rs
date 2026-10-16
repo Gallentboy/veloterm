@@ -82,7 +82,7 @@ mod imp {
         let cached = YQ_MAIN.get_or_init(load_yq_main);
         let Ok(yq_main) = cached.as_ref().copied() else {
             let msg = cached.as_ref().err().map(String::as_str).unwrap_or("");
-            eprintln!("yq: 未找到 yqffi.dll（{msg}）。");
+            eprintln!("yq: yqffi.dll 不可用（{msg}）");
             eprintln!("yqffi.dll 随安装包分发；开发模式请先运行 node scripts/build-tools.mjs 构建。");
             return 2;
         };

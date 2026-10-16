@@ -7,13 +7,13 @@
 //! 与 openssl/telnet/jq/yq 同为 Windows 专属命令：macOS/Linux 用户可从系统
 //! 获得同类工具，不进跨平台清单。
 //!
-//! 结构参考 yq_impl.rs 的 cfg 分家：`imp`（Windows）持库调用，非 Windows 为
-//! 不可达桩。与 yq 的 FFI 不同，全部逻辑都在本文件——故把「参数解析 / 行拆分 /
-//! 输出」管道放在无条件编译的 `pipeline` 子模块，由 transform 函数注入编解码，
-//! macOS 的常规测试门禁也能覆盖 argv0 剥离、`--` 终止符、CRLF 行尾处理等自研逻辑。
+//! 平台形态同 data-encoding 家族（urlcoding 是纯 Rust 库，无 DLL/FFI 约束）：
+//! 实现与分发臂跨平台编译，仅 tools-catalog 的 Windows 清单门控——macOS 常规
+//! 测试门禁全量覆盖「参数解析 / 行拆分 / 输出」管道与真实库的编解码向量。
 //!
 //! 行为约定（两个命令一致）：
-//! - 有操作数：逐个编码/解码，各占一行；无操作数：逐行读 stdin（文本行语义，
+//! - 有操作数：逐个编码/解码，各占一行，其中操作数 `-` 按出现顺序读 stdin
+//!   （GNU 惯例）；无操作数：逐行读 stdin（文本行语义，
 //!   剥行尾 `\n` 与其前紧邻的 `\r`），每行产出一条；最后一行无换行也补 `\n`；
 //! - stdin 按字节读入再 lossy 转 UTF-8，非 UTF-8 内容不报错（与 yq_impl 的
 //!   argv 取舍一致）；urldecode 解码出的非法 UTF-8 字节按库语义成 U+FFFD；
@@ -28,8 +28,6 @@ mod pipeline {
     use std::io::{BufRead, Write};
 
     /// argv 首元素约定为程序名（与 yq_cmd_main 同一约定），其后为用户参数。
-    /// 非 Windows 构建中仅测试引用（命令不进清单，桩不调用），放行 dead_code。
-    #[cfg_attr(not(windows), allow(dead_code))]
     pub(super) fn run<I, W>(
         input: &mut I,
         out: &mut W,
@@ -68,7 +66,6 @@ mod pipeline {
                         return 0;
                     }
                     s if s.starts_with('-') && s.len() > 1 => {
-                        // 裸 "-" 是普通操作数（惯例上指 stdin 内容本身），不拦
                         eprintln!("{bin}: unrecognized option '{s}'");
                         eprintln!("Try '{bin} --help' for more information.");
                         return 1;
@@ -79,26 +76,46 @@ mod pipeline {
             operands.push(s);
         }
 
-        if !operands.is_empty() {
-            for op in &operands {
-                // 写失败（如管道下游已关闭）静默继续读完输入，不 panic（比
-                // which 的 println! 更稳：head 截断场景无 panic 噪音）
+        if operands.is_empty() {
+            let code = pump_stdin(input, out, transform, bin);
+            let _ = out.flush();
+            return code;
+        }
+        for op in &operands {
+            if op == "-" {
+                // `-` 操作数读 stdin（GNU 惯例），按出现顺序与其他操作数穿插
+                let code = pump_stdin(input, out, transform, bin);
+                if code != 0 {
+                    let _ = out.flush();
+                    return code;
+                }
+            } else {
+                // 写失败（如管道下游已关闭）静默继续，不 panic（比 which 的
+                // println! 更稳：head 截断场景无 panic 噪音）
                 let _ = writeln!(out, "{}", transform(op));
             }
-            let _ = out.flush();
-            return 0;
         }
+        let _ = out.flush();
+        0
+    }
 
-        // 无操作数：逐行读 stdin。read_until 按字节读，非 UTF-8 行不报错
+    /// 逐行读输入并逐行写出变换结果；返回退出码（0 正常 / 1 读失败）。
+    /// 无操作数时输入是 stdin；操作数含 `-` 时按出现顺序内联消费。
+    fn pump_stdin(
+        input: &mut dyn BufRead,
+        out: &mut dyn Write,
+        transform: fn(&str) -> String,
+        bin: &str,
+    ) -> i32 {
+        // read_until 按字节读，非 UTF-8 行不报错（lossy 转 UTF-8）
         let mut buf: Vec<u8> = Vec::new();
         loop {
             buf.clear();
             match input.read_until(b'\n', &mut buf) {
-                Ok(0) => break,
+                Ok(0) => return 0,
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("{bin}: 读取标准输入失败：{e}");
-                    let _ = out.flush();
+                    eprintln!("{bin}: failed to read standard input: {e}");
                     return 1;
                 }
             }
@@ -112,12 +129,9 @@ mod pipeline {
             }
             let _ = writeln!(out, "{}", transform(&String::from_utf8_lossy(line)));
         }
-        let _ = out.flush();
-        0
     }
 }
 
-#[cfg(windows)]
 mod imp {
     use std::ffi::OsString;
 
@@ -147,12 +161,17 @@ mod imp {
         )
     }
 
-    fn encode_str(s: &str) -> String {
+    pub(super) fn encode_str(s: &str) -> String {
         urlencoding::encode(s).into_owned()
     }
 
-    fn decode_str(s: &str) -> String {
-        urlencoding::decode(s).into_owned()
+    /// urlencoding 2.1.3 的 decode 返回 Result（2.2+ 才是 infallible Cow）：
+    /// 解出非法 UTF-8 时按 WHATWG 恢复语义降级为 U+FFFD（lossy），不报错
+    pub(super) fn decode_str(s: &str) -> String {
+        match urlencoding::decode(s) {
+            Ok(cow) => cow.into_owned(),
+            Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+        }
     }
 
     const USAGE_ENCODE: &str = "\
@@ -164,6 +183,7 @@ space becomes %20, '+' is never used; trailing \\n and \\r\\n are stripped).
       --help     display this help and exit
       --version  output version information and exit
 
+An operand '-' reads standard input.
 '--' ends the options, so a STRING starting with '-' can be encoded.";
 
     const USAGE_DECODE: &str = "\
@@ -176,34 +196,12 @@ U+FFFD; trailing \\n and \\r\\n are stripped before decoding).
       --help     display this help and exit
       --version  output version information and exit
 
+An operand '-' reads standard input.
 '--' ends the options, so a STRING starting with '-' can be decoded.";
 }
 
-#[cfg(not(windows))]
-mod imp {
-    use std::ffi::OsString;
-
-    /// 非 Windows 桩：命令只进 Windows 清单（tools-catalog 的 cfg 门控），
-    /// 本桩在 mac 构建中无人调用——允许 dead_code（同 yq_impl 桩）。
-    #[allow(dead_code)]
-    pub fn urlencode_cmd_main<I: IntoIterator<Item = OsString>>(args: I) -> i32 {
-        let _ = args.into_iter().count();
-        eprintln!("urlencode 仅在 Windows 构建");
-        2
-    }
-
-    #[allow(dead_code)]
-    pub fn urldecode_cmd_main<I: IntoIterator<Item = OsString>>(args: I) -> i32 {
-        let _ = args.into_iter().count();
-        eprintln!("urldecode 仅在 Windows 构建");
-        2
-    }
-}
-
 // bin crate：分发臂按 crate::urlcoding_impl::urlencode_cmd_main 全路径调用；
-// 入口定义在 cfg 分家的 imp 子模块里，需顶层 re-export。cfg 限定 windows：
-// 非 Windows 构建没有调用方，无条件 re-export 反而触发 unused_imports。
-#[cfg(windows)]
+// 入口定义在 imp 子模块里，需顶层 re-export（分发臂跨平台编译，无条件导出）
 pub use imp::{urldecode_cmd_main, urlencode_cmd_main};
 
 #[cfg(test)]
@@ -211,11 +209,11 @@ mod tests {
     use super::pipeline::run;
     use std::ffi::OsString;
 
-    /// 测试用恒等变换：只验证管道自身（argv0 剥离 / 选项解析 / 行拆分），
-    /// 真实编解码向量见下方 cfg(windows) 的 roundtrip 测试
     fn ident(s: &str) -> String {
         s.to_string()
     }
+
+    // 真实编解码向量见下方 roundtrip 测试（urlcoding 跨平台编译后 macOS 直接执行）
 
     const USAGE: &str = "Usage: fake [OPTION]... [STRING]...\n";
 
@@ -300,7 +298,7 @@ mod tests {
         );
         assert!(output(&out).is_empty());
 
-        // `--` 终止后 `-x` 是操作数；裸 `-` 也是操作数
+        // `--` 终止后 `-x` 是操作数；裸 `-` 读 stdin（此处 stdin 为空 → 无输出）
         let mut out = Vec::new();
         assert_eq!(
             run(
@@ -313,14 +311,29 @@ mod tests {
             ),
             0
         );
-        assert_eq!(output(&out), "-x\n-\n");
+        assert_eq!(output(&out), "-x\n");
     }
 
-    /// 真实库行为向量（仅 Windows 编译侧执行；CI 的 Windows 作业只构建，
-    /// 该测试主要供本地 Windows 冒烟与安装包验证）：
+    /// 操作数 `-` 读 stdin（与无操作数同一逐行路径），可与其他操作数按序穿插
+    #[test]
+    fn dash_operand_reads_stdin_in_order() {
+        let mut input = &b"stdin line\r\nsecond"[..];
+        let mut out = Vec::new();
+        let code = run(
+            &mut input,
+            &mut out,
+            ident,
+            "fake",
+            USAGE,
+            &s(&["fake", "op1", "-", "op2"]),
+        );
+        assert_eq!(code, 0);
+        assert_eq!(output(&out), "op1\nstdin line\nsecond\nop2\n");
+    }
+
+    /// 真实库行为向量（urlcoding 跨平台编译后 macOS 门禁直接执行）：
     /// WHATWG 语义、`+` 保留、非法转义按字面、往返一致
     #[test]
-    #[cfg(windows)]
     fn real_library_vectors_and_roundtrip() {
         use super::imp::{decode_str, encode_str};
         assert_eq!(encode_str("a b 中文/~._-"), "a%20b%20%E4%B8%AD%E6%96%87%2F~._-");
