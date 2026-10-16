@@ -33,6 +33,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 eza = { path = "../../vendor/eza" }
 palette_derive = "=0.7.5"
 wget-rs = { path = "../../vendor/wget-rs" }
+rust-parallel = { path = "../../vendor/rust-parallel" }
 
 uucore = { path = "../../vendor/coreutils/src/uucore", features = ["openssl"] }
 uu_arch = { path = "../../vendor/coreutils/src/uu/arch" }
