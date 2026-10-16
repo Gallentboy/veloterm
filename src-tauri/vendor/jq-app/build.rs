@@ -234,6 +234,11 @@ fn run() -> Result<(), String> {
 
     // ── 3. 编译捆绑 oniguruma（独立 cc Build：宏与 include 都不与 jq 侧混）──
     let mut onig = cc::Build::new();
+    // 显式钉 /O2 + NDEBUG：不依赖 cargo profile 透传（OPT_LEVEL 链路任何一环
+    // 缺失都会让 C 代码落到 /Od，解析/分配密集路径实测慢 10 倍以上），同时
+    // 剔除热路径上的 assert 运行时检查
+    onig.opt_level(2);
+    onig.define("NDEBUG", "1");
     onig.include(&onig_src).include(&onigcfg);
     // 静态编入同一二进制：oniguruma.h 的 ONIG_EXTERN 在 MSVC 下默认展开为
     // __declspec(dllimport)（那是给 DLL 消费者用的），静态链接时会连锁报
@@ -253,6 +258,10 @@ fn run() -> Result<(), String> {
 
     // ── 4. 编译 jq 本体 + compat ────────────────────────────────────────────
     let mut jq = cc::Build::new();
+    // 同 onig：显式钉 /O2 + NDEBUG——builtin.jq 整库编译是解析/分配密集路径，
+    // 优化级别与 assert 开关直接决定 jq 的启动耗时
+    jq.opt_level(2);
+    jq.define("NDEBUG", "1");
     // 同 onig：第三方源全部告警静默（MSVC -W0 / GNU -w）
     jq.warnings(false);
     // MSVC 传统预处理器无法正确处理 jv.h 的 JV_ARRAY / JV_OBJECT 参数计数宏
