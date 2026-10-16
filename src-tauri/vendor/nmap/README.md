@@ -97,13 +97,18 @@ Npcap SDK 与 OpenSSL 静态库：
      ——仅影响 `--version` 展示与 OS 指纹匹配字符串；
    - `HAVE_LIBSSH2` / `LIBSSH2_INCLUDED` 注释掉（不集成 libssh2，其需单独
      CMake 构建 + OpenSSL 集成；NSE 的 ssh 脚本报 unavailable，其余不受影响）。
-4. **删除上游 `.gitignore`**：nmap 的 git 仓忽略规则面向他们自己的开发仓
+4. `nse_fs.cc`（搜 `VeloTerm patch`）：`dir_data.hFile` 由 `long` 改
+   `intptr_t`（并显式引 `<stdint.h>`，`_findfirst` 返回值比较同步改）。
+   **x64 移植必需**：MSVC 的 `_findfirst()` 在 x64 返回 `intptr_t`（64 位
+   句柄），存进 `long`（LLP64 下 32 位）会截断，随后 `_findnext` 用无效句柄
+   → 访问违例 0xC0000005（`nmap --script-updatedb` 遍历 scripts/ 时崩，
+   CI 实测）。官方 Windows 构建只有 Win32 平台，故上游未暴露此问题。
+5. **删除上游 `.gitignore`**：nmap 的 git 仓忽略规则面向他们自己的开发仓
    （那里 `/libpcap/bpf_filter.c`、`/libz/zconf.h`、`/libpcap/*.3pcap`、
    `/libpcap/grammar.y` 等是生成物/不入库文件），而 dist tarball 实际携带
-   这些文件——vendor 入库时被静默吞掉 43 个（`bpf_filter.c`、`zconf.h` 等
-   对 MSVC 路线不再是必需，但保持源码树完整仍应恢复）。删除该文件并从
-   tarball 恢复全部被吞文件入库。
-5. 删减：`zenmap/` 整目录（GUI，不构建不分发）；上游 `README.md` 挪为
+   这些文件——vendor 入库时被静默吞掉 43 个。删除该文件并从 tarball 恢复
+   全部被吞文件入库（保持源码树完整；MSVC 路线下这些文件不参与构建）。
+6. 删减：`zenmap/` 整目录（GUI，不构建不分发）；上游 `README.md` 挪为
    `README.upstream.md` 给本文件让位。
 
 `mswin32/winfix.cc` 与 `libpcap/**` 均为**上游原版**（MSVC 路线下 winfix.cc
