@@ -148,11 +148,15 @@ uu_who = { path = "../../vendor/coreutils/src/uu/who" }
 [target.'cfg(any(unix, windows))'.dependencies]
 uu_stdbuf = { path = "../../vendor/coreutils/src/uu/stdbuf" }
 
-# 仅 Windows：openssl CLI、telnet CLI 与 jq CLI（vendor 源码 cc 现场编译）
+# 仅 Windows：openssl CLI、telnet CLI、jq CLI（vendor 源码 cc 现场编译）
+# 与 yq（Go 源码经 yqffi.dll 运行时加载，见 src/yq_impl.rs）
 [target.'cfg(windows)'.dependencies]
 openssl-app = { path = "../../vendor/openssl-app" }
 putty-telnet = { path = "../../vendor/putty-telnet" }
 jq-app = { path = "../../vendor/jq-app" }
+# yq（Go）的 yqffi.dll 运行时加载（见 src/yq_impl.rs：MSVC 无法静态链
+# Go 的 c-archive，DLL 动态导入是 extern 链接的唯一形态）
+libloading = "0.8"
 
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }

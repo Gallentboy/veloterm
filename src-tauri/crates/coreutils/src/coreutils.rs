@@ -204,6 +204,9 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // 仅 Windows：源码内嵌 PuTTY 的 telnet（C 层 GNU 参数解析）
         #[cfg(target_os = "windows")]
         "telnet" => putty_telnet::telnet_cmd_main(it),
+        // 仅 Windows：yq（Go）经 yqffi.dll 的 C 导出（运行时加载，见 yq_impl.rs）
+        #[cfg(target_os = "windows")]
+        "yq" => crate::yq_impl::yq_cmd_main(it),
         // 不可达：run_command 已按 all_commands 白名单拦截
         _ => {
             eprintln!("coreutils: unimplemented command '{name}'");
@@ -367,7 +370,12 @@ mod tests {
     #[test]
     fn all_commands_dispatch_version_sweep() {
         let expect_one = ["test", "false", "which"];
-        let skip = ["cmp", "diff", "sd", "wget"];
+        let mut skip = vec!["cmp", "diff", "sd", "wget"];
+        // yq 仅在 Windows 命令表里，且依赖打包产物 yqffi.dll（运行时加载），
+        // cargo test 环境不保证存在 —— 跳过（真实行为由安装包冒烟覆盖）
+        if cfg!(target_os = "windows") {
+            skip.push("yq");
+        }
         let all = all_commands();
         let mut visited = 0usize;
         for name in all.iter().copied() {

@@ -1421,6 +1421,7 @@ dependencies = [
  "flate2",
  "frawk",
  "jq-app",
+ "libloading 0.8.9",
  "openssl-app",
  "palette_derive",
  "putty-telnet",
