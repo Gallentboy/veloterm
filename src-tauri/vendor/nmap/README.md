@@ -55,10 +55,13 @@ in-tree 构建**（nmap 有 libdnet/liblua/libpcre/liblinear/libz/nbase/nsock
    --with-openssl=/mingw64 --with-liblua=included --with-libpcre=included
    --with-libz=included --with-liblinear=included
    --without-libssh2 --without-ncat --without-nping --without-zenmap
-   --without-ndiff`，`LIBS=-lpacket LDFLAGS=-L<npcap-shim>/lib`
-   （libdnet.a 与 winfix.o 的 Packet* 符号靠它进最终链接）→ `make -j`。
-   OpenSSL 走 MSYS2 mingw64 静态库（最终链接 `-static` 解析到 .a）；
-   lua/pcre2/zlib/liblinear/libdnet 全部 bundled 静态。
+   --without-ndiff`，`LIBS="-lpacket -lws2_32 -liphlpapi"
+   LDFLAGS=-L<npcap-shim>/lib` —— `-lpacket` 供 libdnet.a 与 winfix.o 的
+   Packet* 符号进最终链接；`ws2_32`/`iphlpapi` 是静态 libpcap.a 的系统依赖
+   （上游 MSVC 工程同样链 `ws2_32.lib;IPHlpAPI.Lib`，autotools 侧从无此
+   配置——缺它时 pcap_create 探测报 no、退回自编 bundled libpcap，CI 实测）
+   → `make -j`。OpenSSL 走 MSYS2 mingw64 静态库（最终链接 `-static` 解析到
+   .a）；lua/pcre2/zlib/liblinear/libdnet 全部 bundled 静态。
 4. **runner exe 与数据 staging**：按上游链接规则产出 `nmap.exe`（追加
    winfix.o，仅构建期使用，不随包分发）——用它以 `NMAPDIR=<源码树>` 跑
    `--script-updatedb` 生成 `scripts/script.db`（`make install-nse` 的
