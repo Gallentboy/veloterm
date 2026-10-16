@@ -36,7 +36,11 @@ void jv_tsd_dtoa_ctx_init() {
   atexit(jv_tsd_dtoa_ctx_fini);
 }
 
-inline struct dtoa_context *tsd_dtoa_context_get() {
+/* veloterm 修补：原为 `inline struct dtoa_context *tsd_dtoa_context_get()`。
+ * 裸 inline 定义在 MSVC 下不产出外部符号（jv.c / jv_print.c 引用它，CI 报
+ * LNK2019）；去 inline 改为普通外部定义。GNU 侧语义不变：本 TU 已包含
+ * jv_dtoa_tsd.h 的非 inline 声明，按 C99 规则本就编出外部定义。 */
+struct dtoa_context *tsd_dtoa_context_get() {
   pthread_once(&dtoa_ctx_once, jv_tsd_dtoa_ctx_init); // cannot fail
   struct dtoa_context *ctx = (struct dtoa_context*)pthread_getspecific(dtoa_ctx_key);
   if (!ctx) {
