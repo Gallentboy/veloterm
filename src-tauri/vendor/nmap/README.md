@@ -9,80 +9,58 @@ GitHub tag v7.992）
 部分」的要求裁掉，其余原样保留——ncat/nping 源码留在树内但构建以
 `--without-ncat/--without-nping` 跳过，未嵌入）。
 
-## 为什么是 MinGW DLL，而不是 MSVC 或静态链入
+## 为什么是 MSVC + CMake 自建工程（官方 Windows 路径）
 
-上游官方 Windows 构建是 MSVC（`mswin32/nmap.sln` + Win32 平台 + SVN 预编译
-依赖），无 MinGW 支持承诺（issue #2927）；但 nmap 是 C/C++ + autotools 体系，
-同样不具备 jq 那种纯 C 自包含、cc 现场编译链入 MSVC 的条件。故沿用
-qalc（libqalculate）的例外形态：**源码 vendor + Windows 上经 MSYS2 MinGW64
-构建 + `nmapffi.dll` 运行时 LoadLibrary**（分发臂在
-`crates/coreutils/src/nmap_impl.rs`）。
+上游官方 Windows 构建就是 **MSVC**（`mswin32/Build.bat` + `nmap.sln`），它链
+Npcap SDK 的 `wpcap.lib`（`pcap_*`）+ `packet.lib`（`Packet*`），并以 MSVC 原生
+`DelayLoadDLLs=packet.dll;wpcap.dll` 让二者延迟加载——没装 Npcap 的机器上仍能
+启动，运行期由 `mswin32/winfix.cc` 的 SEH 探测降级 connect 扫描。本工程**照搬
+官方这条路径**，故：
 
-上游在 MinGW 下的两处已知缺口由本仓库补齐（见下「本地补丁」）：
+- **不编译 bundled libpcap**（pcap 符号由 Npcap SDK 提供），MinGW 路线下踩过的
+  flex/bison 缺失、asprintf 隐式声明、man 页缺失、pcap 运行期探测、静态库依赖
+  顺序等全部问题不存在；
+- **winfix.cc 用上游原版**（该文件本就是 MSVC 专用：`#include <nmap_winconfig.h>`
+  + `_MSC_VER` 门控的 SEH/delayimp 降级），无本地补丁；
+- 配置头（`nmap_winconfig.h` / `nbase/nbase_winconfig.h` / `nsock/include/
+  nsock_winconfig.h`）都在树内，无需 autoconf。
 
-- `mswin32/winfix.cc` 不在 autotools 构建清单里（Makefile.in 的 OBJS 不含
-  它），WIN32 下 `win_pre_init/win_init` 会 undefined reference；
-- 缺 Npcap 时的优雅降级路径（SEH + delayimp）被 `_MSC_VER` 门控。
+官方 sln 唯一的问题是**只有 Win32(x86) 平台**（`Release|x64` 映射回
+`Release|Win32`），产物是 32 位 exe——无法载入 64 位宿主 coreutils.exe。故以
+`veloterm-win/CMakeLists.txt`（本仓库新增）复刻官方 vcxproj 的源清单/宏/include
+路径/库清单，用 `-A x64` 出 **x64 DLL**，C 入口 `veloterm_nmap_main` 由
+`veloterm_ffi.cc` 提供（分发臂在 `crates/coreutils/src/nmap_impl.rs`）。
 
 ## 构建形态（`scripts/build-tools.mjs --only nmap`，仅 Windows）
 
-在 MSYS2 MinGW64 环境（windows-latest 预装 `C:\msys64`，依赖由 CI 的 pacman
-步骤安装：gcc / make / pkg-config / cmake / ninja / openssl）。构建目录
-`src-tauri/nmap-build/`（已 gitignore）。源码树**整目录复制到构建目录做
-in-tree 构建**（nmap 有 libdnet/liblua/libpcre/liblinear/libz/nbase/nsock
-七个子 configure，VPATH 构建未经验，in-tree 拷贝最稳），步骤：
+在 **windows-latest 的 MSVC + CMake** 环境（不需要 MSYS2/MinGW），依赖只有
+Npcap SDK 与 OpenSSL 静态库：
 
 1. **Npcap SDK**：下载 `https://npcap.com/dist/npcap-sdk-1.13.zip`（与上游
-   `mswin32/Build.bat` 同版），解压出 `Include/` + `Lib/x64/`。两处消费：
-   - `npcap-shim/`（include/ + lib/ 平铺布局）给 libdnet-stripped 的
-     `--with-wpdpack` 用（其 configure 只认 `<dir>/include/packet32.h` +
-     `<dir>/lib/packet.lib` 布局）；
-   - `Packet_ROOT` 给 libpcap 的 CMake 用。
-   注意：MSYS2 自带的 `mingw-w64-x86_64-libpcap` 以 `-DPCAP_TYPE=null` 构建、
-   无真实抓包后端，**不能用**。
-2. **libpcap 静态库**（bundled `libpcap/`，1.10.7，CMake 官方 Windows 路线）：
-   `cmake -G Ninja -DBUILD_SHARED_LIBS=OFF -DPacket_ROOT=<SDK>` → `libpcap.a`，
-   install 进 `pcap-stage/`（include + lib），再把 Npcap SDK 的 `Include/*`
-   （含 pcap/ 子目录，递归拷）并进 `pcap-stage/include`（nmap 侧的
-   winfix.cc 要 `Packet32.h`）。选 CMake 静态编而不是直链 Npcap SDK 的
-   `wpcap.lib`：pcap_* 全部编进 DLL、唯一外部导入收敛为 Packet.dll，
-   且不赌 GNU ld 对 MSVC 短导入库的兼容性。CMake 路线经树内补丁改用
-   **预生成**的 scanner.c/grammar.c（见下「本地补丁」第 4 条），零
-   flex/bison 依赖；该补丁已在 macOS 本地 cmake configure + 全量构建
-   验证（libpcap.a 产出、构建目录零生成物）。
-3. **nmap 主体**：configure
-   `--with-libpcap=<pcap-stage> --with-wpdpack=<npcap-shim>
-   --with-openssl=/mingw64 --with-liblua=included --with-libpcre=included
-   --with-libz=included --with-liblinear=included
-   --without-libssh2 --without-ncat --without-nping --without-zenmap
-   --without-ndiff`，`LIBS="-lpacket -lws2_32 -liphlpapi"
-   LDFLAGS=-L<npcap-shim>/lib` —— `-lpacket` 供 libdnet.a 与 winfix.o 的
-   Packet* 符号进最终链接；`ws2_32`/`iphlpapi` 是静态 libpcap.a 的系统依赖
-   （上游 MSVC 工程同样链 `ws2_32.lib;IPHlpAPI.Lib`，autotools 侧从无此
-   配置——缺它时 pcap_create 探测报 no、退回自编 bundled libpcap，CI 实测）
-   → `make -j`。OpenSSL 走 MSYS2 mingw64 静态库（最终链接 `-static` 解析到
-   .a）；lua/pcre2/zlib/liblinear/libdnet 全部 bundled 静态。
-4. **runner exe 与数据 staging**：按上游链接规则产出 `nmap.exe`（追加
-   winfix.o，仅构建期使用，不随包分发）——用它以 `NMAPDIR=<源码树>` 跑
-   `--script-updatedb` 生成 `scripts/script.db`（`make install-nse` 的
-   NSE_FILES 依赖它），再 `make install-nmap install-nse` 把数据文件装进
-   `nmap-data/`（nmap-services、nmap-os-db、nmap-service-probes、
-   nmap-protocols、nmap-rpc、nmap-mac-prefixes、docs/nmap.xsl、docs/nmap.dtd、
-   nse_main.lua、scripts/、nselib/，另补上游安装清单遗漏的 nmap-payloads），
-   并以 `NMAPDIR=<stage>` 跑 `./stage/bin/nmap.exe --version` 与
-   `-sT 127.0.0.1 -p 1` 冒烟（CI 无 Npcap，正好回归优雅降级路径）。
-5. **链接 nmapffi.dll**：捕获 `make -n nmap` 的最终链接行，去掉 `main.o`
-   （其 main 由 veloterm_ffi.cc 以 `#define main` 改名包含 main.cc 替代），
-   追加 veloterm_ffi.o + winfix.o，改驱动为
-   `g++ -shared -static -static-libgcc -static-libstdc++
-   -Wl,--delayload,Packet.dll -ldelayimp` —— 依赖全静态打入，Packet.dll
-   以**延迟导入**进 DLL（未装 Npcap 的机器上 LoadLibrary(nmapffi.dll) 仍
-   成功，运行期由打补丁的 win_init 探测降级到 connect() 扫描）。
-   `objdump` 依赖断言：除 Windows 系统库与 Packet.dll（延迟导入，也会被
-   objdump 列出）外不得有任何 MinGW/MSYS 动态库。
-6. 产物复制到 `src-tauri/binaries/nmapffi.dll` + `binaries/nmap-data/`，
-   经 `tauri.windows.conf.json` 的 resources 放安装根目录（nmap-data/
-   随 DLL 平铺在安装根）。
+   `mswin32/Build.bat` 同版），解压得 `Include/` + `Lib/x64/`。两份导入库
+   （`wpcap.lib` / `Packet.lib`）直接进最终链接；libdnet 的 `FindPacket`
+   也以 `-DPacket_ROOT=<SDK>` 指向它。
+2. **OpenSSL 静态库**：复用 CI 的 vcpkg `x64-windows-static`（与 SQLCipher /
+   openssl-app 同源，`OPENSSL_DIR` 环境变量；二进制缓存已预热）。
+3. **CMake 配置 + 构建**：`cmake -S vendor/nmap/veloterm-win -B <build> -A x64
+   -DNPCAP_SDK_DIR=<SDK> -DOPENSSL_DIR=<OPENSSL_DIR>`，`cmake --build
+   --config Release`。工程内以 `add_subdirectory` 消费 libpcre(PCRE2 8-bit
+   静态) / libz(静态) / libdnet-stripped(静态，Packet 来自 SDK) 的官方
+   CMakeLists；nbase / nsock / libnetutil / liblua / liblinear 直接编源
+   （清单照搬官方各 vcxproj）。产出 `nmapffi.dll`（`/DELAYLOAD:packet.dll;
+   wpcap.dll`、静态 CRT `/MT` 对齐 vcpkg triplet）。
+4. **runner nmap.exe + 数据 staging + 冒烟**：同工程另出 `nmap-runner`
+   （上游 `main.cc` 原样，构建期工具、不随包分发）——跑 `--script-updatedb`
+   生成 `scripts/script.db`，把数据文件收进 `nmap-data/`（清单见下），并跑
+   `--version` 与 `-sT 127.0.0.1 -p 1` 冒烟（CI 无 Npcap，正好回归
+   `/DELAYLOAD` 降级路径）。
+5. 产物复制到 `src-tauri/binaries/nmapffi.dll` + `binaries/nmap-data/`，
+   经 `tauri.windows.conf.json` 的 resources 放安装根目录。
+
+数据文件清单（`nmap-data/`，取上游 `Makefile.in` 的 `install-nmap`/`install-nse`
+目标，另补上游安装清单遗漏的 `nmap-payloads`）：`nmap-services`、`nmap-os-db`、
+`nmap-service-probes`、`nmap-protocols`、`nmap-rpc`、`nmap-mac-prefixes`、
+`nmap-payloads`、`nse_main.lua`、`nmap.xsl`、`nmap.dtd`、`scripts/`、`nselib/`。
 
 ## 运行时行为
 
@@ -106,48 +84,29 @@ in-tree 构建**（nmap 有 libdnet/liblua/libpcre/liblinear/libz/nbase/nsock
 ## 本地补丁（升级时需逐条复核重放）
 
 升级 = 换 vendor 源码 + 改 `VELOTERM_VERSION` + 重放下列补丁 + 复核
-build-tools.mjs 的 configure/link flag 仍然成立：
+`veloterm-win/CMakeLists.txt` 的源清单/宏/库清单仍然成立：
 
-1. `mswin32/winfix.cc`（搜 `VeloTerm patch`，三处）：
-   - 配置头分家：`<nmap_winconfig.h>` 仅 MSVC，MinGW 走 `config.h`；包含
-     路径反斜杠改正斜杠（GCC）；
-   - `PacketGetVersion()/pcap_lib_version()` 调用移入 `o.have_pcap` 门内，
-     MinGW 下先 `LoadLibraryA("Packet.dll")` 探测（`#ifndef _MSC_VER`），
-     缺 Npcap 直接降级、不触发 delayload 解析（详见补丁注释）。
-2. `veloterm_ffi.cc`（本仓库新增文件）：`#define main` 改名包含 `main.cc`
-   + 导出 `veloterm_nmap_main`。
-3. `libpcap/CMakeLists.txt`（搜 `VeloTerm patch`，五处）：
-   - flex/bison 探测与生成段整体跳过（`VELOTERM_SHIPPED_GENERATED`），
-     scanner/grammar 消费点改指源码树内**预生成**文件——树内无 grammar.y
-     （仅 grammar.y.in 模板），bison 生成路径无从工作；MSYS2 也没有
-     mingw 版 flex/bison 包（win_flex/win_bison，packages.msys2.org 实查
-     404）。与 NMAP_MODIFICATIONS 0001 在 autotools 侧「直接用发行文件、
-     不重新生成」的立场一致；
-   - `rpcapd`/`testprogs` 的 add_subdirectory 加存在性守卫（nmap 发行树
-     裁掉了这两个目录，上游无条件引用会 configure 失败）；
-   - MinGW 分支对共享目标 `pcap` 的 set_target_properties 加
-     `BUILD_SHARED_LIBS` 守卫——共享目标只在 BUILD_SHARED_LIBS=ON 时建立，
-     上游在「MinGW + 静态构建」组合下必失败（我们正是该组合，CI 实测）；
-     同文件其余 `${LIBRARY_NAME}` 引用经核对均在既有守卫内或经
-     LIBRARIES_TO_INSTALL 条件构造，无需改动。
-   - `asprintf`/`vasprintf` 探测在 WIN32 下强制为假——check_function_exists
-     走链接期探测，MinGW 的 libmingwex 有符号（报 found）但头文件仅在
-     `_GNU_SOURCE` 下声明，portability.h 据此把 `pcapint_asprintf` 映射到
-     系统 asprintf，GCC 14 对隐式声明报错（pcap-npf.c 编译失败，CI 实测）。
-     上游 WIN32 分支本就「假定没有 asprintf」并无条件编入
-     `missing/win_asprintf.c`，此处让探测与之一致。
-   - 该补丁在 macOS 本地以静态/共享两种模式分别 configure + 全量构建
-     验证（libpcap.a / libpcap.dylib 均产出、零警告）；asprintf 强制为假
-     仅作用于 WIN32，非 WIN32 探测行为不变（本地 config.h 实测
-     `HAVE_ASPRINTF 1` 保留）。
+1. `veloterm_ffi.cc`（本仓库新增文件）：`#define main` 改名包含 `main.cc`
+   + 导出 `veloterm_nmap_main`（DLL 入口）。
+2. `veloterm-win/CMakeLists.txt`（本仓库新增文件）：MSVC x64 自建工程，
+   源清单/宏/include/库清单复刻官方 `mswin32/nmap.vcxproj` 与各子项目
+   vcxproj；不编译 bundled libpcap（pcap 符号由 Npcap SDK 提供）。
+3. `nmap_winconfig.h`（搜 `VeloTerm patch`，两处）：
+   - `NMAP_PLATFORM` 按实际架构分（`_M_X64` → x86_64，否则保持上游 i686）
+     ——仅影响 `--version` 展示与 OS 指纹匹配字符串；
+   - `HAVE_LIBSSH2` / `LIBSSH2_INCLUDED` 注释掉（不集成 libssh2，其需单独
+     CMake 构建 + OpenSSL 集成；NSE 的 ssh 脚本报 unavailable，其余不受影响）。
 4. **删除上游 `.gitignore`**：nmap 的 git 仓忽略规则面向他们自己的开发仓
    （那里 `/libpcap/bpf_filter.c`、`/libz/zconf.h`、`/libpcap/*.3pcap`、
    `/libpcap/grammar.y` 等是生成物/不入库文件），而 dist tarball 实际携带
-   这些文件——vendor 入库时被静默吞掉 43 个（`bpf_filter.c` 是 CMake 必需
-   源、`zconf.h` 是 bundled zlib 的公共头，缺了必挂）。删除该文件并从
+   这些文件——vendor 入库时被静默吞掉 43 个（`bpf_filter.c`、`zconf.h` 等
+   对 MSVC 路线不再是必需，但保持源码树完整仍应恢复）。删除该文件并从
    tarball 恢复全部被吞文件入库。
 5. 删减：`zenmap/` 整目录（GUI，不构建不分发）；上游 `README.md` 挪为
    `README.upstream.md` 给本文件让位。
+
+`mswin32/winfix.cc` 与 `libpcap/**` 均为**上游原版**（MSVC 路线下 winfix.cc
+开箱即用；libpcap 根本不参与构建），无本地补丁。
 
 ## 许可（NPSL，重要）
 

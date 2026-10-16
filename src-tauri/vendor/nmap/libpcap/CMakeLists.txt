@@ -761,19 +761,8 @@ endif()
 
 check_function_exists(strlcpy HAVE_STRLCPY)
 check_function_exists(strlcat HAVE_STRLCAT)
-# VeloTerm patch（MinGW）：check_function_exists 走链接期探测，MinGW 的
-# libmingwex 有 asprintf/vasprintf 符号（探测报 found）但头文件仅在
-# _GNU_SOURCE 下声明——portability.h 据此把 pcapint_asprintf 映射到系统
-# asprintf，GCC 14 对隐式声明直接报错（pcap-npf.c 编译失败，CI 实测）。
-# 上游 WIN32 分支本就「假定没有 asprintf」并无条件编入 missing/win_asprintf.c
-# （见下方 PROJECT_SOURCE_LIST_C），探测结果与之一致即可。
-if(WIN32)
-    set(HAVE_ASPRINTF FALSE)
-    set(HAVE_VASPRINTF FALSE)
-else()
-    check_function_exists(asprintf HAVE_ASPRINTF)
-    check_function_exists(vasprintf HAVE_VASPRINTF)
-endif()
+check_function_exists(asprintf HAVE_ASPRINTF)
+check_function_exists(vasprintf HAVE_VASPRINTF)
 check_function_exists(strtok_r HAVE_STRTOK_R)
 if(NOT WIN32)
     check_function_exists(vsyslog HAVE_VSYSLOG)
@@ -2920,18 +2909,6 @@ endif()
 # Kitware.
 #
 
-# ── VeloTerm patch（树内预生成 scanner/grammar）─────────────────────
-# nmap 发行树自带预生成的 scanner.c/scanner.h/grammar.c/grammar.h，且不含
-# grammar.y（仅 grammar.y.in 模板），bison 生成路径无从工作；MSYS2 亦无
-# mingw 版 flex/bison 包（win_flex/win_bison，packages.msys2.org 实查 404）。
-# 与 NMAP_MODIFICATIONS 0001 在 autotools 侧「直接用发行文件、不重新生成」
-# 的立场一致：跳过下述 flex/bison 探测与生成步骤，全部消费点改指源码树内
-# 的预生成文件（PCAP_GENERATED_DIR）。升级 libpcap 时复核此补丁仍适用。
-set(VELOTERM_SHIPPED_GENERATED ON)
-set(PCAP_GENERATED_DIR ${CMAKE_CURRENT_SOURCE_DIR})
-# ── VeloTerm patch 结束 ──────────────────────────────────────────
-
-if(NOT VELOTERM_SHIPPED_GENERATED)
 #
 # Try to find Flex, a Windows version of Flex, or Lex.
 #
@@ -3057,8 +3034,6 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/grammar.c PROPERTIES
 #
 #set(PROJECT_SOURCE_LIST_C ${PROJECT_SOURCE_LIST_C} ${CMAKE_CURRENT_BINARY_DIR}/grammar.c)
 
-endif() # VeloTerm patch：flex/bison 探测与生成段到此为止（预生成文件见上方补丁）
-
 #
 # Assume, by default, no support for shared libraries and V7/BSD
 # convention for man pages (devices in section 4, file formats in
@@ -3174,14 +3149,10 @@ endif(WIN32)
 # Add subdirectories after we've set various variables, so they pick up
 # pick up those variables.
 #
-# VeloTerm patch：nmap 发行树裁掉了 libpcap 的 rpcapd/ 与 testprogs/ 目录，
-# 以存在性守卫（上游完整树行为不变）
-if(ENABLE_REMOTE AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/rpcapd/CMakeLists.txt)
+if(ENABLE_REMOTE)
     add_subdirectory(rpcapd)
-endif()
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/testprogs/CMakeLists.txt)
-    add_subdirectory(testprogs)
-endif()
+endif(ENABLE_REMOTE)
+add_subdirectory(testprogs)
 
 ######################################
 # Register targets
@@ -3196,8 +3167,8 @@ endif()
 #
 add_custom_target(SerializeTarget
     DEPENDS
-    ${PCAP_GENERATED_DIR}/grammar.c
-    ${PCAP_GENERATED_DIR}/scanner.c
+    ${CMAKE_CURRENT_BINARY_DIR}/grammar.c
+    ${CMAKE_CURRENT_BINARY_DIR}/scanner.c
 )
 
 set_source_files_properties(${PROJECT_EXTERNAL_OBJECT_LIST} PROPERTIES
@@ -3206,8 +3177,8 @@ set_source_files_properties(${PROJECT_EXTERNAL_OBJECT_LIST} PROPERTIES
 if(BUILD_SHARED_LIBS)
     add_library(${LIBRARY_NAME} SHARED
         ${PROJECT_SOURCE_LIST_C}
-        ${PCAP_GENERATED_DIR}/grammar.c
-        ${PCAP_GENERATED_DIR}/scanner.c
+        ${CMAKE_CURRENT_BINARY_DIR}/grammar.c
+        ${CMAKE_CURRENT_BINARY_DIR}/scanner.c
         ${PROJECT_EXTERNAL_OBJECT_LIST}
     )
     target_include_directories(${LIBRARY_NAME} PUBLIC
@@ -3235,8 +3206,8 @@ endif(BUILD_SHARED_LIBS)
 
 add_library(${LIBRARY_NAME}_static STATIC
     ${PROJECT_SOURCE_LIST_C}
-    ${PCAP_GENERATED_DIR}/grammar.c
-    ${PCAP_GENERATED_DIR}/scanner.c
+    ${CMAKE_CURRENT_BINARY_DIR}/grammar.c
+    ${CMAKE_CURRENT_BINARY_DIR}/scanner.c
     ${PROJECT_EXTERNAL_OBJECT_LIST}
 )
 target_include_directories(${LIBRARY_NAME}_static PUBLIC
@@ -3273,15 +3244,10 @@ if(WIN32)
         # For compatibility, build the shared library without the "lib" prefix on
         # MinGW as well.
         #
-        # VeloTerm patch：共享目标 pcap 仅在 BUILD_SHARED_LIBS=ON 时存在
-        # （上游此处无条件 set_target_properties 在「MinGW + 静态构建」
-        # 组合下必失败——本工程正是该组合，CI 实测），加同一守卫
-        if(BUILD_SHARED_LIBS)
-            set_target_properties(${LIBRARY_NAME} PROPERTIES
-                PREFIX ""
-                OUTPUT_NAME "${LIBRARY_NAME}"
-            )
-        endif()
+        set_target_properties(${LIBRARY_NAME} PROPERTIES
+            PREFIX ""
+            OUTPUT_NAME "${LIBRARY_NAME}"
+        )
         set_target_properties(${LIBRARY_NAME}_static PROPERTIES
             OUTPUT_NAME "${LIBRARY_NAME}"
         )
@@ -3344,10 +3310,7 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmakeconfig.h.in ${CMAKE_CURRENT_BINA
 # Write out the grammar.y file
 ######################################
 
-# VeloTerm patch：预生成模式下不生成 grammar.y（见上方 flex/bison 段的补丁说明）
-if(NOT VELOTERM_SHIPPED_GENERATED)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/grammar.y.in ${CMAKE_CURRENT_BINARY_DIR}/grammar.y @ONLY)
-endif()
 
 ######################################
 # Install pcap library, include files, and man pages
@@ -3618,13 +3581,7 @@ if(NOT MSVC)
 
         set(MAN3PCAP "")
         foreach(MANPAGE ${MAN3PCAP_NOEXPAND})
-            # VeloTerm patch：nmap 发行树裁掉了 3 个 man 页（pcap_init /
-            # pcap_set_protocol_linux / pcap_get_required_select_timeout，
-            # 上游用 autotools 构建 libpcap、从不跑本 CMake，安装清单未同步），
-            # 按存在性过滤，避免 install 阶段 FATAL
-            if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${MANPAGE})
-                set(MAN3PCAP ${MAN3PCAP} ${CMAKE_CURRENT_SOURCE_DIR}/${MANPAGE})
-            endif()
+            set(MAN3PCAP ${MAN3PCAP} ${CMAKE_CURRENT_SOURCE_DIR}/${MANPAGE})
         endforeach(MANPAGE)
         foreach(TEMPLATE_MANPAGE ${MAN3PCAP_EXPAND})
             string(REPLACE ".in" "" MANPAGE ${TEMPLATE_MANPAGE})
