@@ -38,9 +38,12 @@ mod imp {
     /// 进程内首次调用加载一次；错误串缓存避免每次调用重复打日志。
     static YQ_MAIN: OnceLock<Result<YqMainFn, String>> = OnceLock::new();
 
-    /// DLL 候选路径（纯函数，单测覆盖）：exe 同目录 → exe 上级目录。
-    fn candidates_for(exe: Option<&Path>) -> Vec<PathBuf> {
-        let dir = exe?.parent()?;
+    /// DLL 候选路径（纯函数，单测覆盖）：exe 同目录 → exe 上级目录；
+    /// 进程路径不可得（exe 为 None 或无父目录）时返回空候选。
+    pub(super) fn candidates_for(exe: Option<&Path>) -> Vec<PathBuf> {
+        let Some(dir) = exe.and_then(|p| p.parent()) else {
+            return Vec::new();
+        };
         let mut v = vec![dir.join("yqffi.dll")];
         if let Some(parent) = dir.parent() {
             v.push(parent.join("yqffi.dll"));
@@ -77,7 +80,7 @@ mod imp {
     /// 等价于直接执行 `yq <args[1..]>`。返回其退出码。
     pub fn yq_cmd_main<I: IntoIterator<Item = OsString>>(args: I) -> i32 {
         let cached = YQ_MAIN.get_or_init(load_yq_main);
-        let Some(yq_main) = cached.as_ref().copied() else {
+        let Ok(yq_main) = cached.as_ref().copied() else {
             let msg = cached.as_ref().err().map(String::as_str).unwrap_or("");
             eprintln!("yq: 未找到 yqffi.dll（{msg}）。");
             eprintln!("yqffi.dll 随安装包分发；开发模式请先运行 node scripts/build-tools.mjs 构建。");
@@ -116,8 +119,11 @@ mod imp {
     }
 }
 
-// bin crate：分发臂直接用 crate::yq_impl::yq_cmd_main 全路径调用，不做 pub use
-// （bin 无外部消费者，re-export 会触发 unused_imports）
+// bin crate：分发臂按 crate::yq_impl::yq_cmd_main 全路径调用；yq_cmd_main
+// 定义在 cfg 分家的 imp 子模块里，需顶层 re-export。cfg 限定 windows：
+// 非 Windows 构建没有调用方，无条件 re-export 反而触发 unused_imports。
+#[cfg(windows)]
+pub use imp::yq_cmd_main;
 
 #[cfg(test)]
 mod tests {
