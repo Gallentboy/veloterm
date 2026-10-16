@@ -46,7 +46,19 @@ MSVC 不支持。已加 `_MSC_VER` 分支改用等价三元式；当前唯一使
 CI 报 C2057/C2466/C2133）。已改 `enum { max_utf8_len = 4 };`，值语义不变
 （仅作数值使用，无取址）。
 
-四处补丁均有中文注释标记。
+`src/jv_dtoa_tsd.c`（第 39 行）：`inline struct dtoa_context *tsd_dtoa_context_get()`
+的裸 inline 定义在 MSVC 下不产出外部符号，jv.c / jv_print.c 引用处链接失败
+（CI 报 LNK2019）。已去 `inline` 改普通外部定义；GNU 侧语义不变（本 TU 已
+包含 jv_dtoa_tsd.h 的非 inline 声明，按 C99 规则本就编出外部定义）。
+
+五处补丁均有中文注释标记。
+
+## 构建集合的隐式项（jq-app build.rs 的收录依据）
+
+`Makefile.am` 的 `LIBJQ_SRC` 只列 .c 文件，`lexer.c` / `parser.c`（tarball 自带的
+flex 2.6.4 / bison 预生成物）是经 `LIBJQ_INCS` 的 `lexer.l` / `parser.y` 后缀规则
+**隐式编入** libjq 的——移植到 cc 构建时必须显式收录，否则缺
+`jq_parse` / `jq_parse_library`（CI 实测 LNK2019）。
 
 ## 关键构建事实（jq-app build.rs 的依据，均已对 tarball 逐条核实）
 

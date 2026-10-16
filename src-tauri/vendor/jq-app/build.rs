@@ -10,11 +10,13 @@
 //! - **编译集合**：`Makefile.am` 的 `LIBJQ_SRC` + `jq_SOURCES`：
 //!   src/{builtin,bytecode,compile,execute,jq_test,jv,jv_alloc,jv_aux,jv_dtoa,
 //!   jv_file,jv_parse,jv_print,jv_unicode,linker,locfile,util,jv_dtoa_tsd}.c +
-//!   src/main.c + src/decNumber/{decContext,decNumber}.c。
-//!   src/inject_errors.c 是 ENABLE_ERROR_INJECTION 的测试用 LD_PRELOAD 库，
-//!   不属于 jq 程序本体，排除。lexer.c / parser.c 是 tarball 自带的
-//!   flex 2.6.4 / bison 预生成物（Makefile.am 非 maintainer-mode 明确不重新
-//!   生成），直接按普通源码编译。
+//!   src/main.c + src/decNumber/{decContext,decNumber}.c + 预生成的
+//!   src/lexer.c / src/parser.c（tarball 自带的 flex 2.6.4 / bison 产物，
+//!   非 maintainer-mode 不重新生成）。lexer/parser 不在 LIBJQ_SRC 的 .c
+//!   清单里——automake 经 LIBJQ_INCS 的 lexer.l/parser.y 后缀规则隐式编入
+//!   libjq，故 JQ_SOURCES 须显式收录（漏编即缺 jq_parse/jq_parse_library，
+//!   CI 实测 LNK2019）。src/inject_errors.c 是 ENABLE_ERROR_INJECTION 的
+//!   测试用 LD_PRELOAD 库，不属于 jq 程序本体，排除。
 //! - **oniguruma 6.9.8 随 jq tarball 捆绑**（modules/oniguruma）：编译其
 //!   `src/Makefile.am` 的 `libonig_la_SOURCES` 全集（regposix/regposerr 是
 //!   ENABLE_POSIX_API 可选项、koi8.c/mktable.c/unicode_*_data*.c 是
@@ -68,7 +70,9 @@
 //!   mutex 与 key 声明却漏了 once，jv.c/jv_dtoa_tsd.c 无条件使用——用
 //!   INIT_ONCE 补齐）；`<malloc.h>`（main.c 的 wmain 裸调 alloca）；
 //!   `JV_PRINTF_LIKE` / `JV_VPRINTF_LIKE` 空宏（jv.h 只在 `__GNUC__` 下
-//!   定义、129-130 行却无条件使用，MSVC 下未定义会崩坏声明解析）。
+//!   定义、129-130 行却无条件使用，MSVC 下未定义会崩坏声明解析）；
+//!   `S_ISDIR`（POSIX 宏，UCRT <sys/stat.h> 只有 _S_IFMT/_S_IFDIR——
+//!   jv_file.c 用它判目录，未定义会被当隐式函数调用 → LNK2019）。
 //! - 假 `unistd.h`（main/util/jv_file/lexer 包含；MSVC 无此头）：
 //!   含 `<io.h>` + STDIN/STDOUT/STDERR_FILENO 宏 + isatty/fileno 映射到
 //!   `_isatty`/`_fileno`（open/close/fstat/fdopen 等 POSIX 名 UCRT 头件
@@ -79,12 +83,13 @@
 //!   winsock.h 已定义同布局的 timeval，无守卫必报 C2011 重定义。
 //! - 假 `libgen.h`（main.c/linker.c 包含）：dirname 的最小实现（POSIX
 //!   语义，就地修改入参，兼容 `/` 与 `\`）。
-//! - vendor/jq 四处就地修补（均见 vendor/jq/README.md，带中文注释标记）：
+//! - vendor/jq 五处就地修补（均见 vendor/jq/README.md，带中文注释标记）：
 //!   jv.c 上游笔误（`_MSC_VER` 分支误声明 jv_alloc.c 的私有类型
 //!   nomem_handler）；jv_alloc.h 无编译器守卫的
 //!   `__attribute__((warn_unused_result))`；util.h 的 MIN/MAX 宏用 GNU
 //!   语句表达式 + `__typeof__`（MSVC 不支持，加 `_MSC_VER` 三元式分支）；
-//!   jv_file.c 的 `const int` 数组尺寸实为 VLA（MSVC 不支持，改 enum 常量）。
+//!   jv_file.c 的 `const int` 数组尺寸实为 VLA（MSVC 不支持，改 enum 常量）；
+//!   jv_dtoa_tsd.c 的裸 `inline` 定义在 MSVC 下不产出外部符号（LNK2019，去 inline）。
 //!
 //! # 编译告警
 //!
@@ -116,12 +121,14 @@ const JQ_VERSION: &str = "1.7.1";
 const JQ_CONFIG: &str = "cc static build for Windows (veloterm vendor/jq 1.7.1, oniguruma 6.9.8 bundled)";
 
 /// jq 程序本体源（Makefile.am LIBJQ_SRC + jq_SOURCES；inject_errors.c 是
-/// 测试用错误注入库，排除；lexer.c/parser.c 为 tarball 预生成物，照常编译）
+/// 测试用错误注入库，排除）。lexer.c/parser.c 不在 LIBJQ_SRC 的 .c 清单里，
+/// 但 automake 经 LIBJQ_INCS 的 lexer.l/parser.y 后缀规则把预生成的 .c 隐式
+/// 编入 libjq——必须显式收录，否则缺 jq_parse/jq_parse_library（CI LNK2019）。
 const JQ_SOURCES: &[&str] = &[
     "builtin.c", "bytecode.c", "compile.c", "execute.c", "jq_test.c", "jv.c", "jv_alloc.c",
     "jv_aux.c", "jv_dtoa.c", "jv_file.c", "jv_parse.c", "jv_print.c", "jv_unicode.c", "linker.c",
-    "locfile.c", "util.c", "jv_dtoa_tsd.c", "main.c", "decNumber/decContext.c",
-    "decNumber/decNumber.c",
+    "locfile.c", "util.c", "jv_dtoa_tsd.c", "main.c", "lexer.c", "parser.c",
+    "decNumber/decContext.c", "decNumber/decNumber.c",
 ];
 
 /// 捆绑 oniguruma 源（其 src/Makefile.am 的 libonig_la_SOURCES；
@@ -415,6 +422,13 @@ const VELOTERM_JQ_SHIM_H: &str = r#"/* veloterm jq MSVC 顶层垫片（/FI 强�
 
 #include <windows.h>   /* INIT_ONCE（pthread_once 用） */
 #include <malloc.h>    /* alloca（main.c 的 wmain） */
+#include <sys/stat.h>  /* _S_IFMT/_S_IFDIR（S_ISDIR 用） */
+
+/* UCRT 的 <sys/stat.h> 没有 POSIX 的 S_ISDIR；jv_file.c 用它判目录，
+ * 未定义会被当隐式函数调用（LNK2019）。语义与 POSIX 一致。 */
+#ifndef S_ISDIR
+#define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
+#endif
 
 typedef INIT_ONCE pthread_once_t;
 #define PTHREAD_ONCE_INIT INIT_ONCE_STATIC_INIT
@@ -610,15 +624,23 @@ mod tests {
             VELOTERM_JQ_SHIM_H.contains("#define JV_VPRINTF_LIKE(fmt_arg_num)"),
             "JV_VPRINTF_LIKE 需在垫片里定义为空宏"
         );
+        assert!(
+            VELOTERM_JQ_SHIM_H.contains("#define S_ISDIR(m)"),
+            "S_ISDIR 需在垫片里补上（UCRT 无该 POSIX 宏，缺则 LNK2019）"
+        );
     }
 
     /// 编译集合与上游 Makefile.am 的清单条数（变更 vendor 版本时先改这里）
     #[test]
     fn source_lists_match_upstream_makefile_am() {
-        // LIBJQ_SRC 的 .c（17）+ decNumber 2 + main.c = 20；inject_errors 不在
-        assert_eq!(JQ_SOURCES.len(), 20);
+        // LIBJQ_SRC 的 .c（17）+ decNumber 2 + main.c + 预生成 lexer.c/parser.c = 22
+        assert_eq!(JQ_SOURCES.len(), 22);
         assert!(!JQ_SOURCES.contains(&"inject_errors.c"));
         assert!(JQ_SOURCES.contains(&"main.c"));
+        // lexer/parser 经 LIBJQ_INCS 的 .l/.y 后缀规则隐式编入上游 libjq，
+        // 本清单必须显式列（漏编缺 jq_parse/jq_parse_library，CI 实测 LNK2019）
+        assert!(JQ_SOURCES.contains(&"lexer.c"));
+        assert!(JQ_SOURCES.contains(&"parser.c"));
         // onig libonig_la_SOURCES 全集（无 iso8859_12，上游就没有）
         assert_eq!(ONIG_SOURCES.len(), 48);
         assert!(!ONIG_SOURCES.contains(&"iso8859_12.c"));
