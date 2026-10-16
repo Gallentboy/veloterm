@@ -37,6 +37,9 @@ export interface TerminalContextValue {
   isBroadcastActive: boolean;
   setIsBroadcastActive: (active: boolean) => void;
   toggleBroadcast: () => void;
+  /** 终端联动目标 session id 集合：非空即联动生效（任一目标内的用户输入实时镜像到其余目标） */
+  broadcastTargets: number[];
+  setBroadcastTargets: (ids: number[]) => void;
   createSession: (params?: { cwd?: string; hostId?: number; customTitle?: string }) => number;
   closeSession: (sessionId: number) => void;
   activateSession: (sessionId: number) => void;
@@ -71,6 +74,7 @@ export function TerminalProvider({
   });
   const [maximizedSessionId, setMaximizedSessionId] = useState<number | null>(null);
   const [isBroadcastActive, setIsBroadcastActive] = useState<boolean>(false);
+  const [broadcastTargets, setBroadcastTargets] = useState<number[]>([]);
 
   const setLayoutMode = useCallback((mode: TerminalLayoutMode) => {
     setLayoutModeState(mode);
@@ -87,6 +91,8 @@ export function TerminalProvider({
 
   const toggleBroadcast = useCallback(() => {
     setIsBroadcastActive((prev) => !prev);
+    // 关闭控制条时清空联动目标，镜像立即停止（重新打开时由控制条初始化为全选）
+    setBroadcastTargets([]);
   }, []);
 
   useEffect(() => {
@@ -210,6 +216,8 @@ export function TerminalProvider({
       isBroadcastActive,
       setIsBroadcastActive,
       toggleBroadcast,
+      broadcastTargets,
+      setBroadcastTargets,
       createSession,
       closeSession,
       activateSession,
@@ -226,6 +234,7 @@ export function TerminalProvider({
       closeSession,
       createSession,
       isBroadcastActive,
+      broadcastTargets,
       layoutMode,
       markDisconnected,
       maximizedSessionId,
