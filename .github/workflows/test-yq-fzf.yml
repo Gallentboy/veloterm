@@ -1,10 +1,10 @@
 # 目标（单一）：Go FFI 车道——veloterm_goffi.dll（yq + fzf 合并的 c-shared
 # DLL，双符号 veloterm_yq_main / veloterm_fzf_main；cgo 需 gcc，GOAMD64=v3
-# 以 AVX2 为基线）。yq/fzf 两段共用一套 Go/gcc 构建（build-tools.mjs --only yq
-# 或 --only fzf 均产出同一 DLL），故 test_yq / test_fzf 两个 tag 触发同一车道。
+# 以 AVX2 为基线）。经 build-tools.mjs --only goffi 产出（只依赖 Go）。
 # 触发：推 tag（验证完删除）——
-#   git tag test_yq && git push origin test_yq      （fzf 同理 test_fzf）
-#   git push origin :refs/tags/test_yq
+#   git tag test_goffi && git push origin test_goffi
+#   git push origin :refs/tags/test_goffi
+#   （test_yq / test_fzf 历史习惯 tag 同样触发本车道）
 # 也支持 workflow_dispatch 手动触发。
 name: 'test-yq-fzf'
 
@@ -12,6 +12,7 @@ on:
   workflow_dispatch:
   push:
     tags:
+      - 'test_goffi*'
       - 'test_yq*'
       - 'test_fzf*'
 
@@ -35,8 +36,8 @@ jobs:
         run: |
           C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm mingw-w64-x86_64-gcc"
 
-      - name: Build yqffi.dll / fzfffi.dll
-        run: node scripts/build-tools.mjs --only yq --target x86_64-pc-windows-msvc
+      - name: Build veloterm_goffi.dll
+        run: node scripts/build-tools.mjs --only goffi --target x86_64-pc-windows-msvc
 
       - name: Upload Go FFI artifact
         uses: actions/upload-artifact@v7
