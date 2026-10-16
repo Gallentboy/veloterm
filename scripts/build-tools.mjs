@@ -131,18 +131,24 @@ if (only === 'coreutils') {
   process.exit(0);
 }
 
-// ── yq / fzf（Go）：coreutils 的 yq、fzf 命令分别经 yqffi.dll / fzfffi.dll 动态导入 ─
+// ── yq + fzf（Go）→ 单一 veloterm_goffi.dll：coreutils 的 yq、fzf 命令经
+// 合并 DLL 按符号动态导入（veloterm_yq_main / veloterm_fzf_main，分发臂见
+// crates/coreutils 的 goffi_impl.rs，运行时按 exe 同目录/上级目录定位）。
 // Go 官方不支持 MSVC 链接 c-archive（golang/go#74189），静态链入 coreutils.exe
-// 不可能；buildmode=c-shared 的 DLL 是唯一形态（分发臂见 crates/coreutils 的
-// yq_impl.rs / fzf_impl.rs，运行时按 exe 同目录/上级目录定位）。产物为普通文件名
-// yqffi.dll / fzfffi.dll，经 tauri.windows.conf.json 的 resources 随包放在安装根
-// 目录。版本锁在各 vendor 目录的 VELOTERM_VERSION（与 openssl-src 的双源纪律
-// 一致），通过 ldflags 注入让 `yq --version` / `fzf --version` 打出真实版本。
+// 不可能；buildmode=c-shared 的 DLL 是唯一形态。合并架构：宿主取 vendor/fzf
+// 的 package main（自带 FFI 入口与 shell 资源 embed，上游逻辑在根 main 包、
+// 无法被外部 import），经 vendor/go.work 跨模块引 yq 的 cmd 包，fzf 树内
+// veloterm_goffi.go（tag veloterm_goffi）追加导出 yq 入口并在 init 关闭常规
+// GC（单次 CLI 语义，1GB 软上限兜底）。两份 Go runtime 合一，体积省约三成。
+// 版本锁在各 vendor 目录的 VELOTERM_VERSION，经 ldflags 注入让两个
+// --version 都打出真实版本。
+// GOAMD64=v3：以 AVX2 为基线（2013+ Intel/AMD）换取向量化性能，基线以下的
+// CPU 会非法指令崩溃——性能与兼容的权衡，回退只需删掉该环境变量。
 if (!only || only === 'yq' || only === 'fzf') {
   try {
     execSync('go version', { stdio: 'ignore' });
   } catch {
-    console.error('[build-tools] 未找到 go 工具链（yqffi.dll/fzfffi.dll 构建必需）：请安装 Go ≥ 1.24 或将其加入 PATH');
+    console.error('[build-tools] 未找到 go 工具链（veloterm_goffi.dll 构建必需）：请安装 Go ≥ 1.26 或将其加入 PATH');
     process.exit(1);
   }
   // c-shared 需要 cgo：CGO_ENABLED=1 + gcc。windows-latest 镜像通常自带 MinGW
@@ -175,47 +181,31 @@ if (!only || only === 'yq' || only === 'fzf') {
   }
   if (!ensureGccOnPath()) {
     console.error(
-      '[build-tools] 未找到 gcc（cgo 编译 yqffi.dll/fzfffi.dll 必需）：windows-latest 通常自带 MinGW，' +
+      '[build-tools] 未找到 gcc（cgo 编译 veloterm_goffi.dll 必需）：windows-latest 通常自带 MinGW，' +
         '若镜像变化请安装 MinGW-w64 或把其 bin 目录加入 PATH',
     );
     process.exit(1);
   }
 }
-if (!only || only === 'yq') {
-  const yqSrc = join(srcTauri, 'vendor', 'yq');
-  const yqVersion = readFileSync(join(yqSrc, 'VELOTERM_VERSION'), 'utf8').trim();
-  console.log(`[build-tools] yq ${yqVersion}: go build -buildmode=c-shared`);
-  execSync(
-    `go build -buildmode=c-shared -tags veloterm_ffi -trimpath ` +
-      `-ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${yqVersion}" ` +
-      `-o "${join(outDir, 'yqffi.dll')}" .`,
-    { cwd: yqSrc, stdio: 'inherit', env: { ...process.env, CGO_ENABLED: '1' } },
-  );
-  console.log(`[build-tools] yqffi.dll (${yqVersion}) -> ${join(outDir, 'yqffi.dll')}`);
-}
-if (only === 'yq') {
-  console.log('[build-tools] 完成');
-  process.exit(0);
-}
 
-// ── fzf（junegunn/fzf，Go）：同 yq 的 c-shared 形态（veloterm_ffi.go 复刻
-// 上游 main() 的分支逻辑并导出 veloterm_fzf_main，见 vendor/fzf 树内注释）。
-// fzf 是交互式 TUI：DLL 在宿主 coreutils.exe 进程内直跑，stdin/stdout 是
-// 从 cmd 继承的 ConPTY 句柄，交互渲染/按键直接落在 veloterm 终端上；
-// revision 置空让 `fzf --version` 打出与官方二进制一致的裸版本号
-if (!only || only === 'fzf') {
-  const fzfSrc = join(srcTauri, 'vendor', 'fzf');
-  const fzfVersion = readFileSync(join(fzfSrc, 'VELOTERM_VERSION'), 'utf8').trim();
-  console.log(`[build-tools] fzf ${fzfVersion}: go build -buildmode=c-shared`);
+// 合并构建：宿主 = vendor/fzf（package main，veloterm_ffi.go 导出 fzf 入口），
+// vendor/go.work 跨模块引 yq 的 cmd 包，fzf 树内 veloterm_goffi.go 导出 yq
+// 入口 + GC 关闭；双 tag 同时激活两个入口文件，单 DLL 双符号
+if (!only || only === 'yq' || only === 'fzf') {
+  const goffiHost = join(srcTauri, 'vendor', 'fzf');
+  const yqVersion = readFileSync(join(srcTauri, 'vendor', 'yq', 'VELOTERM_VERSION'), 'utf8').trim();
+  const fzfVersion = readFileSync(join(goffiHost, 'VELOTERM_VERSION'), 'utf8').trim();
+  console.log(`[build-tools] goffi: yq ${yqVersion} + fzf ${fzfVersion} -> veloterm_goffi.dll (GOAMD64=v3)`);
   execSync(
-    `go build -buildmode=c-shared -tags veloterm_ffi -trimpath ` +
-      `-ldflags "-s -w -X main.version=${fzfVersion} -X main.revision=" ` +
-      `-o "${join(outDir, 'fzfffi.dll')}" .`,
-    { cwd: fzfSrc, stdio: 'inherit', env: { ...process.env, CGO_ENABLED: '1' } },
+    `go build -buildmode=c-shared -tags "veloterm_ffi veloterm_goffi" -trimpath -buildvcs=false ` +
+      `-ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${yqVersion} -X main.version=${fzfVersion} -X main.revision=" ` +
+      `-o "${join(outDir, 'veloterm_goffi.dll')}" .`,
+    { cwd: goffiHost, stdio: 'inherit',
+      env: { ...process.env, CGO_ENABLED: '1', GOAMD64: 'v3' } },
   );
-  console.log(`[build-tools] fzfffi.dll (${fzfVersion}) -> ${join(outDir, 'fzfffi.dll')}`);
+  console.log(`[build-tools] veloterm_goffi.dll (yq ${yqVersion} + fzf ${fzfVersion}) -> ${join(outDir, 'veloterm_goffi.dll')}`);
 }
-if (only === 'fzf') {
+if (only === 'yq' || only === 'fzf') {
   console.log('[build-tools] 完成');
   process.exit(0);
 }

@@ -11,10 +11,10 @@
 //   - 与上游的差异仅一处防御：args 为空时跳过 Find 回落判断（上游
 //     `args[0]` 在空参 + Find 出错的组合下会越界 panic，本文件补 len 判空）。
 //
-// 构建（由 scripts/build-tools.mjs 在 Windows 上执行）：
-//   CGO_ENABLED=1 go build -buildmode=c-shared -tags veloterm_ffi \
-//     -ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=<VELOTERM_VERSION>" \
-//     -o yqffi.dll .
+// 构建：正式车道自合并构建起不再单独产出 yqffi.dll——由 scripts/build-tools.mjs
+// 以 vendor/fzf 为宿主、vendor/go.work 跨模块引本模块的 cmd 包，产出合并的
+// veloterm_goffi.dll（yq 入口副本见 vendor/fzf/veloterm_goffi.go，两处逻辑
+// 同源、升级需同步复核）；本文件保留作独立构建参考与升级比对源。
 // 版本锁在仓库内本目录的 VELOTERM_VERSION（与 openssl-src 的双源纪律一致）。
 
 package main

@@ -77,8 +77,7 @@ cargo clippy --workspace --all-targets
 | putty-telnet | telnet（PuTTY 源码内嵌 + C 层 GNU 参数解析，仅 Windows） |
 | jq-app | jq（jqlang/jq 1.7.1 + 捆绑 oniguruma 6.9.8，vendor 源码 cc 现场编译 FFI 直调 umain，仅 Windows；vendor 树含本地修补清单，见 `src-tauri/vendor/jq/README.md`） |
 | bc-app | bc（gavinhoward/bc 7.1.0，vendor 源码 cc 现场编译 FFI 直调改名 main，上游自带官方 MSVC 工程零修补，仅 Windows） |
-| yq（Go） | yq（v4.54.1：源码内 vendor + `yqffi.dll` 动态导入 FFI，仅 Windows；Go 官方不支持 MSVC 链接 c-archive，DLL 是 extern 链接的唯一形态） |
-| fzf（Go） | fzf（0.74.5：源码内 vendor + `fzfffi.dll` 动态导入 FFI，仅 Windows；交互式模糊查找器，与 yq 同形态，交互渲染直接落在 veloterm 终端上） |
+| yq + fzf（Go） | 合并为单一 `veloterm_goffi.dll`（yq v4.54.1 + fzf 0.74.5：源码内 vendor + `vendor/go.work` 跨模块聚合、运行时按符号动态导入 FFI，仅 Windows；GOAMD64=v3 以 AVX2 为基线、单次 CLI 关闭常规 GC；Go 官方不支持 MSVC 链接 c-archive，DLL 是 extern 链接的唯一形态；fzf 是交互式模糊查找器，渲染直接落在 veloterm 终端上） |
 | libqalculate（C++） | qalc（5.13.1：源码内 vendor + MSYS2 MinGW64 构建 + `qalcffi.dll` 动态导入 FFI，仅 Windows；上游无 MSVC 工程且官方 Windows 版即 MinGW 构建，依赖全静态打入、定义 XML 编进二进制） |
 | nmap（C/C++） | nmap（7.992：源码内 vendor（裁掉 zenmap GUI）+ MSYS2 MinGW64 构建 + `nmapffi.dll` 动态导入 FFI，仅 Windows；Npcap SDK 经 bundled libpcap CMake 静态编入、Packet.dll 延迟导入——未装 Npcap 时降级 connect 扫描，装后全功能；NSE 数据文件树随包放安装根 `nmap-data/`；NPSL 许可义务见 `src-tauri/vendor/nmap/README.md`） |
 | zoxide | zoxide（0.10.0：ajeetdsouza/zoxide 纯 Rust 源码 vendor 静态链入，lib.rs 可注入入口 eza 同型，仅 Windows 清单；数据库落在 `%LOCALAPPDATA%\zoxide`，上游无 cmd.exe 钩子，`zoxide init powershell` 等可用） |
