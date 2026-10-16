@@ -18,6 +18,28 @@ on:
       - '.github/workflows/tools-ci.yml'
 
 jobs:
+  # 最快反馈环：只构建 qalcffi.dll（build-tools.mjs --only qalc + -O0 -g debug
+  # 编译提速）。qalc 段只依赖 MSYS2——不需要 Rust/vcpkg OpenSSL/Go，从 15 分钟级
+  # 压到几分钟；编译期/链接期/静态自包含断言与 release 配置等价暴露，-O2 代码
+  # 生成差异由 publish 全量构建兜底
+  qalc-debug:
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install MSYS2 packages for qalc (Windows)
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm make gettext mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-libxml2 mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr"
+
+      - name: Build qalcffi.dll only (debug)
+        env:
+          CFLAGS: '-O0 -g'
+          CXXFLAGS: '-O0 -g'
+        run: node scripts/build-tools.mjs --only qalc
+
   build-tools:
     permissions:
       contents: read
