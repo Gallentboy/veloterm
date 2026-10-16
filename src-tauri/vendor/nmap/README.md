@@ -113,7 +113,7 @@ build-tools.mjs 的 configure/link flag 仍然成立：
      缺 Npcap 直接降级、不触发 delayload 解析（详见补丁注释）。
 2. `veloterm_ffi.cc`（本仓库新增文件）：`#define main` 改名包含 `main.cc`
    + 导出 `veloterm_nmap_main`。
-3. `libpcap/CMakeLists.txt`（搜 `VeloTerm patch`，四处）：
+3. `libpcap/CMakeLists.txt`（搜 `VeloTerm patch`，五处）：
    - flex/bison 探测与生成段整体跳过（`VELOTERM_SHIPPED_GENERATED`），
      scanner/grammar 消费点改指源码树内**预生成**文件——树内无 grammar.y
      （仅 grammar.y.in 模板），bison 生成路径无从工作；MSYS2 也没有
@@ -127,8 +127,16 @@ build-tools.mjs 的 configure/link flag 仍然成立：
      上游在「MinGW + 静态构建」组合下必失败（我们正是该组合，CI 实测）；
      同文件其余 `${LIBRARY_NAME}` 引用经核对均在既有守卫内或经
      LIBRARIES_TO_INSTALL 条件构造，无需改动。
+   - `asprintf`/`vasprintf` 探测在 WIN32 下强制为假——check_function_exists
+     走链接期探测，MinGW 的 libmingwex 有符号（报 found）但头文件仅在
+     `_GNU_SOURCE` 下声明，portability.h 据此把 `pcapint_asprintf` 映射到
+     系统 asprintf，GCC 14 对隐式声明报错（pcap-npf.c 编译失败，CI 实测）。
+     上游 WIN32 分支本就「假定没有 asprintf」并无条件编入
+     `missing/win_asprintf.c`，此处让探测与之一致。
    - 该补丁在 macOS 本地以静态/共享两种模式分别 configure + 全量构建
-     验证（libpcap.a / libpcap.dylib 均产出、零警告）。
+     验证（libpcap.a / libpcap.dylib 均产出、零警告）；asprintf 强制为假
+     仅作用于 WIN32，非 WIN32 探测行为不变（本地 config.h 实测
+     `HAVE_ASPRINTF 1` 保留）。
 4. **删除上游 `.gitignore`**：nmap 的 git 仓忽略规则面向他们自己的开发仓
    （那里 `/libpcap/bpf_filter.c`、`/libz/zconf.h`、`/libpcap/*.3pcap`、
    `/libpcap/grammar.y` 等是生成物/不入库文件），而 dist tarball 实际携带
