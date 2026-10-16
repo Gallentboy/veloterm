@@ -228,6 +228,11 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // 仅 Windows：yq（Go）经 yqffi.dll 的 C 导出（运行时加载，见 yq_impl.rs）
         #[cfg(target_os = "windows")]
         "yq" => crate::yq_impl::yq_cmd_main(it),
+        // 仅 Windows：fzf（junegunn/fzf，Go）经 fzfffi.dll 的 C 导出
+        // （运行时加载，见 fzf_impl.rs；交互式 TUI 在宿主进程内直跑，
+        // stdio 是继承的 ConPTY 句柄）
+        #[cfg(target_os = "windows")]
+        "fzf" => crate::fzf_impl::fzf_cmd_main(it),
         // 仅 Windows：qalc（libqalculate C++）经 qalcffi.dll 的 C 导出
         // （运行时加载，见 qalc_impl.rs；MinGW 构建，无 MSVC 链接路径）
         #[cfg(target_os = "windows")]
@@ -397,10 +402,11 @@ mod tests {
     fn all_commands_dispatch_version_sweep() {
         let expect_one = ["test", "false", "which"];
         let mut skip = vec!["cmp", "diff", "sd", "wget"];
-        // yq/qalc 仅在 Windows 命令表里，且依赖打包产物 DLL（运行时加载），
+        // yq/fzf/qalc 仅在 Windows 命令表里，且依赖打包产物 DLL（运行时加载），
         // cargo test 环境不保证存在 —— 跳过（真实行为由安装包冒烟覆盖）
         if cfg!(target_os = "windows") {
             skip.push("yq");
+            skip.push("fzf");
             skip.push("qalc");
         }
         let all = all_commands();

@@ -19,6 +19,7 @@
     "externalBin": ["binaries/coreutils"],
     "resources": {
       "binaries/yqffi.dll": "yqffi.dll",
+      "binaries/fzfffi.dll": "fzfffi.dll",
       "binaries/qalcffi.dll": "qalcffi.dll"
     },
     "targets": ["nsis"],

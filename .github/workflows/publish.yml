@@ -164,7 +164,7 @@ jobs:
 
       # 前端依赖安装排在 coreutils 编译之后：build-tools.mjs 只用 Node 内建模块
       # （child_process/fs/path/url），不依赖 node_modules——先编工具链，能在耗时
-      # 的依赖安装与打包之前尽早暴露 Windows 专属编译问题（jq/yq/qalc/openssl-app）
+      # 的依赖安装与打包之前尽早暴露 Windows 专属编译问题（jq/yq/fzf/qalc/openssl-app）
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 
