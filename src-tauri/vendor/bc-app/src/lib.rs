@@ -60,6 +60,17 @@ mod imp {
 
 pub use imp::bc_cmd_main;
 
+/// build.rs 的纯函数不变量（strgen 生成物复刻 / 宏清单对齐 vcxproj 等）原本
+/// 只在 build 脚本的 `#[cfg(test)]` 里——cargo 从不执行 build 脚本的测试，
+/// vendor 又被 workspace exclude，这些防线实际从未运行过。经 `#[path]` 把
+/// build.rs 纳入 lib 测试编译，`cargo test`（vendor 目录内独立跑，见
+/// AGENTS.md 门禁约定）即可执行全部用例；`#[allow(dead_code)]` 放行 fn main
+/// 等测试外符号。strgen 复刻的正确性防线此前形同虚设，本模块使其生效。
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../build.rs"]
+mod build_script_tests;
+
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::bc_cmd_main;

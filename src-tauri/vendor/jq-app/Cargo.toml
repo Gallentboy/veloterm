@@ -13,6 +13,11 @@ description = "jq CLI (jqlang/jq 1.7.1) 静态编入：仅 Windows，vendor 源�
 license = "MIT"
 publish = false
 
+[dependencies]
+# build.rs 同时经 #[path] 纳入 lib 测试编译（见 src/lib.rs 的
+# build_script_tests）——其函数体引用 cc，故 cc 需作为普通依赖可见
+cc = "1"
+
 [build-dependencies]
 # 与主工程 Cargo.lock 中一致（cc 1.x），用于编译 jq + decNumber + oniguruma 源
 cc = "1"

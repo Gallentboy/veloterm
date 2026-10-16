@@ -237,10 +237,16 @@ SRC=$(cygpath -u '${qalcSrc}')
 BUILD=$(cygpath -u '${qalcBuild}')
 mkdir -p "$BUILD"
 cd "$BUILD"
-# 增量构建：Makefile 已存在（上次构建残留）则跳过 configure
-if [ ! -f Makefile ]; then
+# 增量构建 + 陈旧配置防护：Makefile 已存在（上次构建残留）且 configure 入参
+# 未变时跳过 configure；升级 vendor/libqalculate 或改参数后必须清目录重配——
+# 沿用旧 Makefile/config.h 会静默产出与预期配置不符的 DLL（CI 是 fresh
+# runner 不受影响，本地 Windows 开发机续跑会踩）
+STAMP_HASH=$(printf '%s' "$SRC/configure@--disable-shared@--enable-static@--enable-compiled-definitions@--without-libcurl@--without-icu@--disable-nls@--disable-unittests" | cksum)
+if [ ! -f Makefile ] || [ "$(cat .veloterm-configure-stamp 2>/dev/null || true)" != "$STAMP_HASH" ]; then
+  find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   sh "$SRC/configure" --disable-shared --enable-static --enable-compiled-definitions \
     --without-libcurl --without-icu --disable-nls --disable-unittests
+  printf '%s\n' "$STAMP_HASH" > .veloterm-configure-stamp
 fi
 make -j"$(nproc)"
 # qalc 入口改名编译：-Dmain=qalc_main（仅本翻译单元），编译参数对齐
