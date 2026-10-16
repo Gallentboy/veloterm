@@ -1,4 +1,4 @@
-# tools-ci：vendor 原生编译工具段的快速测试车道（当前为 qalc 的 MSYS2 段）。
+# tools-ci：vendor 原生编译工具段的快速测试车道（当前为 qalc 与 nmap 的 MSYS2 段）。
 # 惯例：build-tools.mjs 里每新增一个「原生编译」工具段（--only 段），就在本
 # 文件加一个对应的 --only + debug（-O0 -g）作业——只装该段的最小依赖、几分钟
 # 级暴露编译/链接/静态自包含问题；publish.yml 仍是全量出包门禁（release 的
@@ -37,3 +37,26 @@ jobs:
           CFLAGS: '-O0 -g'
           CXXFLAGS: '-O0 -g'
         run: node scripts/build-tools.mjs --only qalc
+
+  # nmap：--only nmap 只跑 MSYS2 段产 nmapffi.dll + nmap-data/——不需要
+  # Rust/vcpkg OpenSSL/Go；-O0 -g debug 编译提速。段内自含 runner 冒烟
+  # （--version / -sT 127.0.0.1，runner 无 Npcap，正好回归 Packet.dll
+  # 延迟导入 + winfix 降级补丁），编译期/链接期/静态自包含断言与 release
+  # 配置等价暴露
+  nmap-debug:
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install MSYS2 packages for nmap (Windows)
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm make gettext unzip mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-openssl"
+
+      - name: Build nmapffi.dll only (debug)
+        env:
+          CFLAGS: '-O0 -g'
+          CXXFLAGS: '-O0 -g'
+        run: node scripts/build-tools.mjs --only nmap
