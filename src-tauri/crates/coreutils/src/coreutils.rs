@@ -16,7 +16,8 @@
 //! sd（chmln/sd）、awk（frawk，Cranelift JIT）、parallel（rust-parallel，tokio
 //! 并行执行器，GNU parallel 风格接口）、tree/eza（eza）、wget（wget-rs，
 //! rustls）；tar 由 tar-rs 库 + 自研 CLI 壳（tar_impl.rs）实现；
-//! which 为 unix_extras.rs 自研。
+//! which 为 unix_extras.rs 自研；urlencode/urldecode（仅 Windows）由
+//! urlcoding_impl.rs 基于 crates.io 的 urlencoding 库自研。
 //! chcon/runcon 依赖 SELinux，不集成。
 
 use std::ffi::OsString;
@@ -209,9 +210,19 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // 仅 Windows：源码内嵌 PuTTY 的 telnet（C 层 GNU 参数解析）
         #[cfg(target_os = "windows")]
         "telnet" => putty_telnet::telnet_cmd_main(it),
+        // 仅 Windows：urlencoding 库（kornelski/rust_urlencoding，crates.io
+        // 纯 Rust）封装的百分号编解码 CLI（见 urlcoding_impl.rs）
+        #[cfg(target_os = "windows")]
+        "urldecode" => crate::urlcoding_impl::urldecode_cmd_main(it),
+        #[cfg(target_os = "windows")]
+        "urlencode" => crate::urlcoding_impl::urlencode_cmd_main(it),
         // 仅 Windows：yq（Go）经 yqffi.dll 的 C 导出（运行时加载，见 yq_impl.rs）
         #[cfg(target_os = "windows")]
         "yq" => crate::yq_impl::yq_cmd_main(it),
+        // 仅 Windows：qalc（libqalculate C++）经 qalcffi.dll 的 C 导出
+        // （运行时加载，见 qalc_impl.rs；MinGW 构建，无 MSVC 链接路径）
+        #[cfg(target_os = "windows")]
+        "qalc" => crate::qalc_impl::qalc_cmd_main(it),
         // 不可达：run_command 已按 all_commands 白名单拦截
         _ => {
             eprintln!("coreutils: unimplemented command '{name}'");
@@ -377,10 +388,11 @@ mod tests {
     fn all_commands_dispatch_version_sweep() {
         let expect_one = ["test", "false", "which"];
         let mut skip = vec!["cmp", "diff", "sd", "wget"];
-        // yq 仅在 Windows 命令表里，且依赖打包产物 yqffi.dll（运行时加载），
+        // yq/qalc 仅在 Windows 命令表里，且依赖打包产物 DLL（运行时加载），
         // cargo test 环境不保证存在 —— 跳过（真实行为由安装包冒烟覆盖）
         if cfg!(target_os = "windows") {
             skip.push("yq");
+            skip.push("qalc");
         }
         let all = all_commands();
         let mut visited = 0usize;

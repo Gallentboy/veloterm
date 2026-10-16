@@ -22,7 +22,7 @@
 | 前端类型 | `pnpm run typecheck` | 零错误 |
 | 前端构建 | `pnpm run build` | 成功 |
 | Rust 编译 | `cargo check --workspace --all-targets`（在 `src-tauri/`） | 零错误 |
-| Rust 测试 | `cargo test --workspace` | 全绿（app 66 + coreutils 26 + tools-catalog 1 为当前基线） |
+| Rust 测试 | `cargo test --workspace` | 全绿（app 66 + coreutils 29 + tools-catalog 1 为当前基线） |
 | Lint | `cargo clippy --workspace --all-targets` | 自有代码零警告 |
 
 冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑（jq-app / bc-app 同此约定）。
@@ -30,7 +30,7 @@
 ## 平台约束（硬性）
 
 - **严禁在 macOS 上交叉编译 Windows 目标**。Windows 包只能由 GitHub Actions 的 windows-latest runner（或真实 Windows 机器）出。`scripts/build-tools.mjs` 已内置两道闸：非 Windows target 跳过、非 Windows 主机请求 Windows target 硬拒。
-- 工具链（openssl-app / putty-telnet / jq-app / bc-app 的 C 编译，vcpkg 静态库，yq 的 Go c-shared）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。jq-app 与 openssl-app/putty-telnet 不同：纯 C 自包含（vendor/jq 1.7.1 + 捆绑 oniguruma 6.9.8），零 vcpkg/cmake/perl 依赖，CI 无额外安装步骤。bc-app 更简：上游 bc 7.1.0 自带官方 MSVC 工程（vendor/bc/vs/bc.vcxproj，本地零修补），仅链 bcrypt，宿主生成器 strgen 由 build.rs 的 Rust 复刻替代（byte-diff 验证）。yq 亦零额外依赖：Go 构建只发生在 Windows（build-tools.mjs），macOS/测试机不碰 Go 工具链与 DLL。
+- 工具链（openssl-app / putty-telnet / jq-app / bc-app 的 C 编译，vcpkg 静态库，yq 的 Go c-shared、libqalculate 的 MSYS2 MinGW64 autotools）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。jq-app 与 openssl-app/putty-telnet 不同：纯 C 自包含（vendor/jq 1.7.1 + 捆绑 oniguruma 6.9.8），零 vcpkg/cmake/perl 依赖，CI 无额外安装步骤。bc-app 更简：上游 bc 7.1.0 自带官方 MSVC 工程（vendor/bc/vs/bc.vcxproj，本地零修补），仅链 bcrypt，宿主生成器 strgen 由 build.rs 的 Rust 复刻替代（byte-diff 验证）。yq 亦零额外依赖：Go 构建只发生在 Windows（build-tools.mjs），macOS/测试机不碰 Go 工具链与 DLL。qalc 需 CI 预装 MSYS2 MinGW64 依赖（pacman 装 gcc/make/pkg-config/libxml2/gmp/mpfr，windows-latest 预装 C:\msys2 只补包），macOS/测试机同样不碰 MSYS2 与 DLL。urlencode/urldecode（urlcoding_impl.rs）是 Windows 专属命令里唯一的纯 Rust 形态：crates.io `urlencoding` 库（kornelski/rust_urlencoding，已是 wry 传递依赖，lock 零新增）+ cfg 门控，无 vendor、无构建步骤；其参数解析/行拆分管道为无平台差异代码，macOS 门禁直接测。
 - 所有 Windows 专属逻辑用 `#[cfg(target_os = "windows")]` / `[target.'cfg(windows)'.dependencies]` 门控，不留运行时判断。
 
 ## 架构不变量
@@ -47,7 +47,7 @@
 ### Windows 工具链（BusyBox 模式）
 
 - 单一 `coreutils.exe` 多呼叫二进制；`rg`/`fd`/`awk` 三个命令的解析器直读自身 argv，**仅硬链接短名模式可用**，子命令模式给出提示。
-- **yq（Go）是唯一例外形态**：Go 官方不支持 MSVC 链接 c-archive（golang/go#74189），无法像 openssl-app 那样静态链入——vendor 源码（`vendor/yq/`，版本锁在 `VELOTERM_VERSION`）经 `build-tools.mjs` 用 `go build -buildmode=c-shared -tags veloterm_ffi` 出 `yqffi.dll`，coreutils 的 `yq_impl.rs` 运行时 LoadLibrary 调 `veloterm_yq_main`（无链接期依赖，macOS/CI 测试机无需 Go 工具链）；DLL 随包走 resources 放安装根目录，硬链接短名 `tools\yq.exe` 启动时按 exe 同目录→上级目录搜索。升级 yq：换 vendor 源码 + 改 `VELOTERM_VERSION`（build-tools 自动读入并经 ldflags 注入版本）。
+- **yq（Go）与 qalc（libqalculate C++）是 DLL 例外形态**：Go 官方不支持 MSVC 链接 c-archive（golang/go#74189），libqalculate 则是 autotools 体系的 C++ 库（GMP/MPFR/libxml2 硬依赖，上游无 MSVC 工程、官方 Windows 版即 MinGW 构建），两者都无法像 openssl-app 那样在 MSVC 下静态链入——共同形态是：vendor 源码（`vendor/yq/`、`vendor/libqalculate/`，版本各锁在树内 `VELOTERM_VERSION`）由 `build-tools.mjs` 在 Windows 上产出 DLL（yq：`go build -buildmode=c-shared -tags veloterm_ffi`；qalc：MSYS2 MinGW64 环境 VPATH 构建 + `qalc.cc -Dmain=qalc_main` 改名编译后 `-static` 链自包含 `qalcffi.dll`，定义 XML 经 `--enable-compiled-definitions` 编进二进制、运行时零数据文件），coreutils 的 `yq_impl.rs` / `qalc_impl.rs` 运行时 LoadLibrary 调 C 导出（无链接期依赖，macOS/CI 测试机无需 Go/MSYS2 工具链）；DLL 随包走 resources 放安装根目录，硬链接短名（`tools\yq.exe`、`tools\qalc.exe`）启动时按 exe 同目录→上级目录搜索。升级：换 vendor 源码 + 改 `VELOTERM_VERSION`（qalc 升级还需按树内 README 复核两处 UTF-8 输出补丁）。qalc 的 MinGW 构建依赖由 CI 的 pacman 步骤安装（publish.yml），安装包内的 qalcffi.dll 依赖全静态打入、终端用户不需要 MSYS2。
 - **bc 是 jq-app 的同型简化版**：vendor/bc（gavinhoward/bc 7.1.0，BSD-2-Clause）+ vendor/bc-app sys-crate，cc 现场编译静态链入，`-Dmain=veloterm_bc_main` 改名后 FFI 直调（main.c 按 argv[0] 首字符分发 bc/dc，恒传 "bc"）。上游自带官方 MSVC 工程零修补；4 个 strgen 生成物（lib/lib2/help×2）由 build.rs 的 Rust 复刻渲染（与宿主 strgen byte-diff 验证）；仅链 bcrypt。升级 bc：换 vendor 源码 + 同步 build.rs 的 `BC_VERSION` 与 vendor/bc/VERSION.txt（build.rs 启动时校验双源一致）+ 复核 vs/bc.vcxproj 的宏集合。
 - 硬链接安装在应用启动钩子（`src/tools/hardlinks.rs`，仅 Windows 编译）完成：幂等判据是**文件身份**（Unix inode 对；Windows 退化为大小 + mtime），不是文件大小——同体积升级曾因此误判。
 - 依赖 uutils 家族统一走 vendor 的 uucore 0.12.0（各 vendor 清单已重定向），避免 lock 出现双版本。

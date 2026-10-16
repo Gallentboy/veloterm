@@ -66,8 +66,12 @@ void *alloca (size_t);
 #include "jq.h"
 #include "jv_alloc.h"
 
+/* veloterm 修补：上游把 WIN32 的 fopen 覆盖成同名符号（UTF-8 路径转宽字符后
+ * 调 _wfopen）。动态 CRT 下覆盖的是导入桩、无害；但本工程 Windows 目标静态
+ * 链接 CRT（+crt-static /MT），libucrt.lib 里 fopen 是真实定义，同名即
+ * LNK2005 重定义（CI 实测）。改名保留原行为，调用点（open_file）随改。 */
 #ifdef WIN32
-FILE *fopen(const char *fname, const char *mode) {
+FILE *veloterm_jq_fopen(const char *fname, const char *mode) {
   size_t sz = sizeof(wchar_t) * MultiByteToWideChar(CP_UTF8, 0, fname, -1, NULL, 0);
   wchar_t *wfname = alloca(sz + 2); // +2 is not needed, but just in case
   MultiByteToWideChar(CP_UTF8, 0, fname, -1, wfname, sz);
@@ -281,7 +285,11 @@ static int jq_util_input_read_more(jq_util_input_state *state) {
         state->current_input = stdin;
         state->current_filename = jv_string("<stdin>");
       } else {
+#ifdef WIN32
+        state->current_input = veloterm_jq_fopen(f, "r");
+#else
         state->current_input = fopen(f, "r");
+#endif
         state->current_filename = jv_string(f);
         if (!state->current_input) {
           state->err_cb(state->err_cb_data, f);

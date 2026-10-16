@@ -11,7 +11,7 @@ VeloTerm 是快速、精致的跨平台桌面终端（Tauri 2 + React 19），�
 | 编辑器 | Monaco 内嵌（81 种语言高亮、TS/JS/JSON 智能提示全离线）；远端文件在线编辑、冲突检测（本地 vs 远端 baseHash）、草稿防抖暂存；SQLCipher 加密保存 |
 | 主机库 | 分组树 + 跳板机链 + 三种认证（密码 / 私钥 / Agent）；「终端就绪钩子」——连接建立后自动执行命令库中的指定命令 |
 | 命令库 | 常用命令收藏，支持 `{{参数}}` 占位符模板、危险级别、Markdown 详细说明；全局命令面板快捷执行 |
-| 内置工具链（仅 Windows） | 单一 `coreutils.exe` 多呼叫二进制 + NTFS 硬链接短名入口（`ls` `grep` `rg` `awk` `bc` `jq` `yq` … 115 个命令），BusyBox 模式零拷贝分发 |
+| 内置工具链（仅 Windows） | 单一 `coreutils.exe` 多呼叫二进制 + NTFS 硬链接短名入口（`ls` `grep` `rg` `awk` `bc` `jq` `yq` `qalc` … 118 个命令），BusyBox 模式零拷贝分发 |
 
 ## 环境要求
 
@@ -58,7 +58,7 @@ cargo clippy --workspace --all-targets
 
 ### 内置工具链（仅 Windows）
 
-工具链在 Windows 安装包中随主程序分发（`binaries/coreutils-<triple>.exe`），应用启动时在主程序同级 `tools/` 目录创建 115 个硬链接短名入口并注入 PATH——用户在 cmd 中直接敲 `ls`、`grep`、`rg` 即用。macOS 上不构建、不分发（系统自带完整工具链）。
+工具链在 Windows 安装包中随主程序分发（`binaries/coreutils-<triple>.exe`），应用启动时在主程序同级 `tools/` 目录创建 118 个硬链接短名入口并注入 PATH——用户在 cmd 中直接敲 `ls`、`grep`、`rg` 即用。macOS 上不构建、不分发（系统自带完整工具链）。
 
 工具实现来源（`src-tauri/vendor/`，全部源码锁定随仓库分发）：
 
@@ -67,12 +67,14 @@ cargo clippy --workspace --all-targets
 | uutils/coreutils 0.12.0 | GNU coreutils 全集（90 命令） |
 | uutils/grep · sed · findutils · diffutils | grep、sed、find/xargs、diff/cmp/sdiff |
 | ripgrep · fd-find · chmln/sd · frawk | rg、fd、sd、awk（Cranelift JIT） |
+| rust-parallel | parallel（v1.9.1，tokio 并行执行器，GNU parallel 风格接口；短名 argv[0] 分发） |
 | tar-rs · eza · wget-rs | tar（自研 GNU 兼容 CLI 壳）、eza/tree、wget |
 | openssl-app + openssl-src | openssl CLI（vcpkg 3.6.4 静态库 + 锁版本源码，仅 Windows） |
 | putty-telnet | telnet（PuTTY 源码内嵌 + C 层 GNU 参数解析，仅 Windows） |
 | jq-app | jq（jqlang/jq 1.7.1 + 捆绑 oniguruma 6.9.8，vendor 源码 cc 现场编译 FFI 直调 umain，仅 Windows） |
 | bc-app | bc（gavinhoward/bc 7.1.0，vendor 源码 cc 现场编译 FFI 直调改名 main，上游自带官方 MSVC 工程零修补，仅 Windows） |
 | yq（Go） | yq（v4.54.1：源码内 vendor + `yqffi.dll` 动态导入 FFI，仅 Windows；Go 官方不支持 MSVC 链接 c-archive，DLL 是 extern 链接的唯一形态） |
+| libqalculate（C++） | qalc（5.13.1：源码内 vendor + MSYS2 MinGW64 构建 + `qalcffi.dll` 动态导入 FFI，仅 Windows；上游无 MSVC 工程且官方 Windows 版即 MinGW 构建，依赖全静态打入、定义 XML 编进二进制） |
 | 自研 | which、ps、top（sysinfo + crossterm） |
 
 版本锁定与升级流程见 `src-tauri/vendor/openssl-src/README.md`。
