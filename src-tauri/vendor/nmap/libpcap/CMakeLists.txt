@@ -2909,6 +2909,18 @@ endif()
 # Kitware.
 #
 
+# ── VeloTerm patch（树内预生成 scanner/grammar）─────────────────────
+# nmap 发行树自带预生成的 scanner.c/scanner.h/grammar.c/grammar.h，且不含
+# grammar.y（仅 grammar.y.in 模板），bison 生成路径无从工作；MSYS2 亦无
+# mingw 版 flex/bison 包（win_flex/win_bison，packages.msys2.org 实查 404）。
+# 与 NMAP_MODIFICATIONS 0001 在 autotools 侧「直接用发行文件、不重新生成」
+# 的立场一致：跳过下述 flex/bison 探测与生成步骤，全部消费点改指源码树内
+# 的预生成文件（PCAP_GENERATED_DIR）。升级 libpcap 时复核此补丁仍适用。
+set(VELOTERM_SHIPPED_GENERATED ON)
+set(PCAP_GENERATED_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+# ── VeloTerm patch 结束 ──────────────────────────────────────────
+
+if(NOT VELOTERM_SHIPPED_GENERATED)
 #
 # Try to find Flex, a Windows version of Flex, or Lex.
 #
@@ -3034,6 +3046,8 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/grammar.c PROPERTIES
 #
 #set(PROJECT_SOURCE_LIST_C ${PROJECT_SOURCE_LIST_C} ${CMAKE_CURRENT_BINARY_DIR}/grammar.c)
 
+endif() # VeloTerm patch：flex/bison 探测与生成段到此为止（预生成文件见上方补丁）
+
 #
 # Assume, by default, no support for shared libraries and V7/BSD
 # convention for man pages (devices in section 4, file formats in
@@ -3149,10 +3163,14 @@ endif(WIN32)
 # Add subdirectories after we've set various variables, so they pick up
 # pick up those variables.
 #
-if(ENABLE_REMOTE)
+# VeloTerm patch：nmap 发行树裁掉了 libpcap 的 rpcapd/ 与 testprogs/ 目录，
+# 以存在性守卫（上游完整树行为不变）
+if(ENABLE_REMOTE AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/rpcapd/CMakeLists.txt)
     add_subdirectory(rpcapd)
 endif(ENABLE_REMOTE)
-add_subdirectory(testprogs)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/testprogs/CMakeLists.txt)
+    add_subdirectory(testprogs)
+endif()
 
 ######################################
 # Register targets
@@ -3167,8 +3185,8 @@ add_subdirectory(testprogs)
 #
 add_custom_target(SerializeTarget
     DEPENDS
-    ${CMAKE_CURRENT_BINARY_DIR}/grammar.c
-    ${CMAKE_CURRENT_BINARY_DIR}/scanner.c
+    ${PCAP_GENERATED_DIR}/grammar.c
+    ${PCAP_GENERATED_DIR}/scanner.c
 )
 
 set_source_files_properties(${PROJECT_EXTERNAL_OBJECT_LIST} PROPERTIES
@@ -3177,8 +3195,8 @@ set_source_files_properties(${PROJECT_EXTERNAL_OBJECT_LIST} PROPERTIES
 if(BUILD_SHARED_LIBS)
     add_library(${LIBRARY_NAME} SHARED
         ${PROJECT_SOURCE_LIST_C}
-        ${CMAKE_CURRENT_BINARY_DIR}/grammar.c
-        ${CMAKE_CURRENT_BINARY_DIR}/scanner.c
+        ${PCAP_GENERATED_DIR}/grammar.c
+        ${PCAP_GENERATED_DIR}/scanner.c
         ${PROJECT_EXTERNAL_OBJECT_LIST}
     )
     target_include_directories(${LIBRARY_NAME} PUBLIC
@@ -3206,8 +3224,8 @@ endif(BUILD_SHARED_LIBS)
 
 add_library(${LIBRARY_NAME}_static STATIC
     ${PROJECT_SOURCE_LIST_C}
-    ${CMAKE_CURRENT_BINARY_DIR}/grammar.c
-    ${CMAKE_CURRENT_BINARY_DIR}/scanner.c
+    ${PCAP_GENERATED_DIR}/grammar.c
+    ${PCAP_GENERATED_DIR}/scanner.c
     ${PROJECT_EXTERNAL_OBJECT_LIST}
 )
 target_include_directories(${LIBRARY_NAME}_static PUBLIC
@@ -3310,7 +3328,10 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmakeconfig.h.in ${CMAKE_CURRENT_BINA
 # Write out the grammar.y file
 ######################################
 
+# VeloTerm patch：预生成模式下不生成 grammar.y（见上方 flex/bison 段的补丁说明）
+if(NOT VELOTERM_SHIPPED_GENERATED)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/grammar.y.in ${CMAKE_CURRENT_BINARY_DIR}/grammar.y @ONLY)
+endif()
 
 ######################################
 # Install pcap library, include files, and man pages

@@ -43,9 +43,13 @@ in-tree 构建**（nmap 有 libdnet/liblua/libpcre/liblinear/libz/nbase/nsock
 2. **libpcap 静态库**（bundled `libpcap/`，1.10.7，CMake 官方 Windows 路线）：
    `cmake -G Ninja -DBUILD_SHARED_LIBS=OFF -DPacket_ROOT=<SDK>` → `libpcap.a`，
    install 进 `pcap-stage/`（include + lib），再把 Npcap SDK 的 `Include/*`
-   并进 `pcap-stage/include`（nmap 侧的 winfix.cc 要 `Packet32.h`）。选
-   CMake 静态编而不是直链 Npcap SDK 的 `wpcap.lib`：pcap_* 全部编进 DLL、
-   唯一外部导入收敛为 Packet.dll，且不赌 GNU ld 对 MSVC 短导入库的兼容性。
+   （含 pcap/ 子目录，递归拷）并进 `pcap-stage/include`（nmap 侧的
+   winfix.cc 要 `Packet32.h`）。选 CMake 静态编而不是直链 Npcap SDK 的
+   `wpcap.lib`：pcap_* 全部编进 DLL、唯一外部导入收敛为 Packet.dll，
+   且不赌 GNU ld 对 MSVC 短导入库的兼容性。CMake 路线经树内补丁改用
+   **预生成**的 scanner.c/grammar.c（见下「本地补丁」第 4 条），零
+   flex/bison 依赖；该补丁已在 macOS 本地 cmake configure + 全量构建
+   验证（libpcap.a 产出、构建目录零生成物）。
 3. **nmap 主体**：configure
    `--with-libpcap=<pcap-stage> --with-wpdpack=<npcap-shim>
    --with-openssl=/mingw64 --with-liblua=included --with-libpcre=included
@@ -109,7 +113,22 @@ build-tools.mjs 的 configure/link flag 仍然成立：
      缺 Npcap 直接降级、不触发 delayload 解析（详见补丁注释）。
 2. `veloterm_ffi.cc`（本仓库新增文件）：`#define main` 改名包含 `main.cc`
    + 导出 `veloterm_nmap_main`。
-3. 删减：`zenmap/` 整目录（GUI，不构建不分发）；上游 `README.md` 挪为
+3. `libpcap/CMakeLists.txt`（搜 `VeloTerm patch`，三处）：
+   - flex/bison 探测与生成段整体跳过（`VELOTERM_SHIPPED_GENERATED`），
+     scanner/grammar 消费点改指源码树内**预生成**文件——树内无 grammar.y
+     （仅 grammar.y.in 模板），bison 生成路径无从工作；MSYS2 也没有
+     mingw 版 flex/bison 包（win_flex/win_bison，packages.msys2.org 实查
+     404）。与 NMAP_MODIFICATIONS 0001 在 autotools 侧「直接用发行文件、
+     不重新生成」的立场一致；
+   - `rpcapd`/`testprogs` 的 add_subdirectory 加存在性守卫（nmap 发行树
+     裁掉了这两个目录，上游无条件引用会 configure 失败）。
+4. **删除上游 `.gitignore`**：nmap 的 git 仓忽略规则面向他们自己的开发仓
+   （那里 `/libpcap/bpf_filter.c`、`/libz/zconf.h`、`/libpcap/*.3pcap`、
+   `/libpcap/grammar.y` 等是生成物/不入库文件），而 dist tarball 实际携带
+   这些文件——vendor 入库时被静默吞掉 43 个（`bpf_filter.c` 是 CMake 必需
+   源、`zconf.h` 是 bundled zlib 的公共头，缺了必挂）。删除该文件并从
+   tarball 恢复全部被吞文件入库。
+5. 删减：`zenmap/` 整目录（GUI，不构建不分发）；上游 `README.md` 挪为
    `README.upstream.md` 给本文件让位。
 
 ## 许可（NPSL，重要）
