@@ -22,6 +22,27 @@ const DARWIN_GUI_FALLBACK_PATHS: &[&str] = &[
     "/sbin",
 ];
 
+/// Windows 本地 cmd 会话的「跨盘符 cd 适配层」启动命令（作为 `cmd /k` 参数注入）：
+/// 用 doskey 宏把交互输入的 `cd`/`chdir` 透明补上 `/d` 开关。
+///
+/// 背景：cmd 的 `cd` 不带 `/d` 时不切换当前盘符——`cd D:\proj` 只是替 D 盘记住
+/// 「该盘的当前目录」，进程 CWD 与提示符都停在原盘，用户视角即 cd 未生效
+/// （PowerShell / Git Bash 无此问题：前者 cd 内建切盘，后者是 POSIX shell，
+/// 盘符统一挂成 `/c/` `/d/` 单一根命名空间，没有「每盘各记一个目录」的概念；
+/// 该语义无法移植给 cmd，doskey 宏是 cmd 体系内等价的适配点）。
+///
+/// 约束与取舍：
+/// - 会话级注入（`/k` 启动命令），不写注册表 AutoRun，不波及系统其他 cmd 会话；
+/// - doskey 宏只作用于交互式命令行，批处理与 `cmd /c` 保持原生语义；
+/// - 宏是纯文本替换，`cd "D:\a & b"` 这类含空格/特殊字符的路径不会被二次
+///   解析破坏（相比 .bat 包装必须经 `call` 重解析，特殊字符会碎）；
+/// - 已知边界：`cd /d D:\x` 这类已带开关的输入会展开成 `cd /d /d D:\x`，
+///   cmd 只消费一次 `/D`（ReactOS cmd_chdir：`param += 2` 后余量直接作路径），
+///   重复形态会报错——适配生效后无需再手写 `/d`。真机表现需随 Windows 构建回归
+///   （macOS 无法验证 cmd 语义）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+const WINDOWS_CMD_CD_COMPAT: &str = "doskey cd=cd /d $* & doskey chdir=chdir /d $*";
+
 // 现在 Unix 分支的 Shell 探测专用；Windows 固定 cmd.exe 后暂时无调用点，
 // 保留实现并允许 Windows 下 dead_code，供后续按需复用。
 #[cfg_attr(target_os = "windows", allow(dead_code))]
@@ -97,7 +118,8 @@ fn get_user_login_shell() -> Option<String> {
 /// - Unix/macOS 优先从系统用户数据库 (`getpwuid`) / `$SHELL` 获取用户默认登录 Shell，
 ///   不可用时按 `/bin/zsh` -> `/bin/bash` -> `/bin/sh` 回退；
 /// - Windows 固定使用 `cmd.exe`（不做 pwsh/powershell 探测，也不读取自定义配置），
-///   内置 Unix 工具（coreutils 硬链接短名）经 PATH 注入在 cmd 内直接可用。
+///   内置 Unix 工具（coreutils 硬链接短名）经 PATH 注入在 cmd 内直接可用，
+///   cd/chdir 跨盘符经 doskey 宏自动补 `/d`（见 `WINDOWS_CMD_CD_COMPAT`）。
 fn resolve_local_shell(preferred: Option<&str>) -> String {
     #[cfg(target_os = "windows")]
     {
@@ -318,6 +340,13 @@ impl LocalPtySession {
             // 作为登录 shell 启动，确保加载用户的 .zprofile / .zshrc / .bash_profile
             cmd.arg("-l");
         }
+        // Windows：经 /k 注册跨盘符 cd 适配层（doskey 宏，语义与边界见常量文档）；
+        // /k 在命令执行完后继续保持交互式会话，生命周期与裸起 cmd.exe 一致
+        #[cfg(target_os = "windows")]
+        {
+            cmd.arg("/k");
+            cmd.arg(WINDOWS_CMD_CD_COMPAT);
+        }
         cmd.cwd(&resolved_cwd);
         configure_command_env(&mut cmd, &resolved_shell);
 
@@ -462,5 +491,34 @@ impl TerminalBackendSession for LocalPtySession {
             let _ = child.wait();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WINDOWS_CMD_CD_COMPAT;
+
+    /// 跨盘符 cd 适配层启动命令的形态锁定：
+    /// - 成对覆盖 `cd` 与 `chdir`（同一内建命令的两个拼写），宏体只补 `/d`；
+    /// - 全串不得含引号/管道/重定向——`/k` 字符串里出现引号会触发 cmd 的引号
+    ///   剥离特判分支，保持无引号才走最朴素的解析路径（portable-pty 仅因空格
+    ///   为参数加引号，cmd 按 `/k` 旧规则剥掉首尾引号后即还原为本串）；
+    /// - 两条 doskey 以 ` & ` 分隔：cmd 在解析层先按 `&` 切分命令，doskey 的
+    ///   宏文本天然吃到行尾，两条定义互不污染。
+    #[test]
+    fn windows_cmd_cd_compat_shape() {
+        let parts: Vec<&str> = WINDOWS_CMD_CD_COMPAT.split(" & ").collect();
+        assert_eq!(parts.len(), 2, "应为两条 doskey 定义：{WINDOWS_CMD_CD_COMPAT}");
+        for expected_name in ["cd", "chdir"] {
+            let part = format!("doskey {expected_name}={expected_name} /d $*");
+            assert!(
+                parts.contains(&part.as_str()),
+                "缺少定义「{part}」，实际：{WINDOWS_CMD_CD_COMPAT}"
+            );
+        }
+        assert!(
+            !WINDOWS_CMD_CD_COMPAT.contains(['"', '|', '>', '<']),
+            "不得引入引号/管道/重定向字符：{WINDOWS_CMD_CD_COMPAT}"
+        );
     }
 }

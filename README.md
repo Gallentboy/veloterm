@@ -60,6 +60,8 @@ cargo clippy --workspace --all-targets
 
 工具链在 Windows 安装包中随主程序分发（`binaries/coreutils-<triple>.exe`），应用启动时在主程序同级 `tools/` 目录创建 118 个硬链接短名入口并注入 PATH——用户在 cmd 中直接敲 `ls`、`grep`、`rg` 即用。macOS 上不构建、不分发（系统自带完整工具链）。
 
+本地 cmd 会话启动时还会注入 doskey 宏，把交互输入的 `cd`/`chdir` 自动补上 `/d` 开关——跨盘符直达（`cd D:\proj` 一步到位，无需手写 `cd /d`），批处理脚本与 `cmd /c` 不受影响。
+
 工具实现来源（`src-tauri/vendor/`，全部源码锁定随仓库分发）：
 
 | 来源 | 提供的命令 |
@@ -71,7 +73,7 @@ cargo clippy --workspace --all-targets
 | tar-rs · eza · wget-rs | tar（自研 GNU 兼容 CLI 壳）、eza/tree、wget |
 | openssl-app + openssl-src | openssl CLI（vcpkg 3.6.4 静态库 + 锁版本源码，仅 Windows） |
 | putty-telnet | telnet（PuTTY 源码内嵌 + C 层 GNU 参数解析，仅 Windows） |
-| jq-app | jq（jqlang/jq 1.7.1 + 捆绑 oniguruma 6.9.8，vendor 源码 cc 现场编译 FFI 直调 umain，仅 Windows） |
+| jq-app | jq（jqlang/jq 1.7.1 + 捆绑 oniguruma 6.9.8，vendor 源码 cc 现场编译 FFI 直调 umain，仅 Windows；vendor 树含本地修补清单，见 `src-tauri/vendor/jq/README.md`） |
 | bc-app | bc（gavinhoward/bc 7.1.0，vendor 源码 cc 现场编译 FFI 直调改名 main，上游自带官方 MSVC 工程零修补，仅 Windows） |
 | yq（Go） | yq（v4.54.1：源码内 vendor + `yqffi.dll` 动态导入 FFI，仅 Windows；Go 官方不支持 MSVC 链接 c-archive，DLL 是 extern 链接的唯一形态） |
 | libqalculate（C++） | qalc（5.13.1：源码内 vendor + MSYS2 MinGW64 构建 + `qalcffi.dll` 动态导入 FFI，仅 Windows；上游无 MSVC 工程且官方 Windows 版即 MinGW 构建，依赖全静态打入、定义 XML 编进二进制） |

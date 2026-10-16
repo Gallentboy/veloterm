@@ -22,7 +22,7 @@
 | 前端类型 | `pnpm run typecheck` | 零错误 |
 | 前端构建 | `pnpm run build` | 成功 |
 | Rust 编译 | `cargo check --workspace --all-targets`（在 `src-tauri/`） | 零错误 |
-| Rust 测试 | `cargo test --workspace` | 全绿（app 66 + coreutils 39 + tools-catalog 1 为当前基线） |
+| Rust 测试 | `cargo test --workspace` | 全绿（app 67 + coreutils 44 + tools-catalog 1 为当前基线） |
 | Lint | `cargo clippy --workspace --all-targets` | 自有代码零警告 |
 
 冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑（jq-app / bc-app 同此约定）。
@@ -30,8 +30,9 @@
 ## 平台约束（硬性）
 
 - **严禁在 macOS 上交叉编译 Windows 目标**。Windows 包只能由 GitHub Actions 的 windows-latest runner（或真实 Windows 机器）出。`scripts/build-tools.mjs` 已内置两道闸：非 Windows target 跳过、非 Windows 主机请求 Windows target 硬拒。
-- 工具链（openssl-app / putty-telnet / jq-app / bc-app 的 C 编译，vcpkg 静态库，yq 的 Go c-shared、libqalculate 的 MSYS2 MinGW64 autotools）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。jq-app 与 openssl-app/putty-telnet 不同：纯 C 自包含（vendor/jq 1.7.1 + 捆绑 oniguruma 6.9.8），零 vcpkg/cmake/perl 依赖，CI 无额外安装步骤。bc-app 更简：上游 bc 7.1.0 自带官方 MSVC 工程（vendor/bc/vs/bc.vcxproj，本地零修补），仅链 bcrypt，宿主生成器 strgen 由 build.rs 的 Rust 复刻替代（byte-diff 验证）。yq 亦零额外依赖：Go 构建只发生在 Windows（build-tools.mjs），macOS/测试机不碰 Go 工具链与 DLL。qalc 需 CI 预装 MSYS2 MinGW64 依赖（pacman 装 gcc/make/pkg-config/libxml2/gmp/mpfr，windows-latest 预装 C:\msys2 只补包），macOS/测试机同样不碰 MSYS2 与 DLL。urlencode/urldecode（urlcoding_impl.rs）与 data-encoding 家族同属 Windows 专属命令里的纯 Rust 形态：前者用 crates.io `urlencoding` 库（kornelski/rust_urlencoding，已是 wry 传递依赖，lock 零新增）+ cfg 门控臂，无 vendor、无构建步骤，其参数解析/行拆分管道为无平台差异代码，macOS 门禁直接测；后者见「Windows 工具链」节的 data-encoding 条目。
+- 工具链（openssl-app / putty-telnet / jq-app / bc-app 的 C 编译，vcpkg 静态库，yq 的 Go c-shared、libqalculate 的 MSYS2 MinGW64 autotools）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。jq-app 与 openssl-app/putty-telnet 不同：纯 C 自包含（vendor/jq 1.7.1 + 捆绑 oniguruma 6.9.8），零 vcpkg/cmake/perl 依赖，CI 无额外安装步骤。vendor/jq 带七处本地修补（清单与依据见其树内 README，升级 jq 需逐条复核），其中 main.c 删除 WIN32 的 `_O_U8TEXT` 流模式——MSVC/UCRT 下窄字符输出（fprintf/fwrite）写该模式流会被 CRT 静默吞，jq 的 stderr 报错与重定向输出全部丢失（上游官方构建是 MinGW 不触发；tty 正常输出走 WriteConsoleW 不受影响）。bc-app 更简：上游 bc 7.1.0 自带官方 MSVC 工程（vendor/bc/vs/bc.vcxproj，本地零修补），仅链 bcrypt，宿主生成器 strgen 由 build.rs 的 Rust 复刻替代（byte-diff 验证）。yq 亦零额外依赖：Go 构建只发生在 Windows（build-tools.mjs），macOS/测试机不碰 Go 工具链与 DLL。qalc 需 CI 预装 MSYS2 MinGW64 依赖（pacman 装 gcc/make/pkg-config/libxml2/gmp/mpfr，windows-latest 预装 C:\msys2 只补包），macOS/测试机同样不碰 MSYS2 与 DLL。urlencode/urldecode（urlcoding_impl.rs）与 data-encoding 家族同属 Windows 专属命令里的纯 Rust 形态：前者用 crates.io `urlencoding` 库（kornelski/rust_urlencoding，已是 wry 传递依赖，lock 零新增）+ cfg 门控臂，无 vendor、无构建步骤，其参数解析/行拆分管道为无平台差异代码，macOS 门禁直接测；后者见「Windows 工具链」节的 data-encoding 条目。
 - 所有 Windows 专属逻辑用 `#[cfg(target_os = "windows")]` / `[target.'cfg(windows)'.dependencies]` 门控，不留运行时判断。
+- Windows 本地终端固定 cmd.exe，并经 `cmd /k` 注入「跨盘符 cd 适配层」（`terminal/local_pty.rs` 的 `WINDOWS_CMD_CD_COMPAT`）：doskey 宏把交互输入的 `cd`/`chdir` 自动补 `/d`（cmd 的 cd 不带 /d 只记「该盘当前目录」、不切盘，与 PowerShell/Git Bash 直觉相悖）。宏定义跨平台编译 + macOS 单测锁定形态；只作用于交互式命令行（批处理与 `cmd /c` 保持原生语义），不写注册表 AutoRun。cmd 语义只能靠 Windows 真机/CI 回归——已知边界：`cd /d /d X` 重复开关会报错（ReactOS cmd_chdir 只消费一次 `/D`，余量直接当路径），适配后无需再手写 `/d`。
 
 ## 架构不变量
 
