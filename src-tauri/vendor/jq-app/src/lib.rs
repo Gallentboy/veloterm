@@ -59,6 +59,16 @@ mod imp {
 
 pub use imp::jq_cmd_main;
 
+/// build.rs 的纯函数不变量（builtin.inc 渲染 / 源清单 / 垫片形状等）原本只在
+/// build 脚本的 `#[cfg(test)]` 里——cargo 从不执行 build 脚本的测试，vendor 又
+/// 被 workspace exclude，这些防线实际从未运行过。经 `#[path]` 把 build.rs
+/// 纳入 lib 测试编译，`cargo test`（vendor 目录内独立跑，见 AGENTS.md 门禁
+/// 约定）即可执行全部用例；`#[allow(dead_code)]` 放行 fn main 等测试外符号。
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../build.rs"]
+mod build_script_tests;
+
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::jq_cmd_main;

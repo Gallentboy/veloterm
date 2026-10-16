@@ -357,16 +357,14 @@ pub fn render_strgen(
             continue;
         }
         if !remove_tabs || b != b'\t' {
-            if b == b'{' {
-                if at(i, EX_START) || at(i, EX_END) {
-                    let marker = if at(i, EX_START) { EX_START } else { EX_END };
-                    i += marker.len();
-                    if i < bytes.len() && bytes[i] == b'\r' {
-                        i += 1;
-                    }
+            if b == b'{' && (at(i, EX_START) || at(i, EX_END)) {
+                let marker = if at(i, EX_START) { EX_START } else { EX_END };
+                i += marker.len();
+                if i < bytes.len() && bytes[i] == b'\r' {
                     i += 1;
-                    continue;
                 }
+                i += 1;
+                continue;
             }
             if count == 0 {
                 out.push('\t');
@@ -397,15 +395,18 @@ pub fn render_strgen(
 mod tests {
     use super::*;
 
-    /// 许可头剥离 + 基本形状：头注释嵌路径、数组名、NUL 结尾、define 守卫
+    /// 许可头剥离 + 基本形状：版权头 + 生成路径注释、数组名、NUL 结尾、define 守卫
+    /// （上游 strgen 先输出两行版权再输出 AUTOMATICALLY GENERATED 行，断言按此序）
     #[test]
     fn strgen_strips_license_and_wraps_array() {
         let input = "/*\n * SPDX-License-Identifier: BSD-2-Clause\n */\n\nprint \"hi\\n\"\n";
         let out = render_strgen(input, "gen/x.bc", "x_lib", "x_lib_name", "BC_ENABLED", false)
             .unwrap();
         assert!(
-            out.starts_with("// *** AUTOMATICALLY GENERATED FROM gen/x.bc. DO NOT MODIFY. ***"),
-            "头注释应嵌输入路径"
+            out.starts_with(
+                "// Copyright (c) 2018-2025 Gavin D. Howard and contributors.\n// Licensed under the 2-clause BSD license.\n// *** AUTOMATICALLY GENERATED FROM gen/x.bc. DO NOT MODIFY. ***"
+            ),
+            "头注释应为两行版权 + 嵌输入路径的生成声明"
         );
         assert!(out.contains("extern const char *x_lib_name;\n\n"));
         assert!(out.contains("#if BC_ENABLED\n"));
@@ -437,14 +438,16 @@ mod tests {
         assert!(!out.contains("123,123")); // '{' = 123，标记不得进数组
     }
 
-    /// 行宽折行：超过 72 列即换行；折行后行首补 \t
+    /// 行宽折行：先累加后判宽（上游 strgen.c:485 同序）——单字节 "n," 增量
+    /// 2~4（"49," 是 3），count 最坏累到 MAX_WIDTH+4 才触发换行，行宽上限 =
+    /// MAX_WIDTH + 4 个数字字符 + 行首 \t 共 MAX_WIDTH + 5（实测 76 = 72+4）
     #[test]
     fn strgen_wraps_at_max_width() {
         let input = format!("/*\n * x\n */\n\n{}\n", "1".repeat(200));
         let out = render_strgen(input.as_str(), "gen/x.bc", "x", "", "", false).unwrap();
         for line in out.lines() {
             if line.starts_with('\t') {
-                assert!(line.len() <= MAX_WIDTH + 1, "折行超宽：{}", line.len());
+                assert!(line.len() <= MAX_WIDTH + 5, "折行超宽：{}", line.len());
             }
         }
         assert!(out.contains("\n\t"));
@@ -470,7 +473,7 @@ mod tests {
         assert!(!BC_SOURCES.contains(&"dc_fuzzer.c"));
         // 生成任务：Makefile.in:247-262 的四条
         assert_eq!(STRGEN_JOBS.len(), 4);
-        for (_, _, name, label, define, remove_tabs) in STRGEN_JOBS {
+        for (_, _, name, label, _define, remove_tabs) in STRGEN_JOBS {
             let is_lib = name.starts_with("bc_lib");
             assert_eq!(*remove_tabs, is_lib, "{name} 的 remove_tabs 应与上游一致");
             assert_eq!(!label.is_empty(), is_lib, "{name} 的 label 有无不符");

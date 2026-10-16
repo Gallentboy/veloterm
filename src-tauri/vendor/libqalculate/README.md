@@ -37,7 +37,8 @@ pacman 步骤安装：gcc / make / pkg-config / libxml2 / gmp / mpfr）：
    `veloterm_ffi.cc`（导出 `veloterm_qalc_main`）连同静态库一起
    `g++ -shared -static -static-libgcc -static-libstdc++` 链接——
    libqalculate / libxml2 / gmp / mpfr / winpthread / C++ 运行时全部
-   静态打入，DLL 除系统库外零外部依赖（脚本内 `ldd` 断言）。
+   静态打入，DLL 除系统库外零外部依赖（脚本内 objdump 依赖断言——MSYS2
+   基础包不保证有 ldd，objdump 随 binutils 必在）。
 3. 产物复制到 `src-tauri/binaries/qalcffi.dll`，经
    `tauri.windows.conf.json` 的 resources 放安装根目录。
 
