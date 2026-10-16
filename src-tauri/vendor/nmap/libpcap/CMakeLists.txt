@@ -3167,7 +3167,7 @@ endif(WIN32)
 # 以存在性守卫（上游完整树行为不变）
 if(ENABLE_REMOTE AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/rpcapd/CMakeLists.txt)
     add_subdirectory(rpcapd)
-endif(ENABLE_REMOTE)
+endif()
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/testprogs/CMakeLists.txt)
     add_subdirectory(testprogs)
 endif()
@@ -3262,10 +3262,15 @@ if(WIN32)
         # For compatibility, build the shared library without the "lib" prefix on
         # MinGW as well.
         #
-        set_target_properties(${LIBRARY_NAME} PROPERTIES
-            PREFIX ""
-            OUTPUT_NAME "${LIBRARY_NAME}"
-        )
+        # VeloTerm patch：共享目标 pcap 仅在 BUILD_SHARED_LIBS=ON 时存在
+        # （上游此处无条件 set_target_properties 在「MinGW + 静态构建」
+        # 组合下必失败——本工程正是该组合，CI 实测），加同一守卫
+        if(BUILD_SHARED_LIBS)
+            set_target_properties(${LIBRARY_NAME} PROPERTIES
+                PREFIX ""
+                OUTPUT_NAME "${LIBRARY_NAME}"
+            )
+        endif()
         set_target_properties(${LIBRARY_NAME}_static PROPERTIES
             OUTPUT_NAME "${LIBRARY_NAME}"
         )
