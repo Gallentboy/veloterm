@@ -1,5 +1,6 @@
 import { Loader2, RefreshCw, TriangleAlert, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { EditorFileDescriptor, EditorFileStatus } from '@/editor/types';
@@ -68,28 +69,29 @@ function EditorTabTrigger({
       >
         <span className="shrink-0 whitespace-nowrap">{file.fileName}</span>
       </span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={closeLabel}
-        title={closeLabel}
-        className={cn(
-          'shrink-0 rounded-md',
-          !isActive &&
-            'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100',
-        )}
-        onPointerDown={(event) => {
-          event.stopPropagation();
-        }}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onClose(file.id);
-        }}
-      >
-        <X className="size-3" />
-      </Button>
+      <ControlHintTooltip title={closeLabel} side="bottom" align="end">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label={closeLabel}
+          className={cn(
+            'shrink-0 rounded-md',
+            !isActive &&
+              'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100',
+          )}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose(file.id);
+          }}
+        >
+          <X className="size-3" />
+        </Button>
+      </ControlHintTooltip>
     </div>
   );
 }

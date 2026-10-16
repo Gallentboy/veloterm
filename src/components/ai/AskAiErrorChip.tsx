@@ -2,6 +2,7 @@ import { Sparkles, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import {
   clearAiErrorContext,
   getAiErrorContext,
@@ -42,18 +43,19 @@ export function AskAiErrorChip({ onAsk }: AskAiErrorChipProps) {
 
   return (
     <div className="absolute bottom-3 right-3 z-30 flex items-center gap-1.5 rounded-full border border-border bg-popover py-1 pl-2.5 pr-1 shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200">
-      <button
-        type="button"
-        onClick={() => onAsk(context.detail)}
-        className="flex items-center gap-1.5 text-ui-sm text-foreground transition-colors hover:text-primary"
-        title={context.title}
-      >
-        <Sparkles className="size-3.5 text-primary" />
-        {t('ai.errorChip.ask')}
-        <span className="max-w-40 truncate text-ui-xs text-foreground-subtlest">
-          {context.title}
-        </span>
-      </button>
+      <ControlHintTooltip title={context.title} side="top" align="end">
+        <button
+          type="button"
+          onClick={() => onAsk(context.detail)}
+          className="flex items-center gap-1.5 text-ui-sm text-foreground transition-colors hover:text-primary"
+        >
+          <Sparkles className="size-3.5 text-primary" />
+          {t('ai.errorChip.ask')}
+          <span className="max-w-40 truncate text-ui-xs text-foreground-subtlest">
+            {context.title}
+          </span>
+        </button>
+      </ControlHintTooltip>
       <button
         type="button"
         onClick={() => {
