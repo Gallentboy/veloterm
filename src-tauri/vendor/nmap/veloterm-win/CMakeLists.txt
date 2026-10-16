@@ -90,8 +90,12 @@ set(Packet_ROOT "${NPCAP_SDK_DIR}" CACHE PATH "" FORCE)
 add_subdirectory("${NMAP_ROOT}/libdnet-stripped" "${CMAKE_BINARY_DIR}/dnet" EXCLUDE_FROM_ALL)
 
 # ── include 路径（官方 vcxproj 的 AdditionalIncludeDirectories） ─────────────
+# 注意 mswin32/：官方在那里放 NET/ 与 NETINET/ 两个兼容头目录（如
+# NETINET/IN_SYSTM.H 充当 <netinet/in_systm.h>，MSVC 大小写不敏感匹配）——
+# 缺它 libnetutil/netutil.cc 会 C1083 找不到 netinet/in_systm.h。
 include_directories(
     "${NMAP_ROOT}"
+    "${NMAP_ROOT}/mswin32"
     "${NMAP_ROOT}/liblua"
     "${NMAP_ROOT}/nbase"
     "${NMAP_ROOT}/nsock/include"
@@ -119,7 +123,10 @@ add_library(veloterm_nbase STATIC
     "${NMAP_ROOT}/nbase/strcasecmp.c"
 )
 
-# nsock：异步 I/O 事件循环（engine_*.c 由 HAVE_* 宏门控，全量编入即可）
+# nsock：异步 I/O 事件循环（engine_*.c 由 HAVE_* 宏门控，全量编入即可）。
+# 官方 nsock.vcxproj 对该项目全部源设 CompileAsCpp（把 .c 当 C++ 编）：
+# engine_iocp.c 的 `sin6_addr = IN6ADDR_ANY_INIT`（聚合初始化）在 C++ 下合法、
+# C 下报 `error C2059: syntax error: '{'`（CI 实测）。故设 LANGUAGE CXX。
 add_library(veloterm_nsock STATIC
     "${NMAP_ROOT}/nsock/src/engine_epoll.c"
     "${NMAP_ROOT}/nsock/src/engine_iocp.c"
@@ -145,6 +152,33 @@ add_library(veloterm_nsock STATIC
     "${NMAP_ROOT}/nsock/src/nsock_write.c"
     "${NMAP_ROOT}/nsock/src/proxy_http.c"
     "${NMAP_ROOT}/nsock/src/proxy_socks4.c"
+)
+set_source_files_properties(
+    "${NMAP_ROOT}/nsock/src/engine_epoll.c"
+    "${NMAP_ROOT}/nsock/src/engine_iocp.c"
+    "${NMAP_ROOT}/nsock/src/engine_kqueue.c"
+    "${NMAP_ROOT}/nsock/src/engine_poll.c"
+    "${NMAP_ROOT}/nsock/src/engine_select.c"
+    "${NMAP_ROOT}/nsock/src/error.c"
+    "${NMAP_ROOT}/nsock/src/filespace.c"
+    "${NMAP_ROOT}/nsock/src/gh_heap.c"
+    "${NMAP_ROOT}/nsock/src/netutils.c"
+    "${NMAP_ROOT}/nsock/src/nsock_connect.c"
+    "${NMAP_ROOT}/nsock/src/nsock_core.c"
+    "${NMAP_ROOT}/nsock/src/nsock_engines.c"
+    "${NMAP_ROOT}/nsock/src/nsock_event.c"
+    "${NMAP_ROOT}/nsock/src/nsock_iod.c"
+    "${NMAP_ROOT}/nsock/src/nsock_log.c"
+    "${NMAP_ROOT}/nsock/src/nsock_pcap.c"
+    "${NMAP_ROOT}/nsock/src/nsock_pool.c"
+    "${NMAP_ROOT}/nsock/src/nsock_proxy.c"
+    "${NMAP_ROOT}/nsock/src/nsock_read.c"
+    "${NMAP_ROOT}/nsock/src/nsock_ssl.c"
+    "${NMAP_ROOT}/nsock/src/nsock_timers.c"
+    "${NMAP_ROOT}/nsock/src/nsock_write.c"
+    "${NMAP_ROOT}/nsock/src/proxy_http.c"
+    "${NMAP_ROOT}/nsock/src/proxy_socks4.c"
+    PROPERTIES LANGUAGE CXX
 )
 
 # libnetutil：报文头解析/构造
