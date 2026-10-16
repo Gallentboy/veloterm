@@ -279,8 +279,13 @@ LPWSTR utf8wchar(const char *str) {
 // fputws 宽字符输出在重定向到管道时会被 CRT 按本地代码页转码、iconv
 // 路径则转成 ANSI 代码页，两者都会让 UTF-8 终端看到乱码——改为无条件
 // 按字节写出原始 UTF-8（与 jq/yq 等内嵌工具的输出约定一致）。
-#	define PUTS_UNICODE(x)		puts(x)
-#	define FPUTS_UNICODE(x, y)	fputs(x, y)
+// 宏体必须保持上游「带 else 的完整 if 语句」形态：全文件 345 个调用点
+// 混用带/不带分号两种写法（裸表达式形态 `puts(x)` 在无分号调用点报
+// expected ';'，CI 实测 qalc.o 编译失败）；含空 else 的 if 语句两种写法
+// 下都是完整语句，且与上方 #else 分支的上游形状逐层等价，不改变任何
+// 调用点的语义。
+#	define PUTS_UNICODE(x)		if(true) {puts(x);} else {}
+#	define FPUTS_UNICODE(x, y)	if(true) {fputs(x, y);} else {}
 #else
 #	define PUTS_UNICODE(x)		if(utf8_encoding || !contains_unicode_char(x)) {puts(x);} else {char *gstr = locale_from_utf8(x); if(gstr) {puts(gstr); free(gstr);} else {puts(x);}}
 #	define FPUTS_UNICODE(x, y)	if(utf8_encoding || !contains_unicode_char(x)) {fputs(x, y);} else {char *gstr = locale_from_utf8(x); if(gstr) {fputs(gstr, y); free(gstr);} else {fputs(x, y);}}
