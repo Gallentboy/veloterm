@@ -34,6 +34,11 @@ eza = { path = "../../vendor/eza" }
 palette_derive = "=0.7.5"
 wget-rs = { path = "../../vendor/wget-rs" }
 rust-parallel = { path = "../../vendor/rust-parallel" }
+# data-encoding（零依赖纯 Rust，版本由 Cargo.lock 锁定）：base32hex/base64url/
+# hex/hexupper 命令的编解码内核（CLI 壳在 src/encodings_impl.rs）。命令仅注册进
+# Windows 清单；依赖跨平台编译，macOS 本机单测可直接覆盖行为。走 crates.io 而
+# 非 vendor：uutils 家族本就依赖它，path 依赖会造成同版本双份编译
+data-encoding = "2.11.1"
 
 uucore = { path = "../../vendor/coreutils/src/uucore", features = ["openssl"] }
 uu_arch = { path = "../../vendor/coreutils/src/uu/arch" }

@@ -1422,6 +1422,7 @@ version = "0.1.0"
 dependencies = [
  "bc-app",
  "crossterm",
+ "data-encoding",
  "diffutils",
  "eza",
  "fd-find",
