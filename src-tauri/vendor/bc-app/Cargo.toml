@@ -1,0 +1,19 @@
+# ── bc-app sys-crate ─────────────────────────────────────────────────────────
+# 把 bc CLI（gavinhoward/bc 7.1.0，源码在工程内 vendor/bc）现场编译并静态链接
+# 进 Rust。纯 C 自包含（BSD-2-Clause），唯一外部库依赖 bcrypt（随机数）。
+# 与 jq-app 同型：不需要 vcpkg / cmake / perl，Windows runner 零额外安装；
+# 且比 jq 更省事——上游 7.x 自带官方 MSVC 工程（vendor/bc/vs/bc.vcxproj），
+# 本地零修补。非 Windows 平台不编译任何 C 代码，bc_cmd_main 是打印提示并
+# 返回 2 的桩。布局与依据见 vendor/bc/README.md 与 build.rs 头注释。
+[package]
+name = "bc-app"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "bc CLI (gavinhoward/bc 7.1.0) 静态编入：仅 Windows，vendor 源码 + cc 现场编译"
+license = "BSD-2-Clause"
+publish = false
+
+[build-dependencies]
+# 与主工程 Cargo.lock 中一致（cc 1.x），用于编译 bc 源与生成物
+cc = "1"
