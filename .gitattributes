@@ -1,0 +1,6 @@
+# Windows 端 git 默认 core.autocrlf=true，checkout 时把文本文件转成 CRLF。
+# vendor/jq/src/builtin.jq 是字节敏感资产：jq-app 的 build.rs 生成 builtin.inc
+# 时要求 LF-only（CR 会被拼进 jq 内建源码字符串），且上游 Makefile 的 sed 规则
+# 亦按 LF 文本设计——强制按 LF 检出与存储，杜绝 autocrlf 污染。
+# （jq 树内 decNumber 等 C 源以 CRLF 存库，C 编译不受影响，不在此规则范围。）
+src-tauri/vendor/jq/src/builtin.jq text eol=lf
