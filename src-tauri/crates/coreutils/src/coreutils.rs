@@ -23,7 +23,9 @@
 //! which 为 unix_extras.rs 自研；urlencode/urldecode 由 urlcoding_impl.rs
 //! 基于 crates.io 的 urlcoding 库自研（仅进 Windows 清单，同 data-encoding
 //! 家族的门控形态）；zoxide 由 vendor 源码（ajeetdsouza/zoxide）静态链入
-//! （lib.rs 可注入入口，eza 同型，仅进 Windows 清单）。
+//! （lib.rs 可注入入口，eza 同型，仅进 Windows 清单）；dog 由 vendor 源码
+//! （ogham/dog，DNS 客户端）静态链入（lib.rs 可注入入口，eza/zoxide 同型，
+//! 仅进 Windows 清单，TLS 走 native-tls 无需 OpenSSL）。
 //! chcon/runcon 依赖 SELinux，不集成。
 
 use std::ffi::OsString;
@@ -81,6 +83,11 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         "dir" => uu_dir::uumain(it),
         "dircolors" => uu_dircolors::uumain(it),
         "dirname" => uu_dirname::uumain(it),
+        // dog（ogham/dog，纯 Rust DNS 客户端）：vendor 源码静态链入（lib.rs
+        // 可注入入口，eza/zoxide 同型）。同 data-encoding / urlcoding 家族：
+        // 仅注册进 Windows 命令清单，分发臂跨平台编译，macOS 单测直接经
+        // run_uutils 验证接线与行为（见 dog_dispatch_and_behavior）
+        "dog" => dog::dog_main_from(it),
         "du" => uu_du::uumain(it),
         "echo" => uu_echo::uumain(it),
         "env" => uu_env::uumain(it),
@@ -653,6 +660,38 @@ mod tests {
             std::env::remove_var("_ZO_EXCLUDE_DIRS");
         }
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// dog 接线与行为：命令仅注册进 Windows 清单（同 zoxide），绕过清单
+    /// 直接验证分发臂 → dog::dog_main_from 的通路。行为侧覆盖无网络路径：
+    /// --version / --help → 0；无域名（打印 usage）与非法选项/非法查询类型
+    /// → 3（OPTIONS_ERROR，上游退出码约定）；再取一个刚释放的回环端口做
+    /// --tcp 查询，连接被拒 → 1（NETWORK_ERROR——output.rs 的 print 对空
+    /// 响应除 Short 模式外恒返回 true）。真实 DNS 解析由上游 xtests 覆盖；
+    /// Windows 的系统默认名字服务器发现（ipconfig crate）只能靠 Windows
+    /// 真机/CI 回归。
+    #[test]
+    fn dog_dispatch_and_behavior() {
+        let s = |v: &[&str]| -> Vec<OsString> { v.iter().map(OsString::from).collect() };
+
+        assert_eq!(run_uutils("dog", &s(&["--version"])), 0);
+        assert_eq!(run_uutils("dog", &s(&["--help"])), 0);
+        assert_eq!(run_uutils("dog", &s(&[])), 3);
+        assert_eq!(run_uutils("dog", &s(&["--veloterm-invalid-flag"])), 3);
+        assert_eq!(
+            run_uutils("dog", &s(&["example.com", "--type", "not-a-type"])),
+            3
+        );
+
+        // 回环已关闭端口：TCP 立即 ECONNREFUSED → NETWORK_ERROR 1
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let ns = format!("@127.0.0.1:{port}");
+        assert_eq!(
+            run_uutils("dog", &s(&[ns.as_str(), "example.com", "--tcp", "--colour", "never"])),
+            1
+        );
     }
 
     #[test]
