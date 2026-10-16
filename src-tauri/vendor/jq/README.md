@@ -57,7 +57,17 @@ CI 报 C2057/C2466/C2133）。已改 `enum { max_utf8_len = 4 };`，值语义不
 同名即 LNK2005 重定义（CI 实测）。已改名 `veloterm_jq_fopen`（行为不变），
 唯一调用点 `jq_util_input_read_more` 在 WIN32 分支随改。
 
-六处补丁均有中文注释标记。
+`src/main.c`（umain 开头的 WIN32 初始化节）：上游把 stdout/stderr 设为
+`_O_TEXT | _O_U8TEXT`——UCRT 的宽字符 UTF-8 模式下，窄字符输出函数
+（fprintf/fwrite，jq 的全部错误输出与「重定向到管道/文件」的输出即此类）
+属非法操作，release 版 CRT 经 invalid parameter handler 静默丢弃：坏输入时
+stderr 的 parse error 被吞（终端表现为完全无输出）、`jq ... > file` 产出
+空文件。上游官方构建是 MinGW 不触发；本工程 MSVC/UCRT 静态链接实测触发。
+已删去两行 `_setmode`（同节 `jv_tsd_dtoa_ctx_init` 与 `fflush` 保留；
+tty 正常输出走 jv_print.c 的 `WriteConsoleW` 不经 stdio 不受影响；
+`-b/--binary` 的 `_O_BINARY` 分支不变）。
+
+七处补丁均有中文注释标记。
 
 ## 构建集合的隐式项（jq-app build.rs 的收录依据）
 

@@ -334,8 +334,15 @@ int main(int argc, char* argv[]) {
   jv_tsd_dtoa_ctx_init();
   fflush(stdout);
   fflush(stderr);
-  _setmode(fileno(stdout), _O_TEXT | _O_U8TEXT);
-  _setmode(fileno(stderr), _O_TEXT | _O_U8TEXT);
+  /* veloterm 修补：删除上游对 stdout/stderr 的 `_O_TEXT | _O_U8TEXT` 设置。
+     _O_U8TEXT 是 UCRT 的宽字符 UTF-8 模式，窄字符输出函数（fprintf/fwrite——
+     jq 的全部错误输出与「重定向到管道/文件」的输出即此类）写该模式流属非法
+     操作，release 版 CRT 经 invalid parameter handler 静默丢弃：表现为
+     stderr 报错全被吞（坏输入时用户看到「完全无输出」而非 parse error）、
+     `jq ... > file` 产出空文件。tty 下的正常结果输出走 jv_print.c put_buf 的
+     WriteConsoleW，不经 stdio 模式，删本设置无影响；重定向路径回落为流默认
+     的 _O_TEXT 窄字节直写，与上游官方 MinGW 构建行为一致（CRLF 翻译同源）。
+     `-b/--binary` 的 _O_BINARY 分支保留不变。 */
 #endif
 
   jv ARGS = jv_array(); /* positional arguments */
