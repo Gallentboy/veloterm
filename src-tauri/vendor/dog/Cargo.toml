@@ -1,0 +1,92 @@
+[package]
+name = "dog"
+description = "A command-line DNS client"
+
+authors = ["Benjamin Sago <ogham@bsago.me>"]
+categories = ["command-line-utilities"]
+edition = "2018"
+exclude = [
+    "/completions/*", "/man/*", "/xtests/*",
+    "/dog-screenshot.png", "/Justfile", "/README.md", "/.rustfmt.toml", "/.travis.yml",
+]
+homepage = "https://dns.lookup.dog/"
+license = "EUPL-1.2"
+version = "0.2.0-pre"
+
+
+[[bin]]
+name = "dog"
+path = "src/main.rs"
+doctest = false
+
+# VeloTerm vendor 新增：上游仅有 bin 目标（无 lib），无法作为 path 依赖被
+# 静态链入宿主 crate。声明 lib 目标（src/lib.rs 的 dog_main_from 可注入
+# 入口，同 vendor/eza、vendor/zoxide 的约定），doctest 对齐上游 bin 的设置。
+# 源码锁上游 master tip 721440b12ef01a812abe5dc6ced69af6e221fad5
+# （2021-10-07，上游停更于此；0.2.0 未发版，唯一 tag v0.1.0 缺 Windows
+# 名字服务器探测改进，故锁 commit 而非 tag；树内 Cargo.lock 已按补丁后
+# 清单重新解析，移除 datetime 条目）
+[lib]
+name = "dog"
+path = "src/lib.rs"
+doctest = false
+
+
+[workspace]
+members = [
+  "dns",
+  "dns-transport",
+]
+
+
+# make dev builds faster by excluding debug symbols
+[profile.dev]
+debug = false
+
+# use LTO for smaller binaries (that take longer to build)
+[profile.release]
+lto = true
+overflow-checks = true
+panic = "abort"
+
+
+[dependencies]
+
+# dns stuff
+dns = { path = "./dns" }
+dns-transport = { path = "./dns-transport" }
+
+# command-line
+ansi_term = "0.12"
+atty = "0.2"
+getopts = "0.2"
+
+# transaction ID generation
+rand = "0.8"
+
+# json output
+json = "0.12"
+
+# logging
+log = "0.4"
+
+# windows default nameserver determination
+[target.'cfg(windows)'.dependencies]
+ipconfig = { version = "0.2" }
+
+# VeloTerm vendor 修改：上游的 [build-dependencies]（datetime，仅为
+# pre-release/debug 构建的版本串生成编译日期）已随 build.rs 的去 git 化
+# 一并移除（见 build.rs 头部说明），运行时依赖保持上游原样
+[dev-dependencies]
+pretty_assertions = "0.7"
+
+[features]
+default = ["with_idna", "with_tls", "with_https", "with_nativetls"]
+with_idna = ["dns/with_idna"]
+
+with_tls = ["dns-transport/with_tls"]
+with_https = ["dns-transport/with_https"]
+
+with_nativetls = ["dns-transport/with_nativetls"]
+with_nativetls_vendored = ["with_nativetls", "dns-transport/with_nativetls", "dns-transport/with_nativetls_vendored"]
+with_rustls = ["dns-transport/with_rustls"]
