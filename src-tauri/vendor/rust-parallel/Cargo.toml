@@ -1,0 +1,43 @@
+[package]
+name = "rust-parallel"
+version = "1.9.1"
+authors = ["Aaron Riekenberg <aaron.riekenberg@gmail.com>"]
+edition = "2021"
+categories = ["asynchronous", "command-line-interface", "concurrency"]
+description = "Fast command line app in rust/tokio to run commands in parallel. Similar interface to GNU parallel or xargs."
+keywords = ["cli", "parallel", "tokio"]
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/aaronriekenberg/rust-parallel"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+# VeloTerm vendor 新增：把 rust-parallel 抽成 lib（src/lib.rs 通过 include!
+# 复用 src/main.rs 的全部逻辑），供 coreutils 多呼叫二进制以
+# rust_parallel::parallel_main() 内嵌调用（main.rs 仍作为独立 bin 入口，
+# 保持原样未改动）。
+[lib]
+name = "rust_parallel"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rust-parallel"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+itertools = "0.11"
+num_cpus = "1"
+regex = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+which = "4"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
