@@ -430,11 +430,13 @@ if [ -z "$SDK_DIR" ] || [ ! -d "$SDK_DIR" ]; then
   SDK_DIR=$(cd "$(dirname "$(find sdk-extract -maxdepth 2 -type d -name Include | head -1)")" && pwd)
   printf '%s\n' "$SDK_DIR" > npcap-sdk.stamp
 fi
-# libdnet --with-wpdpack 只认 <dir>/include + <dir>/lib 平铺布局（SDK 的 Lib/x64 提一级）
+# libdnet --with-wpdpack 只认 <dir>/include + <dir>/lib 平铺布局（SDK 的 Lib/x64 提一级）。
+# SDK 1.13 的 Include/ 含 pcap/ 子目录（CI 实测：不带 -r 的 cp 遇目录即失败），
+# 拷贝必须递归
 rm -rf npcap-shim
 mkdir -p npcap-shim/include npcap-shim/lib
-cp "$SDK_DIR"/Include/* npcap-shim/include/
-cp "$SDK_DIR"/Lib/x64/* npcap-shim/lib/
+cp -r "$SDK_DIR"/Include/* npcap-shim/include/
+cp -r "$SDK_DIR"/Lib/x64/* npcap-shim/lib/
 
 # ── 2. bundled libpcap → 静态库（CMake 官方 Windows 路线，1.10.7 预生成
 #    scanner/grammar，无需 flex/bison；D-Bus/RDMA 在 MinGW 不可用，显式关掉
@@ -447,8 +449,9 @@ if [ ! -f "$PCAP_STAGE/lib/libpcap.a" ]; then
     -DDISABLE_DBUS=ON -DDISABLE_RDMA=ON -DPacket_ROOT="$SDK_DIR"
   cmake --build libpcap-build
   cmake --install libpcap-build --prefix "$PCAP_STAGE"
-  # SDK 头一并并入 stage/include：nmap 侧 winfix.cc 要 Packet32.h
-  cp "$SDK_DIR"/Include/* "$PCAP_STAGE/include/"
+  # SDK 头一并并入 stage/include：nmap 侧 winfix.cc 要 Packet32.h（递归：
+  # pcap/ 子目录与 libpcap 自装的同名头目录合并、同名文件以 SDK 版覆盖）
+  cp -r "$SDK_DIR"/Include/* "$PCAP_STAGE/include/"
 fi
 
 # ── 3. nmap 主体：整树拷贝 in-tree 构建（七个子 configure，VPATH 未经
