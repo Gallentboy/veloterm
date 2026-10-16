@@ -11,10 +11,10 @@
 //! 故把「有哪些命令」与「命令怎么实现」彻底分开：本 crate 只有字符串表，
 //! 实现全部在 `crates/coreutils`。
 
-/// 内嵌补充命令：OWN_ARGV 家族（rg/fd/awk）+ 自研 which（coreutils 的
+/// 内嵌补充命令：OWN_ARGV 家族（rg/fd/awk/parallel）+ 自研 which（coreutils 的
 /// `unix_extras.rs`）+ 自研 ps / top（不经 uutils 的 uumain 表，由
 /// `run_command` 早退分发）
-pub const EXTRA_COMMANDS: &[&str] = &["awk", "fd", "rg", "which", "ps", "top"];
+pub const EXTRA_COMMANDS: &[&str] = &["awk", "fd", "parallel", "rg", "which", "ps", "top"];
 
 /// 跨平台命令（102 个）：uutils feat_common_core 与 feat_Tier1 全集，
 /// 加 uutils/grep、uutils/sed、findutils、diffutils、chmln/sd 家族补充，
