@@ -267,10 +267,10 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
 
         <Button
           type="submit"
-          variant="default"
-          size="sm"
+          variant="outline"
+          size="md"
           disabled={!command.trim() || selectedSessionIds.length === 0 || isExecuting}
-          className="h-8 shrink-0 gap-1.5 px-3.5 text-ui-base"
+          className="shrink-0 gap-1.5"
         >
           <Send className="size-3.5" />
           <span>发送广播</span>
@@ -280,11 +280,11 @@ export function BroadcastCommandBar({ sessions, onClose }: BroadcastCommandBarPr
         <ControlHintTooltip title="向勾选的所有目标终端广播发送中断信号 (Ctrl+C)" side="bottom">
           <Button
             type="button"
-            variant="secondary"
-            size="sm"
+            variant="outline"
+            size="md"
             onClick={() => void executeSendSignal(0x03, 'Ctrl+C (SIGINT)')}
             disabled={selectedSessionIds.length === 0 || isExecuting}
-            className="h-8 shrink-0 gap-1.5 rounded-lg border border-destructive/40 bg-destructive/10 px-3 text-ui-base text-destructive transition-colors hover:bg-destructive/20 hover:text-destructive"
+            className="shrink-0 gap-1.5"
           >
             <Ban className="size-3.5" />
             <span>⌃C 中断</span>
