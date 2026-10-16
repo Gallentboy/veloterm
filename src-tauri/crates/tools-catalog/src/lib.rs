@@ -134,12 +134,12 @@ pub const PLATFORM_COMMANDS: &[&str] = &[
 /// Windows 专属命令（uutils feat_os_windows 额外项 + vcpkg 静态链接的 openssl CLI +
 /// 源码内嵌 PuTTY 的 telnet + vendor 源码现场编译的 bc/jq CLI + yqffi/qalcffi.dll
 /// 动态导入的 yq 与 qalc + urlencoding 库封装的 urlencode/urldecode + data-encoding
-/// 家族的 base32hex/base64url/hex/hexupper——base32/base64 已由跨平台清单的
-/// uutils 实现覆盖，不重复收录）
+/// 家族的 base32hex/base64url/hex/hexupper + vendor 源码静态链入的 zoxide——
+/// base32/base64 已由跨平台清单的 uutils 实现覆盖，不重复收录）
 #[cfg(target_os = "windows")]
 pub const PLATFORM_COMMANDS: &[&str] = &[
     "base32hex", "base64url", "bc", "hex", "hexupper", "jq", "openssl", "qalc", "stdbuf",
-    "telnet", "urldecode", "urlencode", "yq",
+    "telnet", "urldecode", "urlencode", "yq", "zoxide",
 ];
 
 /// 其余平台（本项目不存在，仅保证常量无条件可用）
