@@ -113,7 +113,7 @@ build-tools.mjs 的 configure/link flag 仍然成立：
      缺 Npcap 直接降级、不触发 delayload 解析（详见补丁注释）。
 2. `veloterm_ffi.cc`（本仓库新增文件）：`#define main` 改名包含 `main.cc`
    + 导出 `veloterm_nmap_main`。
-3. `libpcap/CMakeLists.txt`（搜 `VeloTerm patch`，三处）：
+3. `libpcap/CMakeLists.txt`（搜 `VeloTerm patch`，四处）：
    - flex/bison 探测与生成段整体跳过（`VELOTERM_SHIPPED_GENERATED`），
      scanner/grammar 消费点改指源码树内**预生成**文件——树内无 grammar.y
      （仅 grammar.y.in 模板），bison 生成路径无从工作；MSYS2 也没有
@@ -121,7 +121,14 @@ build-tools.mjs 的 configure/link flag 仍然成立：
      404）。与 NMAP_MODIFICATIONS 0001 在 autotools 侧「直接用发行文件、
      不重新生成」的立场一致；
    - `rpcapd`/`testprogs` 的 add_subdirectory 加存在性守卫（nmap 发行树
-     裁掉了这两个目录，上游无条件引用会 configure 失败）。
+     裁掉了这两个目录，上游无条件引用会 configure 失败）；
+   - MinGW 分支对共享目标 `pcap` 的 set_target_properties 加
+     `BUILD_SHARED_LIBS` 守卫——共享目标只在 BUILD_SHARED_LIBS=ON 时建立，
+     上游在「MinGW + 静态构建」组合下必失败（我们正是该组合，CI 实测）；
+     同文件其余 `${LIBRARY_NAME}` 引用经核对均在既有守卫内或经
+     LIBRARIES_TO_INSTALL 条件构造，无需改动。
+   - 该补丁在 macOS 本地以静态/共享两种模式分别 configure + 全量构建
+     验证（libpcap.a / libpcap.dylib 均产出、零警告）。
 4. **删除上游 `.gitignore`**：nmap 的 git 仓忽略规则面向他们自己的开发仓
    （那里 `/libpcap/bpf_filter.c`、`/libz/zconf.h`、`/libpcap/*.3pcap`、
    `/libpcap/grammar.y` 等是生成物/不入库文件），而 dist tarball 实际携带
