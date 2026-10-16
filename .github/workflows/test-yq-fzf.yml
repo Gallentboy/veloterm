@@ -1,0 +1,48 @@
+# 目标（单一）：Go FFI 车道——yqffi.dll 与 fzfffi.dll（Go c-shared，cgo 需 gcc）。
+# yq/fzf 两个段共用一套 Go/gcc 构建（build-tools.mjs --only yq 或 --only fzf
+# 均产出两个 DLL），故 test_yq / test_fzf 两个 tag 触发同一车道。
+# 触发：推 tag（验证完删除）——
+#   git tag test_yq && git push origin test_yq      （fzf 同理 test_fzf）
+#   git push origin :refs/tags/test_yq
+# 也支持 workflow_dispatch 手动触发。
+name: 'test-yq-fzf'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_yq*'
+      - 'test_fzf*'
+
+jobs:
+  build-go-ffi:
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      # cgo 需要 gcc：build-tools.mjs 会探测 PATH 与常见 MinGW 位置，
+      # 这里直接确保 MSYS2 mingw64 gcc 在位（--needed 幂等，已装则秒过）
+      - name: Install MSYS2 gcc for cgo (Windows)
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm mingw-w64-x86_64-gcc"
+
+      - name: Build yqffi.dll / fzfffi.dll
+        run: node scripts/build-tools.mjs --only yq --target x86_64-pc-windows-msvc
+
+      - name: Upload Go FFI artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-ffi-windows-x64
+          path: |
+            src-tauri/binaries/yqffi.dll
+            src-tauri/binaries/fzfffi.dll
+          if-no-files-found: error
+          retention-days: 7
