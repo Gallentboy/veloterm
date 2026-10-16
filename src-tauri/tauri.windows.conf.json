@@ -18,8 +18,7 @@
   "bundle": {
     "externalBin": ["binaries/coreutils"],
     "resources": {
-      "binaries/yqffi.dll": "yqffi.dll",
-      "binaries/fzfffi.dll": "fzfffi.dll",
+      "binaries/veloterm_goffi.dll": "veloterm_goffi.dll",
       "binaries/qalcffi.dll": "qalcffi.dll",
       "binaries/nmapffi.dll": "nmapffi.dll",
       "binaries/nmap-data": "nmap-data"

@@ -14,9 +14,9 @@
 //! 仅注册进 Windows 清单）、
 //! wget-rs（wget，rustls）、openssl 与 telnet（仅 Windows：vcpkg 静态库 FFI、
 //! PuTTY 源码内嵌，见 vendor/openssl-app 与 vendor/putty-telnet）、
-//! yq（仅 Windows：Go 源码 vendor/yq + yqffi.dll 运行时加载 FFI，见 yq_impl.rs）、
-//! fzf（仅 Windows：junegunn/fzf 的 Go 源码 vendor/fzf + fzfffi.dll 运行时
-//! 加载 FFI，交互式模糊查找器，见 fzf_impl.rs）、
+//! yq 与 fzf（仅 Windows：Go 源码 vendor/yq + vendor/fzf，合并为单一
+//! veloterm_goffi.dll 运行时按符号加载 FFI，fzf 是交互式模糊查找器，
+//! 见 goffi_impl.rs），
 //! qalc（仅 Windows：libqalculate 源码 vendor/libqalculate + MinGW 构建的
 //! qalcffi.dll 运行时加载 FFI，见 qalc_impl.rs）、
 //! nmap（仅 Windows：nmap 源码 vendor/nmap + MinGW 构建的 nmapffi.dll
@@ -34,7 +34,7 @@
 
 mod coreutils;
 mod encodings_impl;
-mod fzf_impl;
+mod goffi_impl;
 mod nmap_impl;
 mod ps;
 mod qalc_impl;
@@ -42,7 +42,6 @@ mod tar_impl;
 mod top;
 mod unix_extras;
 mod urlcoding_impl;
-mod yq_impl;
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, ProcessStatus, System, UpdateKind};
 

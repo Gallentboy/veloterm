@@ -16,10 +16,12 @@
 //   - Bash/Zsh/Fish/Nushell 脚本与 man page 直接复用 main.go 的同包
 //     //go:embed 变量与 printScript（同一 package main，无需复制）。
 //
-// 构建（由 scripts/build-tools.mjs 在 Windows 上执行）：
-//   CGO_ENABLED=1 go build -buildmode=c-shared -tags veloterm_ffi \
-//     -ldflags "-s -w -X main.version=<VELOTERM_VERSION> -X main.revision=" \
-//     -o fzfffi.dll .
+// 构建（由 scripts/build-tools.mjs 在 Windows 上执行；本包是合并 DLL 的宿主，
+// 另有 veloterm_goffi.go 追加导出 yq 入口，双 tag 一并激活）：
+//   CGO_ENABLED=1 GOAMD64=v3 go build -buildmode=c-shared \
+//     -tags "veloterm_ffi veloterm_goffi" -trimpath -buildvcs=false \
+//     -ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=<ver> -X main.version=<VELOTERM_VERSION> -X main.revision=" \
+//     -o veloterm_goffi.dll .
 // 版本锁在仓库内本目录的 VELOTERM_VERSION（与 openssl-src 的双源纪律一致）。
 // 升级复核：对照新版 main.go 核对本文件复刻的分支集合是否有增删
 // （0.74.5 相对上游 master 曾多出 Nushell 分支，逐版本会有漂移）。

@@ -235,14 +235,13 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // run_uutils 验证接线，见 urlcoding_family_dispatch）
         "urldecode" => crate::urlcoding_impl::urldecode_cmd_main(it),
         "urlencode" => crate::urlcoding_impl::urlencode_cmd_main(it),
-        // 仅 Windows：yq（Go）经 yqffi.dll 的 C 导出（运行时加载，见 yq_impl.rs）
+        // 仅 Windows：yq 与 fzf（Go）经合并 veloterm_goffi.dll 的 C 导出
+        // （运行时按符号加载，见 goffi_impl.rs；fzf 是交互式 TUI，在宿主
+        // 进程内直跑，stdio 是继承的 ConPTY 句柄）
         #[cfg(target_os = "windows")]
-        "yq" => crate::yq_impl::yq_cmd_main(it),
-        // 仅 Windows：fzf（junegunn/fzf，Go）经 fzfffi.dll 的 C 导出
-        // （运行时加载，见 fzf_impl.rs；交互式 TUI 在宿主进程内直跑，
-        // stdio 是继承的 ConPTY 句柄）
+        "yq" => crate::goffi_impl::yq_cmd_main(it),
         #[cfg(target_os = "windows")]
-        "fzf" => crate::fzf_impl::fzf_cmd_main(it),
+        "fzf" => crate::goffi_impl::fzf_cmd_main(it),
         // 仅 Windows：qalc（libqalculate C++）经 qalcffi.dll 的 C 导出
         // （运行时加载，见 qalc_impl.rs；MinGW 构建，无 MSVC 链接路径）
         #[cfg(target_os = "windows")]

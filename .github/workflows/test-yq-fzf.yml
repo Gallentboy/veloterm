@@ -1,6 +1,7 @@
-# 目标（单一）：Go FFI 车道——yqffi.dll 与 fzfffi.dll（Go c-shared，cgo 需 gcc）。
-# yq/fzf 两个段共用一套 Go/gcc 构建（build-tools.mjs --only yq 或 --only fzf
-# 均产出两个 DLL），故 test_yq / test_fzf 两个 tag 触发同一车道。
+# 目标（单一）：Go FFI 车道——veloterm_goffi.dll（yq + fzf 合并的 c-shared
+# DLL，双符号 veloterm_yq_main / veloterm_fzf_main；cgo 需 gcc，GOAMD64=v3
+# 以 AVX2 为基线）。yq/fzf 两段共用一套 Go/gcc 构建（build-tools.mjs --only yq
+# 或 --only fzf 均产出同一 DLL），故 test_yq / test_fzf 两个 tag 触发同一车道。
 # 触发：推 tag（验证完删除）——
 #   git tag test_yq && git push origin test_yq      （fzf 同理 test_fzf）
 #   git push origin :refs/tags/test_yq
@@ -37,12 +38,10 @@ jobs:
       - name: Build yqffi.dll / fzfffi.dll
         run: node scripts/build-tools.mjs --only yq --target x86_64-pc-windows-msvc
 
-      - name: Upload Go FFI artifacts
+      - name: Upload Go FFI artifact
         uses: actions/upload-artifact@v7
         with:
           name: go-ffi-windows-x64
-          path: |
-            src-tauri/binaries/yqffi.dll
-            src-tauri/binaries/fzfffi.dll
+          path: src-tauri/binaries/veloterm_goffi.dll
           if-no-files-found: error
           retention-days: 7
