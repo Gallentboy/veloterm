@@ -657,6 +657,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bc-app"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "bcrypt-pbkdf"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1413,6 +1420,7 @@ dependencies = [
 name = "coreutils"
 version = "0.1.0"
 dependencies = [
+ "bc-app",
  "crossterm",
  "diffutils",
  "eza",

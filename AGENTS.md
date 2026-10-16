@@ -25,12 +25,12 @@
 | Rust 测试 | `cargo test --workspace` | 全绿（app 66 + coreutils 26 + tools-catalog 1 为当前基线） |
 | Lint | `cargo clippy --workspace --all-targets` | 自有代码零警告 |
 
-冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑（jq-app 同此约定）。
+冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑（jq-app / bc-app 同此约定）。
 
 ## 平台约束（硬性）
 
 - **严禁在 macOS 上交叉编译 Windows 目标**。Windows 包只能由 GitHub Actions 的 windows-latest runner（或真实 Windows 机器）出。`scripts/build-tools.mjs` 已内置两道闸：非 Windows target 跳过、非 Windows 主机请求 Windows target 硬拒。
-- 工具链（openssl-app / putty-telnet / jq-app 的 C 编译、vcpkg 静态库、yq 的 Go c-shared）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。jq-app 与前两者不同：纯 C 自包含（vendor/jq 1.7.1 + 捆绑 oniguruma 6.9.8），零 vcpkg/cmake/perl 依赖，CI 无额外安装步骤。yq 亦零额外依赖：Go 构建只发生在 Windows（build-tools.mjs），macOS/测试机不碰 Go 工具链与 DLL。
+- 工具链（openssl-app / putty-telnet / jq-app / bc-app 的 C 编译，vcpkg 静态库，yq 的 Go c-shared）只在 Windows 编译；macOS 走桩模块，保证本机测试通过即视为完成。jq-app 与 openssl-app/putty-telnet 不同：纯 C 自包含（vendor/jq 1.7.1 + 捆绑 oniguruma 6.9.8），零 vcpkg/cmake/perl 依赖，CI 无额外安装步骤。bc-app 更简：上游 bc 7.1.0 自带官方 MSVC 工程（vendor/bc/vs/bc.vcxproj，本地零修补），仅链 bcrypt，宿主生成器 strgen 由 build.rs 的 Rust 复刻替代（byte-diff 验证）。yq 亦零额外依赖：Go 构建只发生在 Windows（build-tools.mjs），macOS/测试机不碰 Go 工具链与 DLL。
 - 所有 Windows 专属逻辑用 `#[cfg(target_os = "windows")]` / `[target.'cfg(windows)'.dependencies]` 门控，不留运行时判断。
 
 ## 架构不变量
@@ -39,7 +39,7 @@
 
 `src-tauri` 是 workspace 根（根包 = Tauri 主程序 `app`），三个成员职责不可混：
 
-- **app 不依赖任何工具 crate**——uutils/ripgrep/openssl-app/putty-telnet/jq-app 的依赖图只进 `crates/coreutils`。这是「主程序瘦身 + 增量构建互不牵连」的前提：改 UI 只重链 app，改工具只重链 coreutils。
+- **app 不依赖任何工具 crate**——uutils/ripgrep/openssl-app/putty-telnet/jq-app/bc-app 的依赖图只进 `crates/coreutils`。这是「主程序瘦身 + 增量构建互不牵连」的前提：改 UI 只重链 app，改工具只重链 coreutils。
 - **tools-catalog 保持零依赖**——命令名清单是 app（建硬链接）与 coreutils（argv0 分发白名单）的单一事实来源；任何依赖都会经它传染给主程序。
 - `vendor/` 被 workspace `exclude`：vendor 内 coreutils/sed/ripgrep/sd 自带 workspace，其余为无继承键的独立清单；不 exclude 则 uucore 的 `edition.workspace` 会误朝根清单取值而报错。
 - 裸 `cargo build` / `cargo test` 只作用于根包 app；工具链必须显式 `-p coreutils`。
@@ -48,6 +48,7 @@
 
 - 单一 `coreutils.exe` 多呼叫二进制；`rg`/`fd`/`awk` 三个命令的解析器直读自身 argv，**仅硬链接短名模式可用**，子命令模式给出提示。
 - **yq（Go）是唯一例外形态**：Go 官方不支持 MSVC 链接 c-archive（golang/go#74189），无法像 openssl-app 那样静态链入——vendor 源码（`vendor/yq/`，版本锁在 `VELOTERM_VERSION`）经 `build-tools.mjs` 用 `go build -buildmode=c-shared -tags veloterm_ffi` 出 `yqffi.dll`，coreutils 的 `yq_impl.rs` 运行时 LoadLibrary 调 `veloterm_yq_main`（无链接期依赖，macOS/CI 测试机无需 Go 工具链）；DLL 随包走 resources 放安装根目录，硬链接短名 `tools\yq.exe` 启动时按 exe 同目录→上级目录搜索。升级 yq：换 vendor 源码 + 改 `VELOTERM_VERSION`（build-tools 自动读入并经 ldflags 注入版本）。
+- **bc 是 jq-app 的同型简化版**：vendor/bc（gavinhoward/bc 7.1.0，BSD-2-Clause）+ vendor/bc-app sys-crate，cc 现场编译静态链入，`-Dmain=veloterm_bc_main` 改名后 FFI 直调（main.c 按 argv[0] 首字符分发 bc/dc，恒传 "bc"）。上游自带官方 MSVC 工程零修补；4 个 strgen 生成物（lib/lib2/help×2）由 build.rs 的 Rust 复刻渲染（与宿主 strgen byte-diff 验证）；仅链 bcrypt。升级 bc：换 vendor 源码 + 同步 build.rs 的 `BC_VERSION` 与 vendor/bc/VERSION.txt（build.rs 启动时校验双源一致）+ 复核 vs/bc.vcxproj 的宏集合。
 - 硬链接安装在应用启动钩子（`src/tools/hardlinks.rs`，仅 Windows 编译）完成：幂等判据是**文件身份**（Unix inode 对；Windows 退化为大小 + mtime），不是文件大小——同体积升级曾因此误判。
 - 依赖 uutils 家族统一走 vendor 的 uucore 0.12.0（各 vendor 清单已重定向），避免 lock 出现双版本。
 - 新增命令：改 `tools-catalog` 清单 → `crates/coreutils/src/coreutils.rs` 加分发臂 → 补 command_table_consistency 与 version sweep 的预期（平台不对称的命令要条件化 skip，否则 macOS 侧计数对不上）。
