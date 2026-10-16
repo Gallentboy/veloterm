@@ -159,15 +159,15 @@ uu_who = { path = "../../vendor/coreutils/src/uu/who" }
 uu_stdbuf = { path = "../../vendor/coreutils/src/uu/stdbuf" }
 
 # 仅 Windows：openssl CLI、telnet CLI、bc/jq CLI（vendor 源码 cc 现场编译）
-# 与 yq/qalc（Go 源码经 yqffi.dll、libqalculate 经 qalcffi.dll 运行时加载，
-# 见 src/yq_impl.rs 与 src/qalc_impl.rs）
+# 与 yq/fzf/qalc（yq、fzf 是 Go 源码分别经 yqffi.dll/fzfffi.dll，libqalculate 经
+# qalcffi.dll 运行时加载，见 src/yq_impl.rs、src/fzf_impl.rs 与 src/qalc_impl.rs）
 [target.'cfg(windows)'.dependencies]
 bc-app = { path = "../../vendor/bc-app" }
 openssl-app = { path = "../../vendor/openssl-app" }
 putty-telnet = { path = "../../vendor/putty-telnet" }
 jq-app = { path = "../../vendor/jq-app" }
-# yq/qalc 的 DLL 运行时加载（见 yq_impl.rs / qalc_impl.rs：前者是 Go，
-# 后者是 autotools C++，均无 MSVC 链接路径，DLL 动态导入是唯一形态）
+# yq/fzf/qalc 的 DLL 运行时加载（见 yq_impl.rs / fzf_impl.rs / qalc_impl.rs：
+# 前两者是 Go，后者是 autotools C++，均无 MSVC 链接路径，DLL 动态导入是唯一形态）
 libloading = "0.8"
 
 [dev-dependencies]
