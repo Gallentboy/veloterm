@@ -319,6 +319,15 @@ int main(int argc, char* argv[]) {
   int badwrite;
   int options = 0;
 
+#ifdef WIN32
+  /* veloterm 诊断插桩（临时手段，定位后移除）：VELOTERM_JQ_TIMING=1 时在
+     退出前向 stderr 输出分段耗时——用于定位本构建与官方 MinGW 构建在
+     「带程序参数」路径上 ~450ms 差异的具体阶段（CI 实测：--version 28ms、
+     -n 1+1 465ms，官方 MinGW 同版本同机 ~40ms） */
+  static LARGE_INTEGER vt_freq, vt_marks[5];
+  static int vt_on;
+#endif
+
 #ifdef HAVE_SETLOCALE
   (void) setlocale(LC_ALL, "");
 #endif
@@ -334,6 +343,9 @@ int main(int argc, char* argv[]) {
   jv_tsd_dtoa_ctx_init();
   fflush(stdout);
   fflush(stderr);
+  vt_on = getenv("VELOTERM_JQ_TIMING") != NULL &&
+          QueryPerformanceFrequency(&vt_freq) != 0;
+  if (vt_on) QueryPerformanceCounter(&vt_marks[0]);
   /* veloterm 修补：删除上游对 stdout/stderr 的 `_O_TEXT | _O_U8TEXT` 设置。
      _O_U8TEXT 是 UCRT 的宽字符 UTF-8 模式，窄字符输出函数（fprintf/fwrite——
      jq 的全部错误输出与「重定向到管道/文件」的输出即此类）写该模式流属非法
@@ -356,6 +368,9 @@ int main(int argc, char* argv[]) {
     ret = JQ_ERROR_SYSTEM;
     goto out;
   }
+#ifdef WIN32
+  if (vt_on) QueryPerformanceCounter(&vt_marks[1]);
+#endif
 
   int dumpopts = JV_PRINT_INDENT_FLAGS(2);
   const char* program = 0;
@@ -608,6 +623,9 @@ int main(int argc, char* argv[]) {
       }
     }
   }
+#ifdef WIN32
+  if (vt_on) QueryPerformanceCounter(&vt_marks[2]);
+#endif
 
 #ifdef USE_ISATTY
   if (isatty(STDOUT_FILENO)) {
@@ -706,6 +724,9 @@ int main(int argc, char* argv[]) {
                                         jv_string(JQ_CONFIG)); /* named arguments */
     compiled = jq_compile_args(jq, program, jv_copy(program_arguments));
   }
+#ifdef WIN32
+  if (vt_on) QueryPerformanceCounter(&vt_marks[3]);
+#endif
   if (!compiled){
     ret = JQ_ERROR_COMPILE;
     goto out;
@@ -769,6 +790,9 @@ int main(int argc, char* argv[]) {
     ret = JQ_ERROR_SYSTEM;
 
 out:
+#ifdef WIN32
+  if (vt_on) QueryPerformanceCounter(&vt_marks[4]);
+#endif
   badwrite = ferror(stdout);
   if (fclose(stdout)!=0 || badwrite) {
     fprintf(stderr,"jq: error: writing output failed: %s\n", strerror(errno));
@@ -779,6 +803,30 @@ out:
   jv_free(program_arguments);
   jq_util_input_free(&input_state);
   jq_teardown(&jq);
+
+#ifdef WIN32
+  if (vt_on) {
+    LARGE_INTEGER vt_end;
+    double vt_ms[6];
+    int vt_i;
+    QueryPerformanceCounter(&vt_end);
+    vt_ms[0] = (vt_marks[1].QuadPart - vt_marks[0].QuadPart) * 1000.0 / vt_freq.QuadPart;
+    vt_ms[1] = (vt_marks[2].QuadPart - vt_marks[1].QuadPart) * 1000.0 / vt_freq.QuadPart;
+    vt_ms[2] = (vt_marks[3].QuadPart - vt_marks[2].QuadPart) * 1000.0 / vt_freq.QuadPart;
+    vt_ms[3] = (vt_marks[4].QuadPart - vt_marks[3].QuadPart) * 1000.0 / vt_freq.QuadPart;
+    vt_ms[4] = (vt_end.QuadPart - vt_marks[4].QuadPart) * 1000.0 / vt_freq.QuadPart;
+    vt_ms[5] = (vt_end.QuadPart - vt_marks[0].QuadPart) * 1000.0 / vt_freq.QuadPart;
+    fprintf(stderr, "[veloterm-jq-timing] init=%.1fms argparse=%.1fms compile=%.1fms "
+                    "exec+output=%.1fms cleanup=%.1fms total=%.1fms\n",
+            vt_ms[0], vt_ms[1], vt_ms[2], vt_ms[3], vt_ms[4], vt_ms[5]);
+    for (vt_i = 0; vt_i < 5; vt_i++) {
+      if (vt_marks[vt_i].QuadPart == 0) {
+        fprintf(stderr, "[veloterm-jq-timing] NOTE: 提前退出路径，部分分段未覆盖\n");
+        break;
+      }
+    }
+  }
+#endif
 
   if (options & EXIT_STATUS) {
     if (ret != JQ_OK_NO_OUTPUT)
