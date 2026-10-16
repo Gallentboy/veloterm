@@ -1,0 +1,139 @@
+---
+source: tests/repo.rs
+expression: info
+---
+{
+  "title": {
+    "gitUsername": "onefetch-committer-name",
+    "gitVersion": "git version"
+  },
+  "infoFields": [
+    {
+      "ProjectInfo": {
+        "repoName": "repo",
+        "numberOfBranches": 0,
+        "numberOfTags": 1
+      }
+    },
+    {
+      "DescriptionInfo": {
+        "description": "Amazing tool"
+      }
+    },
+    {
+      "HeadInfo": {
+        "headRefs": {
+          "shortCommitId": "short commit",
+          "refs": [
+            "main"
+          ]
+        }
+      }
+    },
+    {
+      "PendingInfo": {
+        "added": 2,
+        "deleted": 0,
+        "modified": 1
+      }
+    },
+    {
+      "VersionInfo": {
+        "version": "tag1"
+      }
+    },
+    {
+      "CreatedInfo": {
+        "creationDate": "2000-01-02T00:00:00Z"
+      }
+    },
+    {
+      "LanguagesInfo": {
+        "languagesWithPercentage": [
+          {
+            "language": "Rust",
+            "percentage": 100.0
+          }
+        ]
+      }
+    },
+    {
+      "DependenciesInfo": {
+        "numberOfDependencies": 1,
+        "manifestType": "Cargo"
+      }
+    },
+    {
+      "AuthorsInfo": {
+        "authors": [
+          {
+            "name": "Author Four",
+            "email": "author4@example.org",
+            "nbrOfCommits": 1,
+            "contribution": 25
+          },
+          {
+            "name": "Author One",
+            "email": "author1@example.org",
+            "nbrOfCommits": 1,
+            "contribution": 25
+          },
+          {
+            "name": "Author Three",
+            "email": "author3@example.org",
+            "nbrOfCommits": 1,
+            "contribution": 25
+          }
+        ]
+      }
+    },
+    {
+      "LastChangeInfo": {
+        "lastChange": "2000-01-02T00:00:00Z"
+      }
+    },
+    {
+      "ContributorsInfo": {
+        "totalNumberOfAuthors": 4
+      }
+    },
+    {
+      "UrlInfo": {
+        "repoUrl": "https://github.com/user/repo.git"
+      }
+    },
+    {
+      "CommitsInfo": {
+        "numberOfCommits": 4,
+        "isShallow": false
+      }
+    },
+    {
+      "ChurnInfo": {
+        "file_churns": [
+          {
+            "filePath": "code.rs",
+            "nbrOfCommits": 4
+          }
+        ],
+        "churn_pool_size": 4
+      }
+    },
+    {
+      "LocInfo": {
+        "linesOfCode": 4
+      }
+    },
+    {
+      "SizeInfo": {
+        "repoSize": 22,
+        "fileCount": 1
+      }
+    },
+    {
+      "LicenseInfo": {
+        "license": "MIT"
+      }
+    }
+  ]
+}

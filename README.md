@@ -11,7 +11,7 @@ VeloTerm 是快速、精致的跨平台桌面终端（Tauri 2 + React 19），�
 | 编辑器 | Monaco 内嵌（81 种语言高亮、TS/JS/JSON 智能提示全离线）；远端文件在线编辑、冲突检测（本地 vs 远端 baseHash）、草稿防抖暂存；SQLCipher 加密保存 |
 | 主机库 | 分组树 + 跳板机链 + 三种认证（密码 / 私钥 / Agent）；「终端就绪钩子」——连接建立后自动执行命令库中的指定命令 |
 | 命令库 | 常用命令收藏，支持 `{{参数}}` 占位符模板、危险级别、Markdown 详细说明；全局命令面板快捷执行 |
-| 内置工具链（仅 Windows） | 单一 `coreutils.exe` 多呼叫二进制 + NTFS 硬链接短名入口（`ls` `grep` `rg` `awk` `bc` `jq` `yq` `qalc` … 118 个命令），BusyBox 模式零拷贝分发 |
+| 内置工具链（仅 Windows） | 单一 `coreutils.exe` 多呼叫二进制 + NTFS 硬链接短名入口（`ls` `grep` `rg` `awk` `bc` `jq` `yq` `qalc` `onefetch` … 123 个命令），BusyBox 模式零拷贝分发 |
 
 ## 环境要求
 
@@ -58,7 +58,7 @@ cargo clippy --workspace --all-targets
 
 ### 内置工具链（仅 Windows）
 
-工具链在 Windows 安装包中随主程序分发（`binaries/coreutils-<triple>.exe`），应用启动时在主程序同级 `tools/` 目录创建 118 个硬链接短名入口并注入 PATH——用户在 cmd 中直接敲 `ls`、`grep`、`rg` 即用。macOS 上不构建、不分发（系统自带完整工具链）。
+工具链在 Windows 安装包中随主程序分发（`binaries/coreutils-<triple>.exe`），应用启动时在主程序同级 `tools/` 目录创建 123 个硬链接短名入口并注入 PATH——用户在 cmd 中直接敲 `ls`、`grep`、`rg` 即用。macOS 上不构建、不分发（系统自带完整工具链）。
 
 本地 cmd 会话启动时还会注入 doskey 宏，把交互输入的 `cd`/`chdir` 自动补上 `/d` 开关——跨盘符直达（`cd D:\proj` 一步到位，无需手写 `cd /d`），批处理脚本与 `cmd /c` 不受影响。
 
@@ -70,6 +70,7 @@ cargo clippy --workspace --all-targets
 | uutils/grep · sed · findutils · diffutils | grep、sed、find/xargs、diff/cmp/sdiff |
 | ripgrep · fd-find · chmln/sd · frawk | rg、fd、sd、awk（Cranelift JIT） |
 | rust-parallel | parallel（v1.9.1，tokio 并行执行器，GNU parallel 风格接口；短名 argv[0] 分发） |
+| onefetch | onefetch（v3.0.0，git 仓库信息面板：语言统计（tokei）/依赖/作者/churn/许可证识别，gix 纯 Rust git 栈；短名 argv[0] 分发，vendor 树自带 ascii/image/manifest 三个 path 子 crate） |
 | tar-rs · eza · wget-rs | tar（自研 GNU 兼容 CLI 壳）、eza/tree、wget |
 | openssl-app + openssl-src | openssl CLI（vcpkg 3.6.4 静态库 + 锁版本源码，仅 Windows） |
 | putty-telnet | telnet（PuTTY 源码内嵌 + C 层 GNU 参数解析，仅 Windows） |
