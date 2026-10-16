@@ -67,7 +67,13 @@ stderr 的 parse error 被吞（终端表现为完全无输出）、`jq ... > fi
 tty 正常输出走 jv_print.c 的 `WriteConsoleW` 不经 stdio 不受影响；
 `-b/--binary` 的 `_O_BINARY` 分支不变）。
 
-七处补丁均有中文注释标记。
+`src/main.c`（第 8 处，**临时诊断插桩，定位后移除**）：`VELOTERM_JQ_TIMING=1`
+时在退出前向 stderr 输出分段耗时（init/argparse/compile/exec+output/cleanup，
+QueryPerformanceCounter）。背景：MSVC 构建在「带程序参数」路径比官方 MinGW
+构建慢 ~430ms（`jq -n 1+1` 465ms vs 官方同版本 40ms；`--version` 双方同速），
+此插桩用于把耗时定位到具体阶段。
+
+八处补丁均有中文注释标记。
 
 ## 构建集合的隐式项（jq-app build.rs 的收录依据）
 

@@ -37,3 +37,76 @@ jobs:
           CFLAGS: '-O0 -g'
           CXXFLAGS: '-O0 -g'
         run: node scripts/build-tools.mjs --only qalc
+
+  # coreutils 构建产物通道：产出可直接下载替换的 coreutils.exe（免装安装包），
+  # 用于真机快速验证（如 jq 分段计时插桩：下载后设 VELOTERM_JQ_TIMING=1，
+  # 以子命令模式运行 `coreutils.exe jq -n 1+1` 观察 stderr 分段耗时）
+  coreutils-artifact:
+    permissions:
+      contents: read
+      packages: write
+    runs-on: windows-latest
+    env:
+      USERNAME: Gallentboy
+      FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
+      VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      # jq/bc/openssl 的 C 编译依赖与 publish 相同（vcpkg OpenSSL 二进制缓存）
+      - name: Add NuGet source for vcpkg binary cache (GitHub Packages)
+        shell: pwsh
+        run: |
+          $vcpkgExe = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" } else { "C:\vcpkg\vcpkg.exe" }
+          $nuget = (& $vcpkgExe fetch nuget | Select-Object -Last 1)
+          & $nuget sources add `
+            -Source "$env:FEED_URL" `
+            -StorePasswordInClearText `
+            -Name GitHubPackages `
+            -UserName "$env:USERNAME" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
+
+      - name: Install OpenSSL for SQLCipher (Windows)
+        working-directory: src-tauri
+        shell: pwsh
+        env:
+          VCPKG_BUILD_TYPE: release
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
+          git config --global --add safe.directory "$vcpkgRoot"
+          git -C "$vcpkgRoot" fetch origin master
+          if ($LASTEXITCODE -ne 0) { Write-Host "git fetch 补历史失败（exit $LASTEXITCODE），继续安装：当前镜像通常已含 baseline 历史" }
+          vcpkg install "--x-install-root=$vcpkgRoot\installed"
+
+      - name: Set OpenSSL env (Windows)
+        shell: pwsh
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
+          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      - name: Build coreutils binary
+        run: node scripts/build-tools.mjs --only coreutils --target x86_64-pc-windows-msvc
+
+      - name: Upload coreutils artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: coreutils-windows-x64
+          path: src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe
+          if-no-files-found: error
+          retention-days: 7
