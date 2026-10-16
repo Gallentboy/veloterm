@@ -3618,7 +3618,13 @@ if(NOT MSVC)
 
         set(MAN3PCAP "")
         foreach(MANPAGE ${MAN3PCAP_NOEXPAND})
-            set(MAN3PCAP ${MAN3PCAP} ${CMAKE_CURRENT_SOURCE_DIR}/${MANPAGE})
+            # VeloTerm patch：nmap 发行树裁掉了 3 个 man 页（pcap_init /
+            # pcap_set_protocol_linux / pcap_get_required_select_timeout，
+            # 上游用 autotools 构建 libpcap、从不跑本 CMake，安装清单未同步），
+            # 按存在性过滤，避免 install 阶段 FATAL
+            if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${MANPAGE})
+                set(MAN3PCAP ${MAN3PCAP} ${CMAKE_CURRENT_SOURCE_DIR}/${MANPAGE})
+            endif()
         endforeach(MANPAGE)
         foreach(TEMPLATE_MANPAGE ${MAN3PCAP_EXPAND})
             string(REPLACE ".in" "" MANPAGE ${TEMPLATE_MANPAGE})
