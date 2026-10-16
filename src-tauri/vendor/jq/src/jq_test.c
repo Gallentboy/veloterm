@@ -8,6 +8,13 @@
 #include "jv.h"
 #include "jq.h"
 
+#ifdef WIN32
+/* veloterm 修补：上游 WIN32 的 fopen 全局覆盖已改名 veloterm_jq_fopen
+ * （见 util.c 的修补注释——同名覆盖与静态 CRT 撞 LNK2005），本文件原依赖
+ * 那个全局覆盖获得 UTF-8 路径支持，此处显式声明并随改调用点。 */
+FILE *veloterm_jq_fopen(const char *fname, const char *mode);
+#endif
+
 static void jv_test();
 static void run_jq_tests(jv, int, FILE *, int, int);
 #ifdef HAVE_PTHREAD
@@ -28,7 +35,11 @@ int jq_testsuite(jv libdirs, int verbose, int argc, char* argv[]) {
         take = atoi(argv[i+1]);
         i++;
       } else {
+#ifdef WIN32
+        testdata = veloterm_jq_fopen(argv[i], "r");
+#else
         testdata = fopen(argv[i], "r");
+#endif
         if (!testdata) {
           perror("fopen");
           exit(1);

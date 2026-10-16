@@ -28,6 +28,9 @@
 //!   `#include "config.h"`。MSVC 下最小集 = HAVE_STDINT_H / HAVE_INTTYPES_H /
 //!   HAVE_SYS_TYPES_H + SIZEOF_{INT,LONG,LONG_LONG,VOIDP}（regint.h 的
 //!   hash_data_type 用），渲染到独立目录避免与 jq 宏互相污染。
+//! - **oniguruma 静态链接需 `ONIG_STATIC`**：oniguruma.h 的 `ONIG_EXTERN`
+//!   在 MSVC 下默认展开为 `__declspec(dllimport)`（面向 DLL 消费者），静态
+//!   编入同一二进制时连锁报 LNK4217。上游 CMake 的静态目标同此做法。
 //! - **builtin.inc**：tarball 不带；Makefile.am:120-122 的规则是
 //!   `sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/'`，
 //!   即每行：反斜杠翻倍 → 双引号转义 → 行首加 `"` → 行尾加 `\n"`。
@@ -83,13 +86,15 @@
 //!   winsock.h 已定义同布局的 timeval，无守卫必报 C2011 重定义。
 //! - 假 `libgen.h`（main.c/linker.c 包含）：dirname 的最小实现（POSIX
 //!   语义，就地修改入参，兼容 `/` 与 `\`）。
-//! - vendor/jq 五处就地修补（均见 vendor/jq/README.md，带中文注释标记）：
+//! - vendor/jq 六处就地修补（均见 vendor/jq/README.md，带中文注释标记）：
 //!   jv.c 上游笔误（`_MSC_VER` 分支误声明 jv_alloc.c 的私有类型
 //!   nomem_handler）；jv_alloc.h 无编译器守卫的
 //!   `__attribute__((warn_unused_result))`；util.h 的 MIN/MAX 宏用 GNU
 //!   语句表达式 + `__typeof__`（MSVC 不支持，加 `_MSC_VER` 三元式分支）；
 //!   jv_file.c 的 `const int` 数组尺寸实为 VLA（MSVC 不支持，改 enum 常量）；
-//!   jv_dtoa_tsd.c 的裸 `inline` 定义在 MSVC 下不产出外部符号（LNK2019，去 inline）。
+//!   jv_dtoa_tsd.c 的裸 `inline` 定义在 MSVC 下不产出外部符号（LNK2019，去 inline）；
+//!   util.c 的 WIN32 `fopen` 同名覆盖与静态 CRT 的 fopen.obj 撞名（LNK2005，
+//!   改名 veloterm_jq_fopen，调用点随改）。
 //!
 //! # 编译告警
 //!
@@ -230,6 +235,11 @@ fn run() -> Result<(), String> {
     // ── 3. 编译捆绑 oniguruma（独立 cc Build：宏与 include 都不与 jq 侧混）──
     let mut onig = cc::Build::new();
     onig.include(&onig_src).include(&onigcfg);
+    // 静态编入同一二进制：oniguruma.h 的 ONIG_EXTERN 在 MSVC 下默认展开为
+    // __declspec(dllimport)（那是给 DLL 消费者用的），静态链接时会连锁报
+    // LNK4217 "imported by ... in function f_match"。上游 CMake 的静态目标正是
+    // 用 ONIG_STATIC 关闭该分支（CMakeLists.txt 的 $<NOT:$<BOOL:${BUILD_SHARED_LIBS}>>）。
+    onig.define("ONIG_STATIC", "1");
     // 第三方上游 C 源（oniguruma / jq / decNumber）全部编译告警静默：
     // cc-rs 对 MSVC 默认 -W4（GNU 系 -Wall），实测刷出 2500+ 条
     // C4245/C4244/C4100，把真正的 error 埋得看不见。warnings(false)
@@ -258,6 +268,9 @@ fn run() -> Result<(), String> {
     jq.define("WIN32", "1");
     jq.define("USE_DECNUM", "1");
     jq.define("HAVE_LIBONIG", "1");
+    // jq 侧（builtin.c 等）include oniguruma.h 时同样要避开 dllimport 分支，
+    // 否则 onig_* 调用被当 DLL 导入（LNK4217 的报错方正是 builtin.o）
+    jq.define("ONIG_STATIC", "1");
     jq.define("IEEE_8087", "1");
     // UCRT 实有的 libc 探测宏
     jq.define("HAVE_SETLOCALE", "1");
