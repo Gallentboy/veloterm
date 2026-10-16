@@ -438,9 +438,10 @@ mkdir -p npcap-shim/include npcap-shim/lib
 cp -r "$SDK_DIR"/Include/* npcap-shim/include/
 cp -r "$SDK_DIR"/Lib/x64/* npcap-shim/lib/
 
-# ── 2. bundled libpcap → 静态库（CMake 官方 Windows 路线，1.10.7 预生成
-#    scanner/grammar，无需 flex/bison；D-Bus/RDMA 在 MinGW 不可用，显式关掉
-#    免探测噪声） ──
+# ── 2. bundled libpcap → 静态库（CMake 官方 Windows 路线；scanner/grammar
+#    经树内 CMakeLists 的 VeloTerm 补丁改用发行树预生成文件——树内无
+#    grammar.y 且 MSYS2 无 mingw flex/bison 包，零生成器依赖，见 vendor/nmap
+#    README 本地补丁清单；D-Bus/RDMA 在 MinGW 不可用，显式关掉免探测噪声） ──
 PCAP_STAGE=$(pwd)/pcap-stage
 if [ ! -f "$PCAP_STAGE/lib/libpcap.a" ]; then
   rm -rf libpcap-build pcap-stage
