@@ -1,6 +1,7 @@
 import { KeyRound, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { FormField, Select, TextInput } from '@/components/hosts/formFields';
 import {
   listAiModels,
@@ -148,9 +149,11 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
             <span className="mr-2 max-w-48 truncate text-ui-xs text-success">{t('ai.provider.testOk')}</span>
           )}
           {testState === 'fail' && (
-            <span className="mr-2 max-w-56 truncate text-ui-xs text-destructive" title={testMessage}>
-              {testMessage || t('ai.provider.testFail')}
-            </span>
+            <ControlHintTooltip title={testMessage || t('ai.provider.testFail')} side="bottom" className="min-w-0 max-w-56">
+              <span className="block truncate text-ui-xs text-destructive">
+                {testMessage || t('ai.provider.testFail')}
+              </span>
+            </ControlHintTooltip>
           )}
           <Button variant="ghost" onClick={onClose}>
             {t('common.cancel')}
@@ -193,17 +196,18 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
                   onChange={(e) => setModel(e.target.value)}
                   placeholder={TYPE_PLACEHOLDERS[providerType]}
                 />
-                <Button
-                  variant="outline"
-                  size="icon-md"
-                  onClick={() => void handleLoadModels()}
-                  disabled={isLoadingModels}
-                  aria-label={t('ai.provider.loadModels')}
-                  title={t('ai.provider.loadModels')}
-                  className="shrink-0"
-                >
-                  <RefreshCw className={cn('size-3.5', isLoadingModels && 'animate-spin')} />
-                </Button>
+                <ControlHintTooltip title={t('ai.provider.loadModels')} side="top">
+                  <Button
+                    variant="outline"
+                    size="icon-md"
+                    onClick={() => void handleLoadModels()}
+                    disabled={isLoadingModels}
+                    aria-label={t('ai.provider.loadModels')}
+                    className="shrink-0"
+                  >
+                    <RefreshCw className={cn('size-3.5', isLoadingModels && 'animate-spin')} />
+                  </Button>
+                </ControlHintTooltip>
               </div>
               {modelsError ? (
                 <span className="text-ui-xs text-destructive">{modelsError}</span>
@@ -254,15 +258,16 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
                   placeholder={`sk-... (${t('ai.provider.keyN', { index: index + 1 })})`}
                   autoComplete="off"
                 />
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={addKey}
-                  aria-label={t('ai.provider.addKey')}
-                  title={t('ai.provider.addKey')}
-                >
-                  <Plus className="size-3.5" />
-                </Button>
+                  <ControlHintTooltip title={t('ai.provider.addKey')} side="top">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={addKey}
+                      aria-label={t('ai.provider.addKey')}
+                    >
+                      <Plus className="size-3.5" />
+                    </Button>
+                  </ControlHintTooltip>
                 {apiKeys.length > 1 && (
                   <Button
                     variant="ghost"

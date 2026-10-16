@@ -2,6 +2,7 @@ import { ArrowDown, ArrowUp, CaseSensitive, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SearchAddon } from '@xterm/addon-search';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -124,55 +125,59 @@ export function TerminalSearchBar({ searchAddon, visible, onClose }: TerminalSea
         {resultLabel}
       </span>
 
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        onClick={toggleCase}
-        aria-pressed={caseSensitive}
-        title={t('terminal.search.caseSensitive')}
-        className={cn(
-          'size-6 rounded text-foreground-subtle hover:text-foreground hover:bg-hover',
-          caseSensitive && 'bg-selected text-foreground',
-        )}
-      >
-        <CaseSensitive className="size-3.5" />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        onClick={() => runSearch(query, { reverse: true })}
-        disabled={!query}
-        title={t('terminal.search.previous')}
-        aria-label={t('terminal.search.previous')}
-        className="size-6 rounded text-foreground-subtle hover:text-foreground hover:bg-hover"
-      >
-        <ArrowUp className="size-3.5" />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        onClick={() => runSearch(query)}
-        disabled={!query}
-        title={t('terminal.search.next')}
-        aria-label={t('terminal.search.next')}
-        className="size-6 rounded text-foreground-subtle hover:text-foreground hover:bg-hover"
-      >
-        <ArrowDown className="size-3.5" />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        onClick={close}
-        title={t('common.close')}
-        aria-label={t('common.close')}
-        className="size-6 rounded text-foreground-subtle hover:text-foreground hover:bg-hover"
-      >
-        <X className="size-3.5" />
-      </Button>
+      <ControlHintTooltip title={t('terminal.search.caseSensitive')} side="bottom">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={toggleCase}
+          aria-pressed={caseSensitive}
+          className={cn(
+            'size-6 rounded text-foreground-subtle hover:text-foreground hover:bg-hover',
+            caseSensitive && 'bg-selected text-foreground',
+          )}
+        >
+          <CaseSensitive className="size-3.5" />
+        </Button>
+      </ControlHintTooltip>
+      <ControlHintTooltip title={t('terminal.search.previous')} side="bottom">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => runSearch(query, { reverse: true })}
+          disabled={!query}
+          aria-label={t('terminal.search.previous')}
+          className="size-6 rounded text-foreground-subtle hover:text-foreground hover:bg-hover"
+        >
+          <ArrowUp className="size-3.5" />
+        </Button>
+      </ControlHintTooltip>
+      <ControlHintTooltip title={t('terminal.search.next')} side="bottom">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => runSearch(query)}
+          disabled={!query}
+          aria-label={t('terminal.search.next')}
+          className="size-6 rounded text-foreground-subtle hover:text-foreground hover:bg-hover"
+        >
+          <ArrowDown className="size-3.5" />
+        </Button>
+      </ControlHintTooltip>
+      <ControlHintTooltip title={t('common.close')} side="bottom">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={close}
+          aria-label={t('common.close')}
+          className="size-6 rounded text-foreground-subtle hover:text-foreground hover:bg-hover"
+        >
+          <X className="size-3.5" />
+        </Button>
+      </ControlHintTooltip>
     </div>
   );
 }

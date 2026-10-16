@@ -1,6 +1,7 @@
 import { ChevronDown, FileText } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { FormField } from '@/components/hosts/formFields';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
@@ -139,11 +140,13 @@ export function ImportPreviewDialog({ open, result, onClose, onImported }: Impor
       <div className="flex flex-col gap-3.5">
         {error ? <p className="text-ui-sm text-destructive">{error}</p> : null}
 
-        {/* 文件名（截断显示，title 悬浮全路径） */}
-        <p className="flex min-w-0 items-center gap-1.5" title={result.path}>
-          <FileText className="size-3.5 shrink-0 text-foreground-subtlest" />
-          <span className="min-w-0 truncate text-ui-sm text-foreground-subtle">{fileName}</span>
-        </p>
+        {/* 文件名（截断显示，悬浮 tooltip 看全路径） */}
+        <ControlHintTooltip title={result.path} side="bottom" className="min-w-0 max-w-full">
+          <p className="flex min-w-0 items-center gap-1.5">
+            <FileText className="size-3.5 shrink-0 text-foreground-subtlest" />
+            <span className="min-w-0 truncate text-ui-sm text-foreground-subtle">{fileName}</span>
+          </p>
+        </ControlHintTooltip>
 
         {/* 汇总：新增 / 冲突 / 无效 */}
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-ui-sm select-none">
@@ -200,15 +203,16 @@ export function ImportPreviewDialog({ open, result, onClose, onImported }: Impor
           >
             {preview.conflicts.map((conflict, index) => (
               <div key={`${conflict.uuid ?? 'local'}-${index}`} className="flex items-baseline gap-2">
-                <span className="max-w-[45%] shrink-0 truncate text-ui-sm text-foreground" title={conflict.title}>
-                  {conflict.title}
-                </span>
-                <code
-                  className="min-w-0 flex-1 truncate font-mono text-ui-xs text-foreground-subtle"
-                  title={conflict.command}
-                >
-                  {conflict.command}
-                </code>
+                <ControlHintTooltip title={conflict.title} side="bottom" className="max-w-[45%] shrink-0">
+                  <span className="block max-w-[45%] truncate text-ui-sm text-foreground">
+                    {conflict.title}
+                  </span>
+                </ControlHintTooltip>
+                <ControlHintTooltip title={conflict.command} side="bottom" className="min-w-0 flex-1">
+                  <code className="block min-w-0 truncate font-mono text-ui-xs text-foreground-subtle">
+                    {conflict.command}
+                  </code>
+                </ControlHintTooltip>
               </div>
             ))}
           </DetailSection>

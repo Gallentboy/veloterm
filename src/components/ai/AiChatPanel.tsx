@@ -1,6 +1,7 @@
 import { Loader2, Play, Send, Settings, Sparkles, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import {
   aiAgentChat,
   listAiProviders,
@@ -277,16 +278,17 @@ ${output}`);
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
           {isTerminalPage ? (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void runToolGetScreen()}
-              disabled={activeTerminalKey == null || isToolRunning !== null}
-              aria-label={t('ai.tools.getScreen')}
-              title={t('ai.tools.getScreen')}
-            >
-              <SquareTerminal className={cn('size-3.5', isToolRunning === 'getScreen' && 'animate-pulse')} />
-            </Button>
+            <ControlHintTooltip title={t('ai.tools.getScreen')} side="top">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void runToolGetScreen()}
+                disabled={activeTerminalKey == null || isToolRunning !== null}
+                aria-label={t('ai.tools.getScreen')}
+              >
+                <SquareTerminal className={cn('size-3.5', isToolRunning === 'getScreen' && 'animate-pulse')} />
+              </Button>
+            </ControlHintTooltip>
           ) : null}
           <select
             value={providerId ?? ''}
@@ -305,15 +307,16 @@ ${output}`);
             )}
           </select>
           {onOpenSettings ? (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onOpenSettings}
-              aria-label={t('ai.provider.title')}
-              title={t('ai.provider.title')}
-            >
-              <Settings className="size-3.5" />
-            </Button>
+            <ControlHintTooltip title={t('ai.provider.title')} side="top">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onOpenSettings}
+                aria-label={t('ai.provider.title')}
+              >
+                <Settings className="size-3.5" />
+              </Button>
+            </ControlHintTooltip>
           ) : null}
           <Button
             variant="ghost"
@@ -436,17 +439,18 @@ ${output}`);
           className="max-h-24 min-w-0 flex-1 resize-none rounded-md border border-border bg-input px-2 py-1.5 text-ui-sm text-foreground outline-none placeholder:text-foreground-subtlest focus:border-border-hover"
         />
         {isTerminalPage ? (
-          <Button
-            variant="outline"
-            size="icon-md"
-            disabled={isToolRunning !== null || !input.trim() || activeTerminalKey == null}
-            onClick={() => void runToolRunCommand()}
-            aria-label={t('ai.tools.runCommand')}
-            title={t('ai.tools.runCommand')}
-            className="shrink-0"
-          >
-            <Play className={cn('size-3.5', isToolRunning === 'runCommand' && 'animate-pulse')} />
-          </Button>
+          <ControlHintTooltip title={t('ai.tools.runCommand')} side="top">
+            <Button
+              variant="outline"
+              size="icon-md"
+              disabled={isToolRunning !== null || !input.trim() || activeTerminalKey == null}
+              onClick={() => void runToolRunCommand()}
+              aria-label={t('ai.tools.runCommand')}
+              className="shrink-0"
+            >
+              <Play className={cn('size-3.5', isToolRunning === 'runCommand' && 'animate-pulse')} />
+            </Button>
+          </ControlHintTooltip>
         ) : null}
         <Button
           size="icon-md"

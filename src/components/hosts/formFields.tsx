@@ -1,6 +1,7 @@
 import { Eye, EyeOff } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { cn } from '@/lib/utils';
 
 /** 表单基元：统一样式，设置/主机等表单复用。 */
@@ -63,15 +64,18 @@ export function PasswordInput(props: Omit<React.ComponentProps<'input'>, 'type'>
         type={visible ? 'text' : 'password'}
         className={cn(controlClassName, 'pr-9', props.className)}
       />
-      <button
-        type="button"
-        title={label}
-        aria-label={label}
-        onClick={() => setVisible((value) => !value)}
-        className="absolute right-1 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground"
-      >
-        {visible ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-      </button>
+      <div className="absolute right-1 top-1/2 -translate-y-1/2">
+        <ControlHintTooltip title={label} side="left">
+          <button
+            type="button"
+            aria-label={label}
+            onClick={() => setVisible((value) => !value)}
+            className="inline-flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground"
+          >
+            {visible ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+          </button>
+        </ControlHintTooltip>
+      </div>
     </div>
   );
 }

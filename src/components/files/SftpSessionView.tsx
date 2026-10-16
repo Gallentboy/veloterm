@@ -204,12 +204,9 @@ function TransferTaskRow({ task }: { task: TransferTask }) {
         />
 
         {task.status === 'error' ? (
-          <span
-            className="min-w-0 flex-1 truncate text-destructive"
-            title={task.error ?? undefined}
-          >
-            {task.error}
-          </span>
+          <ControlHintTooltip title={task.error ?? ''} side="top" className="min-w-0 flex-1">
+            <span className="block min-w-0 truncate text-destructive">{task.error}</span>
+          </ControlHintTooltip>
         ) : (
           <span className="hidden shrink-0 whitespace-nowrap font-mono text-ui-xs text-foreground-subtle @min-[24rem]:inline">
             {formatBytesCompact(task.transferred)}/{formatBytesCompact(task.totalBytes)}
@@ -264,7 +261,6 @@ function TransferTaskRow({ task }: { task: TransferTask }) {
             variant="ghost"
             onClick={() => transferQueue.retryTask(task.id)}
             aria-label={t('files.transfer.retry')}
-            title={t('files.transfer.retry')}
           >
             <RotateCw className="size-3 text-primary" />
           </Button>
@@ -1004,25 +1000,25 @@ export function SftpSessionView({
               <Button
                 type="button"
                 variant="outline"
-                size="sm"
+                size="lg"
                 onClick={() => setItemToDelete(null)}
                 disabled={isDeleting}
-                className="h-8 px-3 rounded-lg"
+                className="h-8 px-3 text-ui-base"
               >
                 {t('common.cancel', { defaultValue: '取消' })}
               </Button>
               <Button
                 type="button"
                 variant="destructive"
-                size="sm"
+                size="lg"
                 onClick={handleDeleteConfirm}
                 disabled={isDeleting}
-                className="h-8 gap-1.5 px-3 rounded-lg"
+                className="h-8 gap-1.5 px-3 text-ui-base"
               >
                 {isDeleting ? (
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <Loader2 className="size-4 animate-spin" />
                 ) : (
-                  <Trash2 className="size-3.5" />
+                  <Trash2 className="size-4" />
                 )}
                 <span>{t('files.delete')}</span>
               </Button>
@@ -1177,9 +1173,9 @@ export function SftpSessionView({
             <div className="mt-5 flex items-center justify-end gap-2">
               <Button
                 type="button"
-                size="sm"
+                size="lg"
                 onClick={() => setEditAttempt(null)}
-                className="h-8 px-3 rounded-lg"
+                className="h-8 px-3 text-ui-base"
               >
                 {t('files.editFailedOk')}
               </Button>

@@ -79,15 +79,16 @@ export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat, isAiPane
           </ControlHintTooltip>
         ) : null}
         {onOpenAiChat ? (
-          <Button
-            variant="ghost"
-            size="icon-md"
-            aria-label={t('ai.chat.title')}
-            title={t('ai.chat.title')}
-            onClick={onOpenAiChat}
-          >
-            <Sparkles className="size-4" />
-          </Button>
+          <ControlHintTooltip title={t('ai.chat.title')} side="bottom">
+            <Button
+              variant="ghost"
+              size="icon-md"
+              aria-label={t('ai.chat.title')}
+              onClick={onOpenAiChat}
+            >
+              <Sparkles className="size-4" />
+            </Button>
+          </ControlHintTooltip>
         ) : null}
         <WorkspaceHelpMenuButton onShowAbout={() => setAboutOpen(true)} />
       </div>

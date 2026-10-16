@@ -133,24 +133,19 @@ export function TerminalTabTrigger({
       ) : (
         <MarqueeText text={title} className="min-w-0 flex-1" />
       )}
-      <ControlHintTooltip
-        title={closeLabel}
-        side="bottom"
-        align="end"
-        // 关闭按钮本身悬停/聚焦才显现（非激活 Tab），显现门控移到包裹层：
-        // 未显现时 pointer-events-none 让 tooltip 不会提前弹出；opacity 门控
-        // 同时控制按钮与 tooltip（tooltip 是包裹层子节点）
-        className={cn(
-          !isActive &&
-            'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100',
-        )}
-      >
+      <ControlHintTooltip title={closeLabel} side="bottom" align="end">
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           aria-label={closeLabel}
-          className="shrink-0 rounded-md"
+          // 非激活 Tab 关闭按钮悬停/聚焦才显现；门控必须直接挂按钮——
+          // ControlHintTooltip 的 className 作用于弹出面板而非包裹层
+          className={cn(
+            'shrink-0 rounded-md',
+            !isActive &&
+              'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100',
+          )}
           onPointerDown={(event) => {
             event.stopPropagation();
           }}
