@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<QALCULATE version="3.19.0">
+  <prefix type="decimal">
+    <names>ar:q,r:quecto</names>
+    <exponent>-30</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:r,r:ronto</names>
+    <exponent>-27</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:y,r:yocto</names>
+    <exponent>-24</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:z,r:zepto</names>
+    <exponent>-21</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:a,r:atto</names>
+    <exponent>-18</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:f,r:femto</names>
+    <exponent>-15</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:p,r:pico</names>
+    <exponent>-12</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:n,r:nano</names>
+    <exponent>-9</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>aur:μ,auor:µ,ar:u,r:micro</names>
+    <exponent>-6</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:m,r:milli</names>
+    <exponent>-3</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:c,r:centi</names>
+    <exponent>-2</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:d,r:deci</names>
+    <exponent>-1</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:da,r:deca</names>
+    <exponent>1</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:h,r:hecto</names>
+    <exponent>2</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:k,r:kilo</names>
+    <exponent>3</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:M,r:mega</names>
+    <exponent>6</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:G,r:giga</names>
+    <exponent>9</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:T,r:tera</names>
+    <exponent>12</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:P,r:peta</names>
+    <exponent>15</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:E,r:exa</names>
+    <exponent>18</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:Z,r:zetta</names>
+    <exponent>21</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:Y,r:yotta</names>
+    <exponent>24</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:R,r:ronna</names>
+    <exponent>27</exponent>
+  </prefix>
+  <prefix type="decimal">
+    <names>ar:Q,r:quetta</names>
+    <exponent>30</exponent>
+  </prefix>
+  <prefix type="binary">
+    <names>ar:Ki,r:kibi</names>
+    <exponent>10</exponent>
+  </prefix>
+  <prefix type="binary">
+    <names>ar:Mi,r:mebi</names>
+    <exponent>20</exponent>
+  </prefix>
+  <prefix type="binary">
+    <names>ar:Gi,r:gibi</names>
+    <exponent>30</exponent>
+  </prefix>
+  <prefix type="binary">
+    <names>ar:Ti,r:tebi</names>
+    <exponent>40</exponent>
+  </prefix>
+  <prefix type="binary">
+    <names>ar:Pi,r:pebi</names>
+    <exponent>50</exponent>
+  </prefix>
+  <prefix type="binary">
+    <names>ar:Ei,r:exbi</names>
+    <exponent>60</exponent>
+  </prefix>
+  <prefix type="binary">
+    <names>ar:Zi,r:zebi</names>
+    <exponent>70</exponent>
+  </prefix>
+  <prefix type="binary">
+    <names>ar:Yi,r:yobi</names>
+    <exponent>80</exponent>
+  </prefix>
+  <prefix type="binary">
+    <names>ar:Ri,r:robi</names>
+    <exponent>90</exponent>
+  </prefix>
+  <prefix type="binary">
+    <names>ar:Qi,r:quebi</names>
+    <exponent>100</exponent>
+  </prefix>
+</QALCULATE>

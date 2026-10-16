@@ -150,7 +150,8 @@ uu_who = { path = "../../vendor/coreutils/src/uu/who" }
 uu_stdbuf = { path = "../../vendor/coreutils/src/uu/stdbuf" }
 
 # 仅 Windows：openssl CLI、telnet CLI、jq CLI（vendor 源码 cc 现场编译）
-# 与 yq（Go 源码经 yqffi.dll 运行时加载，见 src/yq_impl.rs）
+# 与 yq/qalc（Go 源码经 yqffi.dll、libqalculate 经 qalcffi.dll 运行时加载，
+# 见 src/yq_impl.rs 与 src/qalc_impl.rs）
 # 及 urlencode/urldecode（crates.io 的 urlencoding 库，kornelski/rust_urlencoding，
 # 纯 Rust 零依赖，已是 tauri 栈 wry 的传递依赖——lock 不新增条目；见 src/urlcoding_impl.rs）
 [target.'cfg(windows)'.dependencies]
@@ -158,8 +159,8 @@ openssl-app = { path = "../../vendor/openssl-app" }
 putty-telnet = { path = "../../vendor/putty-telnet" }
 jq-app = { path = "../../vendor/jq-app" }
 urlencoding = "2"
-# yq（Go）的 yqffi.dll 运行时加载（见 src/yq_impl.rs：MSVC 无法静态链
-# Go 的 c-archive，DLL 动态导入是 extern 链接的唯一形态）
+# yq/qalc 的 DLL 运行时加载（见 yq_impl.rs / qalc_impl.rs：前者是 Go，
+# 后者是 autotools C++，均无 MSVC 链接路径，DLL 动态导入是唯一形态）
 libloading = "0.8"
 
 [dev-dependencies]

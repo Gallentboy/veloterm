@@ -1,0 +1,21 @@
+* Lambert W branches
+
+* Quoted ")" in function
+* Replace pointers to unit when unit type has changed (a different object must be created)
+
+* Enhanced integration
+
+* More functions
+* More units
+
+* Increase support for non-glibc systems
+
+* Sane and stable API
+
+* Script/code plugins for advanced functions
+
+* Load data set from csv file
+
+* Complete non-square free factorization
+
+* Simplification of division by polynomial with roots
