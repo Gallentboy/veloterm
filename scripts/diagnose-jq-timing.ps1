@@ -131,6 +131,7 @@ $segRows = New-Object System.Collections.Generic.List[object]
 function Measure-Segments([string]$name, [string[]]$jqArgs, [hashtable]$extraEnv) {
     $preMain = @(); $inMain = @(); $uptimes = @(); $lives = @()
     $peakWs = @(); $priv = @(); $cpuMs = @(); $codes = @()
+    $childCpus = @(); $childPeaks = @()
     $lastProbe = ''
     for ($i = 0; $i -lt $Runs; $i++) {
         $errFile = Join-Path $work 'seg-err.txt'
@@ -149,6 +150,10 @@ function Measure-Segments([string]$name, [string[]]$jqArgs, [hashtable]$extraEnv
         $life = $null
         try { $p.WaitForExit(); $life = ($p.ExitTime - $p.StartTime).TotalMilliseconds } catch { }
         $code = $null; try { $code = [int]$p.ExitCode } catch { }
+        # 子进程总 CPU（父侧读，含退出路径）与父侧可见峰值内存：
+        # CPU≈0 而墙钟大 => 进程在「等」（I/O / 内核 / WER / AV），不是算。
+        $childCpu = $null; try { $childCpu = $p.TotalProcessorTime.TotalMilliseconds } catch { }
+        $childPeak = $null; try { $childPeak = $p.PeakWorkingSet64 / 1MB } catch { }
         Remove-Item Env:VELOTERM_JQ_TIMING -ErrorAction SilentlyContinue
         if ($extraEnv) {
             foreach ($k in $extraEnv.Keys) {
@@ -171,6 +176,8 @@ function Measure-Segments([string]$name, [string[]]$jqArgs, [hashtable]$extraEnv
         $preMain += $pm; $inMain += $inm; $uptimes += $um; $lives += [math]::Round($life, 1)
         $peakWs += $pw; $priv += $pv; $cpuMs += $cp
         $codes += $(if ($null -ne $code) { ('0x{0:X8}' -f [uint32]([int64]$code -band [int64]0xFFFFFFFF)) } else { 'n/a' })
+        $childCpus += $(if ($null -ne $childCpu) { [math]::Round($childCpu, 1) } else { 0 })
+        $childPeaks += $(if ($null -ne $childPeak) { [math]::Round($childPeak, 1) } else { 0 })
     }
     $avg = { param($a) if ($a.Count -eq 0) { 0 } else { [math]::Round(($a | Measure-Object -Average).Average, 1) } }
     $post = @(); for ($i = 0; $i -lt $Runs; $i++) { $post += [math]::Round($lives[$i] - $uptimes[$i], 1) }
@@ -181,15 +188,17 @@ function Measure-Segments([string]$name, [string[]]$jqArgs, [hashtable]$extraEnv
         uptime     = (& $avg $uptimes)
         post_probe = (& $avg $post)
         life       = (& $avg $lives)
+        cpu_in     = (& $avg $cpuMs)
+        cpu_total  = (& $avg $childCpus)
         peak_ws_MB = (& $avg $peakWs)
         private_MB = (& $avg $priv)
-        cpu_ms     = (& $avg $cpuMs)
+        peak_ws_ext = (& $avg $childPeaks)
         exitcodes  = (($codes | Select-Object -Unique) -join '/')
     }
     $script:segRows.Add($row)
-    Say ("  {0,-26} pre={1,7} in={2,6} post={3,7} life={4,7}  peak_ws={5,7}MB private={6,7}MB cpu={7,6}ms exit={8}" -f `
+    Say ("  {0,-26} pre={1,7} in={2,6} post={3,7} life={4,7}  cpu_in={5,6} cpu_total={6,6} peak_ws={7,7}MB priv={8,7}MB exit={9}" -f `
             $row.Case, $row.pre_main, $row.in_main, $row.post_probe, $row.life,
-            $row.peak_ws_MB, $row.private_MB, $row.cpu_ms, $row.exitcodes)
+            $row.cpu_in, $row.cpu_total, $row.peak_ws_MB, $row.private_MB, $row.exitcodes)
     if ($lastProbe) { Say ('      probe: ' + ($lastProbe -replace "`r?`n", ' | ')) }
 }
 
@@ -233,6 +242,13 @@ Measure-Segments 'jq -n 1+1 exit-after-compile'   @('-n', '1+1') @{ VELOTERM_JQ_
 Measure-Segments 'jq -n 1+1 exit-mode=quick'      @('-n', '1+1') @{ VELOTERM_JQ_EXIT_MODE = 'quick' }
 Measure-Segments 'jq -n 1+1 exit-mode=terminate'  @('-n', '1+1') @{ VELOTERM_JQ_EXIT_MODE = 'terminate' }
 Measure-Segments 'jq --version exit-mode=terminate' @('--version') @{ VELOTERM_JQ_EXIT_MODE = 'terminate' }
+
+# 内存规模对照：若 post_probe 随「程序规模/编译期内存」增长，则退出段成本由
+# 地址空间大小驱动（内核回收脏页）；若基本持平，则与内存无关。
+Head 'memory-scaling control (program size vs post_probe)'
+Measure-Segments 'jq -n 1+1 (tiny program)'       @('-n', '1+1')
+Measure-Segments 'jq -n 1+2+3 (small program)'    @('-n', '1+2+3')
+Measure-Segments 'jq -n range(1000)|add (bigger)' @('-n', 'range(1000)|add')
 
 # ---------------------------------------------------------------- controls
 Head 'control: same binary, other commands (coreutils.exe subcommand mode)'
