@@ -55,7 +55,10 @@ Npcap SDK 与 OpenSSL 静态库：
    `--version` 与 `-sT 127.0.0.1 -p 1` 冒烟（CI 无 Npcap，正好回归
    `/DELAYLOAD` 降级路径）。
 5. 产物复制到 `src-tauri/binaries/nmapffi.dll` + `binaries/nmap-data/`，
-   经 `tauri.windows.conf.json` 的 resources 放安装根目录。
+   经 `tauri.windows.conf.json` 的 resources 随包分发：**DLL 放安装根 `lib/`
+   子目录**（与 goffi/qalcffi 同约定，运行期候选路径见
+   `crates/coreutils/src/dll_paths.rs`），**`nmap-data/` 仍平铺在安装根**
+   （数据目录候选独立于 DLL 约定，见 `nmap_impl.rs` 的 `data_dir_candidates_for`）。
 
 数据文件清单（`nmap-data/`，取上游 `Makefile.in` 的 `install-nmap`/`install-nse`
 目标）：`nmap-services`、`nmap-os-db`、`nmap-service-probes`、`nmap-protocols`、

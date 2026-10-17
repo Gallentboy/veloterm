@@ -33,6 +33,7 @@
 //! 不依赖 Git Bash / MSYS2。
 
 mod coreutils;
+mod dll_paths;
 mod encodings_impl;
 mod goffi_impl;
 mod nmap_impl;
