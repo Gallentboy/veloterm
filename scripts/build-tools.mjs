@@ -48,9 +48,11 @@ console.log(`[build-tools] target: ${target}`);
 
 // --only <段>：局部构建（coreutils / goffi / qalc / nmap）。tag 触发的
 // test-*.yml 快速反馈车道用
-// `--only qalc` / `--only nmap` 只产对应 DLL——该段只依赖 MSYS2（不需要 cargo
-// 全量编译、Go 与 vcpkg OpenSSL），反馈环最短；goffi 段（yq+fzf 合并 DLL）
-// 只依赖 Go。不传时全量构建（publish 路径），行为不变
+// `--only qalc` / `--only nmap` 只产对应产物——qalc 段只依赖 MSYS2（不需要
+// cargo 全量编译、Go 与 vcpkg OpenSSL）；nmap 段走 MSVC+CMake，一次构建产出
+// nmapffi/ncatffi/npingffi 三个 DLL（三者同属 Nmap 项目、共享 nbase/nsock/
+// OpenSSL/Npcap SDK 依赖，同工程一次 configure 最省）。goffi 段（yq+fzf 合并
+// DLL）只依赖 Go。不传时全量构建（publish 路径），行为不变
 const onlyFlag = args.indexOf('--only');
 const only = onlyFlag !== -1 && args[onlyFlag + 1] ? args[onlyFlag + 1] : '';
 if (only && !['coreutils', 'goffi', 'qalc', 'nmap'].includes(only)) {
@@ -418,7 +420,18 @@ execSync(`cmake --build "${buildDir}" --config Release --parallel`, { stdio: 'in
 
 const builtDll = join(buildDir, 'out', 'nmapffi.dll');
 const builtRunner = join(buildDir, 'out', 'nmap.exe');
-for (const p of [builtDll, builtRunner]) {
+const builtNcatDll = join(buildDir, 'out', 'ncatffi.dll');
+const builtNcatRunner = join(buildDir, 'out', 'ncat.exe');
+const builtNpingDll = join(buildDir, 'out', 'npingffi.dll');
+const builtNpingRunner = join(buildDir, 'out', 'nping.exe');
+for (const p of [
+  builtDll,
+  builtRunner,
+  builtNcatDll,
+  builtNcatRunner,
+  builtNpingDll,
+  builtNpingRunner,
+]) {
   if (!existsSync(p)) {
     console.error(`[build-tools] 缺少构建产物: ${p}`);
     process.exit(1);
@@ -474,10 +487,39 @@ execSync(`"${builtRunner}" -n -sT -p 1 -T5 --max-retries 1 127.0.0.1`, {
   env: { ...process.env, NMAPDIR: dataStage },
 });
 
-// 4. 复制产物到 externalBin 目录
+// 4. ncat / nping 构建期冒烟（同 nmap：CI 无 Npcap，正好回归 /DELAYLOAD 降级）
+// ncat --version 打印版本后退出；-z 是「零 I/O 扫描」模式，对回环做一次连接
+// 尝试即可验证运行期可用（不依赖 Npcap 的原始包能力）。nping 的 --version
+// 与一次本地 ICMP/TCP 探测同理。
+console.log('[build-tools] 冒烟：ncat --version / nping --version');
+execSync(`"${builtNcatRunner}" --version`, { stdio: 'inherit' });
+execSync(`"${builtNpingRunner}" --version`, { stdio: 'inherit' });
+// ncat 对回环做一次 connect（-z 零 I/O 模式；退出码 0=端口开放，非 0 亦可接受，
+// 关键是进程能正常启动与退出）——用 try 包住，只要求不因缺 DLL 而无法启动。
+try {
+  execSync(`"${builtNcatRunner}" -z -w 1 127.0.0.1 1`, { stdio: 'inherit' });
+} catch (e) {
+  console.log(`[build-tools] ncat -z 冒烟返回非 0（端口关闭属正常）：${e.status}`);
+}
+// nping 对回环发一个 TCP 探测包（--tcp -p 1，count=1）
+try {
+  execSync(`"${builtNpingRunner}" --tcp -p 1 -c 1 --delay 10ms 127.0.0.1`, { stdio: 'inherit' });
+} catch (e) {
+  console.log(`[build-tools] nping 探测冒烟返回非 0（无 Npcap 时的降级行为）：${e.status}`);
+}
+
+// 5. 复制产物到 externalBin 目录
 cpSync(builtDll, join(outDir, 'nmapffi.dll'));
+cpSync(builtNcatDll, join(outDir, 'ncatffi.dll'));
+cpSync(builtNpingDll, join(outDir, 'npingffi.dll'));
+// ncat 的 SSL 客户端证书束：ncat 在 exe 同目录查找 ca-bundle.crt（缺失仅
+// debug 告警、不致命）；DLL 形态下 GetModuleHandle(0) 取到宿主 coreutils.exe
+// 路径，故随包放安装根即可命中。
+cpSync(join(nmapSrc, 'ncat', 'certs', 'ca-bundle.crt'), join(outDir, 'ca-bundle.crt'));
 rmSync(join(outDir, 'nmap-data'), { recursive: true, force: true });
 cpSync(dataStage, join(outDir, 'nmap-data'), { recursive: true });
-console.log(`[build-tools] nmapffi.dll + nmap-data/ (${nmapVersion}) -> ${join(outDir)}`);
+console.log(
+  `[build-tools] nmapffi/ncatffi/npingffi.dll + nmap-data/ + ca-bundle.crt (${nmapVersion}) -> ${join(outDir)}`,
+);
 
 console.log('[build-tools] 完成');
