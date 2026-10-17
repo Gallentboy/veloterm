@@ -181,3 +181,16 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # 安装包内容核验：断言三个 FFI DLL 落在 lib/ 子目录、nmap-data/ 仍平铺在
+      # 安装根、且安装根没有 DLL 残留（本轮起统一进 lib/）。运行期解析逻辑由
+      # 单测与 test-jq 车道的 verify-dll-layout.ps1 覆盖，但 bundle.resources 的
+      # 映射笔误只有检查真实安装包才能发现（三条映射，漏改一条不影响其余）。
+      # 7z 缺失时脚本跳过并告警（不误判失败）。
+      - name: Verify installer layout (lib/ DLL placement)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $setup = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/VeloTerm_${ver}_x64-setup.exe"
+          pwsh -NoProfile -File scripts/verify-installer-layout.ps1 -Installer $setup

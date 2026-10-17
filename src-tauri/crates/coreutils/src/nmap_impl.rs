@@ -8,8 +8,9 @@
 //! 自包含的 jq 那样能现场编译链入。故与 yq/fzf/qalc 同一形态：源码锁在
 //! `vendor/nmap/`（含树内 winfix.cc 的 MinGW 补丁与 veloterm_ffi.cc 壳），
 //! 由 `scripts/build-tools.mjs` 在 Windows 上经 MSYS2 MinGW64 构建，依赖全
-//! 静态打入 `nmapffi.dll`，数据文件树（scripts/nselib/nmap-services 等）随
-//! 包放安装根目录的 `nmap-data/`（见 vendor/nmap/README.md）。
+//! 静态打入 `nmapffi.dll`（经 `tauri.windows.conf.json` 的 resources 随包放在
+//! 安装根 `lib/` 子目录），数据文件树（scripts/nselib/nmap-services 等）随包
+//! 平铺在安装根目录的 `nmap-data/`（见 vendor/nmap/README.md）。
 //!
 //! # 为什么运行时 LoadLibrary，而不是链接期导入库
 //!
@@ -19,9 +20,10 @@
 //!
 //! # DLL 搜索路径与数据文件目录
 //!
-//! 与 yqffi/qalcffi 相同：安装后 coreutils.exe 与 nmapffi.dll 同在安装根
-//! 目录；用户经 `tools\nmap.exe` 硬链接短名启动时按绝对路径依次尝试 exe 同
-//! 目录 → exe 上级目录（tools\ 场景的安装根）。
+//! DLL 候选顺序（同目录 → 上级 lib/ → 上级）由共享模块 `crate::dll_paths`
+//! 统一生成，三个 DLL 例外形态（goffi / qalc / nmap）同一套约定，依据见其
+//! 文件头。数据目录不随 DLL 进 `lib/`：`nmap-data/` 仍平铺在安装根，故沿用
+//! 「exe 同目录 → exe 上级目录」两候选（与共享模块的 DLL 约定不同）。
 //!
 //! 数据文件：nmap 在 Windows 下默认找 **exe 同目录**（nmap_fetchfile_sub
 //! 的搜索序），DLL 形态下 `GetModuleFileName(GetModuleHandle(0))` 取到的是
@@ -51,20 +53,13 @@ mod imp {
     /// 进程内首次调用加载一次；错误串缓存避免每次调用重复打日志。
     static NMAP_MAIN: OnceLock<Result<NmapMainFn, String>> = OnceLock::new();
 
-    /// DLL 候选路径（纯函数，单测覆盖）：exe 同目录 → exe 上级目录；
-    /// 进程路径不可得（exe 为 None 或无父目录）时返回空候选。
+    /// DLL 候选路径（共享约定，见 crate::dll_paths）：同目录 → 上级 lib/ → 上级。
     pub(super) fn dll_candidates_for(exe: Option<&Path>) -> Vec<PathBuf> {
-        let Some(dir) = exe.and_then(|p| p.parent()) else {
-            return Vec::new();
-        };
-        let mut v = vec![dir.join("nmapffi.dll")];
-        if let Some(parent) = dir.parent() {
-            v.push(parent.join("nmapffi.dll"));
-        }
-        v
+        crate::dll_paths::dll_candidates(exe, "nmapffi.dll")
     }
 
-    /// nmap 数据目录候选（与 DLL 同一套定位约定：nmap-data/ 平铺在安装根）。
+    /// nmap 数据目录候选（平铺在安装根，不随 DLL 进 lib/）：
+    /// exe 同目录 → exe 上级目录（tools\ 短名场景的安装根）。
     pub(super) fn data_dir_candidates_for(exe: Option<&Path>) -> Vec<PathBuf> {
         let Some(dir) = exe.and_then(|p| p.parent()) else {
             return Vec::new();
@@ -198,14 +193,26 @@ mod tests {
         assert_eq!(c.len(), 2);
     }
 
-    /// 数据目录候选与 DLL 候选同一套定位（nmap-data/ 平铺在安装根）
+    /// 数据目录候选独立于 DLL 候选（nmap-data/ 平铺在安装根，不进 lib/）
     #[test]
     #[cfg(windows)]
-    fn data_dir_candidates_mirror_dll_candidates() {
+    fn data_dir_candidates_stay_flat_in_install_root() {
         let exe = Path::new(r"C:\app\tools\nmap.exe");
         let c = data_dir_candidates_for(Some(exe));
         assert_eq!(c[0], Path::new(r"C:\app\tools\nmap-data"));
         assert_eq!(c[1], Path::new(r"C:\app\nmap-data"));
+        assert_eq!(c.len(), 2);
+    }
+
+    /// DLL 候选含 lib/ 子目录（安装后的标准位置，排在平铺兜底之前）
+    #[test]
+    #[cfg(windows)]
+    fn dll_candidates_cover_lib_subdir() {
+        let exe = Path::new(r"C:\app\tools\nmap.exe");
+        let c = dll_candidates_for(Some(exe));
+        assert_eq!(c[0], Path::new(r"C:\app\tools\lib\nmapffi.dll"));
+        assert_eq!(c[1], Path::new(r"C:\app\lib\nmapffi.dll"));
+        assert_eq!(c[2], Path::new(r"C:\app\tools\nmapffi.dll"));
     }
 
     /// 进程路径不可得时不 panic，返回空候选
