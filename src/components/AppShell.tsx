@@ -581,12 +581,12 @@ export function AppShell() {
 
           {/* 「关于」窗口打开时主窗遮罩：淡化下层 + 阻断交互。点击遮罩不关闭——
               对话框只能由 OK 按钮（或 Esc/Enter 键盘）收尾。常驻挂载、以透明度
-              过渡开合，时长与关于卡片动效对齐（入场 220ms），开关事件由卡片
+              过渡开合，时长与关于卡片动效对齐（入场 320ms），开关事件由卡片
               动画首帧同帧广播——两窗动画同步开始不割裂 */}
           <div
             aria-hidden="true"
             className={cn(
-              'fixed inset-0 z-[90] cursor-default bg-black/45 transition-opacity duration-[220ms]',
+              'fixed inset-0 z-[90] cursor-default bg-black/45 transition-opacity duration-[320ms]',
               isAboutOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
             )}
           />

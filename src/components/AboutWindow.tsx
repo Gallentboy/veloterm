@@ -7,7 +7,7 @@ import { useAppVersion } from '@/hooks/useAppVersion';
 import { cn } from '@/lib/utils';
 
 /** 出场动画时长（与 styles.css 的 .about-card-out 保持一致，关窗延时对齐） */
-const ABOUT_EXIT_ANIMATION_MS = 150;
+const ABOUT_EXIT_ANIMATION_MS = 220;
 
 /** 构建时间展示本地时区紧凑格式（与 ZCode formatAboutBuildTime 一致） */
 function formatBuildTime(iso: string): string {
