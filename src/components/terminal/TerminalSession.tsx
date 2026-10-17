@@ -27,7 +27,7 @@ import {
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
 import { buildSshErrorPrompt, setAiErrorContext } from '@/services/aiContext';
 import { listCommands, markCommandUsed } from '@/services/commandService';
-import { mirrorInputToSessions } from '@/services/terminalBroadcastService';
+import { mirrorInputToSessions, mirrorClearToSessions } from '@/services/terminalBroadcastService';
 import {
   createTerminalByteChannel,
   encodeBinaryString,
@@ -1082,6 +1082,8 @@ export function TerminalSession({
     const term = termRef.current;
     closeContextMenu();
     term?.clear();
+    // 联动开启时清屏同步到组内其余终端（纯前端缓冲清除，与输入镜像同一门控）
+    mirrorClearToSessions(broadcastTargetsRef.current, sessionId);
     requestFocus();
   };
 

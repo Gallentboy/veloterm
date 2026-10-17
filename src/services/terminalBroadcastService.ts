@@ -103,3 +103,27 @@ export function broadcastSignalToSessions(
     'broadcastSignalToSessions',
   );
 }
+
+/**
+ * 终端联动·清屏镜像：把发起方终端的「清除」（右键菜单 clear）同步到联动集合
+ * 中的其余终端。
+ *
+ * 清屏是纯前端缓冲操作（xterm `term.clear()` 清视口+回滚），没有等价的输入
+ * 字节可走输入镜像管道——直接经注册表对组内其余 xterm 实例调用 clear()，
+ * 与本机菜单行为完全一致：不向 pty 写任何字节、不进 shell 历史。门控与
+ * 输入镜像相同（组内多于一台且发起方在组内）。
+ */
+export function mirrorClearToSessions(
+  sessionIds: number[],
+  sourceSessionId: number,
+): void {
+  if (sessionIds.length <= 1 || !sessionIds.includes(sourceSessionId)) return;
+  for (const sid of sessionIds) {
+    if (sid === sourceSessionId) continue;
+    try {
+      terminalSessionRegistry.get(sid)?.term.clear();
+    } catch (err) {
+      console.warn(`[mirrorClearToSessions] clear session ${sid} failed:`, err);
+    }
+  }
+}
