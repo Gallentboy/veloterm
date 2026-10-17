@@ -1,8 +1,13 @@
 import { SquareTerminal } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { emit } from '@tauri-apps/api/event';
 import { useAppVersion } from '@/hooks/useAppVersion';
+import { cn } from '@/lib/utils';
+
+/** 出场动画时长（与 styles.css 的 .about-card-out 保持一致，关窗延时对齐） */
+const ABOUT_EXIT_ANIMATION_MS = 110;
 
 /** 构建时间展示本地时区紧凑格式（与 ZCode formatAboutBuildTime 一致） */
 function formatBuildTime(iso: string): string {
@@ -30,17 +35,38 @@ export function AboutWindow() {
   const { t } = useTranslation();
   const { version, tauriVersion, webkitVersion, reactVersion, isAppleSilicon } = useAppVersion();
   const okButtonRef = useRef<HTMLButtonElement>(null);
+  const [isExiting, setIsExiting] = useState(false);
+
+  // 关闭编排（对齐 ZCode Dialog 的同步退场）：卡片滑退与主窗遮罩淡出**同帧**
+  // 开始（先广播 about-visibility=false 再播退场动画，动画结束后才真正关窗），
+  // Esc/Enter/OK/主窗遮罩点击四条路径同走这里；窗口销毁时 Rust 侧还有一道
+  // Destroyed→广播 false 的兜底（幂等）
+  const closeWithAnimation = () => {
+    if (isExiting) return;
+    setIsExiting(true);
+    void emit('about-visibility', false);
+    window.setTimeout(() => {
+      void getCurrentWindow().close();
+    }, ABOUT_EXIT_ANIMATION_MS);
+  };
+
+  // 入场同步：卡片滑入动效与主窗遮罩渐暗同帧开始（mount 时广播 true，
+  // 替代 Rust 侧建窗即广播的粗粒度时机）
+  useEffect(() => {
+    void emit('about-visibility', true);
+  }, []);
 
   useEffect(() => {
     okButtonRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' || event.key === 'Enter') {
-        void getCurrentWindow().close();
+        closeWithAnimation();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- closeWithAnimation 依赖 isExiting，重挂监听无必要
+  }, [isExiting]);
 
   const runtimeRows = [
     { label: 'Tauri', value: tauriVersion || '—' },
@@ -57,7 +83,10 @@ export function AboutWindow() {
     >
       <div
         data-tauri-drag-region
-        className="flex h-[340px] w-64 flex-col overflow-hidden rounded-[12px] bg-[#f4f4f5] p-[22px] pb-3.5 pl-[15px] text-[#1d1d1f] select-none shadow-[0_18px_38px_-10px_rgb(0_0_0/0.38),0_6px_16px_-6px_rgb(0_0_0/0.22)] dark:bg-[#171717] dark:text-[#e8e8e8] dark:shadow-[0_18px_38px_-10px_rgb(0_0_0/0.55),0_6px_16px_-6px_rgb(0_0_0/0.4)]"
+        className={cn(
+          'flex h-[340px] w-64 flex-col overflow-hidden rounded-[12px] bg-[#f4f4f5] p-[22px] pb-3.5 pl-[15px] text-[#1d1d1f] select-none shadow-[0_18px_38px_-10px_rgb(0_0_0/0.38),0_6px_16px_-6px_rgb(0_0_0/0.22)] dark:bg-[#171717] dark:text-[#e8e8e8] dark:shadow-[0_18px_38px_-10px_rgb(0_0_0/0.55),0_6px_16px_-6px_rgb(0_0_0/0.4)]',
+          isExiting ? 'about-card-out' : 'about-card-in',
+        )}
         role="dialog"
         aria-modal="true"
         aria-label={t('help.about')}
@@ -97,7 +126,7 @@ export function AboutWindow() {
       <button
         ref={okButtonRef}
         type="button"
-        onClick={() => void getCurrentWindow().close()}
+        onClick={closeWithAnimation}
         className="mt-auto h-9 w-full rounded-full bg-[#0a0a0a] text-[13px] font-medium text-[#fafafa] outline-none active:opacity-80 dark:bg-[#fafafa] dark:text-[#0a0a0a]"
       >
         {t('about.ok')}

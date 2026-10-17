@@ -590,7 +590,9 @@ export function AppShell() {
               void invoke('close_about_window').catch(() => undefined);
             }}
             className={cn(
-              'fixed inset-0 z-[90] cursor-default bg-black/45 transition-opacity duration-100',
+              // 时长与关于卡片动效对齐（入场 150ms / 退场 110ms，取 150ms 主导手感），
+              // 开关事件由卡片动画首帧同帧广播——两窗动画同步开始
+              'fixed inset-0 z-[90] cursor-default bg-black/45 transition-opacity duration-150',
               isAboutOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
             )}
           />

@@ -69,9 +69,9 @@ pub fn show_about(app: &AppHandle) {
         }
     };
 
-    // 主窗淡化联动：开启即广播 true；窗口销毁（Esc/Enter/OK/遮罩点击任一
-    // 关闭路径）广播 false，主窗据此挂/摘遮罩
-    let _ = app.emit(ABOUT_VISIBILITY_EVENT, true);
+    // 主窗淡化联动时机由前端驱动：AboutWindow mount（卡片入场动画首帧）广播
+    // true、退场动画首帧广播 false——与卡片动效同帧、不割裂。这里只保留窗口
+    // 销毁时的兜底广播（前端来不及发事件的极端路径，主窗 setState 幂等）
     let app_for_close = app.clone();
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Destroyed) {
