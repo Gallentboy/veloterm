@@ -1,0 +1,36 @@
+# 目标（单一）：vim64.dll + vim-runtime/ 的构建（vim 的官方 MSVC nmake 段，
+# 见 scripts/build-tools.mjs 的 vim 段与 vendor/vim/README.md）。零外部依赖
+# ——不需要 vcpkg/MSYS2/Go/CMake，只用 windows-latest 自带的 VS 2022。
+# 段内冒烟（--version / -es 静默编辑替换）在构建脚本里完成。
+# 触发：推 tag（验证完删除）——
+#   git tag test_vim && git push origin test_vim
+#   git push origin :refs/tags/test_vim
+# 也支持 workflow_dispatch 手动触发。
+name: 'test-vim'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_vim*'
+
+jobs:
+  build-vim:
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build vim64.dll only
+        run: node scripts/build-tools.mjs --only vim
+
+      - name: Upload vim artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: vim-windows-x64
+          path: |
+            src-tauri/binaries/vim64.dll
+            src-tauri/binaries/vim-runtime/
+          if-no-files-found: error
+          retention-days: 7

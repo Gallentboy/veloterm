@@ -32,8 +32,10 @@ use std::ffi::OsString;
 use tools_catalog::{all_commands, is_known_command};
 
 /// 读自身 argv 的内嵌命令（解析器无参数注入接口，仅硬链接 argv[0] 模式
-/// 可用，见 coreutils_main；子命令模式下给出提示）
-const OWN_ARGV_COMMANDS: &[&str] = &["awk", "bat", "fd", "onefetch", "parallel", "rg"];
+/// 可用，见 coreutils_main；子命令模式下给出提示）。vim 的解析器是上游
+/// VimMain 内部的 GetCommandLineW 自解析（见 vim_impl.rs），同一受限语义，
+/// 归入本家族
+const OWN_ARGV_COMMANDS: &[&str] = &["awk", "bat", "fd", "onefetch", "parallel", "rg", "vim"];
 
 /// 从 argv[0] 解析被调用的命令名：取 basename 并去掉 `.exe` 后缀。
 /// 分隔符同时兼容 `/` 与 `\`（macOS 单测里也要能解析 Windows 风格路径，
@@ -329,8 +331,9 @@ pub fn coreutils_main() -> i32 {
     let rest: Vec<OsString> = argv.iter().skip(1).cloned().collect();
 
     if is_known_command(&invoked_as) {
-        // OWN_ARGV 家族（rg/fd/awk/bat/onefetch/parallel）：解析器直接读真实进程 argv（无注入接口）；
-        // 硬链接短名模式下 argv 恰好就是用户参数，直接执行。
+        // OWN_ARGV 家族（rg/fd/awk/bat/onefetch/parallel/vim）：解析器直接读真实进程 argv
+        //（vim 是 Win32 进程命令行，见 vim_impl.rs）；硬链接短名模式下 argv 恰好就是用户
+        // 参数，直接执行。
         match invoked_as.as_str() {
             "rg" => return ripgrep::rg_main(),
             "fd" => return fd_find::fd_main(),
@@ -338,6 +341,10 @@ pub fn coreutils_main() -> i32 {
             "onefetch" => return onefetch::onefetch_main(),
             "parallel" => return rust_parallel::parallel_main(),
             "bat" => return bat_app::bat_main(),
+            // vim 仅在 Windows 命令表里：上游 VimMain 在 MSWIN 下用
+            // GetCommandLineW 自解析进程命令行，入口无需（也无法）注入参数
+            #[cfg(target_os = "windows")]
+            "vim" => return crate::vim_impl::vim_cmd_main(),
             _ => {}
         }
         return run_command(&invoked_as, &rest).unwrap_or(1);
@@ -460,9 +467,16 @@ mod tests {
         }
         // 兜底：确认扫描确实走完了整张表（若某命令令进程静默退出，此处不会被
         // 执行到——libtest 会误报通过，故再断言一次数量以留下书面预期）。
+        // OWN_ARGV / skip 按与命令表的**实际交集**计数：vim 这类平台不对称的
+        // OWN_ARGV 命令只在 Windows 表里，macOS 上全量扣减会多数出一个。
+        let own_argv_in_table = all
+            .iter()
+            .filter(|c| OWN_ARGV_COMMANDS.contains(c))
+            .count();
+        let skip_in_table = all.iter().filter(|c| skip.contains(c)).count();
         assert_eq!(
             visited,
-            all.len() - OWN_ARGV_COMMANDS.len() - skip.len(),
+            all.len() - own_argv_in_table - skip_in_table,
             "扫描条数与命令表不符"
         );
     }

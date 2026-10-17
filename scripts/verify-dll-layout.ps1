@@ -11,6 +11,11 @@
 # DLL 加载路径的验证方式（cargo test 只覆盖候选路径的纯函数逻辑，Windows 车道
 # 也不跑 cargo test；打包映射本身只有 publish 能验）。
 #
+# -OwnArgv：OWN_ARGV 家族命令（如 vim——上游 VimMain 自解析进程命令行）
+# **按设计不支持 `coreutils.exe <cmd>` 子命令模式**（走提示退出 2），故布局 2
+# 跳过、布局 3/4/5 改经同目录的 <Cmd>.exe 短名硬链接调用（argv[0] 分发，与
+# 安装后 tools\ 短名同一通路）。
+#
 # 用法：
 #   pwsh -NoProfile -File scripts/verify-dll-layout.ps1 `
 #     -Coreutils src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe `
@@ -31,7 +36,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Coreutils,
     [Parameter(Mandatory = $true)][string]$Dll,
     [string]$Cmd = 'yq',
-    [string]$VersionArg = '--version'
+    [string]$VersionArg = '--version',
+    [switch]$OwnArgv
 )
 
 $ErrorActionPreference = 'Continue'
@@ -104,19 +110,41 @@ try {
 }
 Assert-Runs 'tools\<cmd>.exe (lib/ layout)' $shortName @($VersionArg)
 
+# 在 $app 目录内创建 <Cmd>.exe 短名硬链接（指向同目录 coreutils.exe）；
+# 极端环境不支持硬链接时退化拷贝（argv[0] 分发同样生效）
+function New-ShortLinkIn([string]$app) {
+    $target = Join-Path $app 'coreutils.exe'
+    $link = Join-Path $app ($Cmd + '.exe')
+    try {
+        New-Item -ItemType HardLink -Path $link -Target $target -Force | Out-Null
+    } catch {
+        Copy-Item $target $link -Force
+    }
+    return $link
+}
+
 # ── 布局 2：lib/ 子目录 + coreutils.exe 直跑（子命令模式）─────────────
 Say ''
 Say '-- layout 2: lib/ + coreutils.exe subcommand mode --'
-Assert-Runs 'coreutils.exe <cmd> (lib/ layout)' (Join-Path $app 'coreutils.exe') @($Cmd, $VersionArg)
+if ($OwnArgv) {
+    Say '  SKIP: OWN_ARGV command does not support subcommand mode (by design)'
+} else {
+    Assert-Runs 'coreutils.exe <cmd> (lib/ layout)' (Join-Path $app 'coreutils.exe') @($Cmd, $VersionArg)
+}
 
-# ── 布局 3：平铺兜底（DLL 与 exe 同目录，dev/手工布局）────────────────
+# ── 布局 3：平铺兑底（DLL 与 exe 同目录，dev/手工布局）────────────────
 Say ''
 Say '-- layout 3: flat fallback (DLL next to exe) --'
 $app3 = Join-Path $root 'app3'
 New-Item -ItemType Directory -Path $app3 -Force | Out-Null
 Copy-Item $Coreutils (Join-Path $app3 'coreutils.exe') -Force
 Copy-Item $Dll (Join-Path $app3 $dllName) -Force
-Assert-Runs 'coreutils.exe <cmd> (flat layout)' (Join-Path $app3 'coreutils.exe') @($Cmd, $VersionArg)
+if ($OwnArgv) {
+    # OWN_ARGV：经同目录 <Cmd>.exe 短名调用（exe 目录即布局目录，平铺候选命中）
+    Assert-Runs 'short-name <cmd>.exe (flat layout)' (New-ShortLinkIn $app3) @($VersionArg)
+} else {
+    Assert-Runs 'coreutils.exe <cmd> (flat layout)' (Join-Path $app3 'coreutils.exe') @($Cmd, $VersionArg)
+}
 
 # ── 布局 4：DLL 完全缺失（诊断路径）─────────────────────────────────
 Say ''
@@ -124,7 +152,11 @@ Say '-- layout 4: DLL missing (diagnostic path) --'
 $app4 = Join-Path $root 'app4'
 New-Item -ItemType Directory -Path $app4 -Force | Out-Null
 Copy-Item $Coreutils (Join-Path $app4 'coreutils.exe') -Force
-Assert-Unavailable 'coreutils.exe <cmd> (no DLL)' (Join-Path $app4 'coreutils.exe') @($Cmd, $VersionArg)
+if ($OwnArgv) {
+    Assert-Unavailable 'short-name <cmd>.exe (no DLL)' (New-ShortLinkIn $app4) @($VersionArg)
+} else {
+    Assert-Unavailable 'coreutils.exe <cmd> (no DLL)' (Join-Path $app4 'coreutils.exe') @($Cmd, $VersionArg)
+}
 
 # ── 布局 5：升级残留防护（平铺的陈旧 DLL 不得遮蔽 lib/ 里的新 DLL）─────
 # 从旧版本升级的机器上，安装根可能残留上一版平铺的 DLL（NSIS 卸载清单已不含
@@ -145,7 +177,11 @@ if (-not (Test-Path $decoy)) {
     Copy-Item $Coreutils (Join-Path $app5 'coreutils.exe') -Force
     Copy-Item $Dll (Join-Path $app5 ('lib\' + $dllName)) -Force
     Copy-Item $decoy (Join-Path $app5 $dllName) -Force   # 平铺位置的「陈旧 DLL」
-    Assert-Runs 'coreutils.exe <cmd> (lib/ beats stale flat)' (Join-Path $app5 'coreutils.exe') @($Cmd, $VersionArg)
+    if ($OwnArgv) {
+        Assert-Runs 'short-name <cmd>.exe (lib/ beats stale flat)' (New-ShortLinkIn $app5) @($VersionArg)
+    } else {
+        Assert-Runs 'coreutils.exe <cmd> (lib/ beats stale flat)' (Join-Path $app5 'coreutils.exe') @($Cmd, $VersionArg)
+    }
 }
 
 # ── 汇总 ────────────────────────────────────────────────────────────

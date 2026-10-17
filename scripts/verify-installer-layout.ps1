@@ -36,16 +36,17 @@ $Installer = (Resolve-Path $Installer).Path
 Say '=== verify-installer-layout ==='
 Say ("installer : {0} ({1:N1} MB)" -f $Installer, ((Get-Item $Installer).Length / 1MB))
 
-# 期望：DLL 在 lib/ 下；nmap-data/ 与 ncat 的证书束仍平铺在安装根
+# 期望：DLL 在 lib/ 下；nmap-data/、vim-runtime/ 与 ncat 的证书束仍平铺在安装根
 $expectedLib = @(
     'lib/veloterm_goffi.dll',
     'lib/qalcffi.dll',
     'lib/nmapffi.dll',
     'lib/ncatffi.dll',
-    'lib/npingffi.dll')
-$expectedRoot = @('coreutils.exe', 'nmap-data', 'ca-bundle.crt')
+    'lib/npingffi.dll',
+    'lib/vim64.dll')
+$expectedRoot = @('coreutils.exe', 'nmap-data', 'ca-bundle.crt', 'vim-runtime')
 # 旧的平铺位置不该再出现（本轮起 DLL 统一进 lib/）
-$forbiddenRoot = @('veloterm_goffi.dll', 'qalcffi.dll', 'nmapffi.dll', 'ncatffi.dll', 'npingffi.dll')
+$forbiddenRoot = @('veloterm_goffi.dll', 'qalcffi.dll', 'nmapffi.dll', 'ncatffi.dll', 'npingffi.dll', 'vim64.dll')
 
 # 定位 7z（windows-latest 预装；缺失则告警跳过）
 $sevenZip = $null

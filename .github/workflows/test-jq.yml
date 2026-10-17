@@ -107,6 +107,21 @@ jobs:
             -Dll src-tauri/binaries/veloterm_goffi.dll `
             -Cmd yq
 
+      # vim 宿主验证：vim 是 OWN_ARGV 家族（上游 VimMain 自解析进程命令行），
+      # 子命令模式按设计不支持，verify-dll-layout 的 -OwnArgv 探针经 <Cmd>.exe
+      # 短名硬链接调用（argv[0] 分发，与安装后 tools\vim.exe 同一通路）。vim 段
+      # 零外部依赖（只需 VS nmake），放本车道比另起车道省。
+      - name: Build vim64.dll (OWN_ARGV hosting verification)
+        run: node scripts/build-tools.mjs --only vim --target x86_64-pc-windows-msvc
+
+      - name: Verify vim hosting (OWN_ARGV short-name layouts)
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File scripts/verify-dll-layout.ps1 `
+            -Coreutils src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe `
+            -Dll src-tauri/binaries/vim64.dll `
+            -Cmd vim -OwnArgv
+
       # jq 分层耗时诊断 + 退出路径回归门禁：把 in-main 探针（VELOTERM_JQ_TIMING）
       # 与进程寿命的缺口归因到 pre_main / 退出路径 / 内核回收三段，并在退出码出现
       # 崩溃码（如 0xC0000374 STATUS_HEAP_CORRUPTION）或正常退出路径明显慢于

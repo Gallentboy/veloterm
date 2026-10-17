@@ -3,6 +3,9 @@
 //! 三个 DLL 例外形态（Go 的 veloterm_goffi.dll、libqalculate 的 qalcffi.dll、
 //! nmap 的 nmapffi.dll）都随安装包分发在安装根的 `lib/` 子目录下，运行期由
 //! 各自的 `*_impl.rs` 经本模块解析候选路径后 LoadLibrary。
+//! 附带 `flat_dir_candidates`：平铺在安装根的数据目录（nmap-data/、
+//! vim-runtime/ 等，不随 DLL 进 lib/）的候选生成——与 DLL 候选同一套
+//! 双启动形态推导，供 *_impl.rs 的数据目录兑底使用。
 //!
 //! # 为什么是 lib/ 而不是安装根
 //!
@@ -48,6 +51,9 @@ use std::path::{Path, PathBuf};
 ///
 /// `exe` 为当前进程的可执行文件路径；不可得（`None`）或无父目录时返回空候选
 /// （调用方据此给出「无法定位当前进程路径」的诊断）。
+// 调用方全部在 cfg(windows) 的 *_impl 里，非 Windows 构建中仅测试消费——
+// 允许 dead_code（flat_dir_candidates 同）。
+#[cfg_attr(not(windows), allow(dead_code))]
 pub fn dll_candidates(exe: Option<&Path>, dll_name: &str) -> Vec<PathBuf> {
     let Some(dir) = exe.and_then(|p| p.parent()) else {
         return Vec::new();
@@ -60,9 +66,27 @@ pub fn dll_candidates(exe: Option<&Path>, dll_name: &str) -> Vec<PathBuf> {
     v
 }
 
+/// 生成平铺数据目录名的候选路径（不含存在性判断，纯函数）。
+///
+/// 数据目录（nmap-data/、vim-runtime/）不随 DLL 进 `lib/`，仍平铺在安装根，
+/// 故候选不含 lib/ 变体：
+/// 1. `<exe_dir>/<name>`    —— coreutils.exe 直跑（exe 目录即安装根）
+/// 2. `<exe_dir>/../<name>` —— tools\ 短名硬链接启动（上级即安装根）
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn flat_dir_candidates(exe: Option<&Path>, dir_name: &str) -> Vec<PathBuf> {
+    let Some(dir) = exe.and_then(|p| p.parent()) else {
+        return Vec::new();
+    };
+    let mut v = vec![dir.join(dir_name)];
+    if let Some(parent) = dir.parent() {
+        v.push(parent.join(dir_name));
+    }
+    v
+}
+
 #[cfg(test)]
 mod tests {
-    use super::dll_candidates;
+    use super::{dll_candidates, flat_dir_candidates};
     use std::path::{Path, PathBuf};
 
     // 本模块用平台原生的 `Path::parent()`/`join()` 解析，故跨平台用例一律用
@@ -134,6 +158,33 @@ mod tests {
     fn bare_filename_yields_only_the_sibling_candidate() {
         let c = dll_candidates(Some(Path::new("qalc.exe")), "qalcffi.dll");
         assert_eq!(c, vec![PathBuf::from("lib/qalcffi.dll"), PathBuf::from("qalcffi.dll")]);
+    }
+
+    /// 平铺数据目录：coreutils.exe 直跑 → 本级命中；tools\ 短名 → 上级命中
+    #[test]
+    fn flat_dir_candidates_cover_both_launch_shapes() {
+        let exe = Path::new("/opt/veloterm/coreutils.exe");
+        assert_eq!(
+            flat_dir_candidates(Some(exe), "vim-runtime"),
+            vec![
+                PathBuf::from("/opt/veloterm/vim-runtime"),
+                PathBuf::from("/opt/vim-runtime"),
+            ]
+        );
+        let short = Path::new("/opt/veloterm/tools/vim.exe");
+        assert_eq!(
+            flat_dir_candidates(Some(short), "nmap-data"),
+            vec![
+                PathBuf::from("/opt/veloterm/tools/nmap-data"),
+                PathBuf::from("/opt/veloterm/nmap-data"),
+            ]
+        );
+    }
+
+    /// 平铺数据目录：进程路径不可得时不 panic，返回空候选
+    #[test]
+    fn flat_dir_candidates_empty_without_exe() {
+        assert!(flat_dir_candidates(None, "vim-runtime").is_empty());
     }
 
     /// Windows 盘符路径形态（含反斜杠）按同样顺序展开；该平台不跑 cargo test，
