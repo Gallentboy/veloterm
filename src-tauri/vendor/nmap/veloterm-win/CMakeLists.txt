@@ -65,6 +65,12 @@ add_compile_definitions(
     PCRE2_STATIC
     _CRT_SECURE_NO_WARNINGS
     _CRT_NONSTDC_NO_WARNINGS
+    # 静态链接 OpenSSL（vcpkg x64-windows-static）不需要 applink.c：它是给
+    # 「OpenSSL DLL + 程序 CRT 不同」桥接 stdio FILE* 用的，静态构建下
+    # libcrypto 无 OPENSSL_USE_APPLINK/UP_* 间接层；且 vcpkg 静态安装不提供
+    # 该文件（上游源码树的 ms/applink.c，官方 Windows 包恰好带上才编得过）。
+    # 见 ncat/ncat_ssl.c 的 VeloTerm patch 与 vendor/openssl-app/build.rs。
+    VELOTERM_NO_OPENSSL_APPLINK
 )
 
 # ── 子目录：pcre2 / zlib / libdnet（各自官方 CMakeLists，消费其 target） ─────
