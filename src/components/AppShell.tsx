@@ -470,8 +470,10 @@ export function AppShell() {
             />
           ) : null}
 
-          {/* 内容列内缩与 ZCode 一致：右/下 4px、左 0，顶部经 4px 拖拽条让面板上缘留出等宽间隙 */}
-          <div className="flex min-w-[320px] flex-1 flex-col p-1 pl-0 pt-0">
+          {/* 内容列内缩：右 4px（ZCode 一致）、左/上/下 0——底部原与 ZCode 一致留
+              4px，但终端资源监控条贴面板最底，这 4px 使整条相对窗口底部视觉抬高
+              （用户实测：pb=0 即居中），故底部清零让面板贴住窗口底缘 */}
+          <div className="flex min-w-[320px] flex-1 flex-col pr-1">
             <div className="h-1 w-full shrink-0" data-tauri-drag-region />
             <div
               className="flex min-h-0 flex-1"
@@ -578,17 +580,20 @@ export function AppShell() {
 
           <CommandPalette open={isPaletteOpen} onClose={() => setPaletteOpen(false)} />
 
-          {/* 「关于」窗口打开时主窗遮罩：淡化下层 + 阻断交互，点击即关闭关于窗 */}
-          {isAboutOpen ? (
-            <div
-              aria-hidden="true"
-              onClick={() => {
-                setIsAboutOpen(false);
-                void invoke('close_about_window').catch(() => undefined);
-              }}
-              className="fixed inset-0 z-[90] cursor-default bg-black/45"
-            />
-          ) : null}
+          {/* 「关于」窗口打开时主窗遮罩：淡化下层 + 阻断交互，点击即关闭关于窗。
+              常驻挂载、以透明度过渡开合（ZCode DialogOverlay 同款 100ms 渐变，
+              关闭时也有淡出而非硬切） */}
+          <div
+            aria-hidden="true"
+            onClick={() => {
+              setIsAboutOpen(false);
+              void invoke('close_about_window').catch(() => undefined);
+            }}
+            className={cn(
+              'fixed inset-0 z-[90] cursor-default bg-black/45 transition-opacity duration-100',
+              isAboutOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
+            )}
+          />
         </div>
       </div>
   );
