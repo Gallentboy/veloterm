@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { cn } from '@/lib/utils';
 import {
   fetchResourceSnapshot,
@@ -52,23 +53,23 @@ function Pill({
   value,
   detail,
   className,
-  title,
+  hint,
 }: {
   label: string;
   value: string;
   detail?: string;
   className?: string;
-  title?: string;
+  /** 悬停提示（自定义 tooltip，向上弹出；不用原生 title——样式/延迟不可控且会双重提示） */
+  hint?: string;
 }) {
-  return (
+  const pill = (
     <div
-      title={title}
       className={cn(
-        'flex h-5 shrink-0 items-center gap-1.5 rounded-md border border-border/60 bg-surface px-1.5',
+        'flex h-5 shrink-0 items-center gap-1.5 rounded-md border border-border/30 bg-surface/60 px-1.5',
         className,
       )}
     >
-      <span className="text-ui-xs font-medium uppercase tracking-wider text-foreground-subtlest">
+      <span className="text-ui-xs leading-none font-medium uppercase tracking-wider text-foreground-subtlest">
         {label}
       </span>
       <span className="font-mono text-ui-xs leading-none text-foreground">{value}</span>
@@ -78,6 +79,14 @@ function Pill({
         </span>
       ) : null}
     </div>
+  );
+  if (!hint) {
+    return pill;
+  }
+  return (
+    <ControlHintTooltip title={hint} side="top">
+      {pill}
+    </ControlHintTooltip>
   );
 }
 
@@ -126,14 +135,14 @@ export function TerminalResourceBar({ sessionId, disconnected }: TerminalResourc
   const isLinux = snapshot?.platform === 'linux';
 
   return (
-    <div className="@container flex h-7 shrink-0 select-none items-center gap-1 overflow-hidden border-t border-border/50 bg-background px-2">
+    <div className="@container flex h-[42px] shrink-0 select-none items-center gap-1 overflow-hidden border-t border-border/50 bg-background px-2">
       <Pill
         label={t('terminal.resourceMonitor.latency')}
         value={formatLatency(snapshot?.rttMs ?? null)}
-        title={t('terminal.resourceMonitor.latencyHint')}
+        hint={t('terminal.resourceMonitor.latencyHint')}
       />
       {!isLinux ? (
-        <span className="truncate rounded-md border border-dashed border-border/60 px-1.5 text-ui-xs text-foreground-subtle">
+        <span className="flex h-5 items-center truncate rounded-md border border-dashed border-border/30 bg-surface/60 px-1.5 text-ui-xs leading-none text-foreground-subtle">
           {snapshot
             ? t('terminal.resourceMonitor.linuxOnly')
             : t('terminal.resourceMonitor.loading')}
@@ -143,12 +152,14 @@ export function TerminalResourceBar({ sessionId, disconnected }: TerminalResourc
           <Pill
             label={t('terminal.resourceMonitor.cpu')}
             value={formatPercent(snapshot?.cpu ?? null, 1)}
+            hint={t('terminal.resourceMonitor.cpuHint')}
           />
           {snapshot?.memory ? (
             <Pill
               label={t('terminal.resourceMonitor.memory')}
               value={formatPercent(snapshot.memory.usagePercent)}
               detail={`${formatBytes(snapshot.memory.usedBytes)} / ${formatBytes(snapshot.memory.totalBytes)}`}
+              hint={t('terminal.resourceMonitor.memoryHint')}
             />
           ) : null}
           <div className="hidden @[460px]:flex">
@@ -158,6 +169,7 @@ export function TerminalResourceBar({ sessionId, disconnected }: TerminalResourc
                 snapshot?.network?.rxBytesPerSec ?? null,
                 snapshot?.network?.txBytesPerSec ?? null,
               )}
+              hint={t('terminal.resourceMonitor.networkHint')}
             />
           </div>
           {snapshot?.disk ? (
@@ -165,6 +177,7 @@ export function TerminalResourceBar({ sessionId, disconnected }: TerminalResourc
               label={t('terminal.resourceMonitor.disk')}
               value={formatPercent(snapshot.disk.usagePercent)}
               detail={`${formatBytes(snapshot.disk.usedBytes)} / ${formatBytes(snapshot.disk.totalBytes)}`}
+              hint={t('terminal.resourceMonitor.diskHint')}
             />
           ) : null}
           {snapshot?.swap ? (
@@ -172,12 +185,17 @@ export function TerminalResourceBar({ sessionId, disconnected }: TerminalResourc
               <Pill
                 label={t('terminal.resourceMonitor.swap')}
                 value={formatPercent(snapshot.swap.usagePercent)}
+                hint={t('terminal.resourceMonitor.swapHint')}
               />
             </div>
           ) : null}
           {snapshot?.distro ? (
-            <span className="ml-auto hidden truncate rounded-md border border-border/60 bg-surface px-1.5 font-mono text-ui-xs text-foreground-subtle @[900px]:block">
-              {snapshot.distro}
+            <span className="ml-auto hidden shrink-0 @[900px]:inline-flex">
+              <ControlHintTooltip title={t('terminal.resourceMonitor.distroHint')} side="top">
+                <span className="flex h-5 items-center truncate rounded-md border border-border/30 bg-surface/60 px-1.5 font-mono text-ui-xs leading-none text-foreground-subtle">
+                  {snapshot.distro}
+                </span>
+              </ControlHintTooltip>
             </span>
           ) : null}
         </>

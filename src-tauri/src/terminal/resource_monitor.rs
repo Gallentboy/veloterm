@@ -35,7 +35,7 @@ const MARKER_DF: &str = "__VELOTERM_DF__";
 pub const RESOURCE_COMMAND: &str = r#"printf '%s\n' __VELOTERM_OS__
 uname -s
 printf '%s\n' __VELOTERM_DISTRO__
-D=$(sed -n 's/^PRETTY_NAME="//p' /etc/os-release 2>/dev/null | head -n1)
+D=$(sed -n 's/^PRETTY_NAME="\(.*\)"$/\1/p' /etc/os-release 2>/dev/null | head -n1)
 [ -n "$D" ] || D=$(sed -n 's/^ID=//p' /etc/os-release 2>/dev/null | head -n1)
 printf '%s\n' "$D"
 if [ "$(uname -s)" = Linux ]; then
@@ -250,10 +250,13 @@ pub fn build_snapshot(terminal_id: usize, output: &str, rtt_ms: u64) -> Resource
     }
     .to_string();
 
+    // trim_matches 剥首尾引号：os-release 的值形如 PRETTY_NAME="CentOS ... (Core)"，
+    // 历版采集脚本只剥了前引号，尾引号一路漏到前端徽标（实测 CentOS 7 出现
+    // `CentOS ... (Core)"`）；脚本侧已同步修正，解析侧再兑一层底。
     let distro = sections
         .get(MARKER_DISTRO)
         .and_then(|lines| lines.first())
-        .map(|line| line.trim())
+        .map(|line| line.trim().trim_matches('"').trim())
         .filter(|s| !s.is_empty())
         .map(str::to_string);
 
@@ -291,10 +294,10 @@ pub fn build_snapshot(terminal_id: usize, output: &str, rtt_ms: u64) -> Resource
     }
 
     // 磁盘（df -P -B1 /）
-    if let Some(df_lines) = sections.get(MARKER_DF) {
-        if let Some((used, total, _percent)) = parse_df(df_lines) {
-            snapshot.disk = Some(byte_usage(used, total));
-        }
+    if let Some(df_lines) = sections.get(MARKER_DF)
+        && let Some((used, total, _percent)) = parse_df(df_lines)
+    {
+        snapshot.disk = Some(byte_usage(used, total));
     }
 
     // CPU% 与网络速率：客户端差分（首拍 None；基线超过 60s 视为重新起测）
@@ -398,6 +401,27 @@ Filesystem     1B-blocks       Used   Available Use% Mounted on
         // 基线已登记
         assert!(baselines().lock().unwrap().contains_key(&1));
         forget_baseline(1);
+    }
+
+    #[test]
+    fn strips_stray_quotes_from_distro_line() {
+        // 历版采集脚本只剥 PRETTY_NAME 的前引号，尾引号一路漏到前端徽标
+        // （CentOS 7 实测出现 `CentOS Linux 7 (Core)"`）。脚本侧已修，解析侧
+        // 兜底：首尾引号剥掉、正文中段引号不受影响。
+        let output = "__VELOTERM_OS__\nLinux\n__VELOTERM_DISTRO__\nCentOS Linux 7 (Core)\"\n";
+        let snap = build_snapshot(7, output, 10);
+        assert_eq!(snap.distro.as_deref(), Some("CentOS Linux 7 (Core)"));
+        let quoted_both = "__VELOTERM_OS__\nLinux\n__VELOTERM_DISTRO__\n\"Ubuntu 24.04 LTS\"\n";
+        assert_eq!(
+            build_snapshot(8, quoted_both, 10).distro.as_deref(),
+            Some("Ubuntu 24.04 LTS")
+        );
+        // 无引号值原样保留
+        let plain = "__VELOTERM_OS__\nLinux\n__VELOTERM_DISTRO__\ndebian\n";
+        assert_eq!(build_snapshot(9, plain, 10).distro.as_deref(), Some("debian"));
+        forget_baseline(7);
+        forget_baseline(8);
+        forget_baseline(9);
     }
 
     #[test]
