@@ -141,6 +141,20 @@ pub fn run() {
             if let Some(webview_window) = app.get_webview_window("main") {
                 let webview: &tauri::Webview<_> = webview_window.as_ref();
                 window_state::restore(&webview.window());
+
+                // 关于窗 modal 语义的焦点弹回：主窗被点击激活时（遮罩挡不住
+                // 窗口级激活），若关于窗还开着就把焦点弹回去——主窗在关于窗
+                // 存在期间不可交互；配合关于窗 always_on_top，主窗也盖不住它
+                let bounce_handle = app.handle().clone();
+                webview_window.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::Focused(true)) {
+                        if let Some(about) =
+                            bounce_handle.get_webview_window(about::ABOUT_WINDOW_LABEL)
+                        {
+                            let _ = about.set_focus();
+                        }
+                    }
+                });
             }
 
             #[cfg(target_os = "macos")]

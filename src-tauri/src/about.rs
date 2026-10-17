@@ -51,6 +51,9 @@ pub fn show_about(app: &AppHandle) {
     .fullscreen(false)
     // 透明窗口的系统阴影按方形窗计算，会画出出界的灰影，关掉由内容自带形态
     .shadow(false)
+    // modal 语义：关于窗存在期间置顶——主窗被点击也不会抬到它前面把它挡住
+    // （主窗激活时另有焦点弹回逻辑，见 lib.rs setup）
+    .always_on_top(true)
     // Windows 上不进任务栏（macOS 本就无此项）
     .skip_taskbar(true)
     .visible(false)
