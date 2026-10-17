@@ -215,8 +215,10 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         "users" => uu_users::uumain(it),
         #[cfg(unix)]
         "who" => uu_who::uumain(it),
-        // unix + windows 均可用
-        #[cfg(any(unix, target_os = "windows"))]
+        // 仅 unix：stdbuf 的机制是 LD_PRELOAD 注入 libstdbuf 垫片，原生
+        // Windows 无 LD_PRELOAD（上游仅为 cygwin 提供 windows 臂），Windows
+        // 清单不收录（见 tools-catalog 注释）
+        #[cfg(unix)]
         "stdbuf" => uu_stdbuf::uumain(it),
         // 仅 Windows：vcpkg 静态库 + 现场编译的 OpenSSL CLI（FFI argc/argv）
         #[cfg(target_os = "windows")]

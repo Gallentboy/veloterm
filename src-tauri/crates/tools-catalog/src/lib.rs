@@ -143,11 +143,14 @@ pub const PLATFORM_COMMANDS: &[&str] = &[
 /// zoxide（smarter cd）与 dog（DNS 客户端）
 /// + 官方 VIMDLL 形态 vim64.dll 动态导入的 vim（随包 vim-runtime/ 数据树，
 /// OWN_ARGV 家族：仅硬链接短名模式可用）——base32/base64 已由跨平台清单的
-/// uutils 实现覆盖，不重复收录
+/// uutils 实现覆盖，不重复收录；stdbuf 不收录：其机制是给子进程设
+/// LD_PRELOAD 注入 libstdbuf 垫片，原生 Windows 无 LD_PRELOAD，上游仅为
+/// cygwin 提供 windows 臂（且我方构建走 feat_external_libstdbuf，找不到
+/// libstdbuf.dll 直接报错退出），test-commands 全命令验证车道实测恒失败
 #[cfg(target_os = "windows")]
 pub const PLATFORM_COMMANDS: &[&str] = &[
     "base32hex", "base64url", "bc", "dog", "fzf", "hex", "hexupper", "jq", "ncat",
-    "nmap", "nping", "openssl", "qalc", "stdbuf", "telnet", "urldecode", "urlencode",
+    "nmap", "nping", "openssl", "qalc", "telnet", "urldecode", "urlencode",
     "vim", "yq", "zoxide",
 ];
 
