@@ -1,0 +1,79 @@
+# 目标（单一）：npingffi.dll 的构建（nping 的 MSVC + CMake 段，见
+# src-tauri/vendor/nmap/veloterm-win/CMakeLists.txt 与 scripts/build-tools.mjs
+# 的 nmap 段）。只依赖 CMake/VS 与 OpenSSL 静态库（vcpkg 二进制缓存，与
+# publish.yml 同源）——不需要 MSYS2/Go/Rust。
+# 段内 runner 冒烟（nping --version / TCP 探测）在无 Npcap 的 runner 上
+# 正好回归 /DELAYLOAD 降级路径。
+# 触发：推 tag（验证完删除）——
+#   git tag test_nping && git push origin test_nping
+#   git push origin :refs/tags/test_nping
+# 也支持 workflow_dispatch 手动触发。
+name: 'test-nping'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_nping*'
+
+jobs:
+  build-nping:
+    permissions:
+      contents: read
+      packages: write
+    runs-on: windows-latest
+    env:
+      # vcpkg 二进制缓存（GitHub Packages NuGet 源），与 publish.yml 同一份
+      # feed——缓存已由 publish 预热，此处为秒级恢复；未命中则本地编译
+      USERNAME: Gallentboy
+      FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
+      VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Add NuGet source for vcpkg binary cache (GitHub Packages)
+        shell: pwsh
+        run: |
+          $vcpkgExe = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" } else { "C:\vcpkg\vcpkg.exe" }
+          $nuget = (& $vcpkgExe fetch nuget | Select-Object -Last 1)
+          & $nuget sources add `
+            -Source "$env:FEED_URL" `
+            -StorePasswordInClearText `
+            -Name GitHubPackages `
+            -UserName "$env:USERNAME" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
+
+      - name: Install OpenSSL static (Windows)
+        working-directory: src-tauri
+        shell: pwsh
+        env:
+          VCPKG_BUILD_TYPE: release
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          git config --global --add safe.directory "$vcpkgRoot"
+          git -C "$vcpkgRoot" fetch origin master
+          if ($LASTEXITCODE -ne 0) { Write-Host "git fetch 补历史失败（exit $LASTEXITCODE），继续安装" }
+          vcpkg install "--x-install-root=$vcpkgRoot\installed"
+
+      - name: Set OpenSSL env (Windows)
+        shell: pwsh
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      - name: Build npingffi.dll only
+        run: node scripts/build-tools.mjs --only nping
+
+      - name: Upload npingffi artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: npingffi-windows-x64
+          path: src-tauri/binaries/npingffi.dll
+          if-no-files-found: error
+          retention-days: 7
