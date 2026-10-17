@@ -266,9 +266,11 @@ ${output}`);
         'flex h-full shrink-0 flex-col overflow-hidden rounded-(--workspace-panel-radius) bg-background transition-[width,opacity] duration-200 ease-out',
         // 开合两分支不共用宽度/边距/边框工具类：关闭时必须**零占位**——
         // 曾因保留 ml-1(4px) + 边框残留(2px) 把工作区面板从窗口右缘多挤开 6px
-        // （外层 4px 留白 + 6px = 10px，与 ZCode 基准 4px 不符）
+        // （外层 4px 留白 + 6px = 10px，与 ZCode 基准 4px 不符）。
+        // 开启态不加左缘 margin：与左侧栏分割线同款对称（两侧面板都直接贴
+        // 4px 拖拽条，指示线居中两侧各 1px）
         open
-          ? 'ml-1 w-(--ai-panel-width) border border-border'
+          ? 'w-(--ai-panel-width) border border-border'
           : 'w-0 border-transparent opacity-0 pointer-events-none',
         isResizing && 'transition-opacity',
       )}
