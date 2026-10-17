@@ -541,6 +541,12 @@ add_executable(ncat-runner
     "${NMAP_ROOT}/ncat/ncat_main.c"
     $<TARGET_OBJECTS:veloterm_ncat_core>
 )
+# ncat_main.c 必须按 C++ 编译（官方 ncat.vcxproj 全局 CompileAsCpp）：
+# veloterm_ncat_core 里的函数是 C++ 编译的（LANGUAGE CXX），若 main 用 C 编
+# 则名字修饰不匹配，链接期全符号 undefined（CI 实测）。同时需 ncat/ 为
+# include 基准（ncat.h → ncat_config.h）。
+target_include_directories(ncat-runner PRIVATE "${NMAP_ROOT}/ncat" "${NMAP_ROOT}/liblua")
+set_source_files_properties("${NMAP_ROOT}/ncat/ncat_main.c" PROPERTIES LANGUAGE CXX)
 target_link_libraries(ncat-runner PRIVATE ${VELOTERM_NCAT_LIBS})
 target_link_options(ncat-runner PRIVATE "/DELAYLOAD:wpcap.dll" "/DELAYLOAD:packet.dll")
 set_target_properties(ncat-runner PROPERTIES
@@ -553,6 +559,8 @@ add_executable(nping-runner
     "${NMAP_ROOT}/nping/nping.cc"
     $<TARGET_OBJECTS:veloterm_nping_core>
 )
+# nping.cc 已为 .cc（C++），但需 nping/ 为 include 基准（nping.h 等相对包含）
+target_include_directories(nping-runner PRIVATE "${NMAP_ROOT}/nping")
 target_link_libraries(nping-runner PRIVATE ${VELOTERM_NPING_LIBS})
 target_link_options(nping-runner PRIVATE "/DELAYLOAD:packet.dll" "/DELAYLOAD:wpcap.dll")
 set_target_properties(nping-runner PROPERTIES
