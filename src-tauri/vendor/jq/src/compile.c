@@ -1,5 +1,4 @@
 #include <assert.h>
-#include <math.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -7,7 +6,7 @@
 #include "bytecode.h"
 #include "locfile.h"
 #include "jv_alloc.h"
-#include "linker.h"
+#include "util.h"
 
 /*
   The intermediate representation for jq filters is as a sequence of
@@ -129,7 +128,7 @@ block gen_location(location loc, struct locfile* l, block b) {
   return b;
 }
 
-block gen_noop() {
+block gen_noop(void) {
   block b = {0,0};
   return b;
 }
@@ -526,13 +525,17 @@ jv block_module_meta(block b) {
   return jv_null();
 }
 
-block gen_import(const char* name, const char* as, int is_data) {
+block gen_import(jv name, jv as, int is_data) {
+  assert(jv_get_kind(name) == JV_KIND_STRING);
+  assert(!jv_is_valid(as) || jv_get_kind(as) == JV_KIND_STRING);
   inst* i = inst_new(DEPS);
   jv meta = jv_object();
-  if (as != NULL)
-    meta = jv_object_set(meta, jv_string("as"), jv_string(as));
+  if (jv_is_valid(as))
+    meta = jv_object_set(meta, jv_string("as"), as);
+  else
+    jv_free(as);
   meta = jv_object_set(meta, jv_string("is_data"), is_data ? jv_true() : jv_false());
-  meta = jv_object_set(meta, jv_string("relpath"), jv_string(name));
+  meta = jv_object_set(meta, jv_string("relpath"), name);
   i->imm.constant = meta;
   return inst_block(i);
 }
@@ -845,46 +848,26 @@ block gen_reduce(block source, block matcher, block init, block body) {
 }
 
 block gen_foreach(block source, block matcher, block init, block update, block extract) {
-  block output = gen_op_targetlater(JUMP);
   block state_var = gen_op_var_fresh(STOREV, "foreach");
-  block loop = BLOCK(gen_op_simple(DUPN),
-                     // get a value from the source expression:
-                     source,
-                     // destructure the value into variable(s) for all the code
-                     // in the body to see
-                     bind_alternation_matchers(matcher,
-                                  // load the loop state variable
-                                  BLOCK(gen_op_bound(LOADVN, state_var),
-                                        // generate updated state
-                                        update,
-                                        // save the updated state for value extraction
-                                        gen_op_simple(DUP),
-                                        // save new state
-                                        gen_op_bound(STOREV, state_var),
-                                        // extract an output...
-                                        extract,
-                                        // ...and output it by jumping
-                                        // past the BACKTRACK that comes
-                                        // right after the loop body,
-                                        // which in turn is there
-                                        // because...
-                                        //
-                                        // (Incidentally, extract can also
-                                        // backtrack, e.g., if it calls
-                                        // empty, in which case we don't
-                                        // get here.)
-                                        output)));
-  block foreach = BLOCK(gen_op_simple(DUP),
-                        init,
-                        state_var,
-                        gen_op_target(FORK, loop),
-                        loop,
-                        // ...at this point `foreach`'s original input
-                        // will be on top of the stack, and we don't
-                        // want to output it, so we backtrack.
-                        gen_op_simple(BACKTRACK));
-  inst_set_target(output, foreach); // make that JUMP go bast the BACKTRACK at the end of the loop
-  return foreach;
+  return BLOCK(gen_op_simple(DUP),
+               init,
+               state_var,
+               gen_op_simple(DUP),
+               // get a value from the source expression:
+               source,
+               // destructure the value into variable(s) for all the code
+               // in the body to see
+               bind_alternation_matchers(matcher,
+                            // load the loop state variable
+                            BLOCK(gen_op_bound(LOADVN, state_var),
+                                  // generate updated state
+                                  update,
+                                  // save the updated state for value extraction
+                                  gen_op_simple(DUP),
+                                  // save new state
+                                  gen_op_bound(STOREV, state_var),
+                                  // extract an output...
+                                  extract)));
 }
 
 block gen_definedor(block a, block b) {
@@ -1262,6 +1245,13 @@ static int compile(struct bytecode* bc, block b, struct locfile* lf, jv args, jv
 
     if (curr->op == CLOSURE_CREATE) {
       assert(curr->bound_by == curr);
+      // Prevent subfunction index from overflowing into ARG_NEWCLOSURE flag
+      if (bc->nsubfunctions >= ARG_NEWCLOSURE) {
+        locfile_locate(lf, curr->source,
+            "too many function parameters or local function definitions (max %d)", ARG_NEWCLOSURE - 1);
+        errors++;
+        break;
+      }
       curr->imm.intval = bc->nsubfunctions++;
     }
     if (curr->op == CLOSURE_CREATE_C) {
@@ -1295,6 +1285,13 @@ static int compile(struct bytecode* bc, block b, struct locfile* lf, jv args, jv
         for (inst* param = curr->arglist.first; param; param = param->next) {
           assert(param->op == CLOSURE_PARAM);
           assert(param->bound_by == param);
+          // Prevent closure index from overflowing into ARG_NEWCLOSURE flag
+          if (subfn->nclosures >= ARG_NEWCLOSURE) {
+            locfile_locate(lf, curr->source,
+                "function has too many parameters (max %d)", ARG_NEWCLOSURE - 1);
+            errors++;
+            break;
+          }
           param->imm.intval = subfn->nclosures++;
           param->compiled = subfn;
           params = jv_array_append(params, jv_string(param->symbol));
@@ -1374,7 +1371,7 @@ int block_compile(block b, struct bytecode** out, struct locfile* lf, jv args) {
   bc->globals = jv_mem_alloc(sizeof(struct symbol_table));
   int ncfunc = count_cfunctions(b);
   bc->globals->ncfunctions = 0;
-  bc->globals->cfunctions = jv_mem_calloc(ncfunc, sizeof(struct cfunction));
+  bc->globals->cfunctions = jv_mem_calloc(MAX(ncfunc, 1), sizeof(struct cfunction));
   bc->globals->cfunc_names = jv_array();
   bc->debuginfo = jv_object_set(jv_object(), jv_string("name"), jv_null());
   jv env = jv_invalid();

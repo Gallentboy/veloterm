@@ -1,6 +1,6 @@
-//! jq-app 构建脚本：把 jq CLI（vendor/jq，1.7.1）连同其捆绑的 oniguruma
+//! jq-app 构建脚本：把 jq CLI（vendor/jq，1.8.2）连同其捆绑的 oniguruma
 //! 用 cc 现场编译并静态链接。零外部依赖——不需要 vcpkg / cmake / perl /
-//! flex / bison / sed，Windows runner 无任何额外安装步骤。
+//! flex / bison / od / sed，Windows runner 无任何额外安装步骤。
 //!
 //! 仅 `target_os = windows` 时工作，其余平台直接 return（macOS 走桩模块，
 //! 按 AGENTS.md 约定本机测试通过即视为完成，真实编译由 CI windows runner 验证）。
@@ -10,18 +10,21 @@
 //! - **编译集合**：`Makefile.am` 的 `LIBJQ_SRC` + `jq_SOURCES`：
 //!   src/{builtin,bytecode,compile,execute,jq_test,jv,jv_alloc,jv_aux,jv_dtoa,
 //!   jv_file,jv_parse,jv_print,jv_unicode,linker,locfile,util,jv_dtoa_tsd}.c +
-//!   src/main.c + src/decNumber/{decContext,decNumber}.c + 预生成的
-//!   src/lexer.c / src/parser.c（tarball 自带的 flex 2.6.4 / bison 产物，
-//!   非 maintainer-mode 不重新生成）。lexer/parser 不在 LIBJQ_SRC 的 .c
-//!   清单里——automake 经 LIBJQ_INCS 的 lexer.l/parser.y 后缀规则隐式编入
-//!   libjq，故 JQ_SOURCES 须显式收录（漏编即缺 jq_parse/jq_parse_library，
-//!   CI 实测 LNK2019）。src/inject_errors.c 是 ENABLE_ERROR_INJECTION 的
-//!   测试用 LD_PRELOAD 库，不属于 jq 程序本体，排除。
-//! - **oniguruma 6.9.8 随 jq tarball 捆绑**（modules/oniguruma）：编译其
-//!   `src/Makefile.am` 的 `libonig_la_SOURCES` 全集（regposix/regposerr 是
-//!   ENABLE_POSIX_API 可选项、koi8.c/mktable.c/unicode_*_data*.c 是
+//!   src/main.c + vendor/decNumber/{decContext,decNumber}.c（1.8 起从
+//!   src/decNumber/ 移到 vendor/）+ 预生成的 src/lexer.c / src/parser.c
+//!   （tarball 自带的 flex / bison 产物，非 maintainer-mode 不重新生成）。
+//!   lexer/parser 不在 LIBJQ_SRC 的 .c 清单里——automake 经 LIBJQ_INCS 的
+//!   lexer.l/parser.y 后缀规则隐式编入 libjq，故 JQ_SOURCES 须显式收录
+//!   （漏编即缺 jq_parse/jq_parse_library，CI 实测 LNK2019）。
+//!   src/inject_errors.c 是 ENABLE_ERROR_INJECTION 的测试用 LD_PRELOAD
+//!   库，不属于 jq 程序本体，排除。
+//! - **oniguruma 6.9.10 随 jq tarball 捆绑**（vendor/oniguruma，1.8 起从
+//!   modules/ 移到 vendor/）：编译其 `src/Makefile.am` 的
+//!   `libonig_la_SOURCES` 全集（regposix/regposerr 是 ENABLE_POSIX_API
+//!   可选项、koi8.c/mktable.c/unicode_*_data*.c（含 6.9.10 新增的
+//!   unicode_egcb_data/unicode_wb_data/unicode_property_data*）是
 //!   EXTRA_DIST——data 文件被 unicode.c 直接 `#include`，均不单独编译）。
-//! - **jq 1.7.1 没有 config.h**：configure.ac 无 `AC_CONFIG_HEADERS`，全部
+//! - **jq 没有 config.h**：configure.ac 无 `AC_CONFIG_HEADERS`，全部
 //!   `AC_DEFINE` 走 DEFS 命令行 `-D` 宏。本脚本照此直接用 cc 的 define
 //!   传宏（取舍见下），不渲染 jq 侧 config.h。
 //! - **oniguruma 需要 config.h**：其 `src/regenc.h` 无条件
@@ -31,13 +34,20 @@
 //! - **oniguruma 静态链接需 `ONIG_STATIC`**：oniguruma.h 的 `ONIG_EXTERN`
 //!   在 MSVC 下默认展开为 `__declspec(dllimport)`（面向 DLL 消费者），静态
 //!   编入同一二进制时连锁报 LNK4217。上游 CMake 的静态目标同此做法。
-//! - **builtin.inc**：tarball 不带；Makefile.am:120-122 的规则是
-//!   `sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/'`，
-//!   即每行：反斜杠翻倍 → 双引号转义 → 行首加 `"` → 行尾加 `\n"`。
-//!   Windows runner 无 sed，用 Rust 逐行等价实现（生成函数有单测）。
+//! - **builtin.inc**：tarball 不带；Makefile.am:121-129 的规则（1.8 起从
+//!   sed 字符串转义改为八进制字节 dump）：
+//!   `od -v -A n -t o1 -- $< | sed`，把 src/builtin.jq 逐字节转成逗号分隔
+//!   的八进制整数表，消费方是 builtin.c 的
+//!   `static const char jq_builtins[] = { #include "src/builtin.inc" '\0', }`。
+//!   Windows runner 无 od/sed，用 Rust 逐字节等价实现（生成函数有单测；
+//!   行首空白与 od 的平台差异无关 C 语义——数组初始化只看数值与逗号）。
 //!   消费方：builtin.c 的 `#include "src/builtin.inc"`、main.c 的
 //!   `#include "src/version.h"` / `"src/config_opts.inc"`——统一生成到
 //!   OUT_DIR/gen/src/ 下，把 gen 目录挂进 include 路径即可命中。
+//! - **version.h 双源校验**：1.8 起 tarball 实发 src/version.h（裸版本号）。
+//!   include 路径上 OUT_DIR 生成版优先生效，但构建启动时与 tarball 实发值
+//!   校验一致，防 JQ_VERSION 常量与 vendor 树漂移（同 bc-app 校验
+//!   VERSION.txt 的约定）。
 //! - **入口改名**：jq 在 WIN32 下 main.c 只有 `wmain`（宽字符入口，MinGW
 //!   -municode 用）与 `umain`（真实逻辑，UTF-8 char**）；本项目 FFI 直接
 //!   调 umain，`-Dumain=veloterm_jq_main` 改名（全树 grep 过：umain 标识符
@@ -56,9 +66,11 @@
 //!   `HAVE_GETTIMEOFDAY`（MSVC 没有，由本脚本的 compat .c 用
 //!   GetSystemTimeAsFileTime 实现，保住 now/1 的亚秒精度）。
 //! - 数学宏 = UCRT 实有的 C99 全集 + POSIX 贝塞尔 j0/j1/jn/y0/y1/yn
-//!   （MSDN 浮点支持页确认 UCRT 提供全部 C99 数学函数）。**不**定义：
-//!   gamma / scalb（glibc 遗产，UCRT 无，jq 回退为内建不可用报错）、
-//!   drem / exp10 / pow10 / significand（libm.h 里本就 `&& !WIN32` 关闭）。
+//!   （MSDN 浮点支持页确认 UCRT 提供全部 C99 数学函数；1.8.2 的 libm.h
+//!   新增 modf/frexp 门控，均 UCRT 实有）。**不**定义：gamma / scalb
+//!   （glibc 遗产，UCRT 无，jq 回退为内建不可用报错）、drem / exp10 /
+//!   significand（libm.h 里本就 `&& !WIN32` 关闭，1.8.2 已删 pow10 条目）、
+//!   lgamma_r（1.8.2 新增门控，glibc 扩展、UCRT 无）。
 //! - **不**定义：HAVE_PTHREAD* / HAVE___THREAD（MSVC 走 jv_alloc.c 的
 //!   `__declspec(thread)` TLS 分支与 jv.c 的 Heimdal TSD 实现）、
 //!   HAVE_MEMMEM / HAVE_STRPTIME / HAVE_SETENV（util.c/builtin.c 各有
@@ -86,17 +98,20 @@
 //!   winsock.h 已定义同布局的 timeval，无守卫必报 C2011 重定义。
 //! - 假 `libgen.h`（main.c/linker.c 包含）：dirname 的最小实现（POSIX
 //!   语义，就地修改入参，兼容 `/` 与 `\`）。
-//! - vendor/jq 就地修补（均见 vendor/jq/README.md，带中文注释标记）：
+//! - vendor/jq 就地修补（均见 vendor/jq/README.md，带中文注释标记；1.7.1
+//!   时的 jv_file.c VLA 补丁上游 1.8 已自行修复，随升级移除）：
 //!   jv.c 上游笔误（`_MSC_VER` 分支误声明 jv_alloc.c 的私有类型
-//!   nomem_handler）；jv_alloc.h 无编译器守卫的
-//!   `__attribute__((warn_unused_result))`；util.h 的 MIN/MAX 宏用 GNU
+//!   nomem_handler）；jv.c 文件头无条件 `#include <pthread.h>`（MSVC 无此头
+//!   C1083，按 jv_thread.h 同样的 WIN32/MinGW 门控包住）；jv_alloc.h 无编译器
+//!   守卫的 `__attribute__((warn_unused_result))`；util.h 的 MIN/MAX 宏用 GNU
 //!   语句表达式 + `__typeof__`（MSVC 不支持，加 `_MSC_VER` 三元式分支）；
-//!   jv_file.c 的 `const int` 数组尺寸实为 VLA（MSVC 不支持，改 enum 常量）；
 //!   jv_dtoa_tsd.c 的裸 `inline` 定义在 MSVC 下不产出外部符号（LNK2019，去 inline）；
 //!   util.c 的 WIN32 `fopen` 同名覆盖与静态 CRT 的 fopen.obj 撞名（LNK2005，
-//!   改名 veloterm_jq_fopen，调用点随改）；main.c 的 `_O_U8TEXT` 流模式
+//!   改名 veloterm_jq_fopen，调用点 WIN32 分支随改）；main.c 的 `_O_U8TEXT` 流模式
 //!   （窄字符输出被静默吞）；main.c 的诊断探针（临时）；jv.c 的 WIN32 TSD
-//!   shim 在替换旧值时调析构器致退出期二次 free（0xC0000374 + WER 延迟）。
+//!   shim 在替换旧值时调析构器致退出期二次 free（0xC0000374 + WER 延迟）；
+//!   builtin.c 的 void* 指针算术（GNU 扩展，MSVC C2036，换 char* 承载字节偏移）。
+//!   当前共 10 处。
 //!
 //! # 编译告警
 //!
@@ -123,20 +138,25 @@ const TAG: &str = "[jq-app]";
 /// `printf("jq-%s\n", JQ_VERSION)` 自加前缀（→ `jq --version` 输出
 /// "jq-1.7.1"），且 `$ENV.VERSION_DIR` 按「有无 `-`」分支（带前缀会被
 /// 误判为开发版输出 "jq-master"）。与 tarball 实发的 src/version.h 同值。
-const JQ_VERSION: &str = "1.7.1";
+const JQ_VERSION: &str = "1.8.2";
 /// --build-configuration / $JQ_BUILD_CONFIGURATION 输出的构建描述
-const JQ_CONFIG: &str = "cc static build for Windows (veloterm vendor/jq 1.7.1, oniguruma 6.9.8 bundled)";
+const JQ_CONFIG: &str = "cc static build for Windows (veloterm vendor/jq 1.8.2, oniguruma 6.9.10 bundled)";
 
 /// jq 程序本体源（Makefile.am LIBJQ_SRC + jq_SOURCES；inject_errors.c 是
 /// 测试用错误注入库，排除）。lexer.c/parser.c 不在 LIBJQ_SRC 的 .c 清单里，
 /// 但 automake 经 LIBJQ_INCS 的 lexer.l/parser.y 后缀规则把预生成的 .c 隐式
 /// 编入 libjq——必须显式收录，否则缺 jq_parse/jq_parse_library（CI LNK2019）。
+/// decNumber 自 1.8 起不在 src/ 下，单列 DEC_SOURCES（基目录 vendor/decNumber）。
 const JQ_SOURCES: &[&str] = &[
     "builtin.c", "bytecode.c", "compile.c", "execute.c", "jq_test.c", "jv.c", "jv_alloc.c",
     "jv_aux.c", "jv_dtoa.c", "jv_file.c", "jv_parse.c", "jv_print.c", "jv_unicode.c", "linker.c",
     "locfile.c", "util.c", "jv_dtoa_tsd.c", "main.c", "lexer.c", "parser.c",
-    "decNumber/decContext.c", "decNumber/decNumber.c",
 ];
+
+/// vendor/decNumber 源（1.8 起从 src/decNumber/ 移入 vendor/；内部互引是
+/// 同目录 quote-include，无需额外 include 路径；jv.c 的
+/// `#include "decNumber/decNumber.h"` 经 include 路径里的 jq 根 vendor/ 命中）
+const DEC_SOURCES: &[&str] = &["decContext.c", "decNumber.c"];
 
 /// 捆绑 oniguruma 源（其 src/Makefile.am 的 libonig_la_SOURCES；
 /// regposix/regposerr 为可选 POSIX API、koi8.c/mktable.c 与 unicode_*_data*.c
@@ -161,7 +181,7 @@ const JQ_MATH_FUNCS: &[&str] = &[
     "acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh", "cbrt", "ceil", "copysign",
     "cos", "cosh", "erf", "erfc", "exp", "exp2", "expm1", "fabs", "fdim", "floor", "fma",
     "fmax", "fmin", "fmod", "frexp", "hypot", "ilogb", "j0", "j1", "jn", "ldexp", "lgamma",
-    "log", "log10", "log1p", "log2", "logb", "nearbyint", "nextafter", "nexttoward", "pow",
+    "log", "log10", "log1p", "log2", "logb", "modf", "nearbyint", "nextafter", "nexttoward", "pow",
     "remainder", "rint", "round", "scalbln", "scalbn", "sin", "sinh", "sqrt", "tan", "tanh",
     "tgamma", "trunc", "y0", "y1", "yn",
 ];
@@ -175,7 +195,7 @@ fn main() {
         return;
     }
     if let Err(msg) = run() {
-        panic!("{TAG} 构建失败：{msg}\n{TAG} 提示：jq 源码应为工程内 vendor/jq（1.7.1）；\
+        panic!("{TAG} 构建失败：{msg}\n{TAG} 提示：jq 源码应为工程内 vendor/jq（1.8.2）；\
                 缺文件说明 vendor 树不完整，见 vendor/jq/README.md 的裁剪清单。");
     }
 }
@@ -185,7 +205,8 @@ fn run() -> Result<(), String> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap_or_default());
     let jq_root = manifest.join("..").join("jq");
     let jq_src = jq_root.join("src");
-    let onig_src = jq_root.join("modules").join("oniguruma").join("src");
+    let dec_src = jq_root.join("vendor").join("decNumber");
+    let onig_src = jq_root.join("vendor").join("oniguruma").join("src");
 
     // ── 1. 防御式发现：vendor 树的关键文件 ─────────────────────────────────
     for rel in [
@@ -195,8 +216,9 @@ fn run() -> Result<(), String> {
         "src/builtin.jq",
         "src/lexer.c",
         "src/parser.c",
-        "src/decNumber/decNumber.c",
-        "modules/oniguruma/src/oniguruma.h",
+        "src/version.h",
+        "vendor/decNumber/decNumber.c",
+        "vendor/oniguruma/src/oniguruma.h",
     ] {
         let p = jq_root.join(rel);
         if !p.is_file() {
@@ -204,7 +226,22 @@ fn run() -> Result<(), String> {
         }
     }
     println!("{TAG} vendor/jq 源码就位：{}", jq_root.display());
+    // version.h 双源校验：tarball 实发值必须与本脚本 JQ_VERSION 一致
+    //（防升级时只改一处；同 bc-app 校验 VERSION.txt 的约定）
+    let shipped_version_h = fs::read_to_string(jq_src.join("version.h"))
+        .map_err(|e| format!("读 {} 失败：{e}", jq_src.join("version.h").display()))?;
+    let shipped = shipped_version_h
+        .lines()
+        .find_map(|l| l.strip_prefix("#define JQ_VERSION "))
+        .and_then(|v| v.trim().strip_prefix('"').and_then(|v| v.strip_suffix('"')))
+        .ok_or_else(|| format!("src/version.h 形态异常：{shipped_version_h:?}"))?;
+    if shipped != JQ_VERSION {
+        return Err(format!(
+            "版本双源不一致：tarball src/version.h={shipped}，build.rs JQ_VERSION={JQ_VERSION}（升级时两处必须同步改）"
+        ));
+    }
     let jq_sources = resolve_all(&jq_src, JQ_SOURCES)?;
+    let dec_sources = resolve_all(&dec_src, DEC_SOURCES)?;
     let onig_sources = resolve_all(&onig_src, ONIG_SOURCES)?;
 
     // ── 2. 生成物：OUT_DIR 下三棵（gen=jq 的 include 生成物 / shim=MSVC 垫片
@@ -255,7 +292,7 @@ fn run() -> Result<(), String> {
     for f in &onig_sources {
         onig.file(f);
     }
-    println!("{TAG} 编译 oniguruma 6.9.8（{} 个源）", onig_sources.len());
+    println!("{TAG} 编译 oniguruma 6.9.10（{} 个源）", onig_sources.len());
     onig.compile("veloterm_jq_onig");
 
     // ── 4. 编译 jq 本体 + compat ────────────────────────────────────────────
@@ -294,10 +331,10 @@ fn run() -> Result<(), String> {
         jq.define(&format!("HAVE_{}", f.to_uppercase()), "1");
     }
     for inc in [
-        jq_src.clone(),               // jq 头 + decNumber/ 相对包含
+        jq_src.clone(),               // jq 头 + 同目录相对包含
         genout.clone(),                // 生成物 "src/builtin.inc" / "src/version.h" ...
         shim.clone(),                 // MSVC 垫片（假 unistd/sys/time/libgen）
-        jq_src.join("decNumber"),     // decNumber 自身的同目录包含（保险）
+        jq_root.join("vendor"),       // jv.c 的 "decNumber/decNumber.h"（1.8 起的布局）
         onig_src.clone(),             // <oniguruma.h>（builtin.c）
     ] {
         println!("{TAG} include += {}", inc.display());
@@ -307,11 +344,15 @@ fn run() -> Result<(), String> {
     let fi = shim.join("veloterm_jq_shim.h");
     jq.flag(format!("/FI{}", fi.display()));
     println!("{TAG} /FI {}", fi.display());
-    for f in jq_sources.iter() {
+    for f in jq_sources.iter().chain(dec_sources.iter()) {
         jq.file(f);
     }
     jq.file(&compat_c);
-    println!("{TAG} 编译 jq 本体 {} 源 + compat（-Dumain=veloterm_jq_main）", jq_sources.len());
+    println!(
+        "{TAG} 编译 jq 本体 {} 源 + decNumber {} 源 + compat（-Dumain=veloterm_jq_main）",
+        jq_sources.len(),
+        dec_sources.len()
+    );
     jq.compile("veloterm_jq_app");
 
     // ── 5. 链接：仅 shlwapi（linker.c 的 PathIsRelativeA）──────────────────
@@ -347,11 +388,10 @@ fn write_file(path: &Path, content: &str) -> Result<(), String> {
     fs::write(path, content).map_err(|e| format!("写 {} 失败：{e}", path.display()))
 }
 
-/// main.c 的 `#include "src/version.h"`：上游由 scripts/version 在 dist 时
-/// 生成（tarball 内 src/version.h 即其产物，值为裸版本号 `"1.7.1"`）。
-/// 本脚本生成到 OUT_DIR/gen/src/version.h —— 该路径是 `"src/version.h"`
-/// 经 -I 解析时唯一命中的形态（vendor/jq/src/version.h 需 `"version.h"`
-/// 拼写才可达），即 Windows 构建实际生效的就是这里渲染的值。
+/// main.c 的 `#include "src/version.h"`：1.8 起 tarball 实发 src/version.h
+/// （裸版本号）；上游由 scripts/version 在 dist 时生成。本脚本仍在 OUT_DIR
+/// 生成一份（该路径是 `"src/version.h"` 经 -I 解析时唯一命中的形态），
+/// 构建启动时与 tarball 实发值校验一致，双源防漂移。
 fn render_version_h() -> String {
     format!("#define JQ_VERSION \"{JQ_VERSION}\"\n")
 }
@@ -362,29 +402,50 @@ fn render_config_opts_inc() -> String {
     format!("#define JQ_CONFIG \"{JQ_CONFIG}\"\n")
 }
 
-/// 复刻 Makefile.am:120-122 的 builtin.inc 生成规则（每行：反斜杠翻倍、
-/// 双引号转义、行首加 `"`、行尾加 `\n"`；sed 逐行处理、行尾无累积；
-/// 文件末尾的换行不产生幽灵空行，中间的空行照样产出 `"\n"` 段）。
-/// 与 sed 的差异仅限末尾换行的有无（C 拼接语义不受影响）。
-/// 入参必须 LF-only：GNU sed 会把 CRLF 的 \r 当行内容拼进字符串，为了不
-/// 携带这个隐患，遇 CR 直接报错（当前 vendor 的 builtin.jq 为 ASCII/LF）。
+/// 复刻 Makefile.am:121-129 的 builtin.inc 生成规则（1.8 起）：
+/// `od -v -A n -t o1 | sed ...` 把 src/builtin.jq 逐字节转成逗号分隔的
+/// 八进制整数表，消费方是 builtin.c 的
+/// `static const char jq_builtins[] = { #include "src/builtin.inc" '\0', }`。
+/// 语义关键在 sed 的两条「补零」规则（`s/ 0/  0/g` 与
+/// `s/ \([123456789]\)/ 0\1/g`）：它们把不以 0 开头的 token（字节 64~255
+/// 的三位八进制形如 144）补上前导 0 成 0144——**C 整数字面量只有带前导 0
+/// 才按八进制解析**，裸 144 会被当十进制 144=0x90（非法 UTF-8，首版复刻
+/// 实踩：builtin 编译报 INVALID_CHARACTER、行内仅 <64 的字节存活）。
+/// 行内空白与 od 的平台差异无关 C 语义（数组初始化只看数值与逗号）；
+/// 本实现每行 16 个 token、3 位补零八进制 + 不足前导 0 的补上，与上游
+/// 形态一致。入参必须 LF-only：CR 会作为字节 015 混进内建源码，
+/// 为了不携带这个隐患，遇 CR 直接报错（当前 vendor 的 builtin.jq 为
+/// ASCII/LF）。
 /// （pub 仅为测试/校验工具可直调；build script 根位置无可见性副作用。）
 pub fn render_builtin_inc(builtin_jq: &str) -> Result<String, String> {
     if builtin_jq.trim().is_empty() {
         return Err("src/builtin.jq 内容为空".into());
     }
     if builtin_jq.contains('\r') {
-        return Err("src/builtin.jq 含 CR（应为 LF-only，CRLF 会把 \\r 拼进内建源码）".into());
+        return Err("src/builtin.jq 含 CR（应为 LF-only，CR 会作为字节 015 混进内建源码）".into());
     }
-    let mut lines: Vec<&str> = builtin_jq.split('\n').collect();
-    if lines.last() == Some(&"") {
-        lines.pop(); // 文件以 \n 结尾：最后一“行”是文件终结符，不是空行
+    let bytes = builtin_jq.as_bytes();
+    let mut out = String::with_capacity(bytes.len() * 5 + bytes.len() / 16 + 1);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 {
+            if i % 16 == 0 {
+                out.push_str(",\n");
+            } else {
+                out.push_str(", ");
+            }
+        }
+        let tok = format!("{b:03o}");
+        if !tok.starts_with('0') {
+            out.push('0'); // C 八进制字面量的前导 0（上游 sed 补零规则的语义）
+        }
+        out.push_str(&tok);
     }
-    let mut out = String::with_capacity(builtin_jq.len() * 2);
-    for line in lines {
-        let escaped = line.replace('\\', "\\\\").replace('"', "\\\"");
-        out.push_str(&format!("\"{escaped}\\n\"\n"));
-    }
+    // 尾逗号：上游 od 输出行尾有固定宽度填充空白，sed 的「数字+空格→数字+,」
+    // 规则使每个 token（含最后一个）后都带逗号——builtin.c 的
+    // `#include "src/builtin.inc" '\0',` 正是依赖这一点与 '\0' 衔接
+    //（C 初始化列表允许尾逗号；漏掉则最后一个 token 与 '\0' 之间缺分隔符）
+    out.push(',');
+    out.push('\n');
     Ok(out)
 }
 
@@ -576,24 +637,77 @@ int gettimeofday(struct timeval *tv, void *tz) {
 mod tests {
     use super::*;
 
-    /// builtin.inc 生成规则与 Makefile.am 的 sed 逐条等价：
-    /// 反斜杠翻倍、双引号转义、行首 `"`、行尾 `\n"`。
+    /// builtin.inc 生成规则与 Makefile.am 的 od 管道等价：
+    /// 每个字节转八进制且**必带前导 0**（C 八进制字面量语义，上游 sed
+    /// 补零规则的本意），逗号分隔，每行 16 个 token，末 token 后带逗号。
     #[test]
-    fn builtin_inc_matches_makefile_sed_rule() {
-        let jq_src = "line1\nhas \"quotes\" and \\backslash\nlast";
-        let inc = render_builtin_inc(jq_src).unwrap();
-        assert_eq!(
-            inc,
-            "\"line1\\n\"\n\"has \\\"quotes\\\" and \\\\backslash\\n\"\n\"last\\n\"\n"
-        );
+    fn builtin_inc_matches_makefile_od_rule() {
+        // 'a'=0x61 → 八进制 141 → 字面量 0141；≥64 的字节必须补前导 0，
+        // 裸 141 会被 C 按十进制解析成 0x8d（非法 UTF-8）——首版实踩的坑
+        let inc = render_builtin_inc("ab\nc").unwrap();
+        assert_eq!(inc, "0141, 0142, 012, 0143,\n");
+        // 高位字节（UTF-8 多字节序列成分）也稳定转八进制：C3 A9
+        assert_eq!(render_builtin_inc("\u{e9}").unwrap(), "0303, 0251,\n");
+        // NUL 与控制字符照常 dump（消费方是 char 数组，无字符串字面量限制）
+        assert_eq!(render_builtin_inc("\0\x01").unwrap(), "000, 001,\n");
+        // U+00FF 的 UTF-8 编码是 C3 BF（合法 UTF-8 里不会出现 0xFF 单字节，
+        // 首字节最大 0xF4——全覆盖断言见下一个用例）
+        assert_eq!(render_builtin_inc("\u{ff}").unwrap(), "0303, 0277,\n");
     }
 
-    /// C 语义抽查：拼出来的字符串常量逐行以 `\n` 结尾、首尾引号配对
+    /// 语义不变量：产出的每个 token 都以 '0' 开头（C 八进制字面量）且按
+    /// 八进制解析回原字节值——任一不满足即内建源码损坏。用覆盖全部
+    /// 会出现的字节值（0x00-0x7F 单字节 + 0x80-0xBF 尾字节 + 0xC2-0xF4
+    /// 首字节）的合法 UTF-8 字符串验证。
     #[test]
-    fn builtin_inc_lines_are_c_string_segments() {
-        let inc = render_builtin_inc("a\nb\n").unwrap();
-        for line in inc.lines() {
-            assert!(line.starts_with('"') && line.ends_with("\\n\""), "坏行：{line}");
+    fn builtin_inc_tokens_are_valid_c_octal_literals() {
+        let mut s = String::new();
+        for cp in 0u32..=0x7F {
+            if cp != 0x0D {
+                s.push(char::from_u32(cp).unwrap()); // 0x0D 是 CR，渲染函数按约定拒绝
+            }
+        }
+        for cp in 0x80u32..=0x7FF {
+            s.push(char::from_u32(cp).unwrap()); // 双字节序列覆盖 0xC2-0xDF 与 0x80-0xBF
+        }
+        for cp in [0x800u32, 0x20AC, 0xFFFD, 0x10000, 0x10FFFF] {
+            s.push(char::from_u32(cp).unwrap()); // 三/四字节序列覆盖 0xE0-0xF4
+        }
+        let inc = render_builtin_inc(&s).unwrap();
+        let toks: Vec<&str> = inc
+            .trim_end()
+            .trim_end_matches(',')
+            .split([',', '\n'])
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
+        assert_eq!(toks.len(), s.len(), "token 数应等于 UTF-8 字节数");
+        for (tok, byte) in toks.iter().zip(s.as_bytes()) {
+            assert!(tok.starts_with('0'), "token {tok} 缺前导 0（C 会按十进制解析成非法字节）");
+            assert_eq!(
+                u8::from_str_radix(tok, 8).unwrap(),
+                *byte,
+                "token {tok} 八进制值与原字节 {byte:#x} 不符"
+            );
+        }
+    }
+
+    /// C 语义抽查：每行是逗号分隔的八进制 token（行尾随上游 od+sed 形态
+    /// 带逗号，C 初始化列表合法），token 全为八进制数字、无空 token
+    #[test]
+    fn builtin_inc_lines_are_octal_tokens() {
+        let inc = render_builtin_inc(&"x".repeat(33)).unwrap(); // 33 字节 = 2 行 + 1
+        let lines: Vec<&str> = inc.trim_end().lines().collect();
+        assert_eq!(lines.len(), 3);
+        // 行分隔符 ",\n" 落在前行行尾（与上游 od+sed 的「每 token 后跟逗号」
+        // 一致），统计 token 前先剥掉行尾逗号
+        assert_eq!(lines[0].trim_end_matches(',').split(',').count(), 16);
+        assert_eq!(lines[1].trim_end_matches(',').split(',').count(), 16);
+        assert_eq!(lines[2], "0170,"); // 'x' = 0x78 = 0170（带前导 0 + 尾逗号）
+        for line in &lines {
+            for tok in line.trim_end_matches(',').split(", ") {
+                assert!(tok.starts_with('0') && tok.bytes().all(|b| b.is_ascii_digit()), "坏 token：{tok}");
+            }
         }
     }
 
@@ -604,21 +718,21 @@ mod tests {
         assert!(render_builtin_inc("\n \n").is_err());
     }
 
-    /// 末尾换行不产生幽灵空行；中间空行产出 `"\n"` 段；含 CR 直接报错
+    /// 末尾换行是一个真实的 012 字节；含 CR 直接报错
     #[test]
-    fn builtin_inc_handles_trailing_newline_and_blank_lines() {
-        assert_eq!(render_builtin_inc("a\nb\n").unwrap(), "\"a\\n\"\n\"b\\n\"\n");
-        assert_eq!(render_builtin_inc("a\nb").unwrap(), "\"a\\n\"\n\"b\\n\"\n");
-        assert_eq!(render_builtin_inc("a\n\nb").unwrap(), "\"a\\n\"\n\"\\n\"\n\"b\\n\"\n");
-        assert!(render_builtin_inc("a\r\nb\r\n").is_err());
+    fn builtin_inc_handles_trailing_newline_and_cr() {
+        assert_eq!(render_builtin_inc("a\n").unwrap(), "0141, 012,\n");
+        assert_eq!(render_builtin_inc("a").unwrap(), "0141,\n");
+        assert!(render_builtin_inc("a\r\nb").is_err());
     }
 
     /// version.h / config_opts.inc / onig config.h 的形状
     #[test]
     fn generated_headers_have_expected_shape() {
-        // 值必须与 tarball 实发的 src/version.h 一致（裸版本号）；
-        // 带 "jq-" 前缀会被 main.c 的 printf 二次加前缀成 jq-jq-1.7.1
-        assert_eq!(render_version_h(), "#define JQ_VERSION \"1.7.1\"\n");
+        // 值必须与 tarball 实发的 src/version.h 一致（裸版本号；构建期另有
+        // 双源一致性校验）；
+        // 带 "jq-" 前缀会被 main.c 的 printf 二次加前缀成 jq-jq-1.8.2
+        assert_eq!(render_version_h(), "#define JQ_VERSION \"1.8.2\"\n");
         assert!(!render_version_h().contains("\"jq-"), "版本宏不应带 jq- 前缀");
         assert!(render_config_opts_inc().starts_with("#define JQ_CONFIG \""));
         let onig = render_onig_config_h();
@@ -657,18 +771,31 @@ mod tests {
     /// 编译集合与上游 Makefile.am 的清单条数（变更 vendor 版本时先改这里）
     #[test]
     fn source_lists_match_upstream_makefile_am() {
-        // LIBJQ_SRC 的 .c（17）+ decNumber 2 + main.c + 预生成 lexer.c/parser.c = 22
-        assert_eq!(JQ_SOURCES.len(), 22);
+        // LIBJQ_SRC 的 .c（17）+ main.c + 预生成 lexer.c/parser.c = 20；
+        // decNumber 自 1.8 起在 vendor/decNumber/，单列 2 个
+        assert_eq!(JQ_SOURCES.len(), 20);
+        assert_eq!(DEC_SOURCES.len(), 2);
+        assert!(JQ_SOURCES.iter().all(|s| !s.contains('/')));
         assert!(!JQ_SOURCES.contains(&"inject_errors.c"));
         assert!(JQ_SOURCES.contains(&"main.c"));
         // lexer/parser 经 LIBJQ_INCS 的 .l/.y 后缀规则隐式编入上游 libjq，
         // 本清单必须显式列（漏编缺 jq_parse/jq_parse_library，CI 实测 LNK2019）
         assert!(JQ_SOURCES.contains(&"lexer.c"));
         assert!(JQ_SOURCES.contains(&"parser.c"));
-        // onig libonig_la_SOURCES 全集（无 iso8859_12，上游就没有）
+        // onig libonig_la_SOURCES 全集（无 iso8859_12，上游就没有；6.9.10 新增
+        // 的 unicode_egcb/wb/property data 文件与 fold_data 同属 EXTRA_DIST）
         assert_eq!(ONIG_SOURCES.len(), 48);
         assert!(!ONIG_SOURCES.contains(&"iso8859_12.c"));
-        for not_in in ["regposix.c", "regposerr.c", "koi8.c", "mktable.c", "unicode_fold_data.c"] {
+        for not_in in [
+            "regposix.c",
+            "regposerr.c",
+            "koi8.c",
+            "mktable.c",
+            "unicode_fold_data.c",
+            "unicode_egcb_data.c",
+            "unicode_wb_data.c",
+            "unicode_property_data.c",
+        ] {
             assert!(!ONIG_SOURCES.contains(&not_in), "{not_in} 不应单独编译");
         }
     }
