@@ -7,7 +7,6 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { DesktopTopOverlay } from '@/components/DesktopTopOverlay';
 import { EditorScreen } from '@/components/editor/EditorScreen';
@@ -580,19 +579,14 @@ export function AppShell() {
 
           <CommandPalette open={isPaletteOpen} onClose={() => setPaletteOpen(false)} />
 
-          {/* 「关于」窗口打开时主窗遮罩：淡化下层 + 阻断交互，点击即关闭关于窗。
-              常驻挂载、以透明度过渡开合（ZCode DialogOverlay 同款 100ms 渐变，
-              关闭时也有淡出而非硬切） */}
+          {/* 「关于」窗口打开时主窗遮罩：淡化下层 + 阻断交互。点击遮罩不关闭——
+              对话框只能由 OK 按钮（或 Esc/Enter 键盘）收尾。常驻挂载、以透明度
+              过渡开合，时长与关于卡片动效对齐（入场 220ms），开关事件由卡片
+              动画首帧同帧广播——两窗动画同步开始不割裂 */}
           <div
             aria-hidden="true"
-            onClick={() => {
-              setIsAboutOpen(false);
-              void invoke('close_about_window').catch(() => undefined);
-            }}
             className={cn(
-              // 时长与关于卡片动效对齐（入场 150ms / 退场 110ms，取 150ms 主导手感），
-              // 开关事件由卡片动画首帧同帧广播——两窗动画同步开始
-              'fixed inset-0 z-[90] cursor-default bg-black/45 transition-opacity duration-150',
+              'fixed inset-0 z-[90] cursor-default bg-black/45 transition-opacity duration-[220ms]',
               isAboutOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
             )}
           />
