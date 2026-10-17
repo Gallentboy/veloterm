@@ -31,7 +31,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             is_apple_silicon,
             about::show_about_window,
-            about::close_about_window,
             logging::set_log_level,
             logging::get_current_log_level,
             logging::get_log_file_path,

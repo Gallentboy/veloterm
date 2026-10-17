@@ -100,14 +100,6 @@ pub fn show_about_window(app: AppHandle) {
     show_about(&app);
 }
 
-/// 主窗遮罩点击关闭：与 Esc/Enter/OK 同一销毁路径（Destroyed 会广播 false）
-#[tauri::command]
-pub fn close_about_window(app: AppHandle) {
-    if let Some(window) = app.get_webview_window(ABOUT_WINDOW_LABEL) {
-        let _ = window.close();
-    }
-}
-
 /// macOS：替换默认菜单 App 子菜单首项（原生 About 面板）为自定义关于项。
 /// 默认菜单的其余部分（Edit/View/Window 与 App 子菜单的 services/hide/quit
 /// 等预定义项）保持不动——Edit 菜单的复制粘贴快捷键被系统文本框依赖。

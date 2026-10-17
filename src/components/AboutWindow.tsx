@@ -7,7 +7,7 @@ import { useAppVersion } from '@/hooks/useAppVersion';
 import { cn } from '@/lib/utils';
 
 /** 出场动画时长（与 styles.css 的 .about-card-out 保持一致，关窗延时对齐） */
-const ABOUT_EXIT_ANIMATION_MS = 110;
+const ABOUT_EXIT_ANIMATION_MS = 150;
 
 /** 构建时间展示本地时区紧凑格式（与 ZCode formatAboutBuildTime 一致） */
 function formatBuildTime(iso: string): string {
@@ -38,8 +38,9 @@ export function AboutWindow() {
   const [isExiting, setIsExiting] = useState(false);
 
   // 关闭编排（对齐 ZCode Dialog 的同步退场）：卡片滑退与主窗遮罩淡出**同帧**
-  // 开始（先广播 about-visibility=false 再播退场动画，动画结束后才真正关窗），
-  // Esc/Enter/OK/主窗遮罩点击四条路径同走这里；窗口销毁时 Rust 侧还有一道
+  // 开始（先广播 about-visibility=false 再播退场动画，动画结束后才真正关窗）。
+  // 关闭路径仅两条：OK 按钮 / Esc·Enter 键盘——主窗遮罩点击不关闭（点击
+  // 别处无效，对话框只能由确定收尾）；窗口销毁时 Rust 侧还有一道
   // Destroyed→广播 false 的兜底（幂等）
   const closeWithAnimation = () => {
     if (isExiting) return;
