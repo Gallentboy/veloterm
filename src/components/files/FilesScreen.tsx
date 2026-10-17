@@ -692,9 +692,10 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
                   gridRow: '1',
                 }}
                 className={cn(
-                  // 面板底色 = ZCode 对话输入栏同款 --color-input（浅色 #ffffff / 深色 #2b2b2b），
-                  // 无论单栏铺满还是双栏分列恒为此色；面板间缝隙透出页面底色
-                  'flex min-h-0 min-w-0 flex-col overflow-hidden bg-input',
+                  // 面板底色与页面/顶栏同源（bg-background，深色 #161616/浅色 #f8f8f8）——
+                  // 与终端页内容区一致，不再用偏亮的 --color-input（深色下 #2b2b2b
+                  // 会与顶部 Tab 栏形成色差）；面板间缝隙透出页面底色
+                  'flex min-h-0 min-w-0 flex-col overflow-hidden bg-background',
                   paneSide == null && 'hidden',
                   // 圆角与工程整体一致（--workspace-panel-radius）：
                   // 双栏时只圆内侧两角（左栏圆右、右栏圆左），单栏铺满时四角全圆
