@@ -98,13 +98,14 @@ jobs:
       - name: Verify DLL lib/ layout at runtime
         shell: pwsh
         run: |
-          # -VersionArg 的值必须加引号：PowerShell 把裸 `--version` 当参数名
-          # 解析（前缀 - 即参数），-VersionArg 会拿不到值并报
-          # "Missing an argument for parameter 'VersionArg'"（CI 实测）。
+          # 不显式传 -VersionArg：pwsh -File 会对参数做二次解析，任何以 `-`
+          # 开头的值（含 '--version'）都会被当成参数名，报 "Missing an argument
+          # for parameter 'VersionArg'"（CI 实测两次）。脚本内默认值即 '--version'，
+          # 直接省掉该参数；手工传值时须用 `-VersionArg:--version` 形式。
           pwsh -NoProfile -File scripts/verify-dll-layout.ps1 `
             -Coreutils src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe `
             -Dll src-tauri/binaries/veloterm_goffi.dll `
-            -Cmd yq -VersionArg '--version'
+            -Cmd yq
 
       # jq 分层耗时诊断 + 退出路径回归门禁：把 in-main 探针（VELOTERM_JQ_TIMING）
       # 与进程寿命的缺口归因到 pre_main / 退出路径 / 内核回收三段，并在退出码出现

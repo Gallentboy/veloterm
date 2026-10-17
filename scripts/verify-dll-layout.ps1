@@ -14,8 +14,9 @@
 # 用法：
 #   pwsh -NoProfile -File scripts/verify-dll-layout.ps1 `
 #     -Coreutils src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe `
-#     -Dll src-tauri/binaries/veloterm_goffi.dll -Cmd yq -VersionArg '--version'
-#   （-VersionArg 的值必须加引号：PowerShell 把裸 `--version` 当参数名解析）
+#     -Dll src-tauri/binaries/veloterm_goffi.dll -Cmd yq
+#   -VersionArg 默认 '--version'，一般无需传；若要显式覆盖，注意 pwsh -File
+#   会对参数二次解析，以 `-` 开头的值必须用冒号形式：-VersionArg:--version
 #
 # 断言（任一失败即以非零码退出，供 CI 车道硬门禁）：
 #   1. lib/ 布局（tools\ 短名启动）→ 命令可执行、退出码 0
