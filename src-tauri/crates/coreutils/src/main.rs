@@ -25,7 +25,10 @@
 //! urlencode / urldecode（仅 Windows：crates.io urlencoding 库封装，见
 //! urlcoding_impl.rs）、
 //! zoxide（仅 Windows：ajeetdsouza/zoxide 源码 vendor/zoxide 纯 Rust 静态链入，
-//! lib.rs 可注入入口，eza 同型）；
+//! lib.rs 可注入入口，eza 同型）、
+//! vim（仅 Windows：vim 源码 vendor/vim 走上游官方 VIMDLL 形态，nmake 产出
+//! vim64.dll 运行时加载 FFI 直调 VimMain，数据树随包放安装根 vim-runtime/，
+//! 见 vim_impl.rs；属 OWN_ARGV 家族，仅硬链接短名模式可用）；
 //! which / ps / top 为自研（unix_extras.rs / ps.rs / top.rs）。
 //!
 //! 安装侧：主程序启动时在 `tools/` 下为本二进制创建硬链接短名入口
@@ -44,6 +47,7 @@ mod tar_impl;
 mod top;
 mod unix_extras;
 mod urlcoding_impl;
+mod vim_impl;
 
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, ProcessStatus, System, UpdateKind};
 

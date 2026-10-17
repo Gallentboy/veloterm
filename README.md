@@ -11,7 +11,7 @@ VeloTerm 是快速、精致的跨平台桌面终端（Tauri 2 + React 19），�
 | 编辑器 | Monaco 内嵌（81 种语言高亮、TS/JS/JSON 智能提示全离线）；远端文件在线编辑、冲突检测（本地 vs 远端 baseHash）、草稿防抖暂存；SQLCipher 加密保存 |
 | 主机库 | 分组树 + 跳板机链 + 三种认证（密码 / 私钥 / Agent）；「终端就绪钩子」——连接建立后自动执行命令库中的指定命令 |
 | 命令库 | 常用命令收藏，支持 `{{参数}}` 占位符模板、危险级别、Markdown 详细说明；全局命令面板快捷执行 |
-| 内置工具链（仅 Windows） | 单一 `coreutils.exe` 多呼叫二进制 + NTFS 硬链接短名入口（`ls` `grep` `rg` `awk` `bat` `bc` `jq` `yq` `qalc` `nmap` `ncat` `nping` `zoxide` `fzf` `dog` `onefetch` … 130 个命令），BusyBox 模式零拷贝分发 |
+| 内置工具链（仅 Windows） | 单一 `coreutils.exe` 多呼叫二进制 + NTFS 硬链接短名入口（`ls` `grep` `rg` `awk` `bat` `bc` `jq` `yq` `qalc` `nmap` `ncat` `nping` `zoxide` `fzf` `dog` `vim` `onefetch` … 131 个命令），BusyBox 模式零拷贝分发 |
 
 ## 环境要求
 
@@ -82,6 +82,7 @@ cargo clippy --workspace --all-targets
 | nmap 三件套（C/C++） | nmap 7.992（源码内 vendor，裁掉 zenmap GUI）+ MSVC x64 构建 + `nmapffi`/`ncatffi`/`npingffi.dll` 动态导入 FFI，仅 Windows：**nmap**（扫描器）、**ncat**（netcat 替代）、**nping**（报文探测）同属 Nmap 项目、共享 nbase/nsock/OpenSSL 依赖，由 `veloterm-win/CMakeLists.txt` 一次 CMake 构建出三个 DLL——走官方 MSVC 路径：直接链 Npcap SDK 的 wpcap.lib/packet.lib + 原生 `/DELAYLOAD` 延迟加载，不编译 bundled libpcap；NSE 数据文件树随包放安装根 `nmap-data/`、ncat 的 `ca-bundle.crt` 随包放安装根；未装 Npcap 时三命令均降级（nmap 退 connect 扫描）；NPSL 许可义务见 `src-tauri/vendor/nmap/README.md` |
 | zoxide | zoxide（0.10.0：ajeetdsouza/zoxide 纯 Rust 源码 vendor 静态链入，lib.rs 可注入入口 eza 同型，仅 Windows 清单；数据库落在 `%LOCALAPPDATA%\zoxide`，上游无 cmd.exe 钩子，`zoxide init powershell` 等可用） |
 | dog | dog（ogham/dog 0.2.0-pre @ master tip 721440b：命令行 DNS 客户端（dig 替代），纯 Rust 源码 vendor 静态链入（自带 dns / dns-transport 两个 path 子 crate），lib.rs 可注入入口 eza/zoxide 同型，仅 Windows 清单；TLS/DoT/DoH 走 native-tls（Windows schannel），系统默认名字服务器经 ipconfig crate 探测） |
+| vim | vim（9.2.1202：官方 `VIMDLL=yes` MSVC nmake 形态，源码 vendor **零修补**，产出 `vim64.dll` 运行时加载 FFI 直调 VimMain，仅 Windows；运行文件树随包放 `vim-runtime/`，控制台/ GUI 形态由宿主进程 PE subsystem 自动选为控制台 vim；属 OWN_ARGV 家族，仅硬链接短名 `vim` 可用，详见 `src-tauri/vendor/vim/README.md`） |
 | 自研 | which、ps、top（sysinfo + crossterm） |
 
 版本锁定与升级流程见 `src-tauri/vendor/openssl-src/README.md`。
