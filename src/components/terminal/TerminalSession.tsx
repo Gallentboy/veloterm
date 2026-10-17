@@ -12,8 +12,11 @@ import {
 import { useTranslation } from 'react-i18next';
 import { readClipboardText, writeClipboardText } from '@/lib/clipboard';
 import { hasPrimaryModifier, shortcutLabel } from '@/lib/keyboard';
+import { isMacOS, platformKind } from '@/lib/platform';
+import { formatPathsForTerminal, type TerminalPathStyle } from '@/lib/shellPath';
 import { cn } from '@/lib/utils';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
+import { useDropTarget } from '@/hooks/useDropTarget';
 import { TerminalSearchBar } from '@/components/terminal/TerminalSearchBar';
 import { loadHostStore, resolveJumpHostChain } from '@/hosts/storage';
 import { formatShellShortLabel } from '@/terminal/terminalPanelState';
@@ -427,6 +430,24 @@ export function TerminalSession({
     });
   }, []);
 
+  // 拖拽文件进终端 → 把路径写进命令行（对齐原生 cmd/zsh 行为）：
+  // 路径格式跟随目标会话的 shell 类型——Windows 本地（固定 cmd.exe）用按需双引号，
+  // macOS 本地与 SSH 远程用 POSIX 反斜杠转义；多文件空格分隔依次写入。
+  // term.paste 走 onData 通路：联动模式下同步镜像到其余勾选终端（与粘贴一致）
+  useDropTarget({
+    ref: rootRef,
+    accepts: ['files'],
+    onDrop: (event) => {
+      if (event.kind !== 'files' || event.paths.length === 0) return;
+      const term = termRef.current;
+      if (!term) return;
+      const style: TerminalPathStyle =
+        hostId != null ? 'posix' : platformKind === 'windows' ? 'windows' : 'posix';
+      term.paste(formatPathsForTerminal(event.paths, style));
+      requestFocus();
+    },
+  });
+
   useEffect(() => {
     isVisibleRef.current = isVisible;
     if (isVisible) {
@@ -685,17 +706,18 @@ export function TerminalSession({
     };
 
     // 拦截与适配终端专属快捷键：
-    // 1. Ctrl+C: 在终端中是标准的 SIGINT 中断信号（如终止 top / 终止当前进程）
-    //    无论是否有文本选区，均直接向 PTY 写入 0x03 (ETX)，绝不能被复制逻辑拦截！
+    // 1. Ctrl+C:
+    //    - Windows：有选区时按原生 conhost/Windows Terminal 语义复制并清选区；
+    //      无选区仍写 0x03 (SIGINT) 中断进程
+    //    - macOS：恒为 SIGINT（复制走 ⌘C，Ctrl 留给终端控制字符）
     // 2. 复制快捷键：
     //    - macOS 下为 Cmd+C (⌘C)
-    //    - Windows 下为 Win+C (⊞C)
-    //    - 兼顾跨平台通用 Ctrl+Shift+C
+    //    - 跨平台通用 Ctrl+Shift+C（Windows 菜单指示也用这个）
     //    有选区时复制选中文本到剪贴板，无选区时不执行操作。
     // 3. 粘贴快捷键：
     //    - macOS 下为 Cmd+V (⌘V)
-    //    - Windows 下为 Win+V (⊞V)
-    //    - 兼顾跨平台通用 Ctrl+Shift+V
+    //    - Windows 下 Ctrl+V（conhost/Windows Terminal 默认键位）与
+    //      Ctrl+Shift+V 均可（WebView2 的原生 paste 事件不可靠，统一走 Rust 剪贴板）
     //    从剪贴板读取文本并通过 term.paste() 写入终端，阻止原生浏览器粘贴防止重复。
     // 4. 全选快捷键：
     //    - macOS 下为 Cmd+A (⌘A)
@@ -705,17 +727,25 @@ export function TerminalSession({
       if (e.type !== 'keydown') return true;
       const key = e.key.toLowerCase();
 
-      // 1. Ctrl+C: 中断/终止进程（SIGINT）
+      // 1. Ctrl+C: 有选区且在 Windows → 复制（原生语义）；否则 SIGINT 中断/终止进程
       if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && key === 'c') {
         e.preventDefault();
         e.stopPropagation();
-        term.clearSelection();
-        // 经 writeInputAndMirror：联动开启时 0x03 同步发往其余勾选终端
-        writeInputAndMirror(new Uint8Array([3]));
+        if (platformKind === 'windows' && term.hasSelection()) {
+          const selectedText = term.getSelection();
+          term.clearSelection();
+          void writeClipboardText(selectedText).catch((err) => {
+            console.warn('[TerminalSession] copy via Ctrl+C failed:', err);
+          });
+        } else {
+          term.clearSelection();
+          // 经 writeInputAndMirror：联动开启时 0x03 同步发往其余勾选终端
+          writeInputAndMirror(new Uint8Array([3]));
+        }
         return false;
       }
 
-      // 2. 复制快捷键：Cmd+C (macOS) / Win+C (Windows) / Ctrl+Shift+C
+      // 2. 复制快捷键：Cmd+C (macOS) / Ctrl+Shift+C
       const isCopy =
         (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && key === 'c') ||
         (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && key === 'c');
@@ -731,10 +761,16 @@ export function TerminalSession({
         return false;
       }
 
-      // 3. 粘贴快捷键：Cmd+V (macOS) / Win+V (Windows) / Ctrl+Shift+V
+      // 3. 粘贴快捷键：Cmd+V (macOS) / Ctrl+Shift+V / Windows 裸 Ctrl+V
       const isPaste =
         (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && key === 'v') ||
-        (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && key === 'v');
+        (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && key === 'v') ||
+        (platformKind === 'windows' &&
+          e.ctrlKey &&
+          !e.shiftKey &&
+          !e.metaKey &&
+          !e.altKey &&
+          key === 'v');
       if (isPaste) {
         e.preventDefault();
         e.stopPropagation();
@@ -1085,6 +1121,11 @@ export function TerminalSession({
           >
             <Copy className="size-3.5" />
             <span>{t('terminal.contextMenu.copy')}</span>
+            {/* 快捷键指示：macOS ⌘C；Windows 菜单指示用 Ctrl+Shift+C（Ctrl+C 有选区时
+                也复制，但菜单只标主键位，对齐 Windows Terminal 惯例） */}
+            <span className="ml-auto font-mono text-ui-xs text-foreground-subtlest">
+              {isMacOS ? shortcutLabel('C') : shortcutLabel('C', { shift: true })}
+            </span>
           </button>
           <button
             type="button"
@@ -1094,6 +1135,11 @@ export function TerminalSession({
           >
             <ClipboardPaste className="size-3.5" />
             <span>{t('terminal.contextMenu.paste')}</span>
+            {/* 快捷键指示：macOS ⌘V；Windows 菜单指示用 Ctrl+Shift+V（裸 Ctrl+V
+                同样可粘贴，菜单只标主键位，对齐 Windows Terminal 惯例） */}
+            <span className="ml-auto font-mono text-ui-xs text-foreground-subtlest">
+              {isMacOS ? shortcutLabel('V') : shortcutLabel('V', { shift: true })}
+            </span>
           </button>
           <div className="my-1 h-px bg-border/60" />
           <button

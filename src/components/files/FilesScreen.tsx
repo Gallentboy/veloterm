@@ -4,14 +4,17 @@ import {
   useEffect,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SftpSessionView } from '@/components/files/SftpSessionView';
-import { SftpTabTrigger, SFTP_TAB_DRAG_MIME } from '@/components/files/SftpTabTrigger';
+import { SftpTabTrigger } from '@/components/files/SftpTabTrigger';
+import {
+  registerDropTarget,
+  type SftpTabDragPayload,
+} from '@/services/dragDropService';
 import { NewSessionMenu } from '@/components/NewSessionMenu';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -397,8 +400,8 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
   // 仅一侧有会话时退化为单栏铺满：隐藏中缝分隔条，另一侧不再渲染占位
   const bothPanesOccupied = Boolean(leftSession && rightSession);
 
-  // ── Tab 拖入分栏 ──
-  // 已在某窗格的 Tab 拖动为 NOOP（dragover 不放行 → 系统禁止落点光标）；
+  // ── Tab 拖入分栏（统一拖放总线，见 services/dragDropService）──
+  // 已在某窗格的 Tab 拖动为 NOOP（不响应悬停与放置）；
   // 双栏已存在：池中 Tab 落到某侧即替换该侧，被替换会话退回池中（仍以 Tab 展示）；
   // 单栏铺满状态：按落点在主区的左/右半区决定新会话进哪一侧，原主机占另一侧，直接形成双栏。
   const isPooledTabDragging =
@@ -407,80 +410,69 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
     draggingTabId !== pane.rightSessionId;
 
   // 落点在主区的左半还是右半（单栏模式据此分栏）
-  const dropSideByPointer = (event: ReactDragEvent<HTMLDivElement>): FilesPaneSide => {
+  const dropSideByX = (clientX: number): FilesPaneSide => {
     const rect = mainAreaRef.current?.getBoundingClientRect();
     const mid = rect ? rect.left + rect.width / 2 : 0;
-    return event.clientX < mid ? 'left' : 'right';
+    return clientX < mid ? 'left' : 'right';
   };
 
-  const handlePaneTabDragOver = useCallback(
-    (event: ReactDragEvent<HTMLDivElement>, side: FilesPaneSide) => {
-      if (!event.dataTransfer.types.includes(SFTP_TAB_DRAG_MIME)) return;
-      // 已分栏的 Tab：不 preventDefault → drop 不会触发（NOOP）
-      if (!isPooledTabDragging) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
-      setTabDropSide(bothPanesOccupied ? side : dropSideByPointer(event));
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- isPooledTabDragging/dropSideByPointer 每次渲染重建，行为取最新值
-    [isPooledTabDragging, bothPanesOccupied],
-  );
+  // 窗格落点目标：跟随当前占用两侧的会话注册（会话/池拖拽态变化时重建，重建开销仅注册表增删）
+  const cellElsRef = useRef(new Map<number, HTMLDivElement>());
+  useEffect(() => {
+    const unregisters = (['left', 'right'] as const).flatMap((side) => {
+      const occupiedId = side === 'left' ? pane.leftSessionId : pane.rightSessionId;
+      if (occupiedId == null) return [];
+      return [
+        registerDropTarget({
+          accepts: ['sftp-tab'],
+          getElement: () => cellElsRef.current.get(occupiedId) ?? null,
+          onHoverChange: (hovered, position) => {
+            if (!hovered || !isPooledTabDragging || !position) {
+              setTabDropSide(null);
+              return;
+            }
+            setTabDropSide(bothPanesOccupied ? side : dropSideByX(position.x));
+          },
+          onDrop: (event) => {
+            setTabDropSide(null);
+            if (event.kind !== 'sftp-tab' || !isPooledTabDragging) return;
+            const droppedId = (event.payload as SftpTabDragPayload).sessionId;
+            if (droppedId == null || !sessions.some((s) => s.id === droppedId)) return;
 
-  const handlePaneTabDragLeave = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
-    // 真正离开窗格（而非在其子元素间移动）才清除；单栏模式半区侧可能与 paneSide 不同，直接清空
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      setTabDropSide(null);
-    }
-  }, []);
-
-  const handlePaneTabDrop = useCallback(
-    (event: ReactDragEvent<HTMLDivElement>, side: FilesPaneSide) => {
-      if (!event.dataTransfer.types.includes(SFTP_TAB_DRAG_MIME)) return;
-      event.preventDefault();
-      setTabDropSide(null);
-      let droppedId: number | null = null;
-      try {
-        const raw = event.dataTransfer.getData(SFTP_TAB_DRAG_MIME);
-        const parsed = raw ? (JSON.parse(raw) as { sessionId?: unknown }) : null;
-        if (parsed && typeof parsed.sessionId === 'number' && Number.isFinite(parsed.sessionId)) {
-          droppedId = parsed.sessionId;
-        }
-      } catch {
-        droppedId = null;
-      }
-      if (droppedId == null || !sessions.some((s) => s.id === droppedId)) return;
-
-      setPane((current) => {
-        // NOOP：已在任一窗格的 Tab 落点无效
-        if (droppedId === current.leftSessionId || droppedId === current.rightSessionId) {
-          return current;
-        }
-        const currentlyBoth = current.leftSessionId != null && current.rightSessionId != null;
-        if (!currentlyBoth) {
-          // 单栏铺满：按落点半区分栏，原主机让到/留在另一侧，形成双栏
-          const dropSide = dropSideByPointer(event);
-          const occupiedSide: FilesPaneSide = current.leftSessionId != null ? 'left' : 'right';
-          const displacedId =
-            occupiedSide === 'left' ? current.leftSessionId : current.rightSessionId;
-          if (dropSide === occupiedSide && displacedId != null) {
-            return dropSide === 'left'
-              ? { ...current, leftSessionId: droppedId, rightSessionId: displacedId, focusedPane: 'left' }
-              : { ...current, rightSessionId: droppedId, leftSessionId: displacedId, focusedPane: 'right' };
-          }
-          return dropSide === 'left'
-            ? { ...current, leftSessionId: droppedId, focusedPane: 'left' }
-            : { ...current, rightSessionId: droppedId, focusedPane: 'right' };
-        }
-        // 双栏已存在：替换指定侧，被替换会话退回池中
-        return side === 'left'
-          ? { ...current, leftSessionId: droppedId, focusedPane: 'left' }
-          : { ...current, rightSessionId: droppedId, focusedPane: 'right' };
-      });
-      activateSession(droppedId);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- dropSideByPointer 每次渲染重建，行为取最新值
-    [activateSession, sessions],
-  );
+            setPane((current) => {
+              // NOOP：已在任一窗格的 Tab 落点无效
+              if (droppedId === current.leftSessionId || droppedId === current.rightSessionId) {
+                return current;
+              }
+              const currentlyBoth = current.leftSessionId != null && current.rightSessionId != null;
+              if (!currentlyBoth) {
+                // 单栏铺满：按落点半区分栏，原主机让到/留在另一侧，形成双栏
+                const dropSide = dropSideByX(event.position.x);
+                const occupiedSide: FilesPaneSide = current.leftSessionId != null ? 'left' : 'right';
+                const displacedId =
+                  occupiedSide === 'left' ? current.leftSessionId : current.rightSessionId;
+                if (dropSide === occupiedSide && displacedId != null) {
+                  return dropSide === 'left'
+                    ? { ...current, leftSessionId: droppedId, rightSessionId: displacedId, focusedPane: 'left' }
+                    : { ...current, rightSessionId: droppedId, leftSessionId: displacedId, focusedPane: 'right' };
+                }
+                return dropSide === 'left'
+                  ? { ...current, leftSessionId: droppedId, focusedPane: 'left' }
+                  : { ...current, rightSessionId: droppedId, focusedPane: 'right' };
+              }
+              // 双栏已存在：替换指定侧，被替换会话退回池中
+              return side === 'left'
+                ? { ...current, leftSessionId: droppedId, focusedPane: 'left' }
+                : { ...current, rightSessionId: droppedId, focusedPane: 'right' };
+            });
+            activateSession(droppedId);
+          },
+        }),
+      ];
+    });
+    return () => unregisters.forEach((u) => u());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isPooledTabDragging/dropSideByX 每次渲染重建，行为取最新值
+  }, [pane.leftSessionId, pane.rightSessionId, sessions, bothPanesOccupied, draggingTabId, activateSession]);
 
   // 右键菜单：退出分栏（清空对应窗格槽位；退出的是激活会话且另一侧仍有会话时，
   // 激活就近落到另一侧，避免高亮一个不可见会话）
@@ -687,15 +679,14 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
             return (
               <div
                 key={session.id}
+                ref={(el) => {
+                  if (el) cellElsRef.current.set(session.id, el);
+                  else cellElsRef.current.delete(session.id);
+                }}
                 role="tabpanel"
                 aria-hidden={paneSide == null}
                 data-state={isTabActive ? 'active' : 'inactive'}
                 onPointerDown={paneSide ? () => focusPane(paneSide) : undefined}
-                onDragOver={
-                  paneSide ? (event) => handlePaneTabDragOver(event, paneSide) : undefined
-                }
-                onDragLeave={paneSide ? (event) => handlePaneTabDragLeave(event) : undefined}
-                onDrop={paneSide ? (event) => handlePaneTabDrop(event, paneSide) : undefined}
                 style={{
                   gridColumn: bothPanesOccupied ? (paneSide === 'right' ? '3' : '1') : '1',
                   gridRow: '1',

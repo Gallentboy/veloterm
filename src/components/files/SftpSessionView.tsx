@@ -22,6 +22,12 @@ import { MarqueeText } from '@/components/ui/MarqueeText';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
+import { useDropTarget } from '@/hooks/useDropTarget';
+import {
+  beginInternalDrag,
+  endInternalDrag,
+  type SftpItemDragPayload,
+} from '@/services/dragDropService';
 import {
   listRemoteDirectory,
   pickDownloadPath,
@@ -150,9 +156,6 @@ function formatModifiedTime(timestampSec: number): string {
   });
 }
 
-/** 面板间拖拽复制的自定义 MIME 载荷标识 */
-const SFTP_DRAG_MIME = 'application/x-veloterm-sftp';
-
 /** SFTP 字体缩放范围（无级平滑，倍率作用于 --ui-font-size 基准 14px） */
 const SFTP_FONT_SCALE_MIN = 0.5;
 const SFTP_FONT_SCALE_MAX = 1.5;
@@ -160,14 +163,6 @@ const SFTP_FONT_SCALE_MAX = 1.5;
 const FONT_SCALE_SNAP_THRESHOLD = 0.04;
 /** 与 styles.css :root 的 --ui-font-size 基准一致 */
 const UI_FONT_BASE_PX = 14;
-
-/** 拖拽载荷：源面板会话 + 被拖拽条目信息 */
-interface SftpDragPayload {
-  sessionId: string;
-  path: string;
-  name: string;
-  isDir: boolean;
-}
 
 /**
  * 传输任务行（固定行高单行布局，永不折行）：
@@ -550,57 +545,39 @@ export function SftpSessionView({
   };
 
   // ===== 面板间拖拽复制：整个面板作为放置目标 =====
-
-  /** 拖拽悬停：仅识别自定义 SFTP 载荷才允许放置 */
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    if (e.dataTransfer.types.includes(SFTP_DRAG_MIME)) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
-      setIsDropTarget(true);
-    }
-  };
-
-  /** 真正离开面板边界才取消高亮（在子元素间移动不取消） */
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-      setIsDropTarget(false);
-    }
-  };
-
-  /** 放置：解析载荷并入队远端复制任务（目录拖拽/源目标相同均拒绝并提示） */
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDropTarget(false);
-    const raw = e.dataTransfer.getData(SFTP_DRAG_MIME);
-    if (!raw) return;
-    let payload: SftpDragPayload;
-    try {
-      payload = JSON.parse(raw) as SftpDragPayload;
-    } catch {
-      return; // 非法载荷直接忽略
-    }
-    if (!payload?.sessionId || !payload.path || !payload.name) return;
-    if (payload.isDir) {
-      setError(t('files.drag.unsupportedDir'));
-      return;
-    }
-    const targetPath =
-      currentPath === '/' ? `/${payload.name}` : `${currentPath}/${payload.name}`;
-    if (payload.sessionId === sessionId && payload.path === targetPath) {
-      setError(t('files.drag.sameTarget'));
-      return;
-    }
-    // 入队远端复制：源会话读取，本面板会话写入，完成后刷新目标面板列表
-    transferQueue.enqueue({
-      direction: 'copy',
-      sessionId: payload.sessionId,
-      remotePath: payload.path,
-      targetSessionId: sessionId,
-      targetRemotePath: targetPath,
-      fileName: payload.name,
-      onFinished: () => void loadDirectory(currentPath),
-    });
-  };
+  // 拖放事件流见 services/dragDropService（原生接管后页内 HTML5 drop 不再触发，
+  // 载荷在 dragstart 时经 beginInternalDrag 登记，Drop 按命中元素分发）
+  useDropTarget({
+    ref: rootRef,
+    accepts: ['sftp-item'],
+    onHoverChange: (hovered) => setIsDropTarget(hovered),
+    onDrop: (event) => {
+      if (event.kind !== 'sftp-item') return;
+      const payload = event.payload as SftpItemDragPayload;
+      // 放置：校验载荷并入队远端复制（目录拖拽/源目标相同均拒绝并提示）
+      if (!payload?.sessionId || !payload.path || !payload.name) return;
+      if (payload.isDir) {
+        setError(t('files.drag.unsupportedDir'));
+        return;
+      }
+      const targetPath =
+        currentPath === '/' ? `/${payload.name}` : `${currentPath}/${payload.name}`;
+      if (payload.sessionId === sessionId && payload.path === targetPath) {
+        setError(t('files.drag.sameTarget'));
+        return;
+      }
+      // 入队远端复制：源会话读取，本面板会话写入，完成后刷新目标面板列表
+      transferQueue.enqueue({
+        direction: 'copy',
+        sessionId: payload.sessionId,
+        remotePath: payload.path,
+        targetSessionId: sessionId,
+        targetRemotePath: targetPath,
+        fileName: payload.name,
+        onFinished: () => void loadDirectory(currentPath),
+      });
+    },
+  });
 
   const allTasks = useTransferTasks();
   // copy 任务双端可见：源端（sessionId）与目标端（targetSessionId）都展示
@@ -626,9 +603,6 @@ export function SftpSessionView({
     <div
       ref={rootRef}
       onPointerDownCapture={() => onPaneFocus?.()}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
       onContextMenu={(event) => {
         event.preventDefault();
         // 菜单已打开时再次右键同一锚点 → 直接关闭（否则 pointerdown 先关、contextmenu
@@ -780,19 +754,17 @@ export function SftpSessionView({
                   <tr
                     key={item.path}
                     draggable
-                    onDragStart={(e) => {
-                      // 目录也允许拖起，由放置端校验拒绝并给出明确提示
-                      e.dataTransfer.setData(
-                        SFTP_DRAG_MIME,
-                        JSON.stringify({
-                          sessionId,
-                          path: item.path,
-                          name: item.name,
-                          isDir: item.is_dir,
-                        }),
-                      );
-                      e.dataTransfer.effectAllowed = 'copy';
+                    onDragStart={() => {
+                      // 目录也允许拖起，由放置端校验拒绝并给出明确提示；载荷经
+                      // 统一拖放总线登记（原生接管后页内 drop 不再携带 dataTransfer）
+                      beginInternalDrag('sftp-item', {
+                        sessionId,
+                        path: item.path,
+                        name: item.name,
+                        isDir: item.is_dir,
+                      });
                     }}
+                    onDragEnd={endInternalDrag}
                     onDoubleClick={() => {
                       if (item.is_dir) {
                         handleNavigate(item.path);
