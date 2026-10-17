@@ -364,6 +364,28 @@ How to read (columns pre_main / in_main / post_probe / life):
 # 避免回归悄悄溜过。
 Head 'regression gate'
 $gateFail = $false
+# functional gate: jq must actually compute correctly. Exit-code and timing
+# gates cannot catch a build that is green but broken -- during the 1.8.2
+# upgrade the builtin.inc tokens lacked the leading zero, C parsed them as
+# decimal, the whole builtin library was garbage while exit codes and
+# timings all stayed normal.
+$funcCases = @(
+    @{ a = @('-n', '1+1');                    e = '2' },
+    @{ a = @('--version');                    e = 'jq-1.8.2' },
+    @{ a = @('-n', '" ab " | trim');          e = '"ab"' },
+    @{ a = @('-c', '-n', '[limit(2; range(5))]'); e = '[0,1]' },
+    @{ a = @('-R', 'match("[0-9]+").string'); e = '"123"'; i = "abc 123`n" }
+)
+foreach ($c in $funcCases) {
+    $out = if ($c.i) { $c.i | & $jq @($c.a) } else { & $jq @($c.a) }
+    $got = "$out".Trim()
+    if ($got -ne $c.e) {
+        Say ("  FAIL: jq {0} -> '{1}' (expected '{2}')" -f ($c.a -join ' '), $got, $c.e)
+        $gateFail = $true
+    } else {
+        Say ("  ok: jq {0} -> {1}" -f ($c.a -join ' '), $got)
+    }
+}
 $crashRows = @($segRows | Where-Object { $_.exitcodes -match 'STATUS_' })
 if ($crashRows.Count -gt 0) {
     foreach ($r in $crashRows) {
@@ -381,7 +403,7 @@ if ($norm -and $term) {
         $gateFail = $true
     }
 }
-if (-not $gateFail) { Say '  PASS: no crash exit codes, exit path within budget' }
+if (-not $gateFail) { Say '  PASS: functional outputs correct, no crash exit codes, exit path within budget' }
 
 $outFile = Join-Path $work 'diagnose-jq-timing.result.txt'
 ($log -join "`r`n") | Out-File -FilePath $outFile -Encoding utf8
