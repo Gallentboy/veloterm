@@ -1,4 +1,4 @@
-# vendor/nmap（nmap 网络扫描器 CLI）
+# vendor/nmap（nmap / ncat / nping 三件套）
 
 上游：https://github.com/nmap/nmap （nmap.org；上游自述见 `README.upstream.md`）
 版本：**7.992**（锁在 `VELOTERM_VERSION`；2026-10-12 发布的最新稳定版，
@@ -6,8 +6,19 @@ GitHub tag v7.992）
 来源：官方 dist 源码包 `https://nmap.org/dist/nmap-7.992.tar.bz2`
 （sha256 `0c12660eddbf7eabeff6996cb0c044a4eadf2bb0c6fbcb340d6cf72b1caee402`），
 整目录解压收入。**已删减 `zenmap/`**（Python GUI 前端，按「只嵌入非 GUI
-部分」的要求裁掉，其余原样保留——ncat/nping 源码留在树内但构建以
-`--without-ncat/--without-nping` 跳过，未嵌入）。
+部分」的要求裁掉）。
+
+**本工程构建其中三个命令**（同属 Nmap 项目、共享 nbase/nsock/OpenSSL 依赖，
+由 `veloterm-win/CMakeLists.txt` 一次 CMake 构建出三个 DLL）：
+
+| 命令 | DLL | 说明 |
+| --- | --- | --- |
+| `nmap` | `nmapffi.dll` | 网络扫描器（本体） |
+| `ncat` | `ncatffi.dll` | netcat 替代（TCP/UDP/SSL 连接、代理、监听） |
+| `nping` | `npingffi.dll` | 报文生成/探测（类 hping） |
+
+`ndiff`（纯 Python 的 XML 比对工具）未集成——它需要 Python 运行时，本项目
+工具链不绑 Python；`nmap` 已能输出 XML，用户可自行 diff。
 
 ## 为什么是 MSVC + CMake 自建工程（官方 Windows 路径）
 
@@ -47,14 +58,19 @@ Npcap SDK 与 OpenSSL 静态库：
    --config Release`。工程内以 `add_subdirectory` 消费 libpcre(PCRE2 8-bit
    静态) / libz(静态) / libdnet-stripped(静态，Packet 来自 SDK) 的官方
    CMakeLists；nbase / nsock / libnetutil / liblua / liblinear 直接编源
-   （清单照搬官方各 vcxproj）。产出 `nmapffi.dll`（`/DELAYLOAD:packet.dll;
-   wpcap.dll`、静态 CRT `/MT` 对齐 vcpkg triplet）。
-4. **runner nmap.exe + 数据 staging + 冒烟**：同工程另出 `nmap-runner`
-   （上游 `main.cc` 原样，构建期工具、不随包分发）——跑 `--script-updatedb`
-   生成 `scripts/script.db`，把数据文件收进 `nmap-data/`（清单见下），并跑
-   `--version` 与 `-sT 127.0.0.1 -p 1` 冒烟（CI 无 Npcap，正好回归
-   `/DELAYLOAD` 降级路径）。
-5. 产物复制到 `src-tauri/binaries/nmapffi.dll` + `binaries/nmap-data/`，
+   （清单照搬官方各 vcxproj）。**一次构建产出三个 DLL**：`nmapffi.dll`、
+   `ncatffi.dll`、`npingffi.dll`（均 `/DELAYLOAD:packet.dll;wpcap.dll`、
+   静态 CRT `/MT` 对齐 vcpkg triplet）。ncat 复用 nbase/nsock/liblua/
+   wpcap/OpenSSL，nping 复用 nbase/nsock/libnetutil/dnet/wpcap+packet/OpenSSL。
+4. **runner exe + 数据 staging + 冒烟**：同工程另出三个 runner
+   （`nmap-runner`/`ncat-runner`/`nping-runner`，各用上游入口文件原样，
+   构建期工具、不随包分发）——`nmap-runner` 跑 `--script-updatedb` 生成
+   `scripts/script.db` 并把数据文件收进 `nmap-data/`（清单见下）；三个 runner
+   各跑 `--version` 与基础功能冒烟（nmap `-sT 127.0.0.1 -p 1`、ncat `-z`、
+   nping TCP 探测；CI 无 Npcap，正好回归 `/DELAYLOAD` 降级路径）。
+5. 产物复制到 `src-tauri/binaries/`：三个 DLL + `nmap-data/` + `ca-bundle.crt`
+   （ncat 的 SSL 客户端证书束，它在 exe 同目录查找；DLL 形态下
+   `GetModuleHandle(0)` 取到宿主 coreutils.exe 路径，故放安装根即可命中），
    经 `tauri.windows.conf.json` 的 resources 放安装根目录。
 
 数据文件清单（`nmap-data/`，取上游 `Makefile.in` 的 `install-nmap`/`install-nse`
@@ -65,18 +81,24 @@ Npcap SDK 与 OpenSSL 静态库：
 
 ## 运行时行为
 
-- coreutils.exe 的 `nmap` 分发臂（硬链接短名 `tools\nmap.exe` 或子命令
-  模式）按 exe 同目录 → 上级目录搜索 `nmapffi.dll`（与 yqffi/qalcffi 同
-  一套约定），调用前置 `NMAPDIR`（若用户未设）指向安装根的 `nmap-data/`
+- coreutils.exe 的三个分发臂（硬链接短名 `tools\nmap.exe` / `tools\ncat.exe` /
+  `tools\nping.exe` 或子命令模式）各按 exe 同目录 → 上级目录搜索对应 DLL
+  （与 yqffi/qalcffi 同一套约定）。
+- **nmap** 调用前置 `NMAPDIR`（若用户未设）指向安装根的 `nmap-data/`
   ——上游在 Windows 下默认找 **exe 同目录** 的数据文件，而 DLL 形态下
   `GetModuleFileName(GetModuleHandle(0))` 取到的是宿主 coreutils.exe 路径
   （tools\ 子目录），必须经 NMAPDIR 兜底；用户显式 `--datadir`/`NMAPDIR`
   优先级仍在上游搜索序的前面，不受影响。
-- **Npcap 依赖是运行期的**：未装 Npcap 时 nmap 仍可用（`--version`、
-  `-sT` connect 扫描、服务/版本探测），SYN/UDP/OS 指纹等原始包能力提示
-  安装 Npcap（https://npcap.com）；装了 Npcap（含 WinPcap 兼容模式）则全
-  功能可用。nmap 的进度输出直接写继承的 ConPTY stdio，无 TUI、无交互
-  prompt，进程内直跑安全。
+- **ncat** 的 `ca-bundle.crt` 同样在 exe 同目录查找（缺失仅 debug 告警、
+  不致命，但 SSL 客户端证书验证会失效）——随包放安装根即命中。
+- **Npcap 依赖是运行期的**：未装 Npcap 时三命令仍可用（nmap `--version`、
+  `-sT` connect 扫描、服务/版本探测；ncat 的 TCP/UDP/SSL 连接与监听不依赖
+  原始包；nping 退化为可用模式），SYN/UDP/OS 指纹等原始包能力提示安装
+  Npcap（https://npcap.com）；装了 Npcap（含 WinPcap 兼容模式）则全功能。
+  三者的进度输出直接写继承的 ConPTY stdio，无 TUI，进程内直跑安全。
+- **三个命令的 main 内均有 exit() 调用**（ncat 22 处、nping 16 处、nmap 10 处）
+  ——coreutils 是「单命令生命周期进程」，exit() 等价于返回退出码（宿主随之
+  结束），无需像 eza/zoxide 那样改造为返回值。
 - NSE 用户级脚本目录 `%APPDATA%\nmap/scripts`、`--datadir` 覆盖等上游
   语义原样保留。安装目录（Program Files）通常只读，用户跑
   `--script-updatedb` 会因无法回写 script.db 报错——script.db 已在构建期

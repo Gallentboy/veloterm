@@ -35,7 +35,9 @@
 mod coreutils;
 mod encodings_impl;
 mod goffi_impl;
+mod ncat_impl;
 mod nmap_impl;
+mod nping_impl;
 mod ps;
 mod qalc_impl;
 mod tar_impl;

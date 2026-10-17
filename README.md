@@ -11,7 +11,7 @@ VeloTerm 是快速、精致的跨平台桌面终端（Tauri 2 + React 19），�
 | 编辑器 | Monaco 内嵌（81 种语言高亮、TS/JS/JSON 智能提示全离线）；远端文件在线编辑、冲突检测（本地 vs 远端 baseHash）、草稿防抖暂存；SQLCipher 加密保存 |
 | 主机库 | 分组树 + 跳板机链 + 三种认证（密码 / 私钥 / Agent）；「终端就绪钩子」——连接建立后自动执行命令库中的指定命令 |
 | 命令库 | 常用命令收藏，支持 `{{参数}}` 占位符模板、危险级别、Markdown 详细说明；全局命令面板快捷执行 |
-| 内置工具链（仅 Windows） | 单一 `coreutils.exe` 多呼叫二进制 + NTFS 硬链接短名入口（`ls` `grep` `rg` `awk` `bat` `bc` `jq` `yq` `qalc` `nmap` `zoxide` `fzf` `dog` `onefetch` … 128 个命令），BusyBox 模式零拷贝分发 |
+| 内置工具链（仅 Windows） | 单一 `coreutils.exe` 多呼叫二进制 + NTFS 硬链接短名入口（`ls` `grep` `rg` `awk` `bat` `bc` `jq` `yq` `qalc` `nmap` `ncat` `nping` `zoxide` `fzf` `dog` `onefetch` … 130 个命令），BusyBox 模式零拷贝分发 |
 
 ## 环境要求
 
@@ -58,7 +58,7 @@ cargo clippy --workspace --all-targets
 
 ### 内置工具链（仅 Windows）
 
-工具链在 Windows 安装包中随主程序分发（`binaries/coreutils-<triple>.exe`），应用启动时在主程序同级 `tools/` 目录创建 128 个硬链接短名入口并注入 PATH——用户在 cmd 中直接敲 `ls`、`grep`、`rg` 即用。macOS 上不构建、不分发（系统自带完整工具链）。
+工具链在 Windows 安装包中随主程序分发（`binaries/coreutils-<triple>.exe`），应用启动时在主程序同级 `tools/` 目录创建 130 个硬链接短名入口并注入 PATH——用户在 cmd 中直接敲 `ls`、`grep`、`rg` 即用。macOS 上不构建、不分发（系统自带完整工具链）。
 
 本地 cmd 会话启动时还会注入 doskey 宏，把交互输入的 `cd`/`chdir` 自动补上 `/d` 开关——跨盘符直达（`cd D:\proj` 一步到位，无需手写 `cd /d`），批处理脚本与 `cmd /c` 不受影响。
 
@@ -79,7 +79,7 @@ cargo clippy --workspace --all-targets
 | bc-app | bc（gavinhoward/bc 7.1.0，vendor 源码 cc 现场编译 FFI 直调改名 main，上游自带官方 MSVC 工程零修补，仅 Windows） |
 | yq + fzf（Go） | 合并为单一 `veloterm_goffi.dll`（yq v4.54.1 + fzf 0.74.5：源码内 vendor + `vendor/go.work` 跨模块聚合、运行时按符号动态导入 FFI，仅 Windows；GOAMD64=v3 以 AVX2 为基线、单次 CLI 关闭常规 GC；Go 官方不支持 MSVC 链接 c-archive，DLL 是 extern 链接的唯一形态；fzf 是交互式模糊查找器，渲染直接落在 veloterm 终端上） |
 | libqalculate（C++） | qalc（5.13.1：源码内 vendor + MSYS2 MinGW64 构建 + `qalcffi.dll` 动态导入 FFI，仅 Windows；上游无 MSVC 工程且官方 Windows 版即 MinGW 构建，依赖全静态打入、定义 XML 编进二进制） |
-| nmap（C/C++） | nmap（7.992：源码内 vendor（裁掉 zenmap GUI）+ MSYS2 MinGW64 构建 + `nmapffi.dll` 动态导入 FFI，仅 Windows；Npcap SDK 经 bundled libpcap CMake 静态编入、Packet.dll 延迟导入——未装 Npcap 时降级 connect 扫描，装后全功能；NSE 数据文件树随包放安装根 `nmap-data/`；NPSL 许可义务见 `src-tauri/vendor/nmap/README.md`） |
+| nmap 三件套（C/C++） | nmap 7.992（源码内 vendor，裁掉 zenmap GUI）+ MSVC x64 构建 + `nmapffi`/`ncatffi`/`npingffi.dll` 动态导入 FFI，仅 Windows：**nmap**（扫描器）、**ncat**（netcat 替代）、**nping**（报文探测）同属 Nmap 项目、共享 nbase/nsock/OpenSSL 依赖，由 `veloterm-win/CMakeLists.txt` 一次 CMake 构建出三个 DLL——走官方 MSVC 路径：直接链 Npcap SDK 的 wpcap.lib/packet.lib + 原生 `/DELAYLOAD` 延迟加载，不编译 bundled libpcap；NSE 数据文件树随包放安装根 `nmap-data/`、ncat 的 `ca-bundle.crt` 随包放安装根；未装 Npcap 时三命令均降级（nmap 退 connect 扫描）；NPSL 许可义务见 `src-tauri/vendor/nmap/README.md` |
 | zoxide | zoxide（0.10.0：ajeetdsouza/zoxide 纯 Rust 源码 vendor 静态链入，lib.rs 可注入入口 eza 同型，仅 Windows 清单；数据库落在 `%LOCALAPPDATA%\zoxide`，上游无 cmd.exe 钩子，`zoxide init powershell` 等可用） |
 | dog | dog（ogham/dog 0.2.0-pre @ master tip 721440b：命令行 DNS 客户端（dig 替代），纯 Rust 源码 vendor 静态链入（自带 dns / dns-transport 两个 path 子 crate），lib.rs 可注入入口 eza/zoxide 同型，仅 Windows 清单；TLS/DoT/DoH 走 native-tls（Windows schannel），系统默认名字服务器经 ipconfig crate 探测） |
 | 自研 | which、ps、top（sysinfo + crossterm） |
