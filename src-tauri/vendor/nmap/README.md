@@ -47,10 +47,18 @@ Npcap SDK 的 `wpcap.lib`（`pcap_*`）+ `packet.lib`（`Packet*`），并以 MS
 在 **windows-latest 的 MSVC + CMake** 环境（不需要 MSYS2/MinGW），依赖只有
 Npcap SDK 与 OpenSSL 静态库：
 
-1. **Npcap SDK**：下载 `https://npcap.com/dist/npcap-sdk-1.13.zip`（与上游
+1. **Npcap SDK**：下载 `https://npcap.com/dist/npcap-sdk-1.16.zip`（与上游
    `mswin32/Build.bat` 同版），解压得 `Include/` + `Lib/x64/`。两份导入库
    （`wpcap.lib` / `Packet.lib`）直接进最终链接；libdnet 的 `FindPacket`
    也以 `-DPacket_ROOT=<SDK>` 指向它。
+   - **SDK 只提供导入库，Npcap 无法静态链接**：`wpcap.lib`/`Packet.lib` 仅
+     数十 KB（内容是跳转到 DLL 的桩，非实现），Npcap 官方从不发布静态库；
+     且真正抓包的内核驱动 `npf.sys` 只能由安装程序装入系统。故本 DLL 的 PE
+     导入表只有系统库 + 延迟导入的 `wpcap.dll`/`packet.dll`，不含 Npcap 代码
+     ——运行期依赖用户自行安装 Npcap（https://npcap.com）。
+   - SDK 版本决定**编译期期望的符号集**（即用户所需的最低 Npcap 版本）：
+     1.16 的变更均为向后兼容（新增 `PacketGetInfo`、`MODE_SENDTORX`、
+     `PACKET_MODE_NANO` 等，重命名常量时保留旧名）。
 2. **OpenSSL 静态库**：复用 CI 的 vcpkg `x64-windows-static`（与 SQLCipher /
    openssl-app 同源，`OPENSSL_DIR` 环境变量；二进制缓存已预热）。
 3. **CMake 配置 + 构建**：`cmake -S vendor/nmap/veloterm-win -B <build> -A x64
