@@ -53,6 +53,19 @@ vim 的运行文件树（syntax/ftplugin/doc 等）随包放安装根 `vim-runti
 其余全量保留（含 runtime/doc 帮助树、spell、tutor 与 `src/INSTALL/` ——
 其中 `INSTALLpc.txt` 是上游 Windows 构建方式的权威文档）。
 
+### 必须保留（曾实踩丢失）
+
+- **`runtime/autoload/dist/`**（ft.vim / script.vim / json.vim / man.vim /
+  vim.vim / vim9.vim / vimindent.vim，共 7 个）：vim 9.1 起 filetype 检测
+  重构，`filetype.vim` / `scripts.vim` 的 BufRead 自动命令改为调用
+  `dist#ft#DetectFromName` 等 autoload 函数。首次 vendor 落库时该目录
+  意外丢失，`-u NONE` 冒烟不加载 defaults.vim → `filetype on` 不执行，
+  车道全绿但用户真机 `vim a.txt` 每次开文件弹两个 E117（Unknown
+  function）+ Press ENTER 暂停（2026-10 发布版实踩，检测靠用户报障）。
+  构建冒烟因此加了一档**不带 `-u NONE`** 的编辑用例并断言 stderr 无
+  `E1xx`（见 scripts/build-tools.mjs 的 vim 段），升级换树后必须保留
+  本目录。
+
 ## 许可
 
 Vim 以 **Vim License**（charityware，见顶层 `LICENSE` 与

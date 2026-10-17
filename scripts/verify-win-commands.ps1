@@ -189,7 +189,9 @@ function New-SeedDir([string]$Name) {
 # --------------------------------------------------------------- 探针覆写表 --
 # 字段：argv（参数数组）/ stdin（标准输入文本）/ exit（期望退出码：int 或
 # 'nonnull'）/ out（stdout 必含子串，字符串或数组=每项都须命中；内嵌 "`n"
-# 可做顺序敏感断言）/ nonempty（stdout 非空即可）/ note（报告备注）。
+# 可做顺序敏感断言）/ outAny（stdout+stderr 合并后必含）/ notAny（合并后
+# 不得出现的子串——错误横幅类）/ nonempty（stdout 非空即可）/ fileAfter
+# （探针后工作目录内文件必须包含指定子串，编辑/写文件类的落盘断言）/ note。
 # 未列出的命令默认探针 = --version 且退出 0（版本通路本身也是分发冒烟）。
 #
 # 断言常量依据：md5/sha256 为 "hello\n" 的公开测试向量；base32/base64 族
@@ -286,7 +288,9 @@ $overrides = @{
     'qalc'      = @{ argv = @('-t', '5+2'); out = '7' }
     'openssl'   = @{ argv = @('version'); out = 'OpenSSL' }
     'awk'       = @{ argv = @('BEGIN { print 40+2 }'); out = '42' }
-    'vim'       = @{ out = 'VIM' }
+    'vim'       = @{ argv = @('-es', '-c', '%s/x/VIMREPL/', '-c', 'wq', 'a.txt');
+        notAny = 'Error detected'; fileAfter = @{ file = 'a.txt'; contains = 'VIMREPL' };
+        note = 'real edit via defaults.vim filetype chain (autoload/dist/ regression)' }
     'nmap'      = @{ out = 'Nmap' }
     'ncat'      = @{ outAny = 'Ncat'; note = 'version banner may go to stderr' }
     'nping'     = @{ nonempty = $true }
@@ -360,6 +364,28 @@ function Invoke-One {
         if ($spec['nonempty'] -and -not $outNorm.Trim()) {
             $verdict = 'FAIL'
             $notes += 'stdout empty'
+        }
+        if ($spec['notAny']) {
+            # notAny：stdout+stderr 合并后不得出现的子串（错误横幅类，如 vim
+            # filetype 链断时的 "Error detected while processing ..."）
+            $anyText = $outNorm + "`n" + (([string]$r.Stderr) -replace "`r`n", "`n")
+            foreach ($bad in @($spec['notAny'])) {
+                if ($anyText.Contains([string]$bad)) {
+                    $verdict = 'FAIL'
+                    $notes += ("output must not contain '{0}'" -f $bad)
+                }
+            }
+        }
+        if ($spec['fileAfter']) {
+            # fileAfter：探针后工作目录内文件必须包含指定子串（编辑/写文件类）
+            $fa = $spec['fileAfter']
+            $faPath = Join-Path $wd ([string]$fa['file'])
+            $faOk = (Test-Path $faPath) -and
+                ([string](Get-Content -Raw $faPath)).Contains([string]$fa['contains'])
+            if (-not $faOk) {
+                $verdict = 'FAIL'
+                $notes += ("file '{0}' missing '{1}'" -f $fa['file'], $fa['contains'])
+            }
         }
         if ($r.Exit -lt 0) {
             $notes += ("CRASH 0x{0:X8}" -f $r.Exit)
