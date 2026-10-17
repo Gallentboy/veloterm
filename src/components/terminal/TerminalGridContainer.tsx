@@ -216,6 +216,8 @@ export function TerminalGridContainer({
                 isPanelResizing={isPanelResizing}
                 // 字体缩放仅在标签页模式启用；九宫格/单屏最大化期间禁用（字号保持）
                 fontScaleEnabled={!isGrid}
+                // 底部远程资源监控条：仅标签页模式的当前可见会话展示（九宫格平铺自动隐藏）
+                resourceBarVisible={!isGrid && sessionVisible}
                 onShellLabelChange={onShellLabelChange}
                 onSizeChange={onSizeChange}
                 onRendererStatusChange={onRendererStatusChange}

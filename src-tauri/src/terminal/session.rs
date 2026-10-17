@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use std::future::Future;
+use std::pin::Pin;
+
 use super::ssh::{SSHTargetAuth, SshHostKeyVerificationMode, TargetSSHOptions};
 
 /// 终端会话底层驱动类型：本地 PTY (`portable-pty`) 或远程 SSH (`russh`)。
@@ -96,4 +99,10 @@ pub trait TerminalBackendSession: Send + Sync {
     fn write(&self, data: &[u8]) -> Result<(), String>;
     fn resize(&self, cols: u16, rows: u16) -> Result<(), String>;
     fn close(&self) -> Result<(), String>;
+    /// 旁路一次性命令执行（资源监控等采集用）：在连接上开独立通道执行并
+    /// 捕获完整输出，不经交互 shell、不污染终端输出流。默认不支持（本地 PTY
+    /// 等后端返回 Err）。返回 BoxFuture 以保持 trait 的 dyn 兼容
+    fn exec_capture(&self, _command: String) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
+        Box::pin(std::future::ready(Err("此会话类型不支持旁路命令执行".to_string())))
+    }
 }

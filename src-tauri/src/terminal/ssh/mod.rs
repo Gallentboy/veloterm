@@ -9,6 +9,8 @@ pub mod known_hosts;
 
 use crate::lifecycle::{DisconnectReason, LifecycleEmitter, LifecycleKind, emit_ssh_lifecycle};
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -21,6 +23,7 @@ pub use known_hosts::*;
 use russh::keys::PublicKeyBase64;
 use tauri::ipc::Channel;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot;
 
 use super::session::{TerminalBackendKind, TerminalBackendSession, TerminalCreateResult};
 
@@ -315,5 +318,27 @@ impl TerminalBackendSession for SshTerminalSession {
         let _ = self.command_tx.send((RCCommand::Disconnect, None));
         let _ = self.abort_tx.send(());
         Ok(())
+    }
+
+    /// 旁路一次性命令执行（资源监控采集）：经 RemoteClient 的 ExecCapture
+    /// 开独立 exec 通道回捕输出；未连接/连接断开时 RemoteClient 立即回 Err
+    fn exec_capture(
+        &self,
+        command: String,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let _ = self.command_tx.send((
+            RCCommand::ExecCapture {
+                command,
+                reply: reply_tx,
+            },
+            None,
+        ));
+        Box::pin(async move {
+            match reply_rx.await {
+                Ok(result) => result,
+                Err(_) => Err("SSH 会话已关闭".to_string()),
+            }
+        })
     }
 }

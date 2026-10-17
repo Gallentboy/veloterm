@@ -146,6 +146,17 @@ export default {
       clear: 'Clear',
       resetZoom: 'Reset zoom',
     },
+    resourceMonitor: {
+      latency: 'Latency',
+      latencyHint: 'Round-trip time of the sampling command over the SSH session',
+      cpu: 'CPU',
+      memory: 'Memory',
+      swap: 'Swap',
+      network: 'Network',
+      disk: 'Disk',
+      linuxOnly: 'Resource monitor is Linux-only',
+      loading: 'Sampling…',
+    },
     search: {
       placeholder: 'Find',
       caseSensitive: 'Match case',

@@ -13,6 +13,7 @@ use russh::client::{AuthResult, Handle, KeyboardInteractiveAuthResponse};
 use russh::keys::{PrivateKeyWithHashAlg, PublicKey};
 use russh::{MethodKind, Preferred, Sig, kex, mac};
 use serde::Serialize;
+use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc::{
     Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
 };
@@ -127,10 +128,18 @@ enum ChannelOpen {
     DirectStreamlocal(String),
 }
 
-#[derive(Clone, Debug)]
+// 不 derive Clone：ExecCapture 携带一次性的 oneshot 回捕端（全仓对
+// RCCommand 只做所有权 send，无克隆需求）；Debug 手写（InnerEvent 需要）
 pub enum RCCommand {
     Connect(Vec<TargetSSHOptions>),
     Channel(usize, ChannelOperation),
+    /// 旁路一次性命令执行（资源监控采集）：在连接上开独立 exec 通道并捕获
+    /// 完整输出，不经交互 shell、不占用既有 channel、不产生 RCEvent（回捕结果
+    /// 经自带 oneshot 返回）。未连接时立即回 Err
+    ExecCapture {
+        command: String,
+        reply: oneshot::Sender<Result<String, String>>,
+    },
     #[allow(dead_code)]
     ForwardTCPIP(String, u32),
     #[allow(dead_code)]
@@ -140,6 +149,26 @@ pub enum RCCommand {
     #[allow(dead_code)]
     CancelStreamlocalForward(String),
     Disconnect,
+}
+
+/// 手写 Debug：ExecCapture 的 oneshot 回捕端不可格式化，仅展示变体名
+impl fmt::Debug for RCCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RCCommand::Connect(_) => f.write_str("Connect(..)"),
+            RCCommand::Channel(id, op) => write!(f, "Channel({id}, {op:?})"),
+            RCCommand::ExecCapture { .. } => f.write_str("ExecCapture{..}"),
+            RCCommand::ForwardTCPIP(_, port) => write!(f, "ForwardTCPIP(_, {port})"),
+            RCCommand::CancelTCPIPForward(_, port) => {
+                write!(f, "CancelTCPIPForward(_, {port})")
+            }
+            RCCommand::StreamlocalForward(_) => f.write_str("StreamlocalForward(..)"),
+            RCCommand::CancelStreamlocalForward(_) => {
+                f.write_str("CancelStreamlocalForward(..)")
+            }
+            RCCommand::Disconnect => f.write_str("Disconnect"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -474,6 +503,42 @@ impl RemoteClient {
             }
             RCCommand::Channel(ch, op) => {
                 self.apply_channel_op(ch, op, reply).await?;
+            }
+            RCCommand::ExecCapture { command, reply } => {
+                // 未连接直接回错（资源监控等轮询方据此降级，不排队重试）
+                let Some(session) = self.session.clone() else {
+                    let _ = reply.send(Err("SSH 未连接".to_string()));
+                    return Ok(false);
+                };
+                // 独立通道旁路执行：不占用 channel_pipes / 不产生 RCEvent，
+                // 结果直接经 oneshot 回捕；全程限时防止慢链路挂死轮询方
+                tokio::spawn(async move {
+                    let result = async {
+                        let channel = tokio::time::timeout(
+                            Duration::from_secs(8),
+                            session.channel_open_session(),
+                        )
+                        .await
+                        .map_err(|_| "旁路命令超时：打开通道失败".to_string())?
+                        .map_err(|e| format!("打开通道失败: {e}"))?;
+                        channel
+                            .exec(true, command)
+                            .await
+                            .map_err(|e| format!("执行旁路命令失败: {e}"))?;
+                        let mut stream = channel.into_stream();
+                        let mut output = String::new();
+                        tokio::time::timeout(
+                            Duration::from_secs(8),
+                            stream.read_to_string(&mut output),
+                        )
+                        .await
+                        .map_err(|_| "旁路命令超时：读取输出失败".to_string())?
+                        .map_err(|e| format!("读取旁路命令输出失败: {e}"))?;
+                        Ok(output)
+                    }
+                    .await;
+                    let _ = reply.send(result);
+                });
             }
             RCCommand::ForwardTCPIP(address, port) => {
                 self.tcpip_forward(address, port).await?;

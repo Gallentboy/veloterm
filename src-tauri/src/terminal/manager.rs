@@ -247,11 +247,28 @@ impl TerminalManager {
             map.remove(&id)
         };
 
+        // 资源监控的差分基线随会话一并清理（避免 id 复用后的伪速率）
+        super::resource_monitor::forget_baseline(id);
+
         if let Some(session) = session {
             log::info!("[TerminalManager] dispose session id={}", id);
             session.close()
         } else {
             Ok(())
         }
+    }
+
+    /// 旁路一次性命令执行（资源监控采集）：会话不存在或后端不支持时回 Err
+    pub async fn exec_capture(&self, id: usize, command: &str) -> Result<String, String> {
+        let session = {
+            let map = self
+                .sessions
+                .lock()
+                .map_err(|_| "terminal sessions mutex poisoned".to_string())?;
+            map.get(&id)
+                .cloned()
+                .ok_or_else(|| format!("terminal session {id} not found"))?
+        };
+        session.exec_capture(command.to_string()).await
     }
 }

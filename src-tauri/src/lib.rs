@@ -49,6 +49,7 @@ pub fn run() {
             terminal::commands::ssh_list_known_hosts,
             terminal::commands::ssh_remove_known_host,
             terminal::commands::ssh_clear_known_hosts,
+            terminal::commands::ssh_resource_snapshot,
             ai::ai_provider_list,
             ai::ai_provider_save,
             ai::ai_provider_delete,
