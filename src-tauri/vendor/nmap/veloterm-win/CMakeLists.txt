@@ -511,8 +511,9 @@ add_library(ncatffi SHARED
 # （target 级 PRIVATE include 不随 $<TARGET_OBJECTS> 传递到本目标）
 target_include_directories(ncatffi PRIVATE "${NMAP_ROOT}/ncat" "${NMAP_ROOT}/liblua")
 target_link_libraries(ncatffi PRIVATE ${VELOTERM_NCAT_LIBS})
-# ncat 仅在 -e/--exec 用 pcap？官方仍链 wpcap 并延迟加载（缺 Npcap 时降级）
-target_link_options(ncatffi PRIVATE "/DELAYLOAD:wpcap.dll" "/DELAYLOAD:packet.dll")
+# 官方 ncat 只链 wpcap.lib（无 packet.lib），故仅对 wpcap 设延迟加载
+# （多余的 /DELAYLOAD:packet.dll 会报 LNK4199 ignored）
+target_link_options(ncatffi PRIVATE "/DELAYLOAD:wpcap.dll")
 set_target_properties(ncatffi PROPERTIES
     OUTPUT_NAME "ncatffi"
     PREFIX ""
@@ -548,7 +549,7 @@ add_executable(ncat-runner
 target_include_directories(ncat-runner PRIVATE "${NMAP_ROOT}/ncat" "${NMAP_ROOT}/liblua")
 set_source_files_properties("${NMAP_ROOT}/ncat/ncat_main.c" PROPERTIES LANGUAGE CXX)
 target_link_libraries(ncat-runner PRIVATE ${VELOTERM_NCAT_LIBS})
-target_link_options(ncat-runner PRIVATE "/DELAYLOAD:wpcap.dll" "/DELAYLOAD:packet.dll")
+target_link_options(ncat-runner PRIVATE "/DELAYLOAD:wpcap.dll")
 set_target_properties(ncat-runner PROPERTIES
     OUTPUT_NAME "ncat"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/out"
