@@ -30,7 +30,13 @@
   编译（data 文件被 `unicode.c` 直接 `#include`，后两者是工具/多余编码表），
   但属源码树组成部分，保留。
 
-## 本地修补（升级版本时需复核是否仍需；当前 8 处）
+## 本地修补（升级版本时需复核是否仍需；当前 10 处）
+
+`src/jv.c`（文件头，第 46 行）：上游 1.8.2 无条件 `#include <pthread.h>`
+（1.7.1 无此行；MSVC 无该头，CI 实测 C1083）。已按 jv_thread.h 同样的
+门控哲学包为 `#if !defined(WIN32) || defined(__MINGW32__)`——WIN32 非
+MinGW 走文件内 Heimdal TSD 节 + jv_thread.h 的自有声明，真 pthread
+平台照旧。
 
 `src/jv.c`（WIN32 非 MinGW 的 Heimdal TSD 节）：上游的
 `#ifdef _MSC_VER` 分支误写为
@@ -59,7 +65,8 @@ MSVC 不支持。已加 `_MSC_VER` 分支改用等价三元式；1.8.2 的全部
 无害；本工程 Windows 目标静态链接 CRT（`+crt-static` /MT），
 `libucrt.lib(fopen.obj)` 是真实定义，同名即 LNK2005 重定义（CI 实测）。
 已改名 `veloterm_jq_fopen`（行为不变），唯一调用点 `open_file` 的
-`fopen(f, "r")` 在 WIN32 分支随改。
+`fopen(f, "r")` 在 WIN32 分支随改（非 WIN32 保持原样 `fopen`，
+POSIX 路径无该定义）。
 
 `src/main.c`（umain 开头的 WIN32 初始化节）：上游把 stdout/stderr 设为
 `_O_TEXT | _O_U8TEXT`——UCRT 的宽字符 UTF-8 模式下，窄字符输出函数
@@ -88,6 +95,11 @@ tty 正常输出走 jv_print.c 的 `WriteConsoleW` 不经 stdio 不受影响；
 做退出路径回归门禁：出现崩溃退出码或正常退出比 TerminateProcess 慢 50ms 以上即
 失败）。默认不设环境变量时探针完全静默，不影响正常使用。
 
+`src/builtin.c`（f_strflocaltime 的 tm 字段写入）：上游 1.8.2 新代码用
+`*(int *)((void *)tm + offsets[i])`——void* 指针算术是 GNU 扩展（按 1 字节
+步长），MSVC 报 C2036 "void *: unknown size"（CI 实测）。已换 `(char *)tm`
+承载同样字节偏移，与 GCC 扩展语义逐字节等价。
+
 `src/jv.c`（退出期堆损坏根因，长期保留）：上游 Heimdal 风格的
 WIN32 TSD shim（`pthread_setspecific`）在「替换旧值」前会调用旧值的析构器，
 这不是 POSIX 语义（真 pthread 只在「键值随线程退出」时调用析构器）。jq 的退出
@@ -105,7 +117,7 @@ pthread 分支，不触发本问题。
   `const int max_utf8_len = 4;` 的变长数组写法改为字面量 `char buf[4096 + 4]`，
   本地补丁不再需要。
 
-8 处补丁均有中文注释标记。
+10 处补丁均有中文注释标记。
 
 ## 构建集合的隐式项（jq-app build.rs 的收录依据）
 
