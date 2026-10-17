@@ -1,0 +1,121 @@
+# 目标（单一）：Windows 全命令验证车道——全量构建内置工具链（coreutils.exe
+# + 六个 FFI DLL + nmap-data/ + vim-runtime/ + ca-bundle.crt，即 publish 的
+# 构建面减去 Tauri 打包），再以 scripts/verify-win-commands.ps1 搭出与安装包
+# 一致的目录形状（tools\ 硬链接短名 + lib\ DLL + 数据树平铺），对**每个**
+# 内置命令做常用功能验证（正则搜索/流替换/编解码/哈希/文件操作/tar/子进程
+# 派生/DLL 家族功能用例，不止 --version），双模式覆盖（短名 argv[0] 分发 +
+# 子命令模式），产出 markdown 报告（job summary + artifact）。命令清单不
+# 硬编码，运行期由受测 coreutils.exe 自述解析（tools-catalog 单一事实来源）。
+# 依赖面 = publish.yml 同源（vcpkg OpenSSL 二进制缓存 + MSYS2 qalc/gcc 包
+# + Go），无新增安装步骤。
+# 触发：推 tag（验证完删除）——
+#   git tag test_cmds && git push origin test_cmds
+#   git push origin :refs/tags/test_cmds
+# 也支持 workflow_dispatch 手动触发（可反复执行）。
+name: 'test-commands'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_cmds*'
+
+jobs:
+  verify-commands:
+    permissions:
+      contents: read
+      # vcpkg 二进制缓存（GitHub Packages NuGet 源），与 publish.yml 同一份 feed
+      packages: write
+    runs-on: windows-latest
+    env:
+      USERNAME: Gallentboy
+      FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
+      VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      # vcpkg OpenSSL（coreutils 的 SQLCipher + nmap/ncat/nping 的 MSVC CMake 段），
+      # 与 publish.yml 完全同源的安装步骤（manifest 版本锁 + 二进制缓存）
+      - name: Add NuGet source for vcpkg binary cache (GitHub Packages)
+        shell: pwsh
+        run: |
+          $vcpkgExe = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" } else { "C:\vcpkg\vcpkg.exe" }
+          $nuget = (& $vcpkgExe fetch nuget | Select-Object -Last 1)
+          & $nuget sources add `
+            -Source "$env:FEED_URL" `
+            -StorePasswordInClearText `
+            -Name GitHubPackages `
+            -UserName "$env:USERNAME" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
+
+      - name: Install OpenSSL for SQLCipher (Windows)
+        working-directory: src-tauri
+        shell: pwsh
+        env:
+          VCPKG_BUILD_TYPE: release
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          git config --global --add safe.directory "$vcpkgRoot"
+          git -C "$vcpkgRoot" fetch origin master
+          if ($LASTEXITCODE -ne 0) { Write-Host "git fetch 补历史失败（exit $LASTEXITCODE），继续安装：当前镜像通常已含 baseline 历史" }
+          vcpkg install "--x-install-root=$vcpkgRoot\installed"
+
+      - name: Set OpenSSL env (Windows)
+        shell: pwsh
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      # MSYS2 包两用：qalc 段的构建依赖（libqalculate autotools 链）+ goffi 段
+      # cgo 所需的 gcc（与 publish.yml 的 pacman 步骤同一行）
+      - name: Install MSYS2 packages for qalc + cgo gcc (Windows)
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm make gettext mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-libxml2 mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr"
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      # 全量构建（等价 publish 的工具链面）：coreutils + goffi + qalc + vim
+      # + nmap 三件套 + nmap-data/ + ca-bundle.crt + vim-runtime/
+      - name: Build all toolchain products
+        run: node scripts/build-tools.mjs --target x86_64-pc-windows-msvc
+
+      # 全命令验证 + 报告（任一命令 FAIL/TIMEOUT 即步骤失败；报告同时进
+      # job summary 与下方 artifact）。不传以 `-` 开头的参数值（pwsh -File
+      # 二次解析坑，参数均为普通路径）。
+      - name: Verify every command (shortname + subcommand modes)
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP 'veloterm-verify-commands'
+          pwsh -NoProfile -File scripts/verify-win-commands.ps1 `
+            -BinariesDir src-tauri/binaries `
+            -Stage $stage
+
+      # 报告即使失败也要上传（失败明细是迭代修复的依据）
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: verify-commands-report
+          path: ${{ runner.temp }}/veloterm-verify-commands/verify-commands-report.md
+          if-no-files-found: warn
+          retention-days: 14
