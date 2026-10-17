@@ -7,6 +7,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { DesktopTopOverlay } from '@/components/DesktopTopOverlay';
 import { EditorScreen } from '@/components/editor/EditorScreen';
 import { FilesScreen } from '@/components/files/FilesScreen';
@@ -114,6 +116,19 @@ export function AppShell() {
   const [isAiChatOpen, setAiChatOpen] = useState(false);
   const [isPaletteOpen, setPaletteOpen] = useState(false);
   const [aiInitialPrompt, setAiInitialPrompt] = useState<string | null>(null);
+
+  // 「关于」独立窗口打开时淡化主窗（modal 视觉）：Rust 侧在关于窗创建/销毁时
+  // 广播 about-visibility；遮罩阻断主窗交互，点击遮罩即关闭关于窗（与 Esc/
+  // Enter/OK 同一销毁路径，对齐 ZCode 的 modal 关闭手感）
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
+  useEffect(() => {
+    const unlisten = listen<boolean>('about-visibility', ({ payload }) => {
+      setIsAboutOpen(Boolean(payload));
+    });
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
 
   const openAiChat = (prompt?: string) => {
     setAiInitialPrompt(prompt ?? null);
@@ -562,6 +577,18 @@ export function AppShell() {
           <DesktopTopOverlay isSidebarVisible={isSidebarVisible} onToggleSidebar={toggleSidebar} />
 
           <CommandPalette open={isPaletteOpen} onClose={() => setPaletteOpen(false)} />
+
+          {/* 「关于」窗口打开时主窗遮罩：淡化下层 + 阻断交互，点击即关闭关于窗 */}
+          {isAboutOpen ? (
+            <div
+              aria-hidden="true"
+              onClick={() => {
+                setIsAboutOpen(false);
+                void invoke('close_about_window').catch(() => undefined);
+              }}
+              className="fixed inset-0 z-[90] cursor-default bg-black/45"
+            />
+          ) : null}
         </div>
       </div>
   );

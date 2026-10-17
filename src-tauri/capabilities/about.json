@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "about-window",
+  "description": "关于窗口（无边框透明自绘）：OK/Escape 关闭与整窗拖拽所需权限",
+  "windows": [
+    "about"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging"
+  ]
+}
