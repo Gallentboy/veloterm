@@ -409,7 +409,7 @@ export function AppShell() {
           style={
             {
               '--sidebar-panel-width': `${isSidebarVisible ? sidebarWidthPx : SIDEBAR_COLLAPSED_WIDTH_PX}px`,
-              '--ai-panel-width': `${isAiChatOpen ? aiPanelWidthPx : 0}px`,
+              '--ai-panel-width': `${isAiChatOpen && page === 'terminal' ? aiPanelWidthPx : 0}px`,
               '--workspace-panel-radius': `${WORKSPACE_PANEL_RADIUS_PX}px`,
             } as CSSProperties
           }
@@ -518,8 +518,9 @@ export function AppShell() {
               </main>
             </section>
 
-            {/* AI 右侧面板拖拽条（镜像左侧栏，方向相反） */}
-            {isAiChatOpen ? (
+            {/* AI 右侧面板拖拽条（镜像左侧栏，方向相反）；门控与面板生效态
+                一致（仅终端页且开启时）——否则非终端页会残留 4px 隐形拖拽条 */}
+            {isAiChatOpen && page === 'terminal' ? (
               <div
                 role="separator"
                 aria-orientation="vertical"

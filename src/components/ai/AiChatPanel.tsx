@@ -263,8 +263,13 @@ ${output}`);
     <aside
       aria-label={t('ai.chat.title')}
       className={cn(
-        'ml-1 flex h-full w-(--ai-panel-width) shrink-0 flex-col overflow-hidden rounded-(--workspace-panel-radius) border border-border bg-background transition-[width,opacity] duration-200 ease-out',
-        !open && 'pointer-events-none border-transparent opacity-0',
+        'flex h-full shrink-0 flex-col overflow-hidden rounded-(--workspace-panel-radius) bg-background transition-[width,opacity] duration-200 ease-out',
+        // 开合两分支不共用宽度/边距/边框工具类：关闭时必须**零占位**——
+        // 曾因保留 ml-1(4px) + 边框残留(2px) 把工作区面板从窗口右缘多挤开 6px
+        // （外层 4px 留白 + 6px = 10px，与 ZCode 基准 4px 不符）
+        open
+          ? 'ml-1 w-(--ai-panel-width) border border-border'
+          : 'w-0 border-transparent opacity-0 pointer-events-none',
         isResizing && 'transition-opacity',
       )}
     >
