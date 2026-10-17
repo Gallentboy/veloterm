@@ -138,8 +138,12 @@ pthread 分支，不触发本问题。
    八进制字节 dump）：`od -v -A n -t o1 | sed` 管道把 `src/builtin.jq`
    逐字节转成逗号分隔的八进制整数表，消费方是 builtin.c 的
    `static const char jq_builtins[] = { #include "src/builtin.inc" '\0', }`。
-   tarball 不含 builtin.inc；jq-app build.rs 用 Rust 逐字节等价复刻
-   （Windows runner 无 od/sed）。
+   **语义关键**：sed 两条补零规则把不以 0 开头的 token（字节 64~255）补成
+   前导 0 形态（144→0144）——C 整数字面量只有带前导 0 才按八进制解析，裸
+   144 会被当十进制 144=0x90（非法 UTF-8，升级时实踩：内建库全损、
+   `jq -n 1+1` 报 INVALID_CHARACTER，而退出码/耗时门禁全绿）。tarball 不含
+   builtin.inc；jq-app build.rs 用 Rust 逐字节等价复刻（Windows runner 无
+   od/sed），含全字节 0~255 的 C 八进制字面量不变量单测。
 3. **version.h 随 tarball 实发**：1.8 起 tarball 自带 `src/version.h`
    （值为裸版本号 `"1.8.2"`）。build.rs 仍按 JQ_VERSION 常量在 OUT_DIR 生成
    （include 路径优先级上生成版生效），并在构建启动时与 tarball 实发值校验

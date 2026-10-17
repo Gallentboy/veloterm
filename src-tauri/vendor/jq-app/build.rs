@@ -406,9 +406,14 @@ fn render_config_opts_inc() -> String {
 /// `od -v -A n -t o1 | sed ...` 把 src/builtin.jq 逐字节转成逗号分隔的
 /// 八进制整数表，消费方是 builtin.c 的
 /// `static const char jq_builtins[] = { #include "src/builtin.inc" '\0', }`。
-/// C 语义只取决于字节值与逗号分隔，与 od 的行内空白无关（od 的行首/行尾
-/// 填充本身在 BSD/GNU 间就不一致）；本实现每行 16 个 token、与 od 同宽
-/// 的 3 位补零八进制。入参必须 LF-only：CR 会作为字节 015 混进内建源码，
+/// 语义关键在 sed 的两条「补零」规则（`s/ 0/  0/g` 与
+/// `s/ \([123456789]\)/ 0\1/g`）：它们把不以 0 开头的 token（字节 64~255
+/// 的三位八进制形如 144）补上前导 0 成 0144——**C 整数字面量只有带前导 0
+/// 才按八进制解析**，裸 144 会被当十进制 144=0x90（非法 UTF-8，首版复刻
+/// 实踩：builtin 编译报 INVALID_CHARACTER、行内仅 <64 的字节存活）。
+/// 行内空白与 od 的平台差异无关 C 语义（数组初始化只看数值与逗号）；
+/// 本实现每行 16 个 token、3 位补零八进制 + 不足前导 0 的补上，与上游
+/// 形态一致。入参必须 LF-only：CR 会作为字节 015 混进内建源码，
 /// 为了不携带这个隐患，遇 CR 直接报错（当前 vendor 的 builtin.jq 为
 /// ASCII/LF）。
 /// （pub 仅为测试/校验工具可直调；build script 根位置无可见性副作用。）
@@ -429,7 +434,11 @@ pub fn render_builtin_inc(builtin_jq: &str) -> Result<String, String> {
                 out.push_str(", ");
             }
         }
-        out.push_str(&format!("{b:03o}"));
+        let tok = format!("{b:03o}");
+        if !tok.starts_with('0') {
+            out.push('0'); // C 八进制字面量的前导 0（上游 sed 补零规则的语义）
+        }
+        out.push_str(&tok);
     }
     // 尾逗号：上游 od 输出行尾有固定宽度填充空白，sed 的「数字+空格→数字+,」
     // 规则使每个 token（含最后一个）后都带逗号——builtin.c 的
@@ -628,19 +637,59 @@ int gettimeofday(struct timeval *tv, void *tz) {
 mod tests {
     use super::*;
 
-    /// builtin.inc 生成规则与 Makefile.am 的 od 管道逐字节等价：
-    /// 每个字节转 3 位补零八进制，逗号分隔，每行 16 个 token。
+    /// builtin.inc 生成规则与 Makefile.am 的 od 管道等价：
+    /// 每个字节转八进制且**必带前导 0**（C 八进制字面量语义，上游 sed
+    /// 补零规则的本意），逗号分隔，每行 16 个 token，末 token 后带逗号。
     #[test]
     fn builtin_inc_matches_makefile_od_rule() {
-        // 'a'=0x61=0141, 'b'=0142, '\n'=012, 'c'=0143；末 token 后带逗号
-        //（上游 od 固定宽度填充 + sed 规则的形态，见函数尾注释）
+        // 'a'=0x61 → 八进制 141 → 字面量 0141；≥64 的字节必须补前导 0，
+        // 裸 141 会被 C 按十进制解析成 0x8d（非法 UTF-8）——首版实踩的坑
         let inc = render_builtin_inc("ab\nc").unwrap();
-        assert_eq!(inc, "141, 142, 012, 143,\n");
-        // 高位字节（UTF-8 多字节序列成分）也稳定转八进制
-        let inc = render_builtin_inc("\u{e9}").unwrap(); // C3 A9
-        assert_eq!(inc, "303, 251,\n");
+        assert_eq!(inc, "0141, 0142, 012, 0143,\n");
+        // 高位字节（UTF-8 多字节序列成分）也稳定转八进制：C3 A9
+        assert_eq!(render_builtin_inc("\u{e9}").unwrap(), "0303, 0251,\n");
         // NUL 与控制字符照常 dump（消费方是 char 数组，无字符串字面量限制）
         assert_eq!(render_builtin_inc("\0\x01").unwrap(), "000, 001,\n");
+        // U+00FF 的 UTF-8 编码是 C3 BF（合法 UTF-8 里不会出现 0xFF 单字节，
+        // 首字节最大 0xF4——全覆盖断言见下一个用例）
+        assert_eq!(render_builtin_inc("\u{ff}").unwrap(), "0303, 0277,\n");
+    }
+
+    /// 语义不变量：产出的每个 token 都以 '0' 开头（C 八进制字面量）且按
+    /// 八进制解析回原字节值——任一不满足即内建源码损坏。用覆盖全部
+    /// 会出现的字节值（0x00-0x7F 单字节 + 0x80-0xBF 尾字节 + 0xC2-0xF4
+    /// 首字节）的合法 UTF-8 字符串验证。
+    #[test]
+    fn builtin_inc_tokens_are_valid_c_octal_literals() {
+        let mut s = String::new();
+        for cp in 0u32..=0x7F {
+            if cp != 0x0D {
+                s.push(char::from_u32(cp).unwrap()); // 0x0D 是 CR，渲染函数按约定拒绝
+            }
+        }
+        for cp in 0x80u32..=0x7FF {
+            s.push(char::from_u32(cp).unwrap()); // 双字节序列覆盖 0xC2-0xDF 与 0x80-0xBF
+        }
+        for cp in [0x800u32, 0x20AC, 0xFFFD, 0x10000, 0x10FFFF] {
+            s.push(char::from_u32(cp).unwrap()); // 三/四字节序列覆盖 0xE0-0xF4
+        }
+        let inc = render_builtin_inc(&s).unwrap();
+        let toks: Vec<&str> = inc
+            .trim_end()
+            .trim_end_matches(',')
+            .split([',', '\n'])
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
+        assert_eq!(toks.len(), s.len(), "token 数应等于 UTF-8 字节数");
+        for (tok, byte) in toks.iter().zip(s.as_bytes()) {
+            assert!(tok.starts_with('0'), "token {tok} 缺前导 0（C 会按十进制解析成非法字节）");
+            assert_eq!(
+                u8::from_str_radix(tok, 8).unwrap(),
+                *byte,
+                "token {tok} 八进制值与原字节 {byte:#x} 不符"
+            );
+        }
     }
 
     /// C 语义抽查：每行是逗号分隔的八进制 token（行尾随上游 od+sed 形态
@@ -654,10 +703,10 @@ mod tests {
         // 一致），统计 token 前先剥掉行尾逗号
         assert_eq!(lines[0].trim_end_matches(',').split(',').count(), 16);
         assert_eq!(lines[1].trim_end_matches(',').split(',').count(), 16);
-        assert_eq!(lines[2], "170,"); // 'x' = 0x78 = 0170（末 token 亦带尾逗号）
+        assert_eq!(lines[2], "0170,"); // 'x' = 0x78 = 0170（带前导 0 + 尾逗号）
         for line in &lines {
             for tok in line.trim_end_matches(',').split(", ") {
-                assert!(tok.bytes().all(|b| b.is_ascii_digit()), "坏 token：{tok}");
+                assert!(tok.starts_with('0') && tok.bytes().all(|b| b.is_ascii_digit()), "坏 token：{tok}");
             }
         }
     }
@@ -672,8 +721,8 @@ mod tests {
     /// 末尾换行是一个真实的 012 字节；含 CR 直接报错
     #[test]
     fn builtin_inc_handles_trailing_newline_and_cr() {
-        assert_eq!(render_builtin_inc("a\n").unwrap(), "141, 012,\n");
-        assert_eq!(render_builtin_inc("a").unwrap(), "141,\n");
+        assert_eq!(render_builtin_inc("a\n").unwrap(), "0141, 012,\n");
+        assert_eq!(render_builtin_inc("a").unwrap(), "0141,\n");
         assert!(render_builtin_inc("a\r\nb").is_err());
     }
 
