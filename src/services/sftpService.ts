@@ -168,10 +168,10 @@ export async function copyRemoteFile(
 }
 
 /**
- * 弹出原生文件选择器选择要上传的本地文件
+ * 弹出原生文件选择器选择要上传的本地文件（多选；取消返回 null）
  */
-export async function pickUploadFile(): Promise<string | null> {
-  return invoke<string | null>('sftp_pick_upload_file');
+export async function pickUploadFiles(): Promise<string[] | null> {
+  return invoke<string[] | null>('sftp_pick_upload_files');
 }
 
 /**
@@ -179,6 +179,13 @@ export async function pickUploadFile(): Promise<string | null> {
  */
 export async function pickDownloadPath(suggestedName: string): Promise<string | null> {
   return invoke<string | null>('sftp_pick_download_path', { suggestedName });
+}
+
+/**
+ * 弹出原生目录选择器选择批量下载的目标目录（取消返回 null）
+ */
+export async function pickDownloadDir(): Promise<string | null> {
+  return invoke<string | null>('sftp_pick_download_dir');
 }
 
 /**

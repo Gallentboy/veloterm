@@ -24,12 +24,17 @@
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { platformKind } from '@/lib/platform';
 
-/** SFTP 远端文件条目拖拽载荷（行 → 对侧面板复制） */
-export interface SftpItemDragPayload {
-  sessionId: string;
+/** 单个远端条目（多选拖拽的载荷单元） */
+export interface SftpItemEntry {
   path: string;
   name: string;
   isDir: boolean;
+}
+
+/** SFTP 远端条目拖拽载荷（行 → 对侧面板复制；多选时携带整个选区） */
+export interface SftpItemDragPayload {
+  sessionId: string;
+  items: SftpItemEntry[];
 }
 
 /** SFTP Tab 拖拽载荷（池中 Tab → 窗格分栏） */

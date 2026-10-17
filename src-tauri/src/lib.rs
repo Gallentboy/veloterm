@@ -1,3 +1,4 @@
+pub mod about;
 pub mod ai;
 pub mod ai_agent;
 pub mod command_library;
@@ -29,6 +30,7 @@ pub fn run() {
         .manage(sftp::types::SftpState::new())
         .invoke_handler(tauri::generate_handler![
             is_apple_silicon,
+            about::show_about_window,
             logging::set_log_level,
             logging::get_current_log_level,
             logging::get_log_file_path,
@@ -74,8 +76,9 @@ pub fn run() {
             sftp::commands::sftp_list_dir,
             sftp::commands::sftp_download_file,
             sftp::commands::sftp_upload_file,
-            sftp::commands::sftp_pick_upload_file,
+            sftp::commands::sftp_pick_upload_files,
             sftp::commands::sftp_pick_download_path,
+            sftp::commands::sftp_pick_download_dir,
             sftp::commands::sftp_remove,
             sftp::commands::sftp_copy_file,
             sftp::file_ops::sftp_read_file,
@@ -85,6 +88,11 @@ pub fn run() {
             editor_storage::editor_save_draft,
             editor_storage::editor_delete_draft,
         ])
+        .on_menu_event(|app, event| {
+            if event.id().as_ref() == "veloterm-about" {
+                about::show_about(app);
+            }
+        })
         .on_window_event(|window, event| {
             if !window_state::is_main_window(window.label()) {
                 return;
@@ -134,6 +142,9 @@ pub fn run() {
                 let webview: &tauri::Webview<_> = webview_window.as_ref();
                 window_state::restore(&webview.window());
             }
+
+            #[cfg(target_os = "macos")]
+            about::install_macos_menu(app.handle());
 
             log::info!("[VeloTerm] application initialized");
 

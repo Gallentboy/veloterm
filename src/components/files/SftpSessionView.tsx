@@ -14,7 +14,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
@@ -27,11 +27,13 @@ import {
   beginInternalDrag,
   endInternalDrag,
   type SftpItemDragPayload,
+  type SftpItemEntry,
 } from '@/services/dragDropService';
 import {
   listRemoteDirectory,
+  pickDownloadDir,
   pickDownloadPath,
-  pickUploadFile,
+  pickUploadFiles,
   removeRemoteItem,
   type RemoteFileItem,
 } from '@/services/sftpService';
@@ -307,6 +309,15 @@ export function SftpSessionView({
   // 是否正被拖拽悬停（作为放置目标时的高亮态）
   const [isDropTarget, setIsDropTarget] = useState<boolean>(false);
 
+  // ── 远端列表多选（Ctrl/⌘ 点选、Shift 范围、单击单选；双击打开不受影响）──
+  // 导航到其他目录/刷新时清空；选中集合是拖拽互拷与批量下载的载荷源
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const selectionAnchorRef = useRef<number | null>(null);
+  useEffect(() => {
+    setSelectedPaths(new Set());
+    selectionAnchorRef.current = null;
+  }, [currentPath]);
+
   // ── 字体大小调节（每个 SFTP 会话独立，关闭 Tab 即复位，不持久化）──
   // 触发方式借用 Chrome 两指捏合手势：WebKit(WKWebView) 的 gesture 事件 + Chrome 合成的 ctrl+滚轮；
   // 应用方式为在面板根覆盖 --ui-font-size，面板内全部 text-ui-* 文字随动（图标/间距不变）
@@ -536,12 +547,74 @@ export function SftpSessionView({
   const handleUpload = async () => {
     if (!sessionId) return;
     try {
-      const localPath = await pickUploadFile();
-      if (!localPath) return;
-      await handleUploadFiles([localPath]);
+      // 多选上传：一次选起多个文件批量入队
+      const paths = await pickUploadFiles();
+      if (!paths || paths.length === 0) return;
+      await handleUploadFiles(paths);
     } catch (err) {
       setError(`上传失败: ${err}`);
     }
+  };
+
+  // 多选批量下载：选目标目录后逐个入队（文件名取远程同名；目录暂不支持，跳过计数提示）
+  const handleBatchDownload = async () => {
+    if (!sessionId) return;
+    const selected = items.filter((item) => selectedPaths.has(item.path));
+    const files = selected.filter((item) => !item.is_dir);
+    const dirCount = selected.length - files.length;
+    if (files.length === 0 && dirCount > 0) {
+      setError(t('files.drag.unsupportedDir'));
+      return;
+    }
+    try {
+      const dir = await pickDownloadDir();
+      if (!dir) return;
+      for (const file of files) {
+        const sep = dir.endsWith('/') || dir.endsWith('\\') ? '' : '/';
+        transferQueue.enqueue({
+          direction: 'download',
+          sessionId,
+          remotePath: file.path,
+          localPath: `${dir}${sep}${file.name}`,
+          fileName: file.name,
+        });
+      }
+      if (dirCount > 0) {
+        setError(t('files.selection.skippedDirs', { count: dirCount }));
+      }
+    } catch (err) {
+      setError(`下载失败: ${err}`);
+    }
+  };
+
+  // 行点击：多选状态机（Ctrl/⌘ 切换、Shift 范围、单击单选）；双击打开不受影响
+  const handleRowSelect = (
+    event: ReactMouseEvent<HTMLTableRowElement>,
+    item: RemoteFileItem,
+    index: number,
+  ) => {
+    if (event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey) {
+      setSelectedPaths((prev) => {
+        const next = new Set(prev);
+        if (next.has(item.path)) {
+          next.delete(item.path);
+        } else {
+          next.add(item.path);
+        }
+        return next;
+      });
+      selectionAnchorRef.current = index;
+      return;
+    }
+    if (event.shiftKey && selectionAnchorRef.current != null) {
+      const from = Math.min(selectionAnchorRef.current, index);
+      const to = Math.max(selectionAnchorRef.current, index);
+      setSelectedPaths(new Set(items.slice(from, to + 1).map((row) => row.path)));
+      return;
+    }
+    setSelectedPaths(new Set([item.path]));
+    selectionAnchorRef.current = index;
   };
 
   // ===== 面板间拖拽复制：整个面板作为放置目标 =====
@@ -562,28 +635,39 @@ export function SftpSessionView({
       }
       if (event.kind !== 'sftp-item') return;
       const payload = event.payload as SftpItemDragPayload;
-      // 放置：校验载荷并入队远端复制（目录拖拽/源目标相同均拒绝并提示）
-      if (!payload?.sessionId || !payload.path || !payload.name) return;
-      if (payload.isDir) {
+      // 多条目逐个入队远端复制：目录跳过并提示，源目标同名跳过；
+      // 全部被跳过时才报错（部分成功不弹错）
+      if (!payload?.sessionId || !Array.isArray(payload.items) || payload.items.length === 0) {
+        return;
+      }
+      let enqueued = 0;
+      let dirSkipped = 0;
+      for (const entry of payload.items as SftpItemEntry[]) {
+        if (entry.isDir) {
+          dirSkipped += 1;
+          continue;
+        }
+        const targetPath =
+          currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+        if (payload.sessionId === sessionId && entry.path === targetPath) {
+          continue;
+        }
+        transferQueue.enqueue({
+          direction: 'copy',
+          sessionId: payload.sessionId,
+          remotePath: entry.path,
+          targetSessionId: sessionId,
+          targetRemotePath: targetPath,
+          fileName: entry.name,
+          onFinished: () => void loadDirectory(currentPath),
+        });
+        enqueued += 1;
+      }
+      if (dirSkipped > 0) {
         setError(t('files.drag.unsupportedDir'));
-        return;
-      }
-      const targetPath =
-        currentPath === '/' ? `/${payload.name}` : `${currentPath}/${payload.name}`;
-      if (payload.sessionId === sessionId && payload.path === targetPath) {
+      } else if (enqueued === 0) {
         setError(t('files.drag.sameTarget'));
-        return;
       }
-      // 入队远端复制：源会话读取，本面板会话写入，完成后刷新目标面板列表
-      transferQueue.enqueue({
-        direction: 'copy',
-        sessionId: payload.sessionId,
-        remotePath: payload.path,
-        targetSessionId: sessionId,
-        targetRemotePath: targetPath,
-        fileName: payload.name,
-        onFinished: () => void loadDirectory(currentPath),
-      });
     },
   });
 
@@ -731,6 +815,35 @@ export function SftpSessionView({
         </div>
       )}
 
+      {/* 多选操作条：选中非空时显示（批量下载 / 清除选择；多选互拷无需按钮，直接拖选区即可） */}
+      {selectedPaths.size > 0 ? (
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-border/50 bg-selected/25 px-3 py-1 text-ui-xs">
+          <span className="text-foreground-subtle select-none">
+            {t('files.selection.selected', { count: selectedPaths.size })}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleBatchDownload}
+            className="h-6 gap-1 rounded-md px-2 text-ui-xs font-medium border-border/70 bg-surface/40 hover:bg-hover active:bg-hover/80 text-foreground shadow-2xs transition-colors"
+          >
+            <Download className="size-3 text-foreground-subtle" />
+            <span>{t('files.selection.download')}</span>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setSelectedPaths(new Set());
+              selectionAnchorRef.current = null;
+            }}
+            className="h-6 gap-1 rounded-md px-2 text-ui-xs font-medium text-foreground-subtle hover:text-foreground hover:bg-hover"
+          >
+            <span>{t('files.selection.clear')}</span>
+          </Button>
+        </div>
+      ) : null}
+
       {/* 远程文件列表 */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {isLoading && items.length === 0 ? (
@@ -756,21 +869,39 @@ export function SftpSessionView({
               </tr>
             </thead>
             <tbody className="divide-y divide-border/30">
-              {items.map((item) => {
+              {items.map((item, index) => {
                 const visuals = getFileItemVisuals(item);
+                const isSelected = selectedPaths.has(item.path);
                 return (
                   <tr
                     key={item.path}
                     draggable
+                    onClick={(event) => handleRowSelect(event, item, index)}
                     onDragStart={() => {
-                      // 目录也允许拖起，由放置端校验拒绝并给出明确提示；载荷经
-                      // 统一拖放总线登记（原生接管后页内 drop 不再携带 dataTransfer）
-                      beginInternalDrag('sftp-item', {
-                        sessionId,
-                        path: item.path,
-                        name: item.name,
-                        isDir: item.is_dir,
-                      });
+                      // 多选拖拽：拖起的行在选区内 → 整个选区都是载荷；否则仅拖
+                      // 该行（并把选区重置为它，与常见文件管理器一致）。目录也允许
+                      // 拖起，由放置端校验拒绝并给出明确提示；载荷经统一拖放总线
+                      // 登记（原生接管后页内 drop 不再携带 dataTransfer）
+                      const dragged: SftpItemEntry[] = isSelected
+                        ? items
+                            .filter((row) => selectedPaths.has(row.path))
+                            .map((row) => ({
+                              path: row.path,
+                              name: row.name,
+                              isDir: row.is_dir,
+                            }))
+                        : [
+                            {
+                              path: item.path,
+                              name: item.name,
+                              isDir: item.is_dir,
+                            },
+                          ];
+                      if (!isSelected) {
+                        setSelectedPaths(new Set([item.path]));
+                        selectionAnchorRef.current = index;
+                      }
+                      beginInternalDrag('sftp-item', { sessionId, items: dragged });
                     }}
                     onDragEnd={endInternalDrag}
                     onDoubleClick={() => {
@@ -789,7 +920,10 @@ export function SftpSessionView({
                         item,
                       });
                     }}
-                    className="hover:bg-surface/40 transition-colors cursor-pointer group"
+                    className={cn(
+                      'transition-colors cursor-pointer group',
+                      isSelected ? 'bg-selected' : 'hover:bg-surface/40',
+                    )}
                   >
                     <td className="py-1.5 pl-4 pr-2 font-medium">
                       <div className="flex items-center gap-2">
