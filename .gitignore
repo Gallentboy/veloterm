@@ -9,6 +9,11 @@
 # Dist
 node_modules
 dist/
+# 例外：vim runtime 的 autoload/dist/ 是 filetype 检测的必需源码目录
+#（上游 9.1 起 filetype.vim/scripts.vim 走 dist#ft#*/dist#script#* autoload
+# 函数），首次 vendor 即被上面的 dist/ 规则静默忽略、装机后 vim 开文件
+# 必弹 E117——勿删本否定规则（详见 vendor/vim/README.md 的实踩登记）
+!src-tauri/vendor/vim/runtime/autoload/dist/
 
 # Profile
 .rspack-profile-*/
