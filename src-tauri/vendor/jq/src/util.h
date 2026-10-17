@@ -47,8 +47,9 @@ const void *_jq_memmem(const void *haystack, size_t haystacklen,
 #ifndef MIN
 #ifdef _MSC_VER
 /* veloterm 修补：MSVC 不支持语句表达式与 __typeof__（GNU 扩展），上游未加
- * 编译器分支。三元式语义等价，仅失去"实参只求值一次"的保证——当前唯一
- * 使用点（jv.c 的 MIN(DEC_MAX_DIGITS, …)）实参无副作用。 */
+ * 编译器分支。三元式语义等价，仅失去"实参只求值一次"的保证——1.8.2 的
+ * 全部使用点（jv.c/jv_print.c/locfile.c/compile.c/builtin.c）实参均为
+ * 纯表达式，无副作用。 */
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #else
 #define MIN(a,b) \
@@ -70,7 +71,7 @@ const void *_jq_memmem(const void *haystack, size_t haystacklen,
 
 #include <time.h>
 
-#if defined(WIN32) && !defined(HAVE_STRPTIME)
+#ifndef HAVE_STRPTIME
 char* strptime(const char *buf, const char *fmt, struct tm *tm);
 #endif
 

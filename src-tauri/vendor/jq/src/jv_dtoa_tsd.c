@@ -19,7 +19,7 @@ static void tsd_dtoa_ctx_dtor(void *ctx) {
 #ifndef WIN32
 static
 #endif
-void jv_tsd_dtoa_ctx_fini() {
+void jv_tsd_dtoa_ctx_fini(void) {
   struct dtoa_context *ctx = pthread_getspecific(dtoa_ctx_key);
   tsd_dtoa_ctx_dtor(ctx);
   pthread_setspecific(dtoa_ctx_key, NULL);
@@ -28,7 +28,7 @@ void jv_tsd_dtoa_ctx_fini() {
 #ifndef WIN32
 static
 #endif
-void jv_tsd_dtoa_ctx_init() {
+void jv_tsd_dtoa_ctx_init(void) {
   if (pthread_key_create(&dtoa_ctx_key, tsd_dtoa_ctx_dtor) != 0) {
     fprintf(stderr, "error: cannot create thread specific key");
     abort();
@@ -40,13 +40,14 @@ void jv_tsd_dtoa_ctx_init() {
  * 裸 inline 定义在 MSVC 下不产出外部符号（jv.c / jv_print.c 引用它，CI 报
  * LNK2019）；去 inline 改为普通外部定义。GNU 侧语义不变：本 TU 已包含
  * jv_dtoa_tsd.h 的非 inline 声明，按 C99 规则本就编出外部定义。 */
-struct dtoa_context *tsd_dtoa_context_get() {
+struct dtoa_context *tsd_dtoa_context_get(void) {
   pthread_once(&dtoa_ctx_once, jv_tsd_dtoa_ctx_init); // cannot fail
   struct dtoa_context *ctx = (struct dtoa_context*)pthread_getspecific(dtoa_ctx_key);
   if (!ctx) {
-    ctx = malloc(sizeof(struct dtoa_context));
+    ctx = jv_mem_alloc(sizeof(struct dtoa_context));
     jvp_dtoa_context_init(ctx);
     if (pthread_setspecific(dtoa_ctx_key, ctx) != 0) {
+      jv_mem_free(ctx);
       fprintf(stderr, "error: cannot set thread specific data");
       abort();
     }

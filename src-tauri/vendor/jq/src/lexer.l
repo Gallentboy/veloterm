@@ -21,6 +21,7 @@ struct lexer_param;
 %s IN_BRACE
 %s IN_QQINTERP
 %x IN_QQSTRING
+%x IN_COMMENT
 %{
   static int enter(int opening, int state, yyscan_t yyscanner);
   static int try_exit(int closing, int state, yyscan_t yyscanner);
@@ -37,7 +38,12 @@ struct lexer_param;
 
 %%
 
-"#"[^\n]* { /* comments */ }
+"#" { yy_push_state(IN_COMMENT, yyscanner); }
+<IN_COMMENT>{
+  \\(\\|\r?\n)|. { }
+  \r?\n { yy_pop_state(yyscanner); }
+}
+<IN_COMMENT><<EOF>> { yy_pop_state(yyscanner); }
 
 "!=" { return NEQ; }
 "==" { return EQ; }
@@ -124,7 +130,7 @@ struct lexer_param;
 \.[a-zA-Z_][a-zA-Z_0-9]*  { yylval->literal = jv_string(yytext+1); return FIELD;}
 \$([a-zA-Z_][a-zA-Z_0-9]*::)*[a-zA-Z_][a-zA-Z_0-9]*  { yylval->literal = jv_string(yytext+1); return BINDING;}
 
-[ \n\t]+  {}
+[ \r\n\t]+  {}
 
 . { return INVALID_CHARACTER; }
 

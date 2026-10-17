@@ -9,7 +9,7 @@
 //!
 //! - **上游自带 MSVC 支持**： bc 7.x 官方 tarball 随附 `vs/bc.vcxproj`
 //!   （v143 工具集、`/std:c17`、ConformanceMode），全部 POSIX 头包含均有
-//!   `#ifndef _WIN32` 守卫——与 jq 1.7.1 的五处修补不同，本地零补丁。
+//!   `#ifndef _WIN32` 守卫——与 jq 1.8.2 的八处修补不同，本地零补丁。
 //! - **编译集合**： vcxproj 的 ClCompile 22 个源（args/bc/bc_lex/bc_parse/
 //!   data/dc/dc_lex/dc_parse/file/history/lang/lex/library/main/num/opt/
 //!   parse/program/rand/read/vector/vm.c）；`bc_fuzzer.c`/`dc_fuzzer.c` 是

@@ -14,12 +14,15 @@
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
-#include <process.h>
 #include <processenv.h>
 #include <shellapi.h>
 #include <wchar.h>
 #include <wtypes.h>
 extern void jv_tsd_dtoa_ctx_init();
+#endif
+
+#ifdef HAVE_LIBONIG
+#include <oniguruma.h>
 #endif
 
 #if !defined(HAVE_ISATTY) && defined(HAVE__ISATTY)
@@ -31,17 +34,13 @@ extern void jv_tsd_dtoa_ctx_init();
 #define USE_ISATTY
 #endif
 
-#include "compile.h"
 #include "jv.h"
 #include "jq.h"
-#include "jv_alloc.h"
 #include "util.h"
 #include "src/version.h"
 #include "src/config_opts.inc"
 
 int jq_testsuite(jv lib_dirs, int verbose, int argc, char* argv[]);
-
-static const char* progname;
 
 /*
  * For a longer help message we could use a better option parsing
@@ -55,22 +54,19 @@ static void usage(int code, int keep_it_short) {
 
   int ret = fprintf(f,
     "jq - commandline JSON processor [version %s]\n"
-    "\nUsage:\t%s [options] <jq filter> [file...]\n"
-    "\t%s [options] --args <jq filter> [strings...]\n"
-    "\t%s [options] --jsonargs <jq filter> [JSON_TEXTS...]\n\n"
+    "\nUsage:\tjq [options] <jq filter> [file...]\n"
+    "\tjq [options] --args <jq filter> [strings...]\n"
+    "\tjq [options] --jsonargs <jq filter> [JSON_TEXTS...]\n\n"
     "jq is a tool for processing JSON inputs, applying the given filter to\n"
     "its JSON text inputs and producing the filter's results as JSON on\n"
     "standard output.\n\n"
     "The simplest filter is ., which copies jq's input to its output\n"
     "unmodified except for formatting. For more advanced filters see\n"
-    "the jq(1) manpage (\"man jq\") and/or https://jqlang.github.io/jq/.\n\n"
+    "the jq(1) manpage (\"man jq\") and/or https://jqlang.org/.\n\n"
     "Example:\n\n\t$ echo '{\"foo\": 0}' | jq .\n"
-    "\t{\n\t  \"foo\": 0\n\t}\n\n",
-    JQ_VERSION, progname, progname, progname);
+    "\t{\n\t  \"foo\": 0\n\t}\n\n", JQ_VERSION);
   if (keep_it_short) {
-    fprintf(f,
-      "For listing the command options, use %s --help.\n",
-      progname);
+    fprintf(f, "For listing the command options, use jq --help.\n");
   } else {
     (void) fprintf(f,
       "Command options:\n"
@@ -95,8 +91,8 @@ static void usage(int code, int keep_it_short) {
       "      --stream-errors       implies --stream and report parse error as\n"
       "                            an array;\n"
       "      --seq                 parse input/output as application/json-seq;\n"
-      "  -f, --from-file file      load filter from the file;\n"
-      "  -L directory              search modules from the directory;\n"
+      "  -f, --from-file           load the filter from a file;\n"
+      "  -L, --library-path dir    search modules from the directory;\n"
       "      --arg name value      set $name to the string value;\n"
       "      --argjson name value  set $name to the JSON value;\n"
       "      --slurpfile name file set $name to an array of JSON values read\n"
@@ -120,30 +116,28 @@ static void usage(int code, int keep_it_short) {
   exit((ret < 0 && code == 0) ? 2 : code);
 }
 
-static void die() {
-  fprintf(stderr, "Use %s --help for help with command-line options,\n", progname);
-  fprintf(stderr, "or see the jq manpage, or online docs  at https://jqlang.github.io/jq\n");
+static void die(void) {
+  fprintf(stderr, "Use jq --help for help with command-line options,\n");
+  fprintf(stderr, "or see the jq manpage, or online docs at https://jqlang.org\n");
   exit(2);
 }
 
 static int isoptish(const char* text) {
-  return text[0] == '-' && (text[1] == '-' || isalpha(text[1]));
+  return text[0] == '-' && (text[1] == '-' || isalpha((unsigned char)text[1]));
 }
 
-static int isoption(const char* text, char shortopt, const char* longopt, size_t *short_opts) {
-  if (text[0] != '-' || text[1] == '-')
-    *short_opts = 0;
-  if (text[0] != '-') return 0;
-
-  // check long option
-  if (text[1] == '-' && !strcmp(text+2, longopt)) return 1;
-  else if (text[1] == '-') return 0;
-
-  // must be short option; check it and...
-  if (!shortopt) return 0;
-  if (strchr(text, shortopt) != NULL) {
-    (*short_opts)++; // ...count it (for option stacking)
-    return 1;
+static int isoption(const char** text, char shortopt, const char* longopt, int is_short) {
+  if (is_short) {
+    if (shortopt && **text == shortopt) {
+      (*text)++;
+      if (!**text) *text = NULL;
+      return 1;
+    }
+  } else {
+    if (!strcmp(*text, longopt)) {
+      *text = NULL;
+      return 1;
+    }
   }
   return 0;
 }
@@ -163,9 +157,8 @@ enum {
   UNBUFFERED_OUTPUT     = 2048,
   EXIT_STATUS           = 4096,
   SEQ                   = 16384,
-  RUN_TESTS             = 32768,
   /* debugging only */
-  DUMP_DISASM           = 65536,
+  DUMP_DISASM           = 32768,
 };
 
 enum {
@@ -178,21 +171,6 @@ enum {
 };
 #define jq_exit_with_status(r)  exit(abs(r))
 #define jq_exit(r)              exit( r > 0 ? r : 0 )
-
-static const char *skip_shebang(const char *p) {
-  if (strncmp(p, "#!", sizeof("#!") - 1) != 0)
-    return p;
-  const char *n = strchr(p, '\n');
-  if (n == NULL || n[1] != '#')
-    return p;
-  n = strchr(n + 1, '\n');
-  if (n == NULL || n[1] == '#' || n[1] == '\0' || n[-1] != '\\' || n[-2] == '\\')
-    return p;
-  n = strchr(n + 1, '\n');
-  if (n == NULL)
-    return p;
-  return n+1;
-}
 
 static int process(jq_state *jq, jv value, int flags, int dumpopts, int options) {
   int ret = JQ_OK_NO_OUTPUT; // No valid results && -e -> exit(4)
@@ -403,6 +381,13 @@ int main(int argc, char* argv[]) {
   (void) setlocale(LC_ALL, "");
 #endif
 
+#ifdef HAVE_LIBONIG
+  // use a lower regex parse depth limit than the default (4096) to protect
+  // from stack-overflows
+  // https://github.com/jqlang/jq/security/advisories/GHSA-f946-j5j2-4w5m
+  onig_set_parse_depth_limit(1024);
+#endif
+
 #ifdef __OpenBSD__
   if (pledge("stdio rpath", NULL) == -1) {
     perror("pledge");
@@ -444,8 +429,6 @@ int main(int argc, char* argv[]) {
   jv ARGS = jv_array(); /* positional arguments */
   jv program_arguments = jv_object(); /* named arguments */
 
-  if (argc) progname = argv[0];
-
   jq = jq_init();
   if (jq == NULL) {
     perror("jq_init");
@@ -465,9 +448,8 @@ int main(int argc, char* argv[]) {
   int further_args_are_json = 0;
   int args_done = 0;
   int jq_flags = 0;
-  size_t short_opts = 0;
   jv lib_search_paths = jv_null();
-  for (int i=1; i<argc; i++, short_opts = 0) {
+  for (int i=1; i<argc; i++) {
     if (args_done || !isoptish(argv[i])) {
       if (!program) {
         program = argv[i];
@@ -476,7 +458,7 @@ int main(int argc, char* argv[]) {
       } else if (further_args_are_json) {
         jv v =  jv_parse(argv[i]);
         if (!jv_is_valid(v)) {
-          fprintf(stderr, "%s: invalid JSON text passed to --jsonargs\n", progname);
+          fprintf(stderr, "jq: invalid JSON text passed to --jsonargs\n");
           die();
         }
         ARGS = jv_array_append(ARGS, v);
@@ -487,223 +469,174 @@ int main(int argc, char* argv[]) {
     } else if (!strcmp(argv[i], "--")) {
       args_done = 1;
     } else {
-      if (argv[i][1] == 'L') {
-        if (jv_get_kind(lib_search_paths) == JV_KIND_NULL)
-          lib_search_paths = jv_array();
-        if (argv[i][2] != 0) { // -Lname (faster check than strlen)
-            lib_search_paths = jv_array_append(lib_search_paths, jq_realpath(jv_string(argv[i]+2)));
-        } else if (i >= argc - 1) {
-          fprintf(stderr, "-L takes a parameter: (e.g. -L /search/path or -L/search/path)\n");
-          die();
-        } else {
-          lib_search_paths = jv_array_append(lib_search_paths, jq_realpath(jv_string(argv[i+1])));
-          i++;
-        }
-        continue;
+      const char* text = argv[i];
+      int is_short;
+      // First '-' already checked by isoptish
+      if (text[1] == '-') {
+        text += 2;
+        is_short = 0;
+      } else {
+        text++;
+        is_short = 1;
       }
+      int raw; // Temporary for --rawfile
 
-      if (isoption(argv[i], 's', "slurp", &short_opts)) {
-        options |= SLURP;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'r', "raw-output", &short_opts)) {
-        options |= RAW_OUTPUT;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 0, "raw-output0", &short_opts)) {
-        options |= RAW_OUTPUT | RAW_NO_LF | RAW_OUTPUT0;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'j', "join-output", &short_opts)) {
-        options |= RAW_OUTPUT | RAW_NO_LF;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'c', "compact-output", &short_opts)) {
-        dumpopts &= ~(JV_PRINT_TAB | JV_PRINT_INDENT_FLAGS(7));
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'C', "color-output", &short_opts)) {
-        options |= COLOR_OUTPUT;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'M', "monochrome-output", &short_opts)) {
-        options |= NO_COLOR_OUTPUT;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'a', "ascii-output", &short_opts)) {
-        options |= ASCII_OUTPUT;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 0, "unbuffered", &short_opts)) {
-        options |= UNBUFFERED_OUTPUT;
-        continue;
-      }
-      if (isoption(argv[i], 'S', "sort-keys", &short_opts)) {
-        options |= SORTED_OUTPUT;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'R', "raw-input", &short_opts)) {
-        options |= RAW_INPUT;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'n', "null-input", &short_opts)) {
-        options |= PROVIDE_NULL;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'f', "from-file", &short_opts)) {
-        options |= FROM_FILE;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'b', "binary", &short_opts)) {
+      // Parse a long option in one iteration or iterate over short options
+      while (text != NULL) {
+        if (isoption(&text, 's', "slurp", is_short)) {
+          options |= SLURP;
+        } else if (isoption(&text, 'r', "raw-output", is_short)) {
+          options |= RAW_OUTPUT;
+        } else if (isoption(&text, 0, "raw-output0", is_short)) {
+          options |= RAW_OUTPUT | RAW_NO_LF | RAW_OUTPUT0;
+        } else if (isoption(&text, 'j', "join-output", is_short)) {
+          options |= RAW_OUTPUT | RAW_NO_LF;
+        } else if (isoption(&text, 'c', "compact-output", is_short)) {
+          dumpopts &= ~(JV_PRINT_TAB | JV_PRINT_INDENT_FLAGS(7));
+        } else if (isoption(&text, 'C', "color-output", is_short)) {
+          options |= COLOR_OUTPUT;
+        } else if (isoption(&text, 'M', "monochrome-output", is_short)) {
+          options |= NO_COLOR_OUTPUT;
+        } else if (isoption(&text, 'a', "ascii-output", is_short)) {
+          options |= ASCII_OUTPUT;
+        } else if (isoption(&text, 0, "unbuffered", is_short)) {
+          options |= UNBUFFERED_OUTPUT;
+        } else if (isoption(&text, 'S', "sort-keys", is_short)) {
+          options |= SORTED_OUTPUT;
+        } else if (isoption(&text, 'R', "raw-input", is_short)) {
+          options |= RAW_INPUT;
+        } else if (isoption(&text, 'n', "null-input", is_short)) {
+          options |= PROVIDE_NULL;
+        } else if (isoption(&text, 'f', "from-file", is_short)) {
+          options |= FROM_FILE;
+        } else if (isoption(&text, 'L', "library-path", is_short)) {
+          if (jv_get_kind(lib_search_paths) == JV_KIND_NULL)
+            lib_search_paths = jv_array();
+          if (text != NULL) { // -Lname
+            lib_search_paths = jv_array_append(lib_search_paths, jq_realpath(jv_string(text)));
+            text = NULL;
+          } else if (i >= argc - 1) {
+            fprintf(stderr, "-L takes a parameter: (e.g. -L /search/path or -L/search/path)\n");
+            die();
+          } else {
+            lib_search_paths = jv_array_append(lib_search_paths, jq_realpath(jv_string(argv[i+1])));
+            i++;
+          }
+        } else if (isoption(&text, 'b', "binary", is_short)) {
 #ifdef WIN32
-        fflush(stdout);
-        fflush(stderr);
-        _setmode(fileno(stdin),  _O_BINARY);
-        _setmode(fileno(stdout), _O_BINARY);
-        _setmode(fileno(stderr), _O_BINARY);
-        if (!short_opts) continue;
+          fflush(stdout);
+          fflush(stderr);
+          _setmode(fileno(stdin),  _O_BINARY);
+          _setmode(fileno(stdout), _O_BINARY);
+          _setmode(fileno(stderr), _O_BINARY);
 #endif
-      }
-      if (isoption(argv[i], 0, "tab", &short_opts)) {
-        dumpopts &= ~JV_PRINT_INDENT_FLAGS(7);
-        dumpopts |= JV_PRINT_TAB | JV_PRINT_PRETTY;
-        continue;
-      }
-      if (isoption(argv[i], 0, "indent", &short_opts)) {
-        if (i >= argc - 1) {
-          fprintf(stderr, "%s: --indent takes one parameter\n", progname);
-          die();
-        }
-        dumpopts &= ~(JV_PRINT_TAB | JV_PRINT_INDENT_FLAGS(7));
-        int indent = atoi(argv[i+1]);
-        if (indent < -1 || indent > 7) {
-          fprintf(stderr, "%s: --indent takes a number between -1 and 7\n", progname);
-          die();
-        }
-        dumpopts |= JV_PRINT_INDENT_FLAGS(indent);
-        i++;
-        continue;
-      }
-      if (isoption(argv[i], 0, "seq", &short_opts)) {
-        options |= SEQ;
-        continue;
-      }
-      if (isoption(argv[i], 0, "stream", &short_opts)) {
-        parser_flags |= JV_PARSE_STREAMING;
-        continue;
-      }
-      if (isoption(argv[i], 0, "stream-errors", &short_opts)) {
-        parser_flags |= JV_PARSE_STREAMING | JV_PARSE_STREAM_ERRORS;
-        continue;
-      }
-      if (isoption(argv[i], 'e', "exit-status", &short_opts)) {
-        options |= EXIT_STATUS;
-        if (!short_opts) continue;
-      }
-      // FIXME: For --arg* we should check that the varname is acceptable
-      if (isoption(argv[i], 0, "args", &short_opts)) {
-        further_args_are_strings = 1;
-        further_args_are_json = 0;
-        continue;
-      }
-      if (isoption(argv[i], 0, "jsonargs", &short_opts)) {
-        further_args_are_strings = 0;
-        further_args_are_json = 1;
-        continue;
-      }
-      if (isoption(argv[i], 0, "arg", &short_opts)) {
-        if (i >= argc - 2) {
-          fprintf(stderr, "%s: --arg takes two parameters (e.g. --arg varname value)\n", progname);
-          die();
-        }
-        if (!jv_object_has(jv_copy(program_arguments), jv_string(argv[i+1])))
-          program_arguments = jv_object_set(program_arguments, jv_string(argv[i+1]), jv_string(argv[i+2]));
-        i += 2; // skip the next two arguments
-        continue;
-      }
-      if (isoption(argv[i], 0, "argjson", &short_opts)) {
-        if (i >= argc - 2) {
-          fprintf(stderr, "%s: --argjson takes two parameters (e.g. --argjson varname text)\n", progname);
-          die();
-        }
-        if (!jv_object_has(jv_copy(program_arguments), jv_string(argv[i+1]))) {
-          jv v = jv_parse(argv[i+2]);
-          if (!jv_is_valid(v)) {
-            fprintf(stderr, "%s: invalid JSON text passed to --argjson\n", progname);
+        } else if (isoption(&text, 0, "tab", is_short)) {
+          dumpopts &= ~JV_PRINT_INDENT_FLAGS(7);
+          dumpopts |= JV_PRINT_TAB | JV_PRINT_PRETTY;
+        } else if (isoption(&text, 0, "indent", is_short)) {
+          if (i >= argc - 1) {
+            fprintf(stderr, "jq: --indent takes one parameter\n");
             die();
           }
-          program_arguments = jv_object_set(program_arguments, jv_string(argv[i+1]), v);
-        }
-        i += 2; // skip the next two arguments
-        continue;
-      }
-      if (isoption(argv[i], 0, "rawfile", &short_opts) ||
-          isoption(argv[i], 0, "slurpfile", &short_opts)) {
-        int raw = isoption(argv[i], 0, "rawfile", &short_opts);
-        const char *which;
-        if (raw)
-          which = "rawfile";
-        else
-          which = "slurpfile";
-        if (i >= argc - 2) {
-          fprintf(stderr, "%s: --%s takes two parameters (e.g. --%s varname filename)\n", progname, which, which);
+          char* end = NULL;
+          errno = 0;
+          long indent = strtol(argv[i+1], &end, 10);
+          if (errno || indent < -1 || indent > 7 ||
+              isspace(*argv[i+1]) || end == argv[i+1] || *end) {
+            fprintf(stderr, "jq: --indent takes a number between -1 and 7\n");
+            die();
+          }
+          dumpopts &= ~(JV_PRINT_TAB | JV_PRINT_INDENT_FLAGS(7));
+          dumpopts |= JV_PRINT_INDENT_FLAGS(indent);
+          i++;
+        } else if (isoption(&text, 0, "seq", is_short)) {
+          options |= SEQ;
+        } else if (isoption(&text, 0, "stream", is_short)) {
+          parser_flags |= JV_PARSE_STREAMING;
+        } else if (isoption(&text, 0, "stream-errors", is_short)) {
+          parser_flags |= JV_PARSE_STREAMING | JV_PARSE_STREAM_ERRORS;
+        } else if (isoption(&text, 'e', "exit-status", is_short)) {
+          options |= EXIT_STATUS;
+        } else if (isoption(&text, 0, "args", is_short)) {
+          further_args_are_strings = 1;
+          further_args_are_json = 0;
+        } else if (isoption(&text, 0, "jsonargs", is_short)) {
+          further_args_are_strings = 0;
+          further_args_are_json = 1;
+        } else if (isoption(&text, 0, "arg", is_short)) {
+          if (i >= argc - 2) {
+            fprintf(stderr, "jq: --arg takes two parameters (e.g. --arg varname value)\n");
+            die();
+          }
+          if (!jv_object_has(jv_copy(program_arguments), jv_string(argv[i+1])))
+            program_arguments = jv_object_set(program_arguments, jv_string(argv[i+1]), jv_string(argv[i+2]));
+          i += 2; // skip the next two arguments
+        } else if (isoption(&text, 0, "argjson", is_short)) {
+          if (i >= argc - 2) {
+            fprintf(stderr, "jq: --argjson takes two parameters (e.g. --argjson varname text)\n");
+            die();
+          }
+          if (!jv_object_has(jv_copy(program_arguments), jv_string(argv[i+1]))) {
+            jv v = jv_parse(argv[i+2]);
+            if (!jv_is_valid(v)) {
+              fprintf(stderr, "jq: invalid JSON text passed to --argjson\n");
+              die();
+            }
+            program_arguments = jv_object_set(program_arguments, jv_string(argv[i+1]), v);
+          }
+          i += 2; // skip the next two arguments
+        } else if ((raw = isoption(&text, 0, "rawfile", is_short)) ||
+            isoption(&text, 0, "slurpfile", is_short)) {
+          const char *which = raw ? "rawfile" : "slurpfile";
+          if (i >= argc - 2) {
+            fprintf(stderr, "jq: --%s takes two parameters (e.g. --%s varname filename)\n", which, which);
+            die();
+          }
+          if (!jv_object_has(jv_copy(program_arguments), jv_string(argv[i+1]))) {
+            jv data = jv_load_file(argv[i+2], raw);
+            if (!jv_is_valid(data)) {
+              data = jv_invalid_get_msg(data);
+              fprintf(stderr, "jq: Bad JSON in --%s %s %s: %s\n", which,
+                      argv[i+1], argv[i+2], jv_string_value(data));
+              jv_free(data);
+              ret = JQ_ERROR_SYSTEM;
+              goto out;
+            }
+            program_arguments = jv_object_set(program_arguments, jv_string(argv[i+1]), data);
+          }
+          i += 2; // skip the next two arguments
+        } else if (isoption(&text,  0,  "debug-dump-disasm", is_short)) {
+          options |= DUMP_DISASM;
+        } else if (isoption(&text,  0,  "debug-trace=all", is_short)) {
+          jq_flags |= JQ_DEBUG_TRACE_ALL;
+        } else if (isoption(&text,  0,  "debug-trace", is_short)) {
+          jq_flags |= JQ_DEBUG_TRACE;
+        } else if (isoption(&text, 'h', "help", is_short)) {
+          usage(0, 0);
+        } else if (isoption(&text, 'V', "version", is_short)) {
+          printf("jq-%s\n", JQ_VERSION);
+          ret = JQ_OK;
+          goto out;
+        } else if (isoption(&text, 0, "build-configuration", is_short)) {
+          printf("%s\n", JQ_CONFIG);
+          ret = JQ_OK;
+          goto out;
+        } else if (isoption(&text, 0, "run-tests", is_short)) {
+          i++;
+          // XXX Pass program_arguments, even a whole jq_state *, through;
+          // could be useful for testing
+          ret = jq_testsuite(lib_search_paths,
+                             (options & DUMP_DISASM) || (jq_flags & JQ_DEBUG_TRACE),
+                             argc - i, argv + i);
+          goto out;
+        } else {
+          if (is_short) {
+            fprintf(stderr, "jq: Unknown option -%c\n", text[0]);
+          } else {
+            fprintf(stderr, "jq: Unknown option --%s\n", text);
+          }
           die();
         }
-        if (!jv_object_has(jv_copy(program_arguments), jv_string(argv[i+1]))) {
-          jv data = jv_load_file(argv[i+2], raw);
-          if (!jv_is_valid(data)) {
-            data = jv_invalid_get_msg(data);
-            fprintf(stderr, "%s: Bad JSON in --%s %s %s: %s\n", progname, which,
-                    argv[i+1], argv[i+2], jv_string_value(data));
-            jv_free(data);
-            ret = JQ_ERROR_SYSTEM;
-            goto out;
-          }
-          program_arguments = jv_object_set(program_arguments, jv_string(argv[i+1]), data);
-        }
-        i += 2; // skip the next two arguments
-        continue;
-      }
-      if (isoption(argv[i],  0,  "debug-dump-disasm", &short_opts)) {
-        options |= DUMP_DISASM;
-        continue;
-      }
-      if (isoption(argv[i],  0,  "debug-trace=all", &short_opts)) {
-        jq_flags |= JQ_DEBUG_TRACE_ALL;
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i],  0,  "debug-trace", &short_opts)) {
-        jq_flags |= JQ_DEBUG_TRACE;
-        continue;
-      }
-      if (isoption(argv[i], 'h', "help", &short_opts)) {
-        usage(0, 0);
-        if (!short_opts) continue;
-      }
-      if (isoption(argv[i], 'V', "version", &short_opts)) {
-        printf("jq-%s\n", JQ_VERSION);
-        ret = JQ_OK;
-        goto out;
-      }
-      if (isoption(argv[i], 0, "build-configuration", &short_opts)) {
-        printf("%s\n", JQ_CONFIG);
-        ret = JQ_OK;
-        goto out;
-      }
-      if (isoption(argv[i], 0, "run-tests", &short_opts)) {
-        i++;
-        // XXX Pass program_arguments, even a whole jq_state *, through;
-        // could be useful for testing
-        ret = jq_testsuite(lib_search_paths,
-                           (options & DUMP_DISASM) || (jq_flags & JQ_DEBUG_TRACE),
-                           argc - i, argv + i);
-        goto out;
-      }
-
-      // check for unknown options... if this argument was a short option
-      if (strlen(argv[i]) != short_opts + 1) {
-        fprintf(stderr, "%s: Unknown option %s\n", progname, argv[i]);
-        die();
       }
     }
   }
@@ -740,7 +673,7 @@ int main(int argc, char* argv[]) {
   if (options & COLOR_OUTPUT) dumpopts |= JV_PRINT_COLOR;
   if (options & NO_COLOR_OUTPUT) dumpopts &= ~JV_PRINT_COLOR;
 
-  if (getenv("JQ_COLORS") != NULL && !jq_set_colors(getenv("JQ_COLORS")))
+  if (!jq_set_colors(getenv("JQ_COLORS")))
       fprintf(stderr, "Failed to set $JQ_COLORS\n");
 
   if (jv_get_kind(lib_search_paths) == JV_KIND_NULL) {
@@ -765,7 +698,7 @@ int main(int argc, char* argv[]) {
     jq_set_attr(jq, jv_string("VERSION_DIR"), jv_string_fmt("%.*s-master", (int)(strchr(JQ_VERSION, '-') - JQ_VERSION), JQ_VERSION));
 
 #ifdef USE_ISATTY
-  if (!program && (!isatty(STDOUT_FILENO) || !isatty(STDIN_FILENO)))
+  if (!program && !(options & FROM_FILE) && (!isatty(STDOUT_FILENO) || !isatty(STDIN_FILENO)))
     program = ".";
 #endif
 
@@ -781,7 +714,16 @@ int main(int argc, char* argv[]) {
     jv data = jv_load_file(program, 1);
     if (!jv_is_valid(data)) {
       data = jv_invalid_get_msg(data);
-      fprintf(stderr, "%s: %s\n", progname, jv_string_value(data));
+      fprintf(stderr, "jq: %s\n", jv_string_value(data));
+      free(program_origin);
+      jv_free(data);
+      ret = JQ_ERROR_SYSTEM;
+      goto out;
+    }
+    int len = jv_string_length_bytes(jv_copy(data));
+    if ((size_t)len != strlen(jv_string_value(data))) {
+      fprintf(stderr, "jq: program file contains NUL bytes\n");
+      free(program_origin);
       jv_free(data);
       ret = JQ_ERROR_SYSTEM;
       goto out;
@@ -794,7 +736,7 @@ int main(int argc, char* argv[]) {
       program_arguments = jv_object_set(program_arguments,
                                         jv_string("JQ_BUILD_CONFIGURATION"),
                                         jv_string(JQ_CONFIG)); /* named arguments */
-    compiled = jq_compile_args(jq, skip_shebang(jv_string_value(data)), jv_copy(program_arguments));
+    compiled = jq_compile_args(jq, jv_string_value(data), jv_copy(program_arguments));
     free(program_origin);
     jv_free(data);
   } else {

@@ -15,7 +15,8 @@ const char* jvp_utf8_backtrack(const char* start, const char* min, int *missing_
   }
   int length = 0;
   int seen = 1;
-  while (start >= min && (length = utf8_coding_length[(unsigned char)*start]) == UTF8_CONTINUATION_BYTE) {
+  while ((length = utf8_coding_length[(unsigned char)*start]) == UTF8_CONTINUATION_BYTE) {
+    if (start == min) break;
     start--;
     seen++;
   }
@@ -41,7 +42,7 @@ const char* jvp_utf8_next(const char* in, const char* end, int* codepoint_ret) {
   } else if (length == 0 || length == UTF8_CONTINUATION_BYTE) {
     /* Bad single byte - either an invalid byte or an out-of-place continuation byte */
     length = 1;
-  } else if (in + length > end) {
+  } else if (length > end - in) {
     /* String ends before UTF8 sequence ends */
     length = end - in;
   } else {
@@ -117,4 +118,22 @@ int jvp_utf8_encode(int codepoint, char* out) {
   }
   assert(out - start == jvp_utf8_encode_length(codepoint));
   return out - start;
+}
+
+// characters with White_Space property in:
+// https://www.unicode.org/Public/UCD/latest/ucd/PropList.txt
+int jvp_codepoint_is_whitespace(int c) {
+  return
+    (c >= 0x0009 && c <= 0x000D) || // <control-0009>..<control-000D>
+    c == 0x0020                  || // SPACE
+    c == 0x0085                  || // <control-0085>
+    c == 0x00A0                  || // NO-BREAK SPACE
+    c == 0x1680                  || // OGHAM SPACE MARK
+    (c >= 0x2000 && c <= 0x200A) || // EN QUAD..HAIR SPACE
+    c == 0x2028                  || // LINE SEPARATOR
+    c == 0x2029                  || // PARAGRAPH SEPARATOR
+    c == 0x202F                  || // NARROW NO-BREAK SPACE
+    c == 0x205F                  || // MEDIUM MATHEMATICAL SPACE
+    c == 0x3000                     // IDEOGRAPHIC SPACE
+    ;
 }
