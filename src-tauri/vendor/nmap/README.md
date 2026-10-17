@@ -125,12 +125,21 @@ Npcap SDK 与 OpenSSL 静态库：
    句柄），存进 `long`（LLP64 下 32 位）会截断，随后 `_findnext` 用无效句柄
    → 访问违例 0xC0000005（`nmap --script-updatedb` 遍历 scripts/ 时崩，
    CI 实测）。官方 Windows 构建只有 Win32 平台，故上游未暴露此问题。
-5. **删除上游 `.gitignore`**：nmap 的 git 仓忽略规则面向他们自己的开发仓
+5. `ncat/ncat_ssl.c`（搜 `VeloTerm patch`）：`#include <openssl/applink.c>`
+   用 `VELOTERM_NO_OPENSSL_APPLINK` 门控跳过（该宏在 CMakeLists 里定义）。
+   **静态链接必需**：applink.c 是给「OpenSSL DLL + 程序 CRT 不同」桥接
+   stdio FILE* 用的，静态构建（vcpkg x64-windows-static）下 libcrypto 无
+   `OPENSSL_USE_APPLINK`/`UP_*` 间接层，applink 表无实际用途；且 vcpkg 的
+   静态安装不提供该文件（它是 OpenSSL 源码树的 `ms/applink.c`，官方 Windows
+   包恰好带上才使上游编得过），不跳过即 C1083（CI 实测）。与
+   vendor/openssl-app/build.rs 的既有立场一致（「静态构建无需 ms\applink.c，
+   编译它反而多余」）。
+6. **删除上游 `.gitignore`**：nmap 的 git 仓忽略规则面向他们自己的开发仓
    （那里 `/libpcap/bpf_filter.c`、`/libz/zconf.h`、`/libpcap/*.3pcap`、
    `/libpcap/grammar.y` 等是生成物/不入库文件），而 dist tarball 实际携带
    这些文件——vendor 入库时被静默吞掉 43 个。删除该文件并从 tarball 恢复
    全部被吞文件入库（保持源码树完整；MSVC 路线下这些文件不参与构建）。
-6. 删减：`zenmap/` 整目录（GUI，不构建不分发）；上游 `README.md` 挪为
+7. 删减：`zenmap/` 整目录（GUI，不构建不分发）；上游 `README.md` 挪为
    `README.upstream.md` 给本文件让位。
 
 `mswin32/winfix.cc` 与 `libpcap/**` 均为**上游原版**（MSVC 路线下 winfix.cc
