@@ -299,7 +299,7 @@ extern "C" {
 #endif
 
 #if defined(IEEE_8087) + defined(IEEE_MC68k) + defined(VAX) + defined(IBM) != 1
-Exactly one of IEEE_8087, IEEE_MC68k, VAX, or IBM should be defined.
+#  error Exactly one of IEEE_8087, IEEE_MC68k, VAX, or IBM should be defined.
 #endif
 
 typedef union { double d; ULong L[2]; } U;
@@ -2368,29 +2368,21 @@ jvp_strtod
 
 	sign = nz0 = nz1 = nz = bc.dplen = bc.uflchk = 0;
 	dval(&rv) = 0.;
-	for(s = s00;;s++) switch(*s) {
+	switch(*(s = s00)) {
 		case '-':
 			sign = 1;
 			/* no break */
 			JQ_FALLTHROUGH;
 		case '+':
 			if (*++s)
-				goto break2;
+				break;
 			/* no break */
 			JQ_FALLTHROUGH;
 		case 0:
 			goto ret0;
-		case '\t':
-		case '\n':
-		case '\v':
-		case '\f':
-		case '\r':
-		case ' ':
-			continue;
 		default:
-			goto break2;
+			break;
 		}
- break2:
 	if (*s == '0') {
 #ifndef NO_HEX_FP /*{*/
 		switch(s[1]) {

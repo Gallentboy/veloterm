@@ -2,7 +2,7 @@
   regparse.c -  Oniguruma (regular expression library)
 **********************************************************************/
 /*-
- * Copyright (c) 2002-2023  K.Kosako
+ * Copyright (c) 2002-2024  K.Kosako
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -548,8 +548,10 @@ typedef struct {
 } st_str_end_key;
 
 static int
-str_end_cmp(st_str_end_key* x, st_str_end_key* y)
+str_end_cmp(st_data_t ax, st_data_t ay)
 {
+  st_str_end_key* x = (st_str_end_key* )ax;
+  st_str_end_key* y = (st_str_end_key* )ay;
   UChar *p, *q;
   int c;
 
@@ -569,8 +571,9 @@ str_end_cmp(st_str_end_key* x, st_str_end_key* y)
 }
 
 static int
-str_end_hash(st_str_end_key* x)
+str_end_hash(st_data_t ax)
 {
+  st_str_end_key* x = (st_str_end_key* )ax;
   UChar *p;
   unsigned val = 0;
 
@@ -635,8 +638,10 @@ typedef struct {
 } st_callout_name_key;
 
 static int
-callout_name_table_cmp(st_callout_name_key* x, st_callout_name_key* y)
+callout_name_table_cmp(st_data_t ax, st_data_t ay)
 {
+  st_callout_name_key* x = (st_callout_name_key* )ax;
+  st_callout_name_key* y = (st_callout_name_key* )ay;
   UChar *p, *q;
   int c;
 
@@ -658,8 +663,9 @@ callout_name_table_cmp(st_callout_name_key* x, st_callout_name_key* y)
 }
 
 static int
-callout_name_table_hash(st_callout_name_key* x)
+callout_name_table_hash(st_data_t ax)
 {
+  st_callout_name_key* x = (st_callout_name_key* )ax;
   UChar *p;
   unsigned int val = 0;
 
@@ -752,10 +758,14 @@ typedef st_data_t HashDataType;   /* 1.6 st.h doesn't define st_data_t type */
 
 #ifdef ONIG_DEBUG
 static int
-i_print_name_entry(UChar* key, NameEntry* e, void* arg)
+i_print_name_entry(st_data_t akey, st_data_t ae, st_data_t arg)
 {
   int i;
-  FILE* fp = (FILE* )arg;
+  FILE* fp;
+  NameEntry* e;
+
+  e = (NameEntry* )ae;
+  fp = (FILE* )arg;
 
   fprintf(fp, "%s: ", e->name);
   if (e->back_num == 0)
@@ -787,8 +797,13 @@ onig_print_names(FILE* fp, regex_t* reg)
 #endif /* ONIG_DEBUG */
 
 static int
-i_free_name_entry(UChar* key, NameEntry* e, void* arg ARG_UNUSED)
+i_free_name_entry(st_data_t akey, st_data_t ae, st_data_t arg ARG_UNUSED)
 {
+  UChar* key;
+  NameEntry* e;
+
+  key = (UChar* )akey;
+  e = (NameEntry* )ae;
   xfree(e->name);
   if (IS_NOT_NULL(e->back_refs)) xfree(e->back_refs);
   xfree(key);
@@ -844,8 +859,14 @@ typedef struct {
 } INamesArg;
 
 static int
-i_names(UChar* key ARG_UNUSED, NameEntry* e, INamesArg* arg)
+i_names(st_data_t key ARG_UNUSED, st_data_t ae, st_data_t aarg)
 {
+  NameEntry* e;
+  INamesArg* arg;
+
+  e = (NameEntry* )ae;
+  arg = (INamesArg* )aarg;
+
   int r = (*(arg->func))(e->name,
                          e->name + e->name_len,
                          e->back_num,
@@ -877,9 +898,14 @@ onig_foreach_name(regex_t* reg,
 }
 
 static int
-i_renumber_name(UChar* key ARG_UNUSED, NameEntry* e, GroupNumMap* map)
+i_renumber_name(st_data_t key ARG_UNUSED, st_data_t ae, st_data_t amap)
 {
   int i;
+  NameEntry* e;
+  GroupNumMap* map;
+
+  e = (NameEntry* )ae;
+  map = (GroupNumMap* )amap;
 
   if (e->back_num > 1) {
     for (i = 0; i < e->back_num; i++) {
@@ -1368,9 +1394,14 @@ static int CalloutNameIDCounter;
 #ifdef USE_ST_LIBRARY
 
 static int
-i_free_callout_name_entry(st_callout_name_key* key, CalloutNameEntry* e,
-                          void* arg ARG_UNUSED)
+i_free_callout_name_entry(st_data_t akey, st_data_t ae, st_data_t arg ARG_UNUSED)
 {
+  st_callout_name_key* key;
+  CalloutNameEntry* e;
+
+  key = (st_callout_name_key* )akey;
+  e = (CalloutNameEntry* )ae;
+
   if (IS_NOT_NULL(e)) {
     xfree(e->name);
   }
@@ -1864,10 +1895,14 @@ typedef intptr_t   CalloutTagVal;
 #define CALLOUT_TAG_LIST_FLAG_TAG_EXIST     (1<<0)
 
 static int
-i_callout_callout_list_set(UChar* key, CalloutTagVal e, void* arg)
+i_callout_callout_list_set(st_data_t key ARG_UNUSED, st_data_t ae, st_data_t arg)
 {
   int num;
-  RegexExt* ext = (RegexExt* )arg;
+  CalloutTagVal e;
+  RegexExt* ext;
+
+  e   = (CalloutTagVal )ae;
+  ext = (RegexExt* )arg;
 
   num = (int )e - 1;
   ext->callout_list[num].flag |= CALLOUT_TAG_LIST_FLAG_TAG_EXIST;
@@ -1920,8 +1955,11 @@ onig_callout_tag_is_exist_at_callout_num(regex_t* reg, int callout_num)
 }
 
 static int
-i_free_callout_tag_entry(UChar* key, CalloutTagVal e, void* arg ARG_UNUSED)
+i_free_callout_tag_entry(st_data_t akey, st_data_t e ARG_UNUSED, st_data_t arg ARG_UNUSED)
 {
+  UChar* key;
+
+  key = (UChar* )akey;
   xfree(key);
   return ST_DELETE;
 }
@@ -3383,6 +3421,34 @@ onig_node_str_set(Node* node, const UChar* s, const UChar* end, int need_free)
 }
 
 static int
+node_str_remove_char(Node* node, UChar c)
+{
+  UChar* p;
+  int n;
+
+  n = 0;
+  p = STR_(node)->s;
+  while (p < STR_(node)->end) {
+    if (*p == c) {
+      UChar *q, *q1;
+      q = q1 = p;
+      q1++;
+      while (q1 < STR_(node)->end) {
+        *q = *q1;
+        q++; q1++;
+      }
+      n++;
+      STR_(node)->end--;
+    }
+    else {
+      p++;
+    }
+  }
+
+  return n;
+}
+
+static int
 node_str_cat_char(Node* node, UChar c)
 {
   UChar s[1];
@@ -4801,6 +4867,7 @@ fetch_name_with_level(OnigCodePoint start_code, UChar** src, UChar* end,
 
   end_code = get_name_end_code_point(start_code);
 
+  *rlevel = 0;
   digit_count = 0;
   name_end = end;
   r = 0;
@@ -5055,7 +5122,7 @@ CC_ESC_WARN(ParseEnv* env, UChar *c)
     UChar buf[WARN_BUFSIZE];
     onig_snprintf_with_pattern(buf, WARN_BUFSIZE, env->enc,
                                env->pattern, env->pattern_end,
-                               (UChar* )"character class has '%s' without escape",
+                               "character class has '%s' without escape",
                                c);
     (*onig_warn)((char* )buf);
   }
@@ -5070,7 +5137,7 @@ CLOSE_BRACKET_WITHOUT_ESC_WARN(ParseEnv* env, UChar* c)
     UChar buf[WARN_BUFSIZE];
     onig_snprintf_with_pattern(buf, WARN_BUFSIZE, (env)->enc,
                          (env)->pattern, (env)->pattern_end,
-                         (UChar* )"regular expression has '%s' without escape", c);
+                         "regular expression has '%s' without escape", c);
     (*onig_warn)((char* )buf);
   }
 }
@@ -5884,6 +5951,7 @@ fetch_token(PToken* tok, UChar** src, UChar* end, ParseEnv* env)
         tok->u.backref.by_name = 0;
 #ifdef USE_BACKREF_WITH_LEVEL
         tok->u.backref.exist_level = 0;
+        tok->u.backref.level = 0;
 #endif
         break;
       }
@@ -7056,11 +7124,16 @@ prs_cc(Node** np, PToken* tok, UChar** src, UChar* end, ParseEnv* env)
           goto val_entry;
         }
         else if (r == TK_CC_AND) {
+        range_end_val_with_warning:
           CC_ESC_WARN(env, (UChar* )"-");
           goto range_end_val;
         }
 
         if (curr_type == CV_CPROP) {
+          if (IS_SYNTAX_BV(env->syntax,
+              ONIG_SYN_ALLOW_CHAR_TYPE_FOLLOWED_BY_MINUS_IN_CC)) {
+            goto range_end_val_with_warning;
+          }
           r = ONIGERR_UNMATCHED_RANGE_SPECIFIER_IN_CHAR_CLASS;
           goto err;
         }
@@ -7091,16 +7164,16 @@ prs_cc(Node** np, PToken* tok, UChar** src, UChar* end, ParseEnv* env)
         if (r < 0) goto err;
 
         fetched = 1;
-        if (r == TK_CC_CLOSE)
+        if (r == TK_CC_CLOSE) {
           goto range_end_val; /* allow [a-b-] */
+        }
         else if (r == TK_CC_AND) {
-          CC_ESC_WARN(env, (UChar* )"-");
-          goto range_end_val;
+          goto range_end_val_with_warning;
         }
 
         if (IS_SYNTAX_BV(env->syntax, ONIG_SYN_ALLOW_DOUBLE_RANGE_OP_IN_CC)) {
-          CC_ESC_WARN(env, (UChar* )"-");
-          goto range_end_val;   /* [0-9-a] is allowed as [0-9\-a] */
+          /* [0-9-a] is allowed as [0-9\-a] */
+          goto range_end_val_with_warning;
         }
         r = ONIGERR_UNMATCHED_RANGE_SPECIFIER_IN_CHAR_CLASS;
         goto err;
@@ -8512,7 +8585,7 @@ assign_quantifier_body(Node* qnode, Node* target, int group, ParseEnv* env)
           if (onig_verb_warn != onig_null_warn) {
             onig_snprintf_with_pattern(buf, WARN_BUFSIZE, env->enc,
                                   env->pattern, env->pattern_end,
-                                  (UChar* )"redundant nested repeat operator");
+                                  "redundant nested repeat operator");
             (*onig_verb_warn)((char* )buf);
           }
           goto warn_exit;
@@ -8522,7 +8595,7 @@ assign_quantifier_body(Node* qnode, Node* target, int group, ParseEnv* env)
           if (onig_verb_warn != onig_null_warn) {
             onig_snprintf_with_pattern(buf, WARN_BUFSIZE, env->enc,
                                        env->pattern, env->pattern_end,
-            (UChar* )"nested repeat operator %s and %s was replaced with '%s'",
+                   "nested repeat operator %s and %s was replaced with '%s'",
             PopularQStr[targetq_num], PopularQStr[nestq_num],
             ReduceQStr[ReduceTypeTable[targetq_num][nestq_num]]);
             (*onig_verb_warn)((char* )buf);
@@ -8818,6 +8891,7 @@ prs_exp(Node** np, PToken* tok, int term, UChar** src, UChar* end,
   tk_byte:
     {
       *np = node_new_str_with_options(tok->backp, *src, env->options);
+    tk_byte2:
       CHECK_NULL_RETURN_MEMERR(*np);
 
       while (1) {
@@ -9034,7 +9108,15 @@ prs_exp(Node** np, PToken* tok, int term, UChar** src, UChar* end,
       }
     }
     else {
-      goto tk_byte;
+      if (tok->type == TK_INTERVAL &&
+          IS_SYNTAX_OP(env->syntax, ONIG_SYN_OP_ESC_BRACE_INTERVAL)) {
+        *np = node_new_str_with_options(tok->backp, *src, env->options);
+        node_str_remove_char(*np, (UChar )'\\');
+        goto tk_byte2;
+      }
+      else {
+        goto tk_byte;
+      }
     }
     break;
 
@@ -9079,8 +9161,14 @@ prs_exp(Node** np, PToken* tok, int term, UChar** src, UChar* end,
     if (r == TK_REPEAT || r == TK_INTERVAL) {
       Node* target;
 
-      if (is_invalid_quantifier_target(*tp))
-        return ONIGERR_TARGET_OF_REPEAT_OPERATOR_INVALID;
+      if (is_invalid_quantifier_target(*tp)) {
+        if (IS_SYNTAX_BV(env->syntax, ONIG_SYN_CONTEXT_INDEP_REPEAT_OPS)) {
+          if (IS_SYNTAX_BV(env->syntax, ONIG_SYN_CONTEXT_INVALID_REPEAT_OPS))
+            return ONIGERR_TARGET_OF_REPEAT_OPERATOR_INVALID;
+        }
+
+        return r;
+      }
 
       INC_PARSE_DEPTH(parse_depth);
 

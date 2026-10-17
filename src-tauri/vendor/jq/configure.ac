@@ -1,11 +1,17 @@
 m4_define([jq_version], m4_esyscmd_s([scripts/version])))
 
-AC_INIT([jq],[jq_version],[https://github.com/jqlang/jq/issues],[jq],[https://jqlang.github.io/jq])
+AC_INIT([jq],[jq_version],[https://github.com/jqlang/jq/issues],[jq],[https://jqlang.org])
 
 dnl Created autoconf implementation thompson@dtosolutions, 26NOV12
 AC_PREREQ([2.65])
 AC_CONFIG_AUX_DIR([config])
 AC_USE_SYSTEM_EXTENSIONS
+
+dnl Prefer GNU make on Solaris where /usr/bin/make is not suitable
+AS_IF([test -z "$MAKE"], [
+  AS_CASE(["`uname -s`"], [SunOS], [MAKE=/usr/gnu/bin/make])
+])
+
 AM_INIT_AUTOMAKE([1.11.2 subdir-objects parallel-tests foreign -Wall])
 AM_SILENT_RULES([yes])
 AM_PROG_AR
@@ -39,11 +45,6 @@ if test "$USE_MAINTAINER_MODE" = yes; then
   AC_CHECK_PROGS(LEX, flex lex)
 fi
 
-dnl Check for valgrind
-AC_CHECK_PROGS(valgrind_cmd, valgrind)
-if test "x$valgrind_cmd" = "x" ; then
-    AC_MSG_WARN([valgrind is required to test jq.])
-fi
 AC_CHECK_FUNCS(memmem)
 
 AC_CHECK_HEADER("sys/cygwin.h", [have_cygwin=1;])
@@ -54,10 +55,9 @@ dnl Running tests with Valgrind is slow. It is faster to iterate on
 dnl code without Valgrind until tests pass, then enable Valgrind and
 dnl fix leaks.
 AC_ARG_ENABLE([valgrind],
-   AS_HELP_STRING([--disable-valgrind],[do not run tests under Valgrind]))
+   AS_HELP_STRING([--enable-valgrind],[enable Valgrind during testing]))
 
-dnl Running tests with Valgrind is slow; address sanitizer (ASAN) is
-dnl faster.
+dnl Address sanitizer (ASan)
 AC_ARG_ENABLE([asan],
    AS_HELP_STRING([--enable-asan],[enable address sanitizer]))
 
@@ -111,10 +111,10 @@ AC_ARG_ENABLE([decnum],
    AS_HELP_STRING([--disable-decnum],[disable decnum support]))
 
 AS_IF([test "x$enable_decnum" != "xno"],[
-   AC_DEFINE([USE_DECNUM],1)
+   AC_DEFINE([USE_DECNUM], 1, [Define to enable decnum support.])
 ])
 
-AM_CONDITIONAL([ENABLE_VALGRIND], [test "x$enable_valgrind" != xno])
+AM_CONDITIONAL([ENABLE_VALGRIND], [test "x$enable_valgrind" = xyes])
 AM_CONDITIONAL([ENABLE_ASAN], [test "x$enable_asan" = xyes])
 AM_CONDITIONAL([ENABLE_UBSAN], [test "x$enable_ubsan" = xyes])
 AM_CONDITIONAL([ENABLE_GCOV], [test "x$enable_gcov" = xyes])
@@ -125,7 +125,7 @@ AM_CONDITIONAL([ENABLE_ALL_STATIC], [test "x$enable_all_static" = xyes])
 dnl Find pthread, if we have it. We do this first because we may set -pthread on CFLAGS
 dnl which can cause various macros to be defined (__REENTRANT on Darwin, for example)
 AX_PTHREAD([
-   AC_DEFINE([HAVE_PTHREAD], [1])
+   AC_DEFINE([HAVE_PTHREAD], [1], [Define to enable POSIX threads support.])
    LIBS="$PTHREAD_LIBS $LIBS"
    CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
    CC="$PTHREAD_CC"
@@ -149,6 +149,8 @@ AC_CHECK_MEMBER([struct tm.tm_gmtoff], [AC_DEFINE([HAVE_TM_TM_GMT_OFF],1,[Define
 AC_CHECK_MEMBER([struct tm.__tm_gmtoff], [AC_DEFINE([HAVE_TM___TM_GMT_OFF],1,[Define to 1 if the system has the __tm_gmt_off field in struct tm])],
                 [], [[#include <time.h>]])
 AC_FIND_FUNC([setlocale], [c], [#include <locale.h>], [0,0])
+AC_FIND_FUNC([arc4random], [c], [#include <stdlib.h>], [])
+AC_FIND_FUNC([getentropy], [c], [#include <unistd.h>], [0, 0])
 
 dnl Figure out if we have the pthread functions we actually need
 AC_FIND_FUNC_NO_LIBS([pthread_key_create], [], [#include <pthread.h>], [NULL, NULL])
@@ -201,7 +203,6 @@ AC_CHECK_MATH_FUNC(lgamma_r)
 AC_CHECK_MATH_FUNC(nearbyint)
 AC_CHECK_MATH_FUNC(nextafter)
 AC_CHECK_MATH_FUNC(nexttoward)
-AC_CHECK_MATH_FUNC(pow10) # Not available with glibc version >= 2.27
 AC_CHECK_MATH_FUNC(pow)
 AC_CHECK_MATH_FUNC(remainder)
 AC_CHECK_MATH_FUNC(rint)
@@ -275,10 +276,10 @@ AS_IF([test "x$with_oniguruma" != xno], [
           AC_MSG_NOTICE([Oniguruma was not found. Will use the packaged oniguruma.])
        ])
    ])
-   AS_IF([test "x$build_oniguruma" = xyes && test -f "${srcdir}/modules/oniguruma/configure.ac" ], [
-       onig_CFLAGS="-I${srcdir}/modules/oniguruma/src"
-       onig_LDFLAGS="-L${srcdir}/modules/oniguruma/src -Wl,-rpath,${libdir}"
-       AC_CONFIG_SUBDIRS([modules/oniguruma])
+   AS_IF([test "x$build_oniguruma" = xyes && test -f "${srcdir}/vendor/oniguruma/configure.ac" ], [
+       onig_CFLAGS="-I${srcdir}/vendor/oniguruma/src"
+       onig_LDFLAGS="-L${srcdir}/vendor/oniguruma/src -Wl,-rpath,${libdir}"
+       AC_CONFIG_SUBDIRS([vendor/oniguruma])
        AC_DEFINE([HAVE_LIBONIG],1,[Define to 1 if the system includes libonig])
    ])
    CFLAGS="$save_CFLAGS"
@@ -289,7 +290,14 @@ AC_SUBST(onig_LDFLAGS)
 
 AM_CONDITIONAL([BUILD_ONIGURUMA], [test "x$build_oniguruma" = xyes])
 AM_CONDITIONAL([WITH_ONIGURUMA], [test "x$with_oniguruma" != xno])
-AC_SUBST([BUNDLER], ["$bundle_cmd"])
+
+dnl On Solaris, strptime clears the tm structure before parsing. This breaks the
+dnl sentinel logic in builtin.c, which then incorrectly assumes that strptime set
+dnl tm_wday and tm_yday. Defining _STRPTIME_DONTZERO disables that behavior.
+AS_IF([test "x`uname -s 2>/dev/null`" = "xSunOS"], [
+  CPPFLAGS="$CPPFLAGS -D_STRPTIME_DONTZERO"
+])
+
 
 AC_CONFIG_MACRO_DIRS([config/m4 m4])
 AC_CONFIG_FILES([Makefile libjq.pc])

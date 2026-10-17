@@ -1,6 +1,6 @@
 //! 仅 Windows：FFI 调现场编译的 jq CLI main。
 //!
-//! build.rs（仅 `target_os = windows` 生效）用 cc 把 vendor/jq（1.7.1）本体
+//! build.rs（仅 `target_os = windows` 生效）用 cc 把 vendor/jq（1.8.2）本体
 //! + decNumber + 捆绑 oniguruma 编进本 crate。jq 在 WIN32 下的 main.c 只有
 //! `wmain`（宽字符入口）与 `umain`（真实逻辑，UTF-8 char**，wmain 只是它的
 //! WideCharToMultiByte 前置转换）；本 crate 越过 wmain 直调 umain——

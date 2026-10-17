@@ -8,46 +8,52 @@
 #include "jv.h"
 #include "jq.h"
 
-#ifdef WIN32
-/* veloterm 修补：上游 WIN32 的 fopen 全局覆盖已改名 veloterm_jq_fopen
- * （见 util.c 的修补注释——同名覆盖与静态 CRT 撞 LNK2005），本文件原依赖
- * 那个全局覆盖获得 UTF-8 路径支持，此处显式声明并随改调用点。 */
-FILE *veloterm_jq_fopen(const char *fname, const char *mode);
-#endif
-
-static void jv_test();
+static void jv_test(void);
 static void run_jq_tests(jv, int, FILE *, int, int);
+static void run_jq_start_state_tests(void);
+static void run_jq_compile_args_tests(void);
+static void run_jq_recompile_tests(void);
+static void run_jq_exhaust_and_reuse_tests(void);
 #ifdef HAVE_PTHREAD
-static void run_jq_pthread_tests();
+static void run_jq_pthread_tests(void);
 #endif
 
 int jq_testsuite(jv libdirs, int verbose, int argc, char* argv[]) {
-  FILE *testdata = stdin;
   int skip = -1;
   int take = -1;
+  int nfiles = 0;
   jv_test();
-  if (argc > 0) {
-    for(int i = 0; i < argc; i++) {
-      if (!strcmp(argv[i], "--skip")) {
-        skip = atoi(argv[i+1]);
-        i++;
-      } else if (!strcmp(argv[i], "--take")) {
-        take = atoi(argv[i+1]);
-        i++;
-      } else {
-#ifdef WIN32
-        testdata = veloterm_jq_fopen(argv[i], "r");
-#else
-        testdata = fopen(argv[i], "r");
-#endif
-        if (!testdata) {
-          perror("fopen");
-          exit(1);
-        }
+  for (int i = 0; i < argc; i++) {
+    if (!strcmp(argv[i], "--skip")) {
+      if (++i >= argc) {
+        fprintf(stderr, "--skip requires an argument\n");
+        exit(1);
       }
+      skip = atoi(argv[i]);
+    } else if (!strcmp(argv[i], "--take")) {
+      if (++i >= argc) {
+        fprintf(stderr, "--take requires an argument\n");
+        exit(1);
+      }
+      take = atoi(argv[i]);
+    } else {
+      FILE *testdata = fopen(argv[i], "r");
+      if (!testdata) {
+        perror("fopen");
+        exit(1);
+      }
+      run_jq_tests(jv_copy(libdirs), verbose, testdata, skip, take);
+      fclose(testdata);
+      nfiles++;
     }
   }
-  run_jq_tests(libdirs, verbose, testdata, skip, take);
+  if (nfiles == 0)
+    run_jq_tests(jv_copy(libdirs), verbose, stdin, skip, take);
+  jv_free(libdirs);
+  run_jq_start_state_tests();
+  run_jq_compile_args_tests();
+  run_jq_recompile_tests();
+  run_jq_exhaust_and_reuse_tests();
 #ifdef HAVE_PTHREAD
   run_jq_pthread_tests();
 #endif
@@ -79,13 +85,11 @@ static void test_err_cb(void *data, jv e) {
     e = jv_dump_string(e, JV_PRINT_INVALID);
   if (!strncmp(jv_string_value(e), "jq: error", sizeof("jq: error") - 1))
     snprintf(err_data->buf, sizeof(err_data->buf), "%s", jv_string_value(e));
-  if (strchr(err_data->buf, '\n'))
-    *(strchr(err_data->buf, '\n')) = '\0';
   jv_free(e);
 }
 
 static void run_jq_tests(jv lib_dirs, int verbose, FILE *testdata, int skip, int take) {
-  char prog[4096];
+  char prog[4096] = {0};
   char buf[4096];
   struct err_data err_msg;
   int tests = 0, passed = 0, invalid = 0;
@@ -117,18 +121,7 @@ static void run_jq_tests(jv lib_dirs, int verbose, FILE *testdata, int skip, int
 
     if (skip > 0) {
       skip--;
-
-      // skip past test data
-      while (fgets(buf, sizeof(buf), testdata)) {
-        lineno++;
-        if (buf[0] == '\n' || (buf[0] == '\r' && buf[1] == '\n'))
-          break;
-      }
-
-      must_fail = 0;
-      check_msg = 0;
-
-      continue;
+      goto next;
     } else if (skip == 0) {
       printf("Skipped %d tests\n", tests_to_skip);
       skip = -1;
@@ -148,37 +141,40 @@ static void run_jq_tests(jv lib_dirs, int verbose, FILE *testdata, int skip, int
 
     if (must_fail) {
       jq_set_error_cb(jq, NULL, NULL);
-      if (!fgets(buf, sizeof(buf), testdata)) { invalid++; break; }
-      lineno++;
-      if (buf[strlen(buf)-1] == '\n') buf[strlen(buf)-1] = 0;
       if (compiled) {
-        printf("*** Test program compiled that should not have at line %u: %s\n", lineno, prog);
-        must_fail = 0;
-        check_msg = 0;
-        invalid++;
-        continue;
+        printf("*** Test program compiled successfully, but should fail at line number %u: %s\n", lineno, prog);
+        goto fail;
       }
-      if (check_msg && strcmp(buf, err_msg.buf) != 0) {
-        printf("*** Erroneous test program failed with wrong message (%s) at line %u: %s\n", err_msg.buf, lineno, prog);
+      char *err_buf = err_msg.buf;
+      while (fgets(buf, sizeof(buf), testdata)) {
+        lineno++;
+        if (skipline(buf)) break;
+        if (check_msg) {
+          if (buf[strlen(buf)-1] == '\n') buf[strlen(buf)-1] = '\0';
+          if (strncmp(buf, err_buf, strlen(buf)) != 0) {
+            if (strchr(err_buf, '\n')) *strchr(err_buf, '\n') = '\0';
+            printf("*** Erroneous program failed with '%s', but expected '%s' at line number %u: %s\n", err_buf, buf, lineno, prog);
+            goto fail;
+          }
+          err_buf += strlen(buf);
+          if (*err_buf == '\n') err_buf++;
+        }
+      }
+      if (check_msg && *err_buf != '\0') {
+        if (strchr(err_buf, '\n')) *strchr(err_buf, '\n') = '\0';
+        printf("*** Erroneous program failed with extra message '%s' at line %u: %s\n", err_buf, lineno, prog);
         invalid++;
-      } else {
-        passed++;
+        pass = 0;
       }
       must_fail = 0;
       check_msg = 0;
+      passed += pass;
       continue;
     }
 
     if (!compiled) {
       printf("*** Test program failed to compile at line %u: %s\n", lineno, prog);
-      invalid++;
-      // skip past test data
-      while (fgets(buf, sizeof(buf), testdata)) {
-        lineno++;
-        if (buf[0] == '\n' || (buf[0] == '\r' && buf[1] == '\n'))
-          break;
-      }
-      continue;
+      goto fail;
     }
     if (verbose) {
       printf("Disassembly:\n");
@@ -190,8 +186,7 @@ static void run_jq_tests(jv lib_dirs, int verbose, FILE *testdata, int skip, int
     jv input = jv_parse(buf);
     if (!jv_is_valid(input)) {
       printf("*** Input is invalid on line %u: %s\n", lineno, buf);
-      invalid++;
-      continue;
+      goto fail;
     }
     jq_start(jq, input, verbose ? JQ_DEBUG_TRACE : 0);
 
@@ -201,8 +196,7 @@ static void run_jq_tests(jv lib_dirs, int verbose, FILE *testdata, int skip, int
       jv expected = jv_parse(buf);
       if (!jv_is_valid(expected)) {
         printf("*** Expected result is invalid on line %u: %s\n", lineno, buf);
-        invalid++;
-        continue;
+        goto fail;
       }
       jv actual = jq_next(jq);
       if (!jv_is_valid(actual)) {
@@ -219,11 +213,18 @@ static void run_jq_tests(jv lib_dirs, int verbose, FILE *testdata, int skip, int
         printf(" for test at line number %u: %s\n", lineno, prog);
         pass = 0;
       }
-      jv as_string = jv_dump_string(jv_copy(expected), rand() & ~(JV_PRINT_COLOR|JV_PRINT_REFCOUNT));
+#ifdef USE_DECNUM
+      jv as_string = jv_dump_string(jv_copy(expected), 0);
       jv reparsed = jv_parse_sized(jv_string_value(as_string), jv_string_length_bytes(jv_copy(as_string)));
-      assert(jv_equal(jv_copy(expected), jv_copy(reparsed)));
+      if (!jv_equal(jv_copy(expected), jv_copy(reparsed))) {
+        printf("*** Expected result should be equal after reparsing, but got ");
+        jv_dump(jv_copy(reparsed), 0);
+        printf(" for test at line %u: %s\n", lineno, buf);
+        pass = 0;
+      }
       jv_free(as_string);
       jv_free(reparsed);
+#endif
       jv_free(expected);
       jv_free(actual);
     }
@@ -233,12 +234,25 @@ static void run_jq_tests(jv lib_dirs, int verbose, FILE *testdata, int skip, int
         printf("*** Superfluous result: ");
         jv_dump(extra, 0);
         printf(" for test at line number %u, %s\n", lineno, prog);
+        invalid++;
         pass = 0;
       } else {
         jv_free(extra);
       }
     }
-    passed+=pass;
+    passed += pass;
+    continue;
+
+fail:
+    invalid++;
+
+next:
+    while (fgets(buf, sizeof(buf), testdata)) {
+      lineno++;
+      if (skipline(buf)) break;
+    }
+    must_fail = 0;
+    check_msg = 0;
   }
   jq_teardown(&jq);
 
@@ -257,6 +271,247 @@ static void run_jq_tests(jv lib_dirs, int verbose, FILE *testdata, int skip, int
   }
 
   if (passed != tests) exit(1);
+}
+
+
+static int test_start_state(jq_state *jq, char *prog) {
+  int pass = 1;
+  jv message = jq_get_error_message(jq);
+  if (jv_is_valid(message)) {
+    printf("*** Expected error_message to be invalid after jq_start: %s\n", prog);
+    pass = 0;
+  }
+  jv_free(message);
+
+  jv exit_code = jq_get_exit_code(jq);
+  if (jv_is_valid(exit_code)) {
+    printf("*** Expected exit_code to be invalid after jq_start: %s\n", prog);
+    pass = 0;
+  }
+  jv_free(exit_code);
+
+  if (jq_halted(jq)) {
+    printf("*** Expected jq to not be halted after jq_start: %s\n", prog);
+    pass = 0;
+  }
+
+  return pass;
+}
+
+// Test jq_state is reset after subsequent calls to jq_start.
+static void test_jq_start_resets_state(char *prog, const char *input) {
+  printf("Test jq_state: %s\n", prog);
+  jq_state *jq = jq_init();
+  assert(jq);
+
+  int compiled = jq_compile(jq, prog);
+  assert(compiled);
+
+  // First call to jq_start. Run until completion.
+  jv parsed_input = jv_parse(input);
+  assert(jv_is_valid(parsed_input));
+  jq_start(jq, parsed_input, 0);
+  assert(test_start_state(jq, prog));
+  while (1) {
+    jv result = jq_next(jq);
+    int valid = jv_is_valid(result);
+    jv_free(result);
+    if (!valid) { break; }
+  }
+
+  // Second call to jq_start.
+  jv parsed_input2 = jv_parse(input);
+  assert(jv_is_valid(parsed_input2));
+  jq_start(jq, parsed_input2, 0);
+  assert(test_start_state(jq, prog));
+
+  jq_teardown(&jq);
+}
+
+static void run_jq_start_state_tests(void) {
+  test_jq_start_resets_state(".[]", "[1,2,3]");
+  test_jq_start_resets_state(".[] | if .%2 == 0 then halt_error else . end", "[1,2,3]");
+}
+
+static void compile_args_and_check(jq_state *jq, const char *prog,
+                                   jv args, jv input, jv expected) {
+  printf("  subtest: %s\n", prog);
+  int compiled = jq_compile_args(jq, prog, args);
+  assert(compiled);
+
+  jq_start(jq, input, 0);
+  jv result = jq_next(jq);
+  assert(jv_is_valid(result));
+  assert(jv_equal(result, expected));
+
+  jv extra = jq_next(jq);
+  assert(!jv_is_valid(extra));
+  jv_free(extra);
+}
+
+// Test that jq_compile_args() with array arguments handles jv
+// refcounting correctly in args2obj(). The array path converts
+// [{"name":"k","value":"v"}, ...] into {"k":"v", ...}.
+static void run_jq_compile_args_tests(void) {
+  printf("Test jq_compile_args with array args\n");
+  jq_state *jq = jq_init();
+  assert(jq);
+
+  // Empty array: loop body never runs, kk/vk allocated and freed
+  compile_args_and_check(jq, "42",
+    jv_array(), jv_null(), jv_number(42));
+
+  // Single element: one iteration, no reuse of kk/vk
+  compile_args_and_check(jq, "$val",
+    JV_ARRAY(JV_OBJECT(jv_string("name"), jv_string("val"),
+                       jv_string("value"), jv_number(42))),
+    jv_null(), jv_number(42));
+
+  // Two elements: minimum to trigger former UAF on iteration 2
+  compile_args_and_check(jq, "$x + $y",
+    JV_ARRAY(JV_OBJECT(jv_string("name"), jv_string("x"),
+                       jv_string("value"), jv_number(1)),
+             JV_OBJECT(jv_string("name"), jv_string("y"),
+                       jv_string("value"), jv_number(2))),
+    jv_null(), jv_number(3));
+
+  // Three elements: exercises further loop iterations
+  compile_args_and_check(jq, "$a + $b + $c",
+    JV_ARRAY(JV_OBJECT(jv_string("name"), jv_string("a"),
+                       jv_string("value"), jv_string("hello")),
+             JV_OBJECT(jv_string("name"), jv_string("b"),
+                       jv_string("value"), jv_string(" ")),
+             JV_OBJECT(jv_string("name"), jv_string("c"),
+                       jv_string("value"), jv_string("world"))),
+    jv_null(), jv_string("hello world"));
+
+  // Object args: bypasses args2obj loop via early return
+  compile_args_and_check(jq, "$x * $y",
+    JV_OBJECT(jv_string("x"), jv_number(10),
+              jv_string("y"), jv_number(20)),
+    jv_null(), jv_number(200));
+
+  jq_teardown(&jq);
+}
+
+
+// Test that recompiling on the same jq_state doesn't leak or
+// double-free the previous bytecode, and that switching between
+// jq_compile and jq_compile_args works correctly.
+static void run_jq_recompile_tests(void) {
+  printf("Test jq recompile on same state\n");
+  jq_state *jq = jq_init();
+  assert(jq);
+
+  // First program via jq_compile
+  int compiled = jq_compile(jq, ". + 1");
+  assert(compiled);
+  jq_start(jq, jv_number(1), 0);
+  jv r = jq_next(jq);
+  assert(jv_is_valid(r));
+  assert(jv_number_value(r) == 2);
+  jv_free(r);
+  r = jq_next(jq);
+  assert(!jv_is_valid(r));
+  jv_free(r);
+
+  // Recompile with a different program on the same state
+  compiled = jq_compile(jq, ". * 2");
+  assert(compiled);
+  jq_start(jq, jv_number(5), 0);
+  r = jq_next(jq);
+  assert(jv_is_valid(r));
+  assert(jv_number_value(r) == 10);
+  jv_free(r);
+  r = jq_next(jq);
+  assert(!jv_is_valid(r));
+  jv_free(r);
+
+  // Recompile via jq_compile_args with array args (args2obj path)
+  compiled = jq_compile_args(jq, "$n + $m",
+    JV_ARRAY(JV_OBJECT(jv_string("name"), jv_string("n"),
+                       jv_string("value"), jv_number(100)),
+             JV_OBJECT(jv_string("name"), jv_string("m"),
+                       jv_string("value"), jv_number(7))));
+  assert(compiled);
+  jq_start(jq, jv_null(), 0);
+  r = jq_next(jq);
+  assert(jv_is_valid(r));
+  assert(jv_number_value(r) == 107);
+  jv_free(r);
+  r = jq_next(jq);
+  assert(!jv_is_valid(r));
+  jv_free(r);
+
+  // Back to jq_compile after jq_compile_args
+  compiled = jq_compile(jq, ". - 1");
+  assert(compiled);
+  jq_start(jq, jv_number(10), 0);
+  r = jq_next(jq);
+  assert(jv_is_valid(r));
+  assert(jv_number_value(r) == 9);
+  jv_free(r);
+  r = jq_next(jq);
+  assert(!jv_is_valid(r));
+  jv_free(r);
+
+  jq_teardown(&jq);
+}
+
+
+// Test that exhausting jq_next doesn't corrupt state, and that
+// the same jq_state can be reused with jq_start after exhaustion.
+static void run_jq_exhaust_and_reuse_tests(void) {
+  printf("Test jq exhaust and reuse\n");
+  jq_state *jq = jq_init();
+  assert(jq);
+
+  int compiled = jq_compile(jq, ".[]");
+  assert(compiled);
+
+  // First run: drain all results
+  jq_start(jq, jv_parse("[1,2,3]"), 0);
+  for (int i = 1; i <= 3; i++) {
+    jv r = jq_next(jq);
+    assert(jv_is_valid(r));
+    assert(jv_number_value(r) == i);
+    jv_free(r);
+  }
+  jv r = jq_next(jq);
+  assert(!jv_is_valid(r));
+  jv_free(r);
+
+  // Reuse with new input on the same compiled program
+  jq_start(jq, jv_parse("[10,20]"), 0);
+  r = jq_next(jq);
+  assert(jv_is_valid(r));
+  assert(jv_number_value(r) == 10);
+  jv_free(r);
+  r = jq_next(jq);
+  assert(jv_is_valid(r));
+  assert(jv_number_value(r) == 20);
+  jv_free(r);
+  r = jq_next(jq);
+  assert(!jv_is_valid(r));
+  jv_free(r);
+
+  // Reuse again with empty array (zero results)
+  jq_start(jq, jv_parse("[]"), 0);
+  r = jq_next(jq);
+  assert(!jv_is_valid(r));
+  jv_free(r);
+
+  // Reuse once more after zero-result run
+  jq_start(jq, jv_parse("[99]"), 0);
+  r = jq_next(jq);
+  assert(jv_is_valid(r));
+  assert(jv_number_value(r) == 99);
+  jv_free(r);
+  r = jq_next(jq);
+  assert(!jv_is_valid(r));
+  jv_free(r);
+
+  jq_teardown(&jq);
 }
 
 
@@ -312,7 +567,7 @@ static void *test_pthread_run(void *ptr) {
     return NULL;
 }
 
-static void run_jq_pthread_tests() {
+static void run_jq_pthread_tests(void) {
     pthread_t threads[NUMBER_OF_THREADS];
     struct test_pthread_data data[NUMBER_OF_THREADS];
     int createerror;
@@ -329,7 +584,11 @@ static void run_jq_pthread_tests() {
 
     // wait for all threads
     for(a = 0; a < NUMBER_OF_THREADS; ++a) {
+#ifdef __MVS__
+        if (threads[a].__ != 0) {
+#else
         if (threads[a] != 0) {
+#endif
             pthread_join(threads[a], NULL);
         }
     }
@@ -342,7 +601,7 @@ static void run_jq_pthread_tests() {
 #endif // HAVE_PTHREAD
 
 
-static void jv_test() {
+static void jv_test(void) {
   /// JSON parser regression tests
   {
     jv v = jv_parse("{\"a':\"12\"}");

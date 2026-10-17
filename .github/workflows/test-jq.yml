@@ -122,10 +122,13 @@ jobs:
             -Dll src-tauri/binaries/vim64.dll `
             -Cmd vim -OwnArgv
 
-      # jq 分层耗时诊断 + 退出路径回归门禁：把 in-main 探针（VELOTERM_JQ_TIMING）
-      # 与进程寿命的缺口归因到 pre_main / 退出路径 / 内核回收三段，并在退出码出现
+      # jq 分层耗时诊断 + 退出路径/功能回归门禁：把 in-main 探针（VELOTERM_JQ_TIMING）
+      # 与进程寿命的缺口归因到 pre_main / 退出路径 / 内核回收三段；退出码出现
       # 崩溃码（如 0xC0000374 STATUS_HEAP_CORRUPTION）或正常退出路径明显慢于
-      # TerminateProcess 时硬失败。探针扩展见 vendor/jq/src/main.c（pre_main/uptime
+      # TerminateProcess 时硬失败；另做功能门禁（jq -n 1+1 / --version / trim /
+      # limit / match 必须算对——退出码与耗时门禁拦不住「绿了但坏了」，1.8.2
+      # 升级实踩：builtin.inc token 缺前导 0 被 C 按十进制解析致内建库全损）。
+      # 探针扩展见 vendor/jq/src/main.c（pre_main/uptime
       # + 内存/CPU 快照 + 退出路径二分 VELOTERM_JQ_EXIT_MODE / VELOTERM_JQ_EXIT_AFTER）。
       # 结果同时进 job summary。
       - name: Diagnose jq timing (layering probe + exit-path gate)
