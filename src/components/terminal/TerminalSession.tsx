@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { useDropTarget } from '@/hooks/useDropTarget';
 import { TerminalSearchBar } from '@/components/terminal/TerminalSearchBar';
+import { TerminalResourceBar } from '@/components/terminal/TerminalResourceBar';
 import { loadHostStore, resolveJumpHostChain } from '@/hosts/storage';
 import { formatShellShortLabel } from '@/terminal/terminalPanelState';
 import {
@@ -88,6 +89,9 @@ export interface TerminalSessionProps {
   onDisconnected?: (sessionId: number, reason: string) => void;
   /** 终端聚焦时 ⌘R/Ctrl+R 重连请求 */
   onReconnectRequest?: (sessionId: number) => void;
+  /** 底部远程资源监控条是否展示（仅标签页模式的当前可见 SSH 会话为 true；
+   * 九宫格平铺自动隐藏，由 TerminalGridContainer 按布局模式计算） */
+  resourceBarVisible?: boolean;
 }
 
 /**
@@ -117,6 +121,7 @@ export function TerminalSession({
   isDisconnected = false,
   onDisconnected,
   onReconnectRequest,
+  resourceBarVisible = false,
 }: TerminalSessionProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1091,12 +1096,18 @@ export function TerminalSession({
     <div
       ref={rootRef}
       onContextMenu={handleContextMenu}
-      className="relative h-full min-h-0 w-full overflow-hidden"
+      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden"
     >
       <div
         ref={containerRef}
-        className="terminal-xterm-shell h-full min-h-0 w-full overflow-hidden"
+        className="terminal-xterm-shell min-h-0 w-full flex-1 overflow-hidden"
       />
+
+      {/* 远程主机资源监控条（终端内容最底一行）：仅 SSH 会话 + 标签页模式展示；
+          挂载/卸载改变 xterm 容器高度，ResizeObserver 会自动 refit */}
+      {resourceBarVisible && hostId != null ? (
+        <TerminalResourceBar sessionId={sessionId} disconnected={isDisconnected} />
+      ) : null}
 
       {contextMenu ? (
         <div

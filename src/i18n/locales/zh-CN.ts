@@ -146,6 +146,17 @@ export default {
       clear: '清屏',
       resetZoom: '重置缩放',
     },
+    resourceMonitor: {
+      latency: '延迟',
+      latencyHint: '采集命令的 SSH 会话往返耗时',
+      cpu: 'CPU',
+      memory: '内存',
+      swap: '交换',
+      network: '网络',
+      disk: '磁盘',
+      linuxOnly: '资源监控仅支持 Linux 主机',
+      loading: '采集中…',
+    },
     search: {
       placeholder: '查找',
       caseSensitive: '区分大小写',

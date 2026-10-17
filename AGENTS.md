@@ -22,7 +22,7 @@
 | 前端类型 | `pnpm run typecheck` | 零错误 |
 | 前端构建 | `pnpm run build` | 成功 |
 | Rust 编译 | `cargo check --workspace --all-targets`（在 `src-tauri/`） | 零错误 |
-| Rust 测试 | `cargo test --workspace` | 全绿（app 67 + coreutils 50 + tools-catalog 1 为当前基线） |
+| Rust 测试 | `cargo test --workspace` | 全绿（app 72 + coreutils 54 + tools-catalog 1 为当前基线） |
 | Lint | `cargo clippy --workspace --all-targets` | 自有代码零警告 |
 
 冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑（jq-app / bc-app 同此约定）。
@@ -72,6 +72,7 @@
 - Monaco 经 `import * as monaco from 'monaco-editor'` 全量入口（81 语言高亮全离线）；worker 用 `new Worker(new URL(...), { type: 'module' })` 让 Rspack 产独立 chunk，`new URL` 必须内联在 `new Worker` 里。
 - 终端内提示（断开/重连快捷键）直接写 xterm 缓冲，不叠 DOM 覆盖层；就绪钩子命令等首屏输出静止 500ms 再注入（早发会被内核回显 + readline 重绘各显示一次，看到两遍）。
 - **拖放一律走统一管线**（`services/dragDropService.ts` + `hooks/useDropTarget.ts`）：两平台 `dragDropEnabled: true`（原生接管，携带文件绝对路径），wry 会整体接管 WebView 的 DnD——页内 HTML5 dragover/drop **不再触发**，页内拖拽（SFTP 面板互拷、Tab 分栏）同样必须走该管线（dragstart 时 `beginInternalDrag` 存载荷，Drop 按坐标命中注册目标），**严禁新增依赖 HTML5 dataTransfer 读取的 drop 处理**。终端拖入文件 → 路径按目标 shell 格式化（`lib/shellPath.ts`：Windows 按需双引号 / POSIX 反斜杠转义）后 `term.paste` 写入。终端复制/粘贴快捷键：macOS ⌘C/⌘V；Windows Ctrl+Shift+C/V 且裸 Ctrl+V 亦粘贴、Ctrl+C 有选区时复制（conhost/Windows Terminal 语义），右键菜单项带键位指示。
+- **SSH 旁路采集一律走独立 exec 通道**（`RCCommand::ExecCapture` → `TerminalBackendSession::exec_capture`，实现见 `terminal/resource_monitor.rs`）：资源监控等只读探测不得占用交互 shell 通道、不得污染终端输出流；CPU% 与网络速率用**客户端差分**（每会话基线存 Rust 侧，轮询间隔即采样窗，dispose 时 `forget_baseline` 清理、超 60s 基线自动作废）。前端资源条（`TerminalResourceBar`）仅标签页模式当前可见 SSH 会话渲染（九宫格自动隐藏）、2s setTimeout 链轮询、容器查询按宽度逐级展开指标（延迟/CPU/内存/磁盘 → 网络 → SWAP → GB 明细 → 发行版）。
 
 ### 存储
 
