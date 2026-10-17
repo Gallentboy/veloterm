@@ -325,11 +325,13 @@ export function TerminalScreen({
                   aria-pressed={resourceMonitorOn}
                   aria-label={t('terminal.resourceMonitor.toggleAria')}
                   className={cn(
-                    // 无边框 28px 圆角图标按钮（与左侧命令面板按钮同族语言）
+                    // 无边框 28px 圆角图标按钮（与左侧命令面板按钮同族语言）；
+                    // 关闭态与命令面板按钮同色 text-foreground（此前用了
+                    // foreground-subtle，与左侧 ⌘ 图标深浅不一致）
                     'size-7 items-center justify-center rounded-lg transition-colors',
                     resourceMonitorOn
                       ? 'bg-selected text-foreground hover:bg-selected'
-                      : 'text-foreground-subtle hover:text-foreground hover:bg-hover'
+                      : 'text-foreground hover:bg-hover'
                   )}
                 >
                   <Gauge
