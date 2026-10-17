@@ -17,7 +17,8 @@ function DropdownItem({
     <button
       type="button"
       onClick={onSelect}
-      className="flex w-full cursor-default items-center gap-2 rounded-none px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-menu-hover"
+      // 条目 hover 圆角与 ZCode 下拉菜单一致（rounded-md）；容器为 rounded-lg
+      className="flex w-full cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-menu-hover"
     >
       {icon}
       <span className="truncate">{children}</span>
@@ -75,7 +76,7 @@ export function WorkspaceHelpMenuButton({ onShowAbout }: WorkspaceHelpMenuButton
       </ControlHintTooltip>
 
       {open ? (
-        <div className="absolute right-0 top-full z-50 mt-1 min-w-40 rounded-md border border-border bg-menu py-1 shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-40 rounded-lg border border-border bg-menu p-1 shadow-lg">
           <DropdownItem
             icon={<Info className="size-4 shrink-0" />}
             onSelect={() => {
