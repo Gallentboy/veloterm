@@ -1,9 +1,8 @@
 import { PanelRightClose, PanelRightOpen, Sparkles } from 'lucide-react';
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { invoke } from '@tauri-apps/api/core';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
-import { AboutDialog } from '@/components/AboutDialog';
 import { WorkspaceHelpMenuButton } from '@/components/WorkspaceHelpMenuButton';
 import type { Page } from '@/components/WorkspaceSidebar';
 import { shortcutLabel } from '@/lib/keyboard';
@@ -23,7 +22,10 @@ interface WorkspaceHeaderProps {
 /** 主面板头部（移植自 ZCode WorkspaceHeader）：h-12、整条可拖拽移动窗口，右侧帮助菜单。 */
 export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat, isAiPanelOpen, onToggleAiPanel }: WorkspaceHeaderProps) {
   const { t } = useTranslation();
-  const [isAboutOpen, setAboutOpen] = useState(false);
+  const showAbout = () => {
+    // 与菜单栏「关于 VeloTerm」同走 Rust 侧 show_about（同一个自绘窗口）
+    void invoke('show_about_window').catch(() => undefined);
+  };
   const title =
     page === 'terminal'
       ? t('terminal.title')
@@ -90,10 +92,8 @@ export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat, isAiPane
             </Button>
           </ControlHintTooltip>
         ) : null}
-        <WorkspaceHelpMenuButton onShowAbout={() => setAboutOpen(true)} />
+        <WorkspaceHelpMenuButton onShowAbout={showAbout} />
       </div>
-
-      <AboutDialog open={isAboutOpen} onClose={() => setAboutOpen(false)} />
     </header>
   );
 }
