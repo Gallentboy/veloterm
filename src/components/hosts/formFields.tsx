@@ -2,6 +2,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
+import { SelectMenu, type SelectMenuOption } from '@/components/ui/SelectMenu';
 import { cn } from '@/lib/utils';
 
 /** 表单基元：统一样式，设置/主机等表单复用。 */
@@ -42,13 +43,21 @@ export function TextArea(props: React.ComponentProps<'textarea'>) {
   );
 }
 
-export function Select(props: React.ComponentProps<'select'>) {
-  return (
-    <select
-      {...props}
-      className={cn(controlClassName, 'cursor-pointer appearance-none pr-6', props.className)}
-    />
-  );
+export interface SelectProps {
+  options: SelectMenuOption[];
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+  'aria-label'?: string;
+}
+
+/** 表单下拉：自绘 SelectMenu 的同签名封装。**严禁用原生 `<select>`** ——
+ * 其弹层由系统绘制，macOS 圆角菜单与 Windows 直角列表观感割裂、深色主题
+ * 不可控（工程约定，见 SelectMenu 头注释） */
+export function Select(props: SelectProps) {
+  return <SelectMenu {...props} />;
 }
 
 /** 密码输入框：右侧眼睛按钮切换明文/密文 */
