@@ -321,17 +321,15 @@ export function TerminalScreen({
                 <Button
                   type="button"
                   variant="ghost"
+                  size="icon-sm"
                   onClick={toggleResourceMonitor}
                   aria-pressed={resourceMonitorOn}
                   aria-label={t('terminal.resourceMonitor.toggleAria')}
                   className={cn(
-                    // 无边框 28px 圆角图标按钮（与左侧命令面板按钮同族语言）；
-                    // 关闭态与命令面板按钮同色 text-foreground（此前用了
-                    // foreground-subtle，与左侧 ⌘ 图标深浅不一致）
-                    'size-7 items-center justify-center rounded-lg transition-colors',
-                    resourceMonitorOn
-                      ? 'bg-selected text-foreground hover:bg-selected'
-                      : 'text-foreground hover:bg-hover'
+                    // 与左侧命令面板按钮完全同规格（icon-sm 26px + rounded-lg +
+                    // ghost 默认 text-foreground），关闭态零叠加；
+                    // 此前手写 size-7（28px）比 ⌘ 按钮大一圈，并排尺寸不齐
+                    resourceMonitorOn && 'bg-selected text-foreground hover:bg-selected'
                   )}
                 >
                   <Gauge
