@@ -285,7 +285,11 @@ static int jq_util_input_read_more(jq_util_input_state *state) {
         state->current_input = stdin;
         state->current_filename = jv_string("<stdin>");
       } else {
+#ifdef WIN32
         state->current_input = veloterm_jq_fopen(f, "r");
+#else
+        state->current_input = fopen(f, "r");
+#endif
         state->current_filename = jv_string(f);
         if (!state->current_input) {
           state->err_cb(state->err_cb_data, f);

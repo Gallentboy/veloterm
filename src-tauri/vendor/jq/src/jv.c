@@ -43,7 +43,12 @@
 #include <time.h>
 #include <unistd.h>
 #include <fcntl.h>
+/* veloterm 修补：上游 1.8.2 在文件头无条件包含 <pthread.h>（MSVC 无此头，
+ * CI 实测 C1083）。WIN32 非 MinGW 走下方 Heimdal TSD 节 + jv_thread.h 的
+ * 自有声明（mutex/key/once 全在），真 pthread 平台照旧包含。 */
+#if !defined(WIN32) || defined(__MINGW32__)
 #include <pthread.h>
+#endif
 
 #include "jv_alloc.h"
 #include "jv.h"

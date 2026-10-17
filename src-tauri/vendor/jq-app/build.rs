@@ -101,15 +101,17 @@
 //! - vendor/jq 就地修补（均见 vendor/jq/README.md，带中文注释标记；1.7.1
 //!   时的 jv_file.c VLA 补丁上游 1.8 已自行修复，随升级移除）：
 //!   jv.c 上游笔误（`_MSC_VER` 分支误声明 jv_alloc.c 的私有类型
-//!   nomem_handler）；jv_alloc.h 无编译器守卫的
-//!   `__attribute__((warn_unused_result))`；util.h 的 MIN/MAX 宏用 GNU
+//!   nomem_handler）；jv.c 文件头无条件 `#include <pthread.h>`（MSVC 无此头
+//!   C1083，按 jv_thread.h 同样的 WIN32/MinGW 门控包住）；jv_alloc.h 无编译器
+//!   守卫的 `__attribute__((warn_unused_result))`；util.h 的 MIN/MAX 宏用 GNU
 //!   语句表达式 + `__typeof__`（MSVC 不支持，加 `_MSC_VER` 三元式分支）；
 //!   jv_dtoa_tsd.c 的裸 `inline` 定义在 MSVC 下不产出外部符号（LNK2019，去 inline）；
 //!   util.c 的 WIN32 `fopen` 同名覆盖与静态 CRT 的 fopen.obj 撞名（LNK2005，
-//!   改名 veloterm_jq_fopen，调用点随改）；main.c 的 `_O_U8TEXT` 流模式
+//!   改名 veloterm_jq_fopen，调用点 WIN32 分支随改）；main.c 的 `_O_U8TEXT` 流模式
 //!   （窄字符输出被静默吞）；main.c 的诊断探针（临时）；jv.c 的 WIN32 TSD
-//!   shim 在替换旧值时调析构器致退出期二次 free（0xC0000374 + WER 延迟）。
-//!   当前共 8 处。
+//!   shim 在替换旧值时调析构器致退出期二次 free（0xC0000374 + WER 延迟）；
+//!   builtin.c 的 void* 指针算术（GNU 扩展，MSVC C2036，换 char* 承载字节偏移）。
+//!   当前共 10 处。
 //!
 //! # 编译告警
 //!
@@ -429,6 +431,11 @@ pub fn render_builtin_inc(builtin_jq: &str) -> Result<String, String> {
         }
         out.push_str(&format!("{b:03o}"));
     }
+    // 尾逗号：上游 od 输出行尾有固定宽度填充空白，sed 的「数字+空格→数字+,」
+    // 规则使每个 token（含最后一个）后都带逗号——builtin.c 的
+    // `#include "src/builtin.inc" '\0',` 正是依赖这一点与 '\0' 衔接
+    //（C 初始化列表允许尾逗号；漏掉则最后一个 token 与 '\0' 之间缺分隔符）
+    out.push(',');
     out.push('\n');
     Ok(out)
 }
@@ -625,14 +632,15 @@ mod tests {
     /// 每个字节转 3 位补零八进制，逗号分隔，每行 16 个 token。
     #[test]
     fn builtin_inc_matches_makefile_od_rule() {
-        // 'a'=0x61=0141, 'b'=0142, '\n'=012, 'c'=0143
+        // 'a'=0x61=0141, 'b'=0142, '\n'=012, 'c'=0143；末 token 后带逗号
+        //（上游 od 固定宽度填充 + sed 规则的形态，见函数尾注释）
         let inc = render_builtin_inc("ab\nc").unwrap();
-        assert_eq!(inc, "141, 142, 012, 143\n");
+        assert_eq!(inc, "141, 142, 012, 143,\n");
         // 高位字节（UTF-8 多字节序列成分）也稳定转八进制
         let inc = render_builtin_inc("\u{e9}").unwrap(); // C3 A9
-        assert_eq!(inc, "303, 251\n");
+        assert_eq!(inc, "303, 251,\n");
         // NUL 与控制字符照常 dump（消费方是 char 数组，无字符串字面量限制）
-        assert_eq!(render_builtin_inc("\0\x01").unwrap(), "000, 001\n");
+        assert_eq!(render_builtin_inc("\0\x01").unwrap(), "000, 001,\n");
     }
 
     /// C 语义抽查：每行是逗号分隔的八进制 token（行尾随上游 od+sed 形态
@@ -646,7 +654,7 @@ mod tests {
         // 一致），统计 token 前先剥掉行尾逗号
         assert_eq!(lines[0].trim_end_matches(',').split(',').count(), 16);
         assert_eq!(lines[1].trim_end_matches(',').split(',').count(), 16);
-        assert_eq!(lines[2], "170"); // 'x' = 0x78 = 0170
+        assert_eq!(lines[2], "170,"); // 'x' = 0x78 = 0170（末 token 亦带尾逗号）
         for line in &lines {
             for tok in line.trim_end_matches(',').split(", ") {
                 assert!(tok.bytes().all(|b| b.is_ascii_digit()), "坏 token：{tok}");
@@ -664,8 +672,8 @@ mod tests {
     /// 末尾换行是一个真实的 012 字节；含 CR 直接报错
     #[test]
     fn builtin_inc_handles_trailing_newline_and_cr() {
-        assert_eq!(render_builtin_inc("a\n").unwrap(), "141, 012\n");
-        assert_eq!(render_builtin_inc("a").unwrap(), "141\n");
+        assert_eq!(render_builtin_inc("a\n").unwrap(), "141, 012,\n");
+        assert_eq!(render_builtin_inc("a").unwrap(), "141,\n");
         assert!(render_builtin_inc("a\r\nb").is_err());
     }
 

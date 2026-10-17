@@ -30,7 +30,7 @@
 
 **无**。bc 7.x 上游自带官方 MSVC 支持（`vs/` 工程随 tarball 分发），
 全部 POSIX 头包含均有 `#ifndef _WIN32` 守卫，MSVC 编译零补丁。
-（与 jq 1.8.2 的八处 MSVC 修补形成对比；升级版本时若上游回归了
+（与 jq 1.8.2 的十处 MSVC 修补形成对比；升级版本时若上游回归了
 MSVC 兼容性，再在此登记。）
 
 ## 关键构建事实（bc-app build.rs 的依据，均已对 tarball 逐条核实）

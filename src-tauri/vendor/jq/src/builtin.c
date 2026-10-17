@@ -1699,7 +1699,10 @@ static int jv2tm(jv a, struct tm *tm, int localtime) {
     double d = jv_number_value(n);
     if (i == 0) /* year */
       d -= 1900;
-    *(int *)((void *)tm + offsets[i]) = d < INT_MIN ? INT_MIN :
+    /* veloterm 修补：原为 `(void *)tm + offsets[i]`——void* 指针算术是 GNU
+     * 扩展（按 1 字节步长），MSVC 报 C2036 "void *: unknown size"（CI 实测）。
+     * 换 char* 承载同样的字节偏移，语义与 GCC 扩展逐字节等价。 */
+    *(int *)((char *)tm + offsets[i]) = d < INT_MIN ? INT_MIN :
                                         d > INT_MAX ? INT_MAX : (int)d;
     jv_free(n);
   }
