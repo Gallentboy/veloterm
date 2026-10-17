@@ -18,9 +18,9 @@
   "bundle": {
     "externalBin": ["binaries/coreutils"],
     "resources": {
-      "binaries/veloterm_goffi.dll": "veloterm_goffi.dll",
-      "binaries/qalcffi.dll": "qalcffi.dll",
-      "binaries/nmapffi.dll": "nmapffi.dll",
+      "binaries/veloterm_goffi.dll": "lib/veloterm_goffi.dll",
+      "binaries/qalcffi.dll": "lib/qalcffi.dll",
+      "binaries/nmapffi.dll": "lib/nmapffi.dll",
       "binaries/nmap-data": "nmap-data"
     },
     "targets": ["nsis"],

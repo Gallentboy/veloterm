@@ -11,7 +11,7 @@
 //! Windows 上经 MSYS2 MinGW64 环境 autotools 构建静态库后连同 FFI 壳
 //! （`veloterm_ffi.cc`，qalc.cc 以 `-Dmain=qalc_main` 改名直调）链接成
 //! `qalcffi.dll`（依赖全静态打入，见 vendor README），经
-//! `tauri.windows.conf.json` 的 resources 随包放在安装根目录。
+//! `tauri.windows.conf.json` 的 resources 随包放在安装根 `lib/` 子目录。
 //!
 //! # 为什么运行时 LoadLibrary，而不是链接期导入库
 //!
@@ -21,9 +21,8 @@
 //!
 //! # DLL 搜索路径
 //!
-//! 与 yqffi 相同：安装后 coreutils.exe 与 qalcffi.dll 同在安装根目录；
-//! 用户经 `tools\qalc.exe` 硬链接短名启动时按绝对路径依次尝试 exe 同
-//! 目录 → exe 上级目录（tools\ 场景的安装根）。
+//! 候选顺序（同目录 → 上级 lib/ → 上级）由共享模块 `crate::dll_paths` 统一
+//! 生成，三个 DLL 例外形态（goffi / qalc / nmap）同一套约定，依据见其文件头。
 //!
 //! # 输出编码
 //!
@@ -45,17 +44,9 @@ mod imp {
     /// 进程内首次调用加载一次；错误串缓存避免每次调用重复打日志。
     static QALC_MAIN: OnceLock<Result<QalcMainFn, String>> = OnceLock::new();
 
-    /// DLL 候选路径（纯函数，单测覆盖）：exe 同目录 → exe 上级目录；
-    /// 进程路径不可得（exe 为 None 或无父目录）时返回空候选。
+    /// DLL 候选路径（共享约定，见 crate::dll_paths）：同目录 → 上级 lib/ → 上级。
     pub(super) fn candidates_for(exe: Option<&Path>) -> Vec<PathBuf> {
-        let Some(dir) = exe.and_then(|p| p.parent()) else {
-            return Vec::new();
-        };
-        let mut v = vec![dir.join("qalcffi.dll")];
-        if let Some(parent) = dir.parent() {
-            v.push(parent.join("qalcffi.dll"));
-        }
-        v
+        crate::dll_paths::dll_candidates(exe, "qalcffi.dll")
     }
 
     fn load_qalc_main() -> Result<QalcMainFn, String> {
@@ -140,24 +131,24 @@ mod tests {
     #[cfg(windows)]
     use std::path::Path;
 
-    /// 硬链接短名场景：exe 在 tools\ 子目录 → 候选含上级目录（安装根）
+    /// 硬链接短名场景：exe 在 tools\ 子目录 → 上级 lib/ 是安装后的 DLL 位置
     #[test]
     #[cfg(windows)]
     fn dll_candidates_cover_hardlink_shortname_dir() {
         let exe = Path::new(r"C:\app\tools\qalc.exe");
         let c = candidates_for(Some(exe));
-        assert_eq!(c[0], Path::new(r"C:\app\tools\qalcffi.dll"));
-        assert_eq!(c[1], Path::new(r"C:\app\qalcffi.dll"));
+        assert_eq!(c[1], Path::new(r"C:\app\lib\qalcffi.dll"));
     }
 
-    /// coreutils 本体直跑场景：exe 在安装根 → 首候选即同目录
+    /// coreutils 本体直跑场景：exe 在安装根 → 本级 lib/ 命中且排在平铺之前
     #[test]
     #[cfg(windows)]
     fn dll_candidates_cover_install_root() {
         let exe = Path::new(r"C:\app\coreutils.exe");
         let c = candidates_for(Some(exe));
-        assert_eq!(c[0], Path::new(r"C:\app\qalcffi.dll"));
-        assert_eq!(c.len(), 2);
+        assert_eq!(c[0], Path::new(r"C:\app\lib\qalcffi.dll"));
+        assert_eq!(c[2], Path::new(r"C:\app\qalcffi.dll"));
+        assert_eq!(c.len(), 3);
     }
 
     /// 进程路径不可得时不 panic，返回空候选

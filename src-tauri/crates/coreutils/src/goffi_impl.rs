@@ -12,7 +12,7 @@
 //! 以 `go build -buildmode=c-shared -tags "veloterm_ffi veloterm_goffi"`
 //! 现场产出（宿主为 vendor/fzf 的 package main，经 vendor/go.work 跨模块
 //! 引 yq 的 cmd 包；GOAMD64=v3 以 AVX2 为基线），经 `tauri.windows.conf.json`
-//! 的 resources 随包放在安装根目录。
+//! 的 resources 随包放在安装根 `lib/` 子目录。
 //!
 //! # 为什么运行时 LoadLibrary，而不是链接期导入库
 //!
@@ -24,15 +24,13 @@
 //!
 //! # DLL 搜索路径
 //!
-//! 安装后 coreutils.exe 与 veloterm_goffi.dll 同在安装根目录；但用户经
-//! `tools\yq.exe` / `tools\fzf.exe` 硬链接短名启动时，进程 exe 目录是
-//! `tools\` 子目录（PE 加载器的默认 DLL 搜索目录跟着进程 exe 走），故按
-//! 绝对路径依次尝试：exe 同目录 → exe 上级目录（tools\ 场景的安装根）。
+//! 候选顺序（同目录 → 上级 lib/ → 上级）由共享模块 `crate::dll_paths` 统一
+//! 生成，三个 DLL 例外形态（goffi / qalc / nmap）同一套约定，依据见其文件头。
 
 #[cfg(windows)]
 mod imp {
     use std::ffi::{c_char, c_int, CString, OsString};
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::sync::OnceLock;
 
     use libloading::Library;
@@ -44,17 +42,9 @@ mod imp {
     /// 缓存的是库句柄（永不 FreeLibrary，见文件头注释），符号按命令解析。
     static GOFFI_LIB: OnceLock<Result<&'static Library, String>> = OnceLock::new();
 
-    /// DLL 候选路径（纯函数，单测覆盖）：exe 同目录 → exe 上级目录；
-    /// 进程路径不可得（exe 为 None 或无父目录）时返回空候选。
-    pub(super) fn candidates_for(exe: Option<&Path>) -> Vec<PathBuf> {
-        let Some(dir) = exe.and_then(|p| p.parent()) else {
-            return Vec::new();
-        };
-        let mut v = vec![dir.join("veloterm_goffi.dll")];
-        if let Some(parent) = dir.parent() {
-            v.push(parent.join("veloterm_goffi.dll"));
-        }
-        v
+    /// DLL 候选路径（共享约定，见 crate::dll_paths）：同目录 → 上级 lib/ → 上级。
+    pub(super) fn candidates_for(exe: Option<&Path>) -> Vec<std::path::PathBuf> {
+        crate::dll_paths::dll_candidates(exe, "veloterm_goffi.dll")
     }
 
     fn load_goffi_lib() -> Result<&'static Library, String> {
@@ -163,24 +153,24 @@ mod tests {
     #[cfg(windows)]
     use std::path::Path;
 
-    /// 硬链接短名场景：exe 在 tools\ 子目录 → 候选含上级目录（安装根）
+    /// 硬链接短名场景：exe 在 tools\ 子目录 → 上级 lib/ 是安装后的 DLL 位置
     #[test]
     #[cfg(windows)]
     fn dll_candidates_cover_hardlink_shortname_dir() {
         let exe = Path::new(r"C:\app\tools\yq.exe");
         let c = candidates_for(Some(exe));
-        assert_eq!(c[0], Path::new(r"C:\app\tools\veloterm_goffi.dll"));
-        assert_eq!(c[1], Path::new(r"C:\app\veloterm_goffi.dll"));
+        assert_eq!(c[1], Path::new(r"C:\app\lib\veloterm_goffi.dll"));
     }
 
-    /// coreutils 本体直跑场景：exe 在安装根 → 首候选即同目录
+    /// coreutils 本体直跑场景：exe 在安装根 → 本级 lib/ 命中且排在平铺之前
     #[test]
     #[cfg(windows)]
     fn dll_candidates_cover_install_root() {
         let exe = Path::new(r"C:\app\coreutils.exe");
         let c = candidates_for(Some(exe));
-        assert_eq!(c[0], Path::new(r"C:\app\veloterm_goffi.dll"));
-        assert_eq!(c.len(), 2);
+        assert_eq!(c[0], Path::new(r"C:\app\lib\veloterm_goffi.dll"));
+        assert_eq!(c[2], Path::new(r"C:\app\veloterm_goffi.dll"));
+        assert_eq!(c.len(), 3);
     }
 
     /// 进程路径不可得时不 panic，返回空候选
