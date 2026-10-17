@@ -10,6 +10,7 @@ import {
   type AiProvider,
 } from '@/services/aiService';
 import { Button } from '@/components/ui/button';
+import { SelectMenu } from '@/components/ui/SelectMenu';
 import { cn } from '@/lib/utils';
 import { ToolCallCard } from '@/components/ai/ToolCallCard';
 import { MarkdownContent } from '@/components/ai/MarkdownContent';
@@ -297,22 +298,14 @@ ${output}`);
               </Button>
             </ControlHintTooltip>
           ) : null}
-          <select
-            value={providerId ?? ''}
-            onChange={(e) => setProviderId(e.target.value ? Number(e.target.value) : null)}
-            className="h-7 max-w-36 rounded-md border border-border bg-input px-1.5 text-ui-sm text-foreground outline-none cursor-pointer"
+          <SelectMenu
+            value={providerId == null ? '' : String(providerId)}
+            onChange={(value) => setProviderId(value ? Number(value) : null)}
+            placeholder={providers.length === 0 ? t('ai.chat.noProvider') : undefined}
+            options={providers.map((p) => ({ value: String(p.id), label: p.name }))}
+            className="w-36 shrink-0"
             aria-label={t('ai.chat.provider')}
-          >
-            {providers.length === 0 ? (
-              <option value="">{t('ai.chat.noProvider')}</option>
-            ) : (
-              providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))
-            )}
-          </select>
+          />
           {onOpenSettings ? (
             <ControlHintTooltip title={t('ai.provider.title')} side="top">
               <Button

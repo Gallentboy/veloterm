@@ -233,12 +233,13 @@ export function PortForwardDialog({ host, onClose }: { host: HostNode; onClose: 
           <FormField label={t('portForward.kindLabel')}>
             <Select
               value={draft.kind}
-              onChange={(e) => setDraft({ ...draft, kind: e.target.value as PortForwardKind })}
-            >
-              <option value="local">{t('portForward.kind.local')}</option>
-              <option value="remote">{t('portForward.kind.remote')}</option>
-              <option value="dynamic">{t('portForward.kind.dynamic')}</option>
-            </Select>
+              onChange={(value) => setDraft({ ...draft, kind: value as PortForwardKind })}
+              options={[
+                { value: 'local', label: t('portForward.kind.local') },
+                { value: 'remote', label: t('portForward.kind.remote') },
+                { value: 'dynamic', label: t('portForward.kind.dynamic') },
+              ]}
+            />
           </FormField>
           <div className="grid grid-cols-2 gap-2">
             <FormField label={t('portForward.bindPort')}>

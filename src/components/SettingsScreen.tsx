@@ -1,4 +1,4 @@
-import { ChevronDown, Monitor, Moon, Sun, Trash2 } from 'lucide-react';
+import { Monitor, Moon, Sun, Trash2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -131,19 +131,13 @@ export function SettingsScreen() {
             />
           </SettingRow>
           <SettingRow title={t('settings.logLevel')} desc={logLevelDescription}>
-            <div className="relative w-32 shrink-0">
+            <div className="w-32 shrink-0">
               <Select
                 aria-label={t('settings.logLevel')}
                 value={logLevel}
-                onChange={(e) => void handleLogLevelChange(e.target.value as LogLevel)}
-              >
-                {LOG_LEVEL_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-foreground-subtle" />
+                onChange={(value) => void handleLogLevelChange(value as LogLevel)}
+                options={LOG_LEVEL_OPTIONS}
+              />
             </div>
           </SettingRow>
         </SettingsSection>

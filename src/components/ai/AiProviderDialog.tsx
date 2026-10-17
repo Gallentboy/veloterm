@@ -2,6 +2,7 @@ import { KeyRound, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
+import type { SelectMenuOption } from '@/components/ui/SelectMenu';
 import { FormField, Select, TextInput } from '@/components/hosts/formFields';
 import {
   listAiModels,
@@ -20,11 +21,11 @@ interface AiProviderDialogProps {
   onClose: () => void;
 }
 
-const PROVIDER_TYPES = [
+const PROVIDER_TYPES: SelectMenuOption[] = [
   { value: 'openai', label: 'OpenAI 兼容' },
   { value: 'anthropic', label: 'Anthropic (Claude)' },
   { value: 'gemini', label: 'Google Gemini' },
-] as const;
+];
 
 const TYPE_PLACEHOLDERS: Record<string, string> = {
   openai: 'gpt-4o-mini',
@@ -172,20 +173,14 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
             <FormField label={t('ai.provider.type')}>
               <Select
                 value={providerType}
-                onChange={(e) => {
-                  const next = e.target.value;
+                onChange={(next) => {
                   if (next !== providerType) {
                     setProviderType(next);
                     setBaseUrl('');
                   }
                 }}
-              >
-                {PROVIDER_TYPES.map((type) => (
-                  <option key={type.value} value={type.value}>
-                    {type.label}
-                  </option>
-                ))}
-              </Select>
+                options={PROVIDER_TYPES}
+              />
             </FormField>
           </div>
           <div className="min-w-0 flex-1">
