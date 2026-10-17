@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // 构建 coreutils 多呼叫二进制并复制到 Tauri externalBin 目录（仅 Windows 需要），
-// 同时产出随包 resources 分发的四个 FFI DLL：yqffi.dll 与 fzfffi.dll（Go）、
-// qalcffi.dll（libqalculate）与 nmapffi.dll（nmap，均 MSYS2 MinGW64 构建）。
-// nmap 段额外随包分发 nmap-data/ 数据文件树（scripts/nselib/服务与版本库）。
+// 同时产出随包 resources 分发的五个 FFI DLL：veloterm_goffi.dll（yq+fzf，Go）、
+// qalcffi.dll（libqalculate，MSYS2 MinGW64）、nmapffi/ncatffi/npingffi.dll（nmap
+// 三件套，MSVC+CMake）与 vim64.dll（vim，官方 MSVC nmake VIMDLL 形态）。
+// nmap 段额外随包分发 nmap-data/ 数据文件树，vim 段随包分发 vim-runtime/。
 // Tauri v2 的 externalBin 要求文件名带 target triple 后缀：
 //   src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe
 // 安装后 Tauri 会去掉 triple 后缀放到主程序同级目录（coreutils.exe），
@@ -15,7 +16,7 @@
 // 未指定 target 时取 rustc 默认 host triple。
 
 import { execSync, execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, existsSync, rmSync, readFileSync } from 'node:fs';
+import { cpSync, mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,18 +47,19 @@ if (!target) {
 
 console.log(`[build-tools] target: ${target}`);
 
-// --only <段>：局部构建（coreutils / goffi / qalc / nmap / ncat / nping）。
+// --only <段>：局部构建（coreutils / goffi / qalc / vim / nmap / ncat / nping）。
 // tag 触发的 test-*.yml 快速反馈车道用
-// `--only qalc` 只依赖 MSYS2；`--only nmap|ncat|nping` 走 MSVC+CMake——三者同属
+// `--only qalc` 只依赖 MSYS2；`--only vim` 只依赖 MSVC nmake（零外部包，最轻）；
+// `--only nmap|ncat|nping` 走 MSVC+CMake——三者同属
 // Nmap 项目、同工程（veloterm-win/CMakeLists.txt），`--only nmap` 出全部三个
 // DLL，`--only ncat` / `--only nping` 只出对应那一个（cmake --target 单目标，
 // 用于增量验证）；goffi 段（yq+fzf 合并 DLL）只依赖 Go。不传时全量构建
 // （publish 路径），行为不变
 const onlyFlag = args.indexOf('--only');
 const only = onlyFlag !== -1 && args[onlyFlag + 1] ? args[onlyFlag + 1] : '';
-if (only && !['coreutils', 'goffi', 'qalc', 'nmap', 'ncat', 'nping'].includes(only)) {
+if (only && !['coreutils', 'goffi', 'qalc', 'vim', 'nmap', 'ncat', 'nping'].includes(only)) {
   console.error(
-    `[build-tools] 未知 --only 段：${only}（可选 coreutils/goffi/qalc/nmap/ncat/nping）`,
+    `[build-tools] 未知 --only 段：${only}（可选 coreutils/goffi/qalc/vim/nmap/ncat/nping）`,
   );
   process.exit(1);
 }
@@ -355,6 +357,102 @@ cpSync(join(qalcBuild, 'qalcffi.dll'), join(outDir, 'qalcffi.dll'));
 console.log(`[build-tools] qalcffi.dll (${qalcVersion}) -> ${join(outDir, 'qalcffi.dll')}`);
 }
 if (only === 'qalc') {
+  console.log('[build-tools] 完成');
+  process.exit(0);
+}
+
+// ── vim（MSVC nmake，官方路径）：coreutils 的 vim 命令经 vim64.dll 动态导入 ──
+// 走上游官方 VIMDLL 拆分（src/INSTALLpc.txt 的 MSVC 构建方式，见
+// vendor/vim/README.md）：nmake VIMDLL=yes 产出瘦启动器 vim.exe + 主体
+// vim64.dll（导出 VimMain，MSWIN 下无条件用 GetCommandLineW 自解析进程命令行，
+// 故 vim 属 OWN_ARGV 家族——仅硬链接短名模式可用）。随包只带 DLL 与
+// vim-runtime/ 数据树（上游仓库自带 doc/tags，无需构建期 helptags）。
+// 分发臂见 crates/coreutils 的 vim_impl.rs（与其他 *ffi 同一套定位约定）。
+if (!only || only === 'vim') {
+  const vimSrc = join(srcTauri, 'vendor', 'vim');
+  const vimVersion = readFileSync(join(vimSrc, 'VELOTERM_VERSION'), 'utf8').trim();
+  console.log(`[build-tools] vim ${vimVersion}: MSVC nmake VIMDLL 构建（x64）`);
+
+  // nmake 需 VS 环境：vswhere 定位最新含 VC 工具链的安装 → vcvars64.bat
+  // （windows-latest 预装；本地 Windows 开发机亦然）。找不到时给出可诊断提示。
+  const vswhereCandidates = [
+    process.env['ProgramFiles(x86)']
+      ? join(process.env['ProgramFiles(x86)'], 'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
+      : '',
+    'C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe',
+  ].filter(Boolean);
+  let vcvars = '';
+  for (const vswhere of vswhereCandidates) {
+    if (!existsSync(vswhere)) continue;
+    const vsPath = execSync(
+      `"${vswhere}" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`,
+      { encoding: 'utf8' },
+    ).trim();
+    if (vsPath) {
+      const cand = join(vsPath, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat');
+      if (existsSync(cand)) vcvars = cand;
+      break;
+    }
+  }
+  if (!vcvars) {
+    console.error(
+      '[build-tools] 未找到 Visual Studio x64 环境（vcvars64.bat，vim 构建必需）：' +
+        '请安装含 “使用 C++ 的桌面开发” 的 VS 2022，或确认 vswhere.exe 存在',
+    );
+    process.exit(1);
+  }
+
+  // nmake 需在源内构建（Make_mvc.mak 全相对路径，生成 pathdef.c/ObjX/）。
+  // 为不写脏 vendor 树，先整目录拷贝 src/ 到 src-tauri/vim-build/（与
+  // qalc-build/nmap-build 同一约定），在副本里构建
+  const vimBuild = join(srcTauri, 'vim-build');
+  rmSync(vimBuild, { recursive: true, force: true });
+  const buildSrc = join(vimBuild, 'src');
+  cpSync(join(vimSrc, 'src'), buildSrc, { recursive: true });
+
+  // 官方形态：VIMDLL=yes（隐含 GUI=yes，DLL 同时编入 GUI/控制台代码，运行期
+  // 按宿主 exe 的 PE subsystem 选择）+ CPU=AMD64 + 静态 CRT（未设 USE_MSVCRT
+  // 时 Make_mvc 自动 /MT）。目标只要 vim.exe（依赖链自动先出 vim64.dll），
+  // gvim.exe/xxd/install 等不构建
+  execSync(
+    `call "${vcvars}" >nul && cd /d "${buildSrc}" && nmake /nologo -f Make_mvc.mak VIMDLL=yes CPU=AMD64 vim.exe`,
+    { stdio: 'inherit' },
+  );
+
+  const vimDll = join(buildSrc, 'vim64.dll');
+  const vimRunner = join(buildSrc, 'vim.exe');
+  for (const p of [vimDll, vimRunner]) {
+    if (!existsSync(p)) {
+      console.error(`[build-tools] 缺少构建产物: ${p}`);
+      process.exit(1);
+    }
+  }
+
+  // runtime 数据树 staging（vendor 树已裁剪 GUI 专属内容，直接整目录拷贝）
+  rmSync(join(outDir, 'vim-runtime'), { recursive: true, force: true });
+  cpSync(join(vimSrc, 'runtime'), join(outDir, 'vim-runtime'), { recursive: true });
+
+  // 构建期冒烟：--version + 无终端 headless 编辑（-es 静默 ex 模式，替换并写回
+  // 后校验内容）——启动器与 vim64.dll 同目录加载，冒烟通过即证明 DLL 导出与
+  // runtime 树可用
+  const rtEnv = { ...process.env, VIMRUNTIME: join(outDir, 'vim-runtime') };
+  console.log('[build-tools] 冒烟：vim --version / -es 编辑替换');
+  execSync(`"${vimRunner}" --version`, { stdio: 'inherit', env: rtEnv });
+  const smokeFile = join(vimBuild, 'smoke.txt');
+  writeFileSync(smokeFile, 'hello veloterm\n');
+  execSync(
+    `"${vimRunner}" -u NONE -es -c "%s/hello/world/" -c "wq" "${smokeFile}" < NUL`,
+    { stdio: 'inherit', env: rtEnv },
+  );
+  if (!readFileSync(smokeFile, 'utf8').includes('world')) {
+    console.error('[build-tools] vim -es 冒烟未产生预期替换结果');
+    process.exit(1);
+  }
+
+  cpSync(vimDll, join(outDir, 'vim64.dll'));
+  console.log(`[build-tools] vim64.dll + vim-runtime/ (${vimVersion}) -> ${join(outDir)}`);
+}
+if (only === 'vim') {
   console.log('[build-tools] 完成');
   process.exit(0);
 }

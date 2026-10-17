@@ -24,7 +24,9 @@
       "binaries/nmap-data": "nmap-data",
       "binaries/ncatffi.dll": "ncatffi.dll",
       "binaries/npingffi.dll": "npingffi.dll",
-      "binaries/ca-bundle.crt": "ca-bundle.crt"
+      "binaries/ca-bundle.crt": "ca-bundle.crt",
+      "binaries/vim64.dll": "vim64.dll",
+      "binaries/vim-runtime": "vim-runtime"
     },
     "targets": ["nsis"],
     "windows": {
