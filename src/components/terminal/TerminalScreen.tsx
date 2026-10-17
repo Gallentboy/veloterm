@@ -320,16 +320,17 @@ export function TerminalScreen({
               >
                 <Button
                   type="button"
-                  size="icon-sm"
                   variant="ghost"
                   onClick={toggleResourceMonitor}
                   aria-pressed={resourceMonitorOn}
                   aria-label={t('terminal.resourceMonitor.toggleAria')}
                   className={cn(
-                    'transition-colors',
+                    // 与右侧联动/布局切换按钮同族：28px 带边框圆角胶囊（裸 icon-sm
+                    // 显瘦且与相邻按钮两种视觉语言）
+                    'size-7 items-center justify-center rounded-lg border transition-colors',
                     resourceMonitorOn
-                      ? 'bg-selected text-foreground hover:bg-selected'
-                      : 'text-foreground-subtle hover:text-foreground hover:bg-hover',
+                      ? 'border-border bg-selected text-foreground hover:bg-selected'
+                      : 'border-border/60 text-foreground-subtle hover:text-foreground hover:bg-hover'
                   )}
                 >
                   <Gauge className={cn('size-3.5', resourceMonitorOn && 'text-primary')} />
