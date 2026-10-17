@@ -172,9 +172,8 @@ uu_stty = { path = "../../vendor/coreutils/src/uu/stty" }
 uu_pinky = { path = "../../vendor/coreutils/src/uu/pinky" }
 uu_users = { path = "../../vendor/coreutils/src/uu/users" }
 uu_who = { path = "../../vendor/coreutils/src/uu/who" }
-
-# stdbuf：unix 与 windows 均可用
-[target.'cfg(any(unix, windows))'.dependencies]
+# stdbuf：仅 unix——原生 Windows 无 LD_PRELOAD 注入机制，不可行
+# （Windows 清单不收录，见 tools-catalog 注释）
 uu_stdbuf = { path = "../../vendor/coreutils/src/uu/stdbuf" }
 
 # 仅 Windows：openssl CLI、telnet CLI、bc/jq CLI（vendor 源码 cc 现场编译）

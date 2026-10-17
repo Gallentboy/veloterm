@@ -262,7 +262,6 @@ $overrides = @{
     'timeout'   = @{ argv = @('2', 'cmd', '/c', 'ver'); note = 'child spawn' }
     'nice'      = @{ argv = @('cmd', '/c', 'ver'); note = 'child spawn' }
     'nohup'     = @{ argv = @('cmd', '/c', 'ver'); note = 'child spawn, stdout->nohup.out' }
-    'stdbuf'    = @{ argv = @('-o0', 'cmd', '/c', 'ver'); note = 'child spawn; GNU form -o0 attached' }
     'sleep'     = @{ argv = @('0') }
     'ps'        = @{ argv = @(); nonempty = $true; note = 'process listing' }
     # ---- 视图/搜索工具 ----
