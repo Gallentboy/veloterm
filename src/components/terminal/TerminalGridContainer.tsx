@@ -17,6 +17,8 @@ export interface TerminalGridContainerProps {
   broadcastTargets: number[];
   isPanelResizing: boolean;
   isVisible: boolean;
+  /** 服务器资源监控总开关（TerminalScreen 工具栏控制，默认关）：关 = 不渲染监控条、不采样 */
+  resourceMonitorOn: boolean;
   onActivateSession: (sessionId: number) => void;
   onMaximizeSession: (sessionId: number | null) => void;
   onCloseSession: (sessionId: number) => void;
@@ -57,6 +59,7 @@ export function TerminalGridContainer({
   broadcastTargets,
   isPanelResizing,
   isVisible,
+  resourceMonitorOn,
   onActivateSession,
   onMaximizeSession,
   onCloseSession,
@@ -78,7 +81,9 @@ export function TerminalGridContainer({
       aria-label={isGrid ? '多终端平铺网格视图' : undefined}
       className={cn(
         'min-h-0 w-full flex-1 overflow-hidden',
-        isGrid ? cn('grid gap-2 p-2', gridClass) : 'flex flex-col p-3 pt-2',
+        // 标签页模式右/底 padding 为 0：监控条贴面板右缘与底缘（留白会让药丸条
+        // 视觉抬高/右缩，用户实测定位）；左 12px / 顶 8px 维持
+        isGrid ? cn('grid gap-2 p-2', gridClass) : 'flex flex-col pl-3 pt-2',
       )}
     >
       {sessions.map((session) => {
@@ -217,7 +222,7 @@ export function TerminalGridContainer({
                 // 字体缩放仅在标签页模式启用；九宫格/单屏最大化期间禁用（字号保持）
                 fontScaleEnabled={!isGrid}
                 // 底部远程资源监控条：仅标签页模式的当前可见会话展示（九宫格平铺自动隐藏）
-                resourceBarVisible={!isGrid && sessionVisible}
+                resourceBarVisible={resourceMonitorOn && !isGrid && sessionVisible}
                 onShellLabelChange={onShellLabelChange}
                 onSizeChange={onSizeChange}
                 onRendererStatusChange={onRendererStatusChange}

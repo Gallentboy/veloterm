@@ -32,6 +32,9 @@ export interface TerminalContextValue {
   layoutMode: TerminalLayoutMode;
   setLayoutMode: (mode: TerminalLayoutMode) => void;
   toggleLayoutMode: () => void;
+  /** 服务器资源监控开关（持久化，默认关）：开 = 底部监控条显示且后台采样，关 = 隐藏且停止轮询 */
+  resourceMonitorOn: boolean;
+  toggleResourceMonitor: () => void;
   maximizedSessionId: number | null;
   setMaximizedSessionId: (sessionId: number | null) => void;
   isBroadcastActive: boolean;
@@ -54,6 +57,7 @@ export interface TerminalContextValue {
 }
 
 const LAYOUT_MODE_STORAGE_KEY = 'veloterm:terminal:layout-mode';
+const RESOURCE_MONITOR_STORAGE_KEY = 'veloterm:terminal:resource-monitor';
 
 const TerminalContext = createContext<TerminalContextValue | null>(null);
 
@@ -85,6 +89,18 @@ export function TerminalProvider({
     setLayoutModeState((prev) => {
       const next = prev === 'grid' ? 'tabs' : 'grid';
       setDbKv(LAYOUT_MODE_STORAGE_KEY, next);
+      return next;
+    });
+  }, []);
+
+  // 服务器资源监控：默认关（仅显式开启才展示监控条并后台采样），状态落库跨启动保留
+  const [resourceMonitorOn, setResourceMonitorOn] = useState<boolean>(
+    () => getDbKv(RESOURCE_MONITOR_STORAGE_KEY) === '1',
+  );
+  const toggleResourceMonitor = useCallback(() => {
+    setResourceMonitorOn((prev) => {
+      const next = !prev;
+      setDbKv(RESOURCE_MONITOR_STORAGE_KEY, next ? '1' : '0');
       return next;
     });
   }, []);
@@ -211,6 +227,8 @@ export function TerminalProvider({
       layoutMode,
       setLayoutMode,
       toggleLayoutMode,
+      resourceMonitorOn,
+      toggleResourceMonitor,
       maximizedSessionId,
       setMaximizedSessionId,
       isBroadcastActive,
@@ -239,10 +257,12 @@ export function TerminalProvider({
       markDisconnected,
       maximizedSessionId,
       reconnectSession,
+      resourceMonitorOn,
       sessions,
       setLayoutMode,
       toggleBroadcast,
       toggleLayoutMode,
+      toggleResourceMonitor,
       transport,
       updateShellLabel,
       renameSession,

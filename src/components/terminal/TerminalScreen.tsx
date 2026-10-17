@@ -1,6 +1,7 @@
 import {
   Command,
   Eraser,
+  Gauge,
   Grid2X2,
   LayoutGrid,
   Plus,
@@ -58,6 +59,8 @@ export function TerminalScreen({
     activeSession,
     layoutMode,
     toggleLayoutMode,
+    resourceMonitorOn,
+    toggleResourceMonitor,
     maximizedSessionId,
     setMaximizedSessionId,
     isBroadcastActive,
@@ -308,6 +311,31 @@ export function TerminalScreen({
                 </Button>
               </ControlHintTooltip>
             ) : null}
+            {/* 服务器资源监控开关（默认关）：开 = 当前 SSH 会话底部展示监控条并后台采样，
+                关 = 隐藏且停止轮询；状态落库跨启动保留 */}
+            {sessions.length > 0 ? (
+              <ControlHintTooltip
+                title={resourceMonitorOn ? t('terminal.resourceMonitor.disable') : t('terminal.resourceMonitor.enable')}
+                side="bottom"
+              >
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  onClick={toggleResourceMonitor}
+                  aria-pressed={resourceMonitorOn}
+                  aria-label={t('terminal.resourceMonitor.toggleAria')}
+                  className={cn(
+                    'transition-colors',
+                    resourceMonitorOn
+                      ? 'bg-selected text-foreground hover:bg-selected'
+                      : 'text-foreground-subtle hover:text-foreground hover:bg-hover',
+                  )}
+                >
+                  <Gauge className={cn('size-3.5', resourceMonitorOn && 'text-primary')} />
+                </Button>
+              </ControlHintTooltip>
+            ) : null}
           {activeSession ? (
             <ControlHintTooltip title={rendererBadge.title} side="bottom">
               <span
@@ -441,6 +469,7 @@ export function TerminalScreen({
           broadcastTargets={broadcastTargets}
           isPanelResizing={isPanelResizing}
           isVisible={isVisible}
+          resourceMonitorOn={resourceMonitorOn}
           onActivateSession={activateSession}
           onMaximizeSession={setMaximizedSessionId}
           onCloseSession={closeSession}
