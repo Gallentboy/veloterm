@@ -21,7 +21,10 @@
       "binaries/veloterm_goffi.dll": "veloterm_goffi.dll",
       "binaries/qalcffi.dll": "qalcffi.dll",
       "binaries/nmapffi.dll": "nmapffi.dll",
-      "binaries/nmap-data": "nmap-data"
+      "binaries/nmap-data": "nmap-data",
+      "binaries/ncatffi.dll": "ncatffi.dll",
+      "binaries/npingffi.dll": "npingffi.dll",
+      "binaries/ca-bundle.crt": "ca-bundle.crt"
     },
     "targets": ["nsis"],
     "windows": {
