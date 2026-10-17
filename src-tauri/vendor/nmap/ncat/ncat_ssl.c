@@ -99,8 +99,16 @@
 
 /* Required for windows compilation to Eliminate APPLINK errors.
    See http://www.openssl.org/support/faq.html#PROG2 */
+/* VeloTerm patch：applink.c 是给「OpenSSL DLL + 程序 CRT 不同」时桥接 stdio
+ * FILE* 用的；本工程静态链接 OpenSSL（vcpkg x64-windows-static），libcrypto
+ * 无 OPENSSL_USE_APPLINK/UP_* 间接层，applink 表无实际用途——且 vcpkg 的静态
+ * 安装不提供 applink.c（它是 OpenSSL 源码树的 ms/applink.c，官方 Windows 包
+ * 恰好带上才使上游能编过），不跳过即 C1083。与 vendor/openssl-app/build.rs
+ * 的既有立场一致（「静态构建无需 ms\applink.c，编译它反而多余」）。 */
+#ifndef VELOTERM_NO_OPENSSL_APPLINK
 #ifdef WIN32
 #include <openssl/applink.c>
+#endif
 #endif
 
 static SSL_CTX *sslctx;

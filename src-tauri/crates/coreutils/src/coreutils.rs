@@ -246,11 +246,20 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // （运行时加载，见 qalc_impl.rs；MinGW 构建，无 MSVC 链接路径）
         #[cfg(target_os = "windows")]
         "qalc" => crate::qalc_impl::qalc_cmd_main(it),
-        // 仅 Windows：nmap（C/C++ autotools）经 nmapffi.dll 的 C 导出
-        // （运行时加载，见 nmap_impl.rs；MinGW 构建，NMAPDIR 指向随包
-        // nmap-data/，Packet.dll 延迟导入——未装 Npcap 时降级 connect 扫描）
+        // 仅 Windows：nmap（C/C++，官方 MSVC 路线）经 nmapffi.dll 的 C 导出
+        // （运行时加载，见 nmap_impl.rs；NMAPDIR 指向随包 nmap-data/，
+        // Packet.dll 延迟导入——未装 Npcap 时降级 connect 扫描）
         #[cfg(target_os = "windows")]
         "nmap" => crate::nmap_impl::nmap_cmd_main(it),
+        // 仅 Windows：ncat（Nmap 项目自带的 netcat 替代，C）经 ncatffi.dll
+        // 的 C 导出（运行时加载，见 ncat_impl.rs；复用 nmap 的 nbase/nsock/
+        // lua/wpcap 依赖；ca-bundle.crt 随包放安装根供 SSL 验证）
+        #[cfg(target_os = "windows")]
+        "ncat" => crate::ncat_impl::ncat_cmd_main(it),
+        // 仅 Windows：nping（报文生成/探测，C++）经 npingffi.dll 的 C 导出
+        // （运行时加载，见 nping_impl.rs；复用 nbase/nsock/libnetutil/dnet）
+        #[cfg(target_os = "windows")]
+        "nping" => crate::nping_impl::nping_cmd_main(it),
         // zoxide（ajeetdsouza/zoxide，纯 Rust）：vendor 源码静态链入（lib.rs
         // 可注入入口，eza 同型）。同 data-encoding / urlcoding 家族：仅注册进
         // Windows 命令清单，分发臂跨平台编译，macOS 单测直接经 run_uutils
@@ -423,13 +432,16 @@ mod tests {
     fn all_commands_dispatch_version_sweep() {
         let expect_one = ["test", "false", "which"];
         let mut skip = vec!["cmp", "diff", "sd", "wget"];
-        // yq/fzf/qalc/nmap 仅在 Windows 命令表里，且依赖打包产物 DLL（运行时加载），
-        // cargo test 环境不保证存在 —— 跳过（真实行为由安装包冒烟覆盖）
+        // yq/fzf/qalc/nmap/ncat/nping 仅在 Windows 命令表里，且依赖打包产物
+        // DLL（运行时加载），cargo test 环境不保证存在 —— 跳过
+        // （真实行为由安装包冒烟覆盖）
         if cfg!(target_os = "windows") {
             skip.push("yq");
             skip.push("fzf");
             skip.push("qalc");
             skip.push("nmap");
+            skip.push("ncat");
+            skip.push("nping");
         }
         let all = all_commands();
         let mut visited = 0usize;

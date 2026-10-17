@@ -65,6 +65,12 @@ add_compile_definitions(
     PCRE2_STATIC
     _CRT_SECURE_NO_WARNINGS
     _CRT_NONSTDC_NO_WARNINGS
+    # 静态链接 OpenSSL（vcpkg x64-windows-static）不需要 applink.c：它是给
+    # 「OpenSSL DLL + 程序 CRT 不同」桥接 stdio FILE* 用的，静态构建下
+    # libcrypto 无 OPENSSL_USE_APPLINK/UP_* 间接层；且 vcpkg 静态安装不提供
+    # 该文件（上游源码树的 ms/applink.c，官方 Windows 包恰好带上才编得过）。
+    # 见 ncat/ncat_ssl.c 的 VeloTerm patch 与 vendor/openssl-app/build.rs。
+    VELOTERM_NO_OPENSSL_APPLINK
 )
 
 # ── 子目录：pcre2 / zlib / libdnet（各自官方 CMakeLists，消费其 target） ─────
@@ -378,6 +384,188 @@ target_link_options(nmap-runner PRIVATE
 )
 set_target_properties(nmap-runner PROPERTIES
     OUTPUT_NAME "nmap"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/out"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/out"
+)
+
+# ── ncat（netcat 替代） ──────────────────────────────────────────────────────
+# 源清单/宏/include 照搬官方 ncat/ncat.vcxproj（CompileAsCpp → LANGUAGE CXX）。
+# 依赖：nbase（Windows 兼容层）、nsock（异步 I/O）、lua（--lua-exec 功能，
+# 官方 config_win.h 定义 LUA_INCLUDED/HAVE_LUA）、wpcap（pcap_*）、OpenSSL。
+# 注意官方 Release 链接行未列 liblua（其 vcxproj 只列 Debug 有），但
+# ncat_lua.c 无条件调用 lua_* 且 ncat_main.c 调用 lua_setup/lua_run，故必须链。
+add_library(veloterm_ncat_core OBJECT
+    "${NMAP_ROOT}/ncat/base64.c"
+    "${NMAP_ROOT}/ncat/http.c"
+    "${NMAP_ROOT}/ncat/http_digest.c"
+    "${NMAP_ROOT}/ncat/ncat_connect.c"
+    "${NMAP_ROOT}/ncat/ncat_core.c"
+    "${NMAP_ROOT}/ncat/ncat_exec_win.c"
+    "${NMAP_ROOT}/ncat/ncat_listen.c"
+    "${NMAP_ROOT}/ncat/ncat_lua.c"
+    "${NMAP_ROOT}/ncat/ncat_proxy.c"
+    "${NMAP_ROOT}/ncat/ncat_ssl.c"
+    "${NMAP_ROOT}/ncat/ncat_win.c"
+    "${NMAP_ROOT}/ncat/sys_wrap.c"
+    "${NMAP_ROOT}/ncat/util.c"
+)
+# ncat 源码以 ncat/ 为基准 include（ncat.h → ncat_config.h → config_win.h）
+target_include_directories(veloterm_ncat_core PRIVATE
+    "${NMAP_ROOT}/ncat"
+    "${NMAP_ROOT}/liblua"
+)
+set_source_files_properties(
+    "${NMAP_ROOT}/ncat/base64.c"
+    "${NMAP_ROOT}/ncat/http.c"
+    "${NMAP_ROOT}/ncat/http_digest.c"
+    "${NMAP_ROOT}/ncat/ncat_connect.c"
+    "${NMAP_ROOT}/ncat/ncat_core.c"
+    "${NMAP_ROOT}/ncat/ncat_exec_win.c"
+    "${NMAP_ROOT}/ncat/ncat_listen.c"
+    "${NMAP_ROOT}/ncat/ncat_lua.c"
+    "${NMAP_ROOT}/ncat/ncat_proxy.c"
+    "${NMAP_ROOT}/ncat/ncat_ssl.c"
+    "${NMAP_ROOT}/ncat/ncat_win.c"
+    "${NMAP_ROOT}/ncat/sys_wrap.c"
+    "${NMAP_ROOT}/ncat/util.c"
+    PROPERTIES LANGUAGE CXX
+)
+
+# ── nping（报文生成/探测） ───────────────────────────────────────────────────
+# 源清单/宏/include 照搬官方 nping/nping.vcxproj（CompileAsCpp → LANGUAGE CXX）。
+# 依赖：nbase、nsock、libnetutil、libdnet、wpcap + packet（原始包）、OpenSSL。
+# 注意 winfix.cc 用 nping/ 目录下那一份（与 mswin32/ 的不同，97 行差异），
+# 故源码基准目录含 nping/。
+add_library(veloterm_nping_core OBJECT
+    "${NMAP_ROOT}/nping/ArgParser.cc"
+    "${NMAP_ROOT}/nping/common_modified.cc"
+    "${NMAP_ROOT}/nping/Crypto.cc"
+    "${NMAP_ROOT}/nping/EchoClient.cc"
+    "${NMAP_ROOT}/nping/EchoHeader.cc"
+    "${NMAP_ROOT}/nping/EchoServer.cc"
+    "${NMAP_ROOT}/nping/NEPContext.cc"
+    "${NMAP_ROOT}/nping/NpingOps.cc"
+    "${NMAP_ROOT}/nping/NpingTarget.cc"
+    "${NMAP_ROOT}/nping/NpingTargets.cc"
+    "${NMAP_ROOT}/nping/output.cc"
+    "${NMAP_ROOT}/nping/ProbeMode.cc"
+    "${NMAP_ROOT}/nping/stats.cc"
+    "${NMAP_ROOT}/nping/utils.cc"
+    "${NMAP_ROOT}/nping/utils_net.cc"
+    "${NMAP_ROOT}/nping/winfix.cc"
+)
+target_include_directories(veloterm_nping_core PRIVATE "${NMAP_ROOT}/nping")
+# nping 的 .cc 是 C++ 天然，但 winfix.cc 也是 .cc；官方仍设 CompileAsCpp
+set_source_files_properties(
+    "${NMAP_ROOT}/nping/ArgParser.cc"
+    "${NMAP_ROOT}/nping/common_modified.cc"
+    "${NMAP_ROOT}/nping/Crypto.cc"
+    "${NMAP_ROOT}/nping/EchoClient.cc"
+    "${NMAP_ROOT}/nping/EchoHeader.cc"
+    "${NMAP_ROOT}/nping/EchoServer.cc"
+    "${NMAP_ROOT}/nping/NEPContext.cc"
+    "${NMAP_ROOT}/nping/NpingOps.cc"
+    "${NMAP_ROOT}/nping/NpingTarget.cc"
+    "${NMAP_ROOT}/nping/NpingTargets.cc"
+    "${NMAP_ROOT}/nping/output.cc"
+    "${NMAP_ROOT}/nping/ProbeMode.cc"
+    "${NMAP_ROOT}/nping/stats.cc"
+    "${NMAP_ROOT}/nping/utils.cc"
+    "${NMAP_ROOT}/nping/utils_net.cc"
+    "${NMAP_ROOT}/nping/winfix.cc"
+    PROPERTIES LANGUAGE CXX
+)
+
+# ncat 链接依赖（官方 ncat.vcxproj 的 AdditionalDependencies + 必需的 liblua）
+set(VELOTERM_NCAT_LIBS
+    veloterm_nbase
+    veloterm_nsock
+    veloterm_lua
+    "${NPCAP_SDK_DIR}/Lib/x64/wpcap.lib"
+    "${OPENSSL_DIR}/lib/libssl.lib"
+    "${OPENSSL_DIR}/lib/libcrypto.lib"
+    ws2_32 iphlpapi advapi32 shell32 user32 gdi32 crypt32
+    delayimp
+)
+
+# nping 链接依赖（官方 nping.vcxproj 的 AdditionalDependencies）
+set(VELOTERM_NPING_LIBS
+    veloterm_nbase
+    veloterm_nsock
+    veloterm_netutil
+    dnet
+    "${NPCAP_SDK_DIR}/Lib/x64/wpcap.lib"
+    "${NPCAP_SDK_DIR}/Lib/x64/Packet.lib"
+    "${OPENSSL_DIR}/lib/libssl.lib"
+    "${OPENSSL_DIR}/lib/libcrypto.lib"
+    ws2_32 iphlpapi advapi32 shell32 user32 gdi32 crypt32
+    delayimp
+)
+
+# ── ncatffi.dll / npingffi.dll ──────────────────────────────────────────────
+add_library(ncatffi SHARED
+    "${CMAKE_CURRENT_SOURCE_DIR}/ncat_ffi.cc"
+    $<TARGET_OBJECTS:veloterm_ncat_core>
+)
+# FFI 壳 `#include "ncat_main.c"`（相对路径），需 ncat/ 为 include 基准
+# （target 级 PRIVATE include 不随 $<TARGET_OBJECTS> 传递到本目标）
+target_include_directories(ncatffi PRIVATE "${NMAP_ROOT}/ncat" "${NMAP_ROOT}/liblua")
+target_link_libraries(ncatffi PRIVATE ${VELOTERM_NCAT_LIBS})
+# 官方 ncat 只链 wpcap.lib（无 packet.lib），故仅对 wpcap 设延迟加载
+# （多余的 /DELAYLOAD:packet.dll 会报 LNK4199 ignored）
+target_link_options(ncatffi PRIVATE "/DELAYLOAD:wpcap.dll")
+set_target_properties(ncatffi PROPERTIES
+    OUTPUT_NAME "ncatffi"
+    PREFIX ""
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/out"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/out"
+)
+
+add_library(npingffi SHARED
+    "${CMAKE_CURRENT_SOURCE_DIR}/nping_ffi.cc"
+    $<TARGET_OBJECTS:veloterm_nping_core>
+)
+# FFI 壳 `#include "nping.cc"`（相对路径），需 nping/ 为 include 基准
+target_include_directories(npingffi PRIVATE "${NMAP_ROOT}/nping")
+target_link_libraries(npingffi PRIVATE ${VELOTERM_NPING_LIBS})
+target_link_options(npingffi PRIVATE "/DELAYLOAD:packet.dll" "/DELAYLOAD:wpcap.dll")
+set_target_properties(npingffi PROPERTIES
+    OUTPUT_NAME "npingffi"
+    PREFIX ""
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/out"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/out"
+)
+
+# ── runner exe（构建期冒烟用，不随包分发） ───────────────────────────────────
+# ncat/nping 的 --version 与基础功能冒烟（CI 无 Npcap，正好回归降级路径）。
+add_executable(ncat-runner
+    "${NMAP_ROOT}/ncat/ncat_main.c"
+    $<TARGET_OBJECTS:veloterm_ncat_core>
+)
+# ncat_main.c 必须按 C++ 编译（官方 ncat.vcxproj 全局 CompileAsCpp）：
+# veloterm_ncat_core 里的函数是 C++ 编译的（LANGUAGE CXX），若 main 用 C 编
+# 则名字修饰不匹配，链接期全符号 undefined（CI 实测）。同时需 ncat/ 为
+# include 基准（ncat.h → ncat_config.h）。
+target_include_directories(ncat-runner PRIVATE "${NMAP_ROOT}/ncat" "${NMAP_ROOT}/liblua")
+set_source_files_properties("${NMAP_ROOT}/ncat/ncat_main.c" PROPERTIES LANGUAGE CXX)
+target_link_libraries(ncat-runner PRIVATE ${VELOTERM_NCAT_LIBS})
+target_link_options(ncat-runner PRIVATE "/DELAYLOAD:wpcap.dll")
+set_target_properties(ncat-runner PROPERTIES
+    OUTPUT_NAME "ncat"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/out"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/out"
+)
+
+add_executable(nping-runner
+    "${NMAP_ROOT}/nping/nping.cc"
+    $<TARGET_OBJECTS:veloterm_nping_core>
+)
+# nping.cc 已为 .cc（C++），但需 nping/ 为 include 基准（nping.h 等相对包含）
+target_include_directories(nping-runner PRIVATE "${NMAP_ROOT}/nping")
+target_link_libraries(nping-runner PRIVATE ${VELOTERM_NPING_LIBS})
+target_link_options(nping-runner PRIVATE "/DELAYLOAD:packet.dll" "/DELAYLOAD:wpcap.dll")
+set_target_properties(nping-runner PROPERTIES
+    OUTPUT_NAME "nping"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/out"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/out"
 )

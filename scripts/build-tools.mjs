@@ -46,15 +46,19 @@ if (!target) {
 
 console.log(`[build-tools] target: ${target}`);
 
-// --only <段>：局部构建（coreutils / goffi / qalc / nmap）。tag 触发的
-// test-*.yml 快速反馈车道用
-// `--only qalc` / `--only nmap` 只产对应 DLL——该段只依赖 MSYS2（不需要 cargo
-// 全量编译、Go 与 vcpkg OpenSSL），反馈环最短；goffi 段（yq+fzf 合并 DLL）
-// 只依赖 Go。不传时全量构建（publish 路径），行为不变
+// --only <段>：局部构建（coreutils / goffi / qalc / nmap / ncat / nping）。
+// tag 触发的 test-*.yml 快速反馈车道用
+// `--only qalc` 只依赖 MSYS2；`--only nmap|ncat|nping` 走 MSVC+CMake——三者同属
+// Nmap 项目、同工程（veloterm-win/CMakeLists.txt），`--only nmap` 出全部三个
+// DLL，`--only ncat` / `--only nping` 只出对应那一个（cmake --target 单目标，
+// 用于增量验证）；goffi 段（yq+fzf 合并 DLL）只依赖 Go。不传时全量构建
+// （publish 路径），行为不变
 const onlyFlag = args.indexOf('--only');
 const only = onlyFlag !== -1 && args[onlyFlag + 1] ? args[onlyFlag + 1] : '';
-if (only && !['coreutils', 'goffi', 'qalc', 'nmap'].includes(only)) {
-  console.error(`[build-tools] 未知 --only 段：${only}（可选 coreutils/goffi/qalc/nmap）`);
+if (only && !['coreutils', 'goffi', 'qalc', 'nmap', 'ncat', 'nping'].includes(only)) {
+  console.error(
+    `[build-tools] 未知 --only 段：${only}（可选 coreutils/goffi/qalc/nmap/ncat/nping）`,
+  );
   process.exit(1);
 }
 if (only) {
@@ -407,6 +411,8 @@ if (!existsSync(sdkInclude)) {
 }
 
 // 2. CMake 配置 + 构建（生成器用 VS 多配置；-A x64 出 64 位）
+// --only ncat / --only nping 时只构建对应目标（cmake --target，用于增量验证）；
+// 否则全量（nmap 段含三个 DLL，publish 与 --only nmap 都走这里）。
 const cmakeSrc = join(nmapSrc, 'veloterm-win');
 const buildDir = join(nmapBuild, 'cmake');
 execSync(
@@ -414,70 +420,128 @@ execSync(
     `-DNPCAP_SDK_DIR="${sdkDir}" -DOPENSSL_DIR="${opensslDir}"`,
   { stdio: 'inherit' },
 );
-execSync(`cmake --build "${buildDir}" --config Release --parallel`, { stdio: 'inherit' });
+const cmakeTargets =
+  only === 'ncat' ? '--target ncatffi ncat-runner' : only === 'nping' ? '--target npingffi nping-runner' : '';
+execSync(`cmake --build "${buildDir}" --config Release --parallel ${cmakeTargets}`, {
+  stdio: 'inherit',
+});
+
+// 需要的产物：--only ncat/nping 只要对应一组；否则三组齐全
+const wantNmap = only !== 'ncat' && only !== 'nping';
+const wantNcat = !only || only === 'nmap' || only === 'ncat';
+const wantNping = !only || only === 'nmap' || only === 'nping';
 
 const builtDll = join(buildDir, 'out', 'nmapffi.dll');
 const builtRunner = join(buildDir, 'out', 'nmap.exe');
-for (const p of [builtDll, builtRunner]) {
+const builtNcatDll = join(buildDir, 'out', 'ncatffi.dll');
+const builtNcatRunner = join(buildDir, 'out', 'ncat.exe');
+const builtNpingDll = join(buildDir, 'out', 'npingffi.dll');
+const builtNpingRunner = join(buildDir, 'out', 'nping.exe');
+const required = [
+  ...(wantNmap ? [builtDll, builtRunner] : []),
+  ...(wantNcat ? [builtNcatDll, builtNcatRunner] : []),
+  ...(wantNping ? [builtNpingDll, builtNpingRunner] : []),
+];
+for (const p of required) {
   if (!existsSync(p)) {
     console.error(`[build-tools] 缺少构建产物: ${p}`);
     process.exit(1);
   }
 }
 
-// 3. 数据文件 staging + script.db 预生成 + 无 Npcap 冒烟
+// 3. 数据文件 staging + script.db 预生成 + 无 Npcap 冒烟（仅 nmap 段需要）
 // 数据文件清单取上游 Makefile.in 的 install-nmap/install-nse 目标
 // （docs/nmap.xsl、docs/nmap.dtd、nmap-services/-os-db/-service-probes/
 // -protocols/-rpc/-mac-prefixes、nse_main.lua、scripts/、nselib/）。
 // 注：旧版的 nmap-payloads 在 7.992 已不存在（payload 数据内置在 payload.cc）。
 const dataStage = join(nmapBuild, 'nmap-data');
-rmSync(dataStage, { recursive: true, force: true });
-mkdirSync(join(dataStage, 'scripts'), { recursive: true });
-mkdirSync(join(dataStage, 'nselib'), { recursive: true });
-for (const f of [
-  'nmap-services',
-  'nmap-os-db',
-  'nmap-service-probes',
-  'nmap-protocols',
-  'nmap-rpc',
-  'nmap-mac-prefixes',
-  'nse_main.lua',
-]) {
-  cpSync(join(nmapSrc, f), join(dataStage, f));
+if (wantNmap) {
+  rmSync(dataStage, { recursive: true, force: true });
+  mkdirSync(join(dataStage, 'scripts'), { recursive: true });
+  mkdirSync(join(dataStage, 'nselib'), { recursive: true });
+  for (const f of [
+    'nmap-services',
+    'nmap-os-db',
+    'nmap-service-probes',
+    'nmap-protocols',
+    'nmap-rpc',
+    'nmap-mac-prefixes',
+    'nse_main.lua',
+  ]) {
+    cpSync(join(nmapSrc, f), join(dataStage, f));
+  }
+  cpSync(join(nmapSrc, 'docs', 'nmap.xsl'), join(dataStage, 'nmap.xsl'));
+  cpSync(join(nmapSrc, 'docs', 'nmap.dtd'), join(dataStage, 'nmap.dtd'));
+  cpSync(join(nmapSrc, 'scripts'), join(dataStage, 'scripts'), { recursive: true });
+  cpSync(join(nmapSrc, 'nselib'), join(dataStage, 'nselib'), { recursive: true });
+
+  // script.db 预生成：NSE 运行期索引，安装目录通常只读、用户跑
+  // --script-updatedb 会失败，故构建期生成随包分发。--script-updatedb 会先过
+  // win_init（无 Npcap → 降级）再扫 scripts/ 写 script.db。
+  console.log('[build-tools] 生成 scripts/script.db（nmap --script-updatedb）');
+  execSync(`"${builtRunner}" --script-updatedb`, {
+    stdio: 'inherit',
+    env: { ...process.env, NMAPDIR: dataStage },
+  });
+  if (!existsSync(join(dataStage, 'scripts', 'script.db'))) {
+    console.error('[build-tools] --script-updatedb 未生成 scripts/script.db');
+    process.exit(1);
+  }
+
+  // 构建期冒烟（CI 无 Npcap：正好回归 /DELAYLOAD + winfix 降级路径）
+  console.log('[build-tools] 冒烟：nmap --version / -sT 127.0.0.1');
+  execSync(`"${builtRunner}" --version`, {
+    stdio: 'inherit',
+    env: { ...process.env, NMAPDIR: dataStage },
+  });
+  execSync(`"${builtRunner}" -n -sT -p 1 -T5 --max-retries 1 127.0.0.1`, {
+    stdio: 'inherit',
+    env: { ...process.env, NMAPDIR: dataStage },
+  });
 }
-cpSync(join(nmapSrc, 'docs', 'nmap.xsl'), join(dataStage, 'nmap.xsl'));
-cpSync(join(nmapSrc, 'docs', 'nmap.dtd'), join(dataStage, 'nmap.dtd'));
-cpSync(join(nmapSrc, 'scripts'), join(dataStage, 'scripts'), { recursive: true });
-cpSync(join(nmapSrc, 'nselib'), join(dataStage, 'nselib'), { recursive: true });
 
-// script.db 预生成：NSE 运行期索引，安装目录通常只读、用户跑
-// --script-updatedb 会失败，故构建期生成随包分发。--script-updatedb 会先过
-// win_init（无 Npcap → 降级）再扫 scripts/ 写 script.db。
-console.log('[build-tools] 生成 scripts/script.db（nmap --script-updatedb）');
-execSync(`"${builtRunner}" --script-updatedb`, {
-  stdio: 'inherit',
-  env: { ...process.env, NMAPDIR: dataStage },
-});
-if (!existsSync(join(dataStage, 'scripts', 'script.db'))) {
-  console.error('[build-tools] --script-updatedb 未生成 scripts/script.db');
-  process.exit(1);
+// 4. ncat / nping 构建期冒烟（同 nmap：CI 无 Npcap，正好回归 /DELAYLOAD 降级）
+// ncat --version 打印版本后退出；-z 是「零 I/O 扫描」模式，对回环做一次连接
+// 尝试即可验证运行期可用（不依赖 Npcap 的原始包能力）。nping 的 --version
+// 与一次本地 TCP 探测同理。
+if (wantNcat) {
+  console.log('[build-tools] 冒烟：ncat --version');
+  execSync(`"${builtNcatRunner}" --version`, { stdio: 'inherit' });
+  // ncat 对回环做一次 connect（-z 零 I/O 模式；退出码 0=端口开放，非 0 亦可
+  // 接受，关键是进程能正常启动与退出）——用 try 包住，只要求不因缺 DLL 而无法启动。
+  try {
+    execSync(`"${builtNcatRunner}" -z -w 1 127.0.0.1 1`, { stdio: 'inherit' });
+  } catch (e) {
+    console.log(`[build-tools] ncat -z 冒烟返回非 0（端口关闭属正常）：${e.status}`);
+  }
+}
+if (wantNping) {
+  console.log('[build-tools] 冒烟：nping --version');
+  execSync(`"${builtNpingRunner}" --version`, { stdio: 'inherit' });
+  // nping 对回环发一个 TCP 探测包（--tcp -p 1，count=1）
+  try {
+    execSync(`"${builtNpingRunner}" --tcp -p 1 -c 1 --delay 10ms 127.0.0.1`, { stdio: 'inherit' });
+  } catch (e) {
+    console.log(`[build-tools] nping 探测冒烟返回非 0（无 Npcap 时的降级行为）：${e.status}`);
+  }
 }
 
-// 构建期冒烟（CI 无 Npcap：正好回归 /DELAYLOAD + winfix 降级路径）
-console.log('[build-tools] 冒烟：nmap --version / -sT 127.0.0.1');
-execSync(`"${builtRunner}" --version`, {
-  stdio: 'inherit',
-  env: { ...process.env, NMAPDIR: dataStage },
-});
-execSync(`"${builtRunner}" -n -sT -p 1 -T5 --max-retries 1 127.0.0.1`, {
-  stdio: 'inherit',
-  env: { ...process.env, NMAPDIR: dataStage },
-});
-
-// 4. 复制产物到 externalBin 目录
-cpSync(builtDll, join(outDir, 'nmapffi.dll'));
-rmSync(join(outDir, 'nmap-data'), { recursive: true, force: true });
-cpSync(dataStage, join(outDir, 'nmap-data'), { recursive: true });
-console.log(`[build-tools] nmapffi.dll + nmap-data/ (${nmapVersion}) -> ${join(outDir)}`);
+// 5. 复制产物到 externalBin 目录（按 only 分段；--only ncat/nping 只拷对应产物）
+if (wantNmap) {
+  cpSync(builtDll, join(outDir, 'nmapffi.dll'));
+  rmSync(join(outDir, 'nmap-data'), { recursive: true, force: true });
+  cpSync(dataStage, join(outDir, 'nmap-data'), { recursive: true });
+}
+if (wantNcat) {
+  cpSync(builtNcatDll, join(outDir, 'ncatffi.dll'));
+  // ncat 的 SSL 客户端证书束：ncat 在 exe 同目录查找 ca-bundle.crt（缺失仅
+  // debug 告警、不致命）；DLL 形态下 GetModuleHandle(0) 取到宿主 coreutils.exe
+  // 路径，故随包放安装根即可命中。
+  cpSync(join(nmapSrc, 'ncat', 'certs', 'ca-bundle.crt'), join(outDir, 'ca-bundle.crt'));
+}
+if (wantNping) {
+  cpSync(builtNpingDll, join(outDir, 'npingffi.dll'));
+}
+console.log(`[build-tools] nmap 段产物 (${nmapVersion}) -> ${join(outDir)}`);
 
 console.log('[build-tools] 完成');
