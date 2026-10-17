@@ -507,6 +507,9 @@ add_library(ncatffi SHARED
     "${CMAKE_CURRENT_SOURCE_DIR}/ncat_ffi.cc"
     $<TARGET_OBJECTS:veloterm_ncat_core>
 )
+# FFI 壳 `#include "ncat_main.c"`（相对路径），需 ncat/ 为 include 基准
+# （target 级 PRIVATE include 不随 $<TARGET_OBJECTS> 传递到本目标）
+target_include_directories(ncatffi PRIVATE "${NMAP_ROOT}/ncat" "${NMAP_ROOT}/liblua")
 target_link_libraries(ncatffi PRIVATE ${VELOTERM_NCAT_LIBS})
 # ncat 仅在 -e/--exec 用 pcap？官方仍链 wpcap 并延迟加载（缺 Npcap 时降级）
 target_link_options(ncatffi PRIVATE "/DELAYLOAD:wpcap.dll" "/DELAYLOAD:packet.dll")
@@ -521,6 +524,8 @@ add_library(npingffi SHARED
     "${CMAKE_CURRENT_SOURCE_DIR}/nping_ffi.cc"
     $<TARGET_OBJECTS:veloterm_nping_core>
 )
+# FFI 壳 `#include "nping.cc"`（相对路径），需 nping/ 为 include 基准
+target_include_directories(npingffi PRIVATE "${NMAP_ROOT}/nping")
 target_link_libraries(npingffi PRIVATE ${VELOTERM_NPING_LIBS})
 target_link_options(npingffi PRIVATE "/DELAYLOAD:packet.dll" "/DELAYLOAD:wpcap.dll")
 set_target_properties(npingffi PROPERTIES
