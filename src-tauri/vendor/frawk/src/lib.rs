@@ -765,7 +765,7 @@ pub fn awk_main() -> i32 {
         Some("interp") => {
             with_io!(|inp, oup| run_interp_with_context(ctx, inp, oup, num_workers))
         }
-        None | Some("cranelift") => {
+        Some("cranelift") => {
             with_io!(|inp, oup| run_cranelift_with_context(
                 ctx,
                 inp,
@@ -776,6 +776,30 @@ pub fn awk_main() -> i32 {
                 },
                 signal,
             ))
+        }
+        None => {
+            // VeloTerm vendor 修改：默认后端（未传 -B/--backend）在 Windows 上
+            // 改走字节码解释器——cranelift-jit 0.91 的 JIT 可执行内存走 Unix
+            // 语义，在 Win64 上编译成功但执行生成代码即 0xC0000005 访问违例
+            // （test-commands 全命令验证车道实测 `awk 'BEGIN { print 40+2 }'`
+            // 恒崩）；解释器是纯 Rust VM，平台无关。显式 `-B cranelift` /
+            // `-B interp` 保持上游语义不变（上面两臂）。
+            cfg_if::cfg_if! {
+                if #[cfg(windows)] {
+                    with_io!(|inp, oup| run_interp_with_context(ctx, inp, oup, num_workers))
+                } else {
+                    with_io!(|inp, oup| run_cranelift_with_context(
+                        ctx,
+                        inp,
+                        oup,
+                        codegen::Config {
+                            opt_level: opt_level as usize,
+                            num_workers,
+                        },
+                        signal,
+                    ))
+                }
+            }
         }
         Some(b) => {
             fail!("invalid backend: {:?}", b);
