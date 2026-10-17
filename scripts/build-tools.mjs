@@ -388,11 +388,17 @@ const nmapBuild = join(srcTauri, 'nmap-build');
 rmSync(nmapBuild, { recursive: true, force: true });
 mkdirSync(nmapBuild, { recursive: true });
 
-// 1. Npcap SDK（版本与上游 mswin32/Build.bat 同源；解到 nmap-build 内，缓存复用）
+// 1. Npcap SDK（版本与上游 mswin32/Build.bat 同源：它下载 npcap-sdk-1.16.zip；
+// 解到 nmap-build 内，缓存复用）。
+// 注意：SDK 只提供**导入库**（wpcap.lib/packet.lib 仅数十 KB，内容是跳转到
+// DLL 的桩），Npcap 官方从不发布静态库；且真正抓包的内核驱动 npf.sys 只能由
+// 安装程序装入系统——故 Npcap 无法静态链接进本 DLL（PE 导入表已证实只延迟
+// 导入 wpcap.dll/packet.dll，无 Npcap 代码）。SDK 版本仅决定编译期期望的
+// 符号集（即用户所需的最低 Npcap 版本）。
 const sdkDir = join(nmapBuild, 'npcap-sdk');
 const sdkInclude = join(sdkDir, 'Include', 'pcap.h');
 if (!existsSync(sdkInclude)) {
-  const NPCAP_SDK_VER = '1.13';
+  const NPCAP_SDK_VER = '1.16';
   const zip = join(nmapBuild, 'npcap-sdk.zip');
   console.log(`[build-tools] 下载 Npcap SDK ${NPCAP_SDK_VER}`);
   execSync(
