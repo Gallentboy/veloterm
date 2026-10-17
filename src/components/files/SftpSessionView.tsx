@@ -712,8 +712,9 @@ export function SftpSessionView({
       }}
       style={fontScaleStyle}
       className={cn(
-        // 面板底色 = ZCode 对话输入栏同款 --color-input（浅色 #ffffff / 深色 #2b2b2b，随主题切换）
-        'relative flex h-full min-h-0 flex-col overflow-hidden bg-input',
+        // 面板底色与页面/顶栏同源（bg-background，与终端页内容区一致；
+        // 不再用偏亮的 --color-input——深色下会与顶部 Tab 栏形成色差）
+        'relative flex h-full min-h-0 flex-col overflow-hidden bg-background',
         isDropTarget && 'ring-2 ring-primary/50 ring-inset',
       )}
     >
@@ -783,7 +784,7 @@ export function SftpSessionView({
         </div>
       </div>
 
-      {/* 面包屑导航栏：底色与面板统一（bg-input，去 surface 叠色）——主内容与
+      {/* 面包屑导航栏：底色与面板统一（bg-background）——主内容与
           上方 Header 各层同色，仅以分隔线区分结构 */}
       <div className="flex shrink-0 items-center gap-1 border-b border-border/40 px-3 py-1 overflow-x-auto text-ui-xs text-foreground-subtle">
         {breadcrumbs.map((crumb, idx) => (
@@ -858,7 +859,7 @@ export function SftpSessionView({
           </div>
         ) : (
           <table className="w-full border-collapse text-left text-ui-xs">
-            <thead className="sticky top-0 bg-input border-b border-border/50 text-foreground-subtle select-none z-10">
+            <thead className="sticky top-0 bg-background border-b border-border/50 text-foreground-subtle select-none z-10">
               <tr>
                 <th className="py-2 pl-4 pr-2 font-medium">{t('files.name')}</th>
                 <th className="py-2 px-2 font-medium w-24">{t('files.size')}</th>
