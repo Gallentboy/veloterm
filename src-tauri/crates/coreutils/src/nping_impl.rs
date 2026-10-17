@@ -5,7 +5,7 @@
 //!
 //! 源码锁在 `vendor/nmap/nping/`，由 `veloterm-win/CMakeLists.txt` 经 MSVC 编成
 //! 自包含 `npingffi.dll`（链 Npcap SDK 的 wpcap.lib/packet.lib + OpenSSL 静态库
-//! + 树内 nbase/nsock/libnetutil/libdnet；见 vendor/nmap/README.md）。入口由
+//! 与树内 nbase/nsock/libnetutil/libdnet；见 vendor/nmap/README.md）。入口由
 //! `nping_ffi.cc` 以 `#define main` 改名包含 nping.cc 提供。
 //!
 //! nping 是独立可执行程序，其 main 与 output.cc 内有 exit() 调用——coreutils
