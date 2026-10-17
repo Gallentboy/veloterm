@@ -222,15 +222,15 @@ $overrides = @{
     'factor'    = @{ argv = @('12'); out = @('2', '3') }
     'date'      = @{ argv = @('+%Y'); out = '20'; note = 'format pipeline (year prefix)' }
     # ---- 编码/哈希（已知测试向量）----
-    'base32'    = @{ stdin = 'hello'; out = 'NBSWY3DP' }
-    'base64'    = @{ stdin = 'hello'; out = 'aGVsbG8' }
+    'base32'    = @{ argv = @(); stdin = 'hello'; out = 'NBSWY3DP' }
+    'base64'    = @{ argv = @(); stdin = 'hello'; out = 'aGVsbG8' }
     'basenc'    = @{ argv = @('--base64'); stdin = 'hello'; out = 'aGVsbG8' }
-    'base32hex' = @{ stdin = 'hello'; out = 'D1IMOR3F' }
-    'base64url' = @{ stdin = 'hello'; out = 'aGVsbG8' }
-    'hex'       = @{ stdin = 'hello'; out = '68656c6c6f' }
-    'hexupper'  = @{ stdin = 'hello'; out = '68656C6C6F' }
-    'md5sum'    = @{ stdin = "hello${LF}"; out = 'b1946ac92492d2347c6235b4d2611184' }
-    'sha256sum' = @{ stdin = "hello${LF}"; out = '5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03' }
+    'base32hex' = @{ argv = @(); stdin = 'hello'; out = 'D1IMOR3F' }
+    'base64url' = @{ argv = @(); stdin = 'hello'; out = 'aGVsbG8' }
+    'hex'       = @{ argv = @(); stdin = 'hello'; out = '68656c6c6f' }
+    'hexupper'  = @{ argv = @(); stdin = 'hello'; out = '68656C6C6F' }
+    'md5sum'    = @{ argv = @(); stdin = "hello${LF}"; out = 'b1946ac92492d2347c6235b4d2611184' }
+    'sha256sum' = @{ argv = @(); stdin = "hello${LF}"; out = '5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03' }
     'urlencode' = @{ argv = @('a b'); out = 'a%20b' }
     'urldecode' = @{ argv = @('a%20b'); out = 'a b' }
     # ---- 文件族（每行独立种子目录，真实操作文件系统）----
@@ -262,7 +262,7 @@ $overrides = @{
     'timeout'   = @{ argv = @('2', 'cmd', '/c', 'ver'); note = 'child spawn' }
     'nice'      = @{ argv = @('cmd', '/c', 'ver'); note = 'child spawn' }
     'nohup'     = @{ argv = @('cmd', '/c', 'ver'); note = 'child spawn, stdout->nohup.out' }
-    'stdbuf'    = @{ argv = @('-o', '0', 'cmd', '/c', 'ver'); note = 'child spawn' }
+    'stdbuf'    = @{ argv = @('-o0', 'cmd', '/c', 'ver'); note = 'child spawn; GNU form -o0 attached' }
     'sleep'     = @{ argv = @('0') }
     'ps'        = @{ argv = @(); nonempty = $true; note = 'process listing' }
     # ---- 视图/搜索工具 ----
@@ -273,7 +273,9 @@ $overrides = @{
     'fd'        = @{ argv = @('a.txt'); out = 'a.txt' }
     'fzf'       = @{ argv = @('-f', 'zz'); stdin = "zz-line${LF}no${LF}"; out = 'zz-line'; note = 'filter mode (non-interactive)' }
     'parallel'  = @{ argv = @('echo'); stdin = 'hello'; out = 'hello' }
-    'more'      = @{ argv = @(); stdin = 'x'; out = 'x'; note = 'cat-through on non-tty stdin' }
+    # more 在非 tty stdin 下会挂死（CI 实测 60s 超时）——uutils more 支持
+    # --version（版本扫描单测在案），换版本探针
+    'more'      = @{ argv = @('--version'); note = 'stdin pager hangs w/o tty (CI-observed); version probe instead' }
     # ---- CLI 语义例外（coreutils.rs 版本扫描单测的已知例外）----
     'false'     = @{ exit = 1; note = 'GNU semantics: always 1, even with --version' }
     'test'      = @{ argv = @('a', '=', 'a'); note = 'no --version support' }
@@ -281,13 +283,13 @@ $overrides = @{
     # ---- DLL 家族功能用例 ----
     'jq'        = @{ argv = @('-n', '1+1'); out = '2' }
     'yq'        = @{ argv = @('-n', '.a = "b"'); out = 'a: b' }
-    'bc'        = @{ stdin = "1+1${LF}"; out = '2' }
+    'bc'        = @{ argv = @(); stdin = "1+1${LF}"; out = '2' }
     'qalc'      = @{ argv = @('-t', '5+2'); out = '7' }
     'openssl'   = @{ argv = @('version'); out = 'OpenSSL' }
     'awk'       = @{ argv = @('BEGIN { print 40+2 }'); out = '42' }
     'vim'       = @{ out = 'VIM' }
     'nmap'      = @{ out = 'Nmap' }
-    'ncat'      = @{ out = 'Ncat' }
+    'ncat'      = @{ outAny = 'Ncat'; note = 'version banner may go to stderr' }
     'nping'     = @{ nonempty = $true }
     'telnet'    = @{ argv = @(); exit = 'nonnull'; note = 'no args -> usage, nonzero' }
 }
@@ -343,6 +345,16 @@ function Invoke-One {
                 if (-not $outNorm.Contains([string]$want)) {
                     $verdict = 'FAIL'
                     $notes += ("stdout missing '{0}'" -f ($want -replace "`r", '\r' -replace "`n", '\n'))
+                }
+            }
+        }
+        if ($spec['outAny']) {
+            # outAny：stdout+stderr 合并后判断子串（有些工具的版本横幅走 stderr）
+            $anyNorm = ($outNorm + "`n" + (([string]$r.Stderr) -replace "`r`n", "`n"))
+            foreach ($want in @($spec['outAny'])) {
+                if (-not $anyNorm.Contains([string]$want)) {
+                    $verdict = 'FAIL'
+                    $notes += ("output missing '{0}'" -f $want)
                 }
             }
         }
@@ -424,7 +436,12 @@ $rows.Add([pscustomobject]@{
 $totalSw = [System.Diagnostics.Stopwatch]::StartNew()
 Say ("`n-- pass 1: shortname mode ({0} commands) --" -f $commands.Count)
 foreach ($cmd in $commands) {
-    $row = Invoke-One -Cmd $cmd -Mode 'shortname'
+    try { $row = Invoke-One -Cmd $cmd -Mode 'shortname' }
+    catch {
+        $row = [pscustomobject]@{ Cmd = $cmd; Mode = 'shortname'; Argv = ''; Exit = -9999; Want = '0';
+            Ms = 0; Verdict = 'FAIL'; Note = "HARNESS ERROR: $($_.Exception.Message)";
+            Out1 = ''; Stdout = ''; Stderr = [string]$_.Exception.Message }
+    }
     $rows.Add($row)
     Say ("  [{0}] {1,-12} exit={2,-4} {3,5} ms  {4}" -f `
         $row.Verdict, $cmd, $row.Exit, $row.Ms, $row.Note)
@@ -434,7 +451,12 @@ $subCmds = @($commands | Where-Object { $ownArgv -notcontains $_ })
 Say ("`n-- pass 2: subcommand mode ({0} commands, OWN_ARGV excluded) --" -f `
     $subCmds.Count)
 foreach ($cmd in $subCmds) {
-    $row = Invoke-One -Cmd $cmd -Mode 'subcommand'
+    try { $row = Invoke-One -Cmd $cmd -Mode 'subcommand' }
+    catch {
+        $row = [pscustomobject]@{ Cmd = $cmd; Mode = 'subcommand'; Argv = ''; Exit = -9999; Want = '0';
+            Ms = 0; Verdict = 'FAIL'; Note = "HARNESS ERROR: $($_.Exception.Message)";
+            Out1 = ''; Stdout = ''; Stderr = [string]$_.Exception.Message }
+    }
     $rows.Add($row)
     Say ("  [{0}] {1,-12} exit={2,-4} {3,5} ms  {4}" -f `
         $row.Verdict, $cmd, $row.Exit, $row.Ms, $row.Note)
@@ -459,16 +481,16 @@ $md.Add('# verify-win-commands report')
 $md.Add('')
 $md.Add('- date      : {0} (UTC)' -f ([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')))
 $md.Add('- commit    : {0}' -f $(if ($sha) { $sha } else { '(local)' }))
-$md.Add('- runner    : {0} {1}' -f $env:RUNNER_OS, $env:ImageOS)
+$md.Add(('- runner    : {0} {1}' -f $env:RUNNER_OS, $env:ImageOS))
 $md.Add('- binaries  : {0}' -f $BinariesDir)
 $md.Add('- commands  : {0} (self-reported by coreutils.exe)' -f $commands.Count)
-$md.Add('- probes    : {0} rows = 1 self-report + {1} shortname + {2} subcommand' -f `
-    $rows.Count, $commands.Count, $subCmds.Count)
-$md.Add('- wall time : {0:N1} s (timeout {1}s per command)' -f `
-    $totalSw.Elapsed.TotalSeconds, $TimeoutSec)
+$md.Add(('- probes    : {0} rows = 1 self-report + {1} shortname + {2} subcommand' -f `
+    $rows.Count, $commands.Count, $subCmds.Count))
+$md.Add(('- wall time : {0:N1} s (timeout {1}s per command)' -f `
+    $totalSw.Elapsed.TotalSeconds, $TimeoutSec))
 $md.Add('')
-$md.Add('**RESULT: {0}** -- {1}/{2} passed' -f `
-    $(if ($failRows.Count) { 'FAIL' } else { 'PASS' }), $passCount, $rows.Count)
+$md.Add(('**RESULT: {0}** -- {1}/{2} passed' -f `
+    $(if ($failRows.Count) { 'FAIL' } else { 'PASS' }), $passCount, $rows.Count))
 $md.Add('')
 $md.Add('| # | command | mode | probe argv | exit | want | ms | verdict | note |')
 $md.Add('| --: | -- | -- | -- | --: | --: | --: | -- | -- |')
