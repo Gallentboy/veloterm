@@ -332,7 +332,10 @@ export function TerminalScreen({
                       : 'text-foreground-subtle hover:text-foreground hover:bg-hover'
                   )}
                 >
-                  <Gauge className={cn('size-3.5', resourceMonitorOn && 'text-primary')} />
+                  <Gauge
+                    className={cn('size-3.5', resourceMonitorOn && 'text-primary')}
+                    strokeWidth={2.5}
+                  />
                 </Button>
               </ControlHintTooltip>
             ) : null}
