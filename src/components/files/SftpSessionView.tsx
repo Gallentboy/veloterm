@@ -783,8 +783,9 @@ export function SftpSessionView({
         </div>
       </div>
 
-      {/* 面包屑导航栏 */}
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/40 bg-surface/10 px-3 py-1 overflow-x-auto text-ui-xs text-foreground-subtle">
+      {/* 面包屑导航栏：底色与面板统一（bg-input，去 surface 叠色）——主内容与
+          上方 Header 各层同色，仅以分隔线区分结构 */}
+      <div className="flex shrink-0 items-center gap-1 border-b border-border/40 px-3 py-1 overflow-x-auto text-ui-xs text-foreground-subtle">
         {breadcrumbs.map((crumb, idx) => (
           <div key={crumb.path} className="flex items-center gap-1 shrink-0">
             {idx > 0 && <span className="text-foreground-subtlest">/</span>}
@@ -857,7 +858,7 @@ export function SftpSessionView({
           </div>
         ) : (
           <table className="w-full border-collapse text-left text-ui-xs">
-            <thead className="sticky top-0 bg-input/95 backdrop-blur-xs border-b border-border/50 text-foreground-subtle select-none z-10">
+            <thead className="sticky top-0 bg-input border-b border-border/50 text-foreground-subtle select-none z-10">
               <tr>
                 <th className="py-2 pl-4 pr-2 font-medium">{t('files.name')}</th>
                 <th className="py-2 px-2 font-medium w-24">{t('files.size')}</th>
