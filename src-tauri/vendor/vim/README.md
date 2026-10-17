@@ -38,8 +38,10 @@ vim 的运行文件树（syntax/ftplugin/doc 等）随包放安装根 `vim-runti
 
 ## 裁剪清单（相对上游 tarball）
 
-- `src/testdir/`（18M 测试套件）、`src/po/`（10M 翻译源，官方 Windows 包亦不带
-  翻译）、`src/GvimExt/`（资源管理器外壳扩展，需 OLE 构建）
+- `src/testdir/`（18M 测试套件；**仅保留 `Make_all.mak`**——Make_mvc.mak 第 699
+  行无条件 `!INCLUDE .\testdir\Make_all.mak`（测试脚本名清单），其余 testdir
+  引用都在 test/clean 目标内、构建不触及）、`src/po/`（10M 翻译源，官方
+  Windows 包亦不带翻译）、`src/GvimExt/`（资源管理器外壳扩展，需 OLE 构建）
 - 顶层 CI/仓库杂项：`.github/`、`ci/`、`READMEdir/`、`pixmaps/`、`nsis/`、
   `lang/`、`tools/`、`configure` 及各 dotfile/贡献指南
 - runtime 内 GUI 专属：`bitmaps/`、`icons/`、`hi*.png`、`gvim.desktop`、
