@@ -1,157 +1,66 @@
-# [![Vim The editor](https://github.com/vim/vim/raw/master/runtime/vimlogo.gif)](https://www.vim.org)
+# vendor/vim — VeloTerm 内嵌的 Vim 源码
 
-[![Github Build status](https://github.com/vim/vim/workflows/GitHub%20CI/badge.svg)](https://github.com/vim/vim/actions?query=workflow%3A%22GitHub+CI%22)
-[![Coverage Status](https://codecov.io/gh/vim/vim/coverage.svg?branch=master)](https://codecov.io/gh/vim/vim?branch=master)
-[![Coverity Scan](https://scan.coverity.com/projects/241/badge.svg)](https://scan.coverity.com/projects/vim)
-[![Debian CI](https://badges.debian.net/badges/debian/testing/vim/version.svg)](https://buildd.debian.org/vim)
-[![Packages](https://repology.org/badge/tiny-repos/vim.svg)](https://repology.org/metapackage/vim)
-[![Fossies codespell report](https://fossies.org/linux/test/vim-master.tar.gz/codespell.svg)](https://fossies.org/linux/test/vim-master.tar.gz/codespell.html)
+上游：https://github.com/vim/vim ，锁定 tag **v9.2.1202**（见 `VELOTERM_VERSION`）。
+本目录是整树 vendor（构建资产），除本 README、`VELOTERM_VERSION` 外**零本地修补**——
+与其他 vendor 树（jq 九处补丁、bc 的 strgen 复刻）不同，vim 走上游官方
+`VIMDLL` 形态即可完成宿主接线，不需要改任何上游源码。
 
-If you find a bug or want to discuss the best way to add a new feature, please
-[open an issue](https://github.com/vim/vim/issues/new/choose).
-If you have a question or want to discuss the best way to do something with
-Vim, you can join [`#vim`](https://web.libera.chat/#vim),
-[reddit.com/r/vim](https://reddit.com/r/vim),
-use [StackExchange](https://vi.stackexchange.com/),
-or one of the [Maillists](https://www.vim.org/community.php).
-
-## What is Vim?
-
-Vim is a greatly improved version of the good old UNIX editor
-[Vi](https://en.wikipedia.org/wiki/Vi_%28text_editor%29).  Many new
-features have been added: multi-level undo, syntax highlighting, command line
-history, on-line help, spell checking, filename completion, block operations,
-script language, etc.  There is also a Graphical User Interface (GUI)
-available.  Still, Vi compatibility is maintained, those who have Vi "in the
-fingers" will feel at home.
-See [`runtime/doc/vi_diff.txt`](runtime/doc/vi_diff.txt) for differences with
-Vi.
-
-This editor is very useful for editing programs and other plain text files.
-All commands are given with normal keyboard characters, so those who can type
-with ten fingers can work very fast.  Additionally, function keys can be
-mapped to commands by the user, and the mouse can be used.
-
-Vim also aims to provide a (mostly) POSIX-compatible vi implementation, when
-compiled with a minimal feature set (typically called vim.tiny), which is used
-by many Linux distributions as the default vi editor.
-
-Vim runs under MS-Windows (7, 8, 10, 11), macOS, Haiku, VMS and almost all
-flavours of UNIX.  Porting to other systems should not be very difficult.
-Older versions of Vim run on MS-DOS, MS-Windows 95/98/Me/NT/2000/XP/Vista,
-Amiga DOS, Atari MiNT, BeOS, RISC OS and OS/2.  These are no longer maintained.
-
-For Vim9 script see [README_VIM9](README_VIM9.md).
-
-## Distribution
-
-You can often use your favorite package manager to install Vim.  On Mac and
-Linux a small version of Vim is pre-installed, you still need to install Vim
-if you want more features.
-
-There are separate distributions for Unix, PC, Amiga and some other systems.
-This `README.md` file comes with the runtime archive.  It includes the
-documentation, syntax files and other files that are used at runtime.  To run
-Vim you must get either one of the binary archives or a source archive.
-Which one you need depends on the system you want to run it on and whether you
-want or must compile it yourself.  Check https://www.vim.org/download.php for
-an overview of currently available distributions.
-
-Some popular places to get the latest Vim:
-* Check out the git repository from [GitHub](https://github.com/vim/vim).
-* Get the source code as an [archive](https://github.com/vim/vim/tags).
-* Get a Windows executable from the
-[vim-win32-installer](https://github.com/vim/vim-win32-installer/releases) repository.
-
-## Compiling
-
-If you obtained a binary distribution you don't need to compile Vim.  If you
-obtained a source distribution, all the stuff for compiling Vim is in the
-[`src`](./src/) directory.  See [`src/INSTALL`](./src/INSTALL) for instructions.
-
-## Installation
-
-See one of these files for system-specific instructions.  Either in the
-[READMEdir directory](./READMEdir/) (in the repository) or
-the top directory (if you unpack an archive):
+## 构建形态（官方 MSVC nmake 路径，见 src/INSTALLpc.txt）
 
 ```
-README_ami.txt		Amiga
-README_unix.txt		Unix
-README_dos.txt		MS-DOS and MS-Windows
-README_mac.txt		Macintosh
-README_haiku.txt	Haiku
-README_vms.txt		VMS
+nmake -f Make_mvc.mak VIMDLL=yes CPU=AMD64 vim.exe
 ```
 
-There are other `README_*.txt` files, depending on the distribution you used.
+- `VIMDLL=yes`（上游 8.2.2863 引入的官方拆分）：产出**瘦启动器 `vim.exe`**
+  （os_w32exe.c 的 `wmain`，只做 `VimMain(0, NULL)`）+ **`vim64.dll`**
+  （主体，`__declspec(dllexport) int VimMain(int argc, char **argv)`，见
+  src/main.c）。默认 `FEATURES=HUGE`、静态 CRT（未定义 `USE_MSVCRT` 时 Make_mvc
+  自动 `/MT`），依赖全系统库，零外部包。
+- VeloTerm 分发：随包只带 `vim64.dll`（coreutils 的 `vim` 分发臂运行时
+  LoadLibrary 直调 `VimMain`，见 `crates/coreutils/src/vim_impl.rs`）；启动器
+  `vim.exe` 仅作 CI 冒烟 runner，不随包分发。
+- GUI/控制台运行期选择：VIMDLL 形态下 DLL 同时编入 GUI 与控制台代码，
+  `VimMain` 以 `mch_is_gui_executable()`（os_win32.c）读**宿主进程 exe** 的 PE
+  subsystem 决定——宿主 coreutils.exe 是控制台程序，恒为控制台 vim。
+- 参数获取：MSWIN 下 `VimMain` **无条件**用 `GetCommandLineW` 自解析进程命令行
+  （main.c 调 `get_cmd_argsW`），入口的 argc/argv 被忽略。因此 vim 属 OWN_ARGV
+  家族（同 rg/fd/awk/bat）：仅硬链接短名（`tools\vim.exe`）模式可用，
+  `coreutils vim ...` 子命令模式给出提示。
 
-## Documentation
+## 随包数据文件（runtime）
 
-The Vim tutor is a one hour training course for beginners.  Often it can be
-started as `vimtutor`.  See `:help tutor` for more information.
+vim 的运行文件树（syntax/ftplugin/doc 等）随包放安装根 `vim-runtime/`，
+调用前由 vim_impl.rs 设 `VIMRUNTIME` 指过去（仅当用户未设；上游搜索序中
+用户显式设置优先级更高）。`runtime/doc/tags` 上游仓库自带，无需构建期生成
+`:helptags`。`vimrun.exe`（`:!` 命令的辅助器）**不随包分发**：上游按
+「exe 同目录是否存在」探测（os_win32.c `s_dont_use_vimrun`），找不到即走
+直调 shell 路径，行为完整。
 
-The best is to use `:help` in Vim.  If you don't have an executable yet, read
-[`runtime/doc/help.txt`](./runtime/doc/help.txt).
-It contains pointers to the other documentation files.
-The User Manual reads like a book and is recommended to learn to use
-Vim.  See `:help user-manual`.
+## 裁剪清单（相对上游 tarball）
 
-## Copying
+- `src/testdir/`（18M 测试套件）、`src/po/`（10M 翻译源，官方 Windows 包亦不带
+  翻译）、`src/GvimExt/`（资源管理器外壳扩展，需 OLE 构建）
+- 顶层 CI/仓库杂项：`.github/`、`ci/`、`READMEdir/`、`pixmaps/`、`nsis/`、
+  `lang/`、`tools/`、`configure` 及各 dotfile/贡献指南
+- runtime 内 GUI 专属：`bitmaps/`、`icons/`、`hi*.png`、`gvim.desktop`、
+  `gvimrc_example.vim`（控制台 vim 不引用）
+- 顶层 `README.md` 换为本文件（veloterm 的 vendor 说明；上游内容另有
+  `README.txt` 原样保留）
 
-Vim is Charityware.  You can use and copy it as much as you like, but you are
-encouraged to make a donation to help orphans in Uganda.  Please read the file
-[`runtime/doc/uganda.txt`](./runtime/doc/uganda.txt)
-for details (do `:help uganda` inside Vim).
+其余全量保留（含 runtime/doc 帮助树、spell、tutor 与 `src/INSTALL/` ——
+其中 `INSTALLpc.txt` 是上游 Windows 构建方式的权威文档）。
 
-Summary of the license: There are no restrictions on using or distributing an
-unmodified copy of Vim.  Parts of Vim may also be distributed, but the license
-text must always be included.  For modified versions, a few restrictions apply.
-The license is GPL compatible, you may compile Vim with GPL libraries and
-distribute it.
+## 许可
 
-## Sponsoring
+Vim 以 **Vim License**（charityware，见顶层 `LICENSE` 与
+`runtime/doc/uganda.txt`）分发：允许自由使用、复制与再分发，要求保留许可
+文本（本树原样保留 LICENSE 与 doc/uganda.txt），并鼓励向乌干达的 ICCF 捐助。
+该许可与 GPL 兼容（含 GPL 兼容性条款），随包分发无障碍。
 
-Fixing bugs and adding new features takes a lot of time and effort.  To show
-your appreciation for the work and motivate developers to continue working on
-Vim please send a donation.
+## 升级流程
 
-The money you donated will be mainly used to help children in Uganda.  See
-[`runtime/doc/uganda.txt`](./runtime/doc/uganda.txt).  But at the same time
-donations increase the development team motivation to keep working on Vim!
-
-For the most recent information about sponsoring look on the Vim web site:
-	https://www.vim.org/sponsor/
-
-## Contributing
-
-If you would like to help make Vim better, see the
-[CONTRIBUTING.md](./CONTRIBUTING.md) file.
-
-## Information
-
-If you are on macOS, you can use [MacVim](https://macvim.org).
-
-The latest news about Vim can be found on the Vim home page:
-	https://www.vim.org/
-
-If you have problems, have a look at the Vim documentation or tips:
-	https://www.vim.org/docs.php
-	https://vim.fandom.com/wiki/Vim_Tips_Wiki
-
-If you still have problems or any other questions, use one of the mailing
-lists to discuss them with Vim users and developers:
-	https://www.vim.org/maillist.php
-
-If nothing else works, report bugs directly to the vim-dev mailing list:
-	`<vim-dev@vim.org>`
-
-## Main author
-
-Most of Vim was created by Bram Moolenaar `<Bram@vim.org>`
-[Bram-Moolenaar](https://vimhelp.org/version9.txt.html#Bram-Moolenaar)
-
-Send any other comments, patches, flowers and suggestions to the vim-dev mailing list:
-	`<vim-dev@vim.org>`
-
-This is `README.md` for version 9.2 of Vim: Vi IMproved.
+1. 下载新 tag tarball 解压替换本树，重放上方裁剪清单；
+2. 更新 `VELOTERM_VERSION`；
+3. 复核 `Make_mvc.mak` 的 VIMDLL 机制仍在（`VimMain` dllexport、
+   `mch_is_gui_executable`、`get_cmd_argsW` 三处引用点）；
+4. 推 `test_vim` tag 走 CI 车道（`.github/workflows/test-vim.yml`）。
