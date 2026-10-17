@@ -782,9 +782,14 @@ pub async fn sftp_copy_file(
 }
 
 #[tauri::command]
-pub async fn sftp_pick_upload_file() -> Result<Option<String>, String> {
-    let file = rfd::AsyncFileDialog::new().pick_file().await;
-    Ok(file.map(|f| f.path().to_string_lossy().to_string()))
+pub async fn sftp_pick_upload_files() -> Result<Option<Vec<String>>, String> {
+    // 多选：一次拖起/选起多个文件批量上传（取消返回 None，空选也返回 None）
+    let files = rfd::AsyncFileDialog::new().pick_files().await;
+    Ok(files.map(|fs| {
+        fs.iter()
+            .map(|f| f.path().to_string_lossy().to_string())
+            .collect()
+    }))
 }
 
 #[tauri::command]
@@ -794,6 +799,13 @@ pub async fn sftp_pick_download_path(suggested_name: String) -> Result<Option<St
         .save_file()
         .await;
     Ok(file.map(|f| f.path().to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub async fn sftp_pick_download_dir() -> Result<Option<String>, String> {
+    // 多选批量下载：选目标目录（文件名取远程同名）
+    let dir = rfd::AsyncFileDialog::new().pick_folder().await;
+    Ok(dir.map(|d| d.path().to_string_lossy().to_string()))
 }
 
 #[tauri::command]
