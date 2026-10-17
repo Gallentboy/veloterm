@@ -77,6 +77,36 @@ jobs:
       - name: Build coreutils binary
         run: node scripts/build-tools.mjs --only coreutils --target x86_64-pc-windows-msvc
 
+      # DLL lib/ 布局的运行期验证（coreutils.exe 作宿主，另建 goffi DLL）：
+      # 搭出安装后的目录形状（tools\ 短名硬链接 + lib/ 放 DLL）执行 yq --version，
+      # 覆盖 crate::dll_paths 的候选解析与 LoadLibrary。这是唯一真正执行 DLL
+      # 加载路径的验证（cargo test 只覆盖纯函数，且 Windows 车道不跑 cargo test）。
+      # 断言见脚本头注释（含平铺兜底与 DLL 缺失诊断）。放本车道是因为这里已有
+      # coreutils.exe 与 OpenSSL；goffi 段只需 Go + gcc（几步安装，比另起车道省）。
+      - name: Install Go + MSYS2 gcc for goffi DLL
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm mingw-w64-x86_64-gcc"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      - name: Build veloterm_goffi.dll (host-side DLL for layout verification)
+        run: node scripts/build-tools.mjs --only goffi --target x86_64-pc-windows-msvc
+
+      - name: Verify DLL lib/ layout at runtime
+        shell: pwsh
+        run: |
+          # 不显式传 -VersionArg：pwsh -File 会对参数做二次解析，任何以 `-`
+          # 开头的值（含 '--version'）都会被当成参数名，报 "Missing an argument
+          # for parameter 'VersionArg'"（CI 实测两次）。脚本内默认值即 '--version'，
+          # 直接省掉该参数；手工传值时须用 `-VersionArg:--version` 形式。
+          pwsh -NoProfile -File scripts/verify-dll-layout.ps1 `
+            -Coreutils src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe `
+            -Dll src-tauri/binaries/veloterm_goffi.dll `
+            -Cmd yq
+
       # jq 分层耗时诊断 + 退出路径回归门禁：把 in-main 探针（VELOTERM_JQ_TIMING）
       # 与进程寿命的缺口归因到 pre_main / 退出路径 / 内核回收三段，并在退出码出现
       # 崩溃码（如 0xC0000374 STATUS_HEAP_CORRUPTION）或正常退出路径明显慢于

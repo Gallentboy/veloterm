@@ -40,7 +40,8 @@ pacman 步骤安装：gcc / make / pkg-config / libxml2 / gmp / mpfr）：
    静态打入，DLL 除系统库外零外部依赖（脚本内 objdump 依赖断言——MSYS2
    基础包不保证有 ldd，objdump 随 binutils 必在）。
 3. 产物复制到 `src-tauri/binaries/qalcffi.dll`，经
-   `tauri.windows.conf.json` 的 resources 放安装根目录。
+   `tauri.windows.conf.json` 的 resources 放安装根 **`lib/` 子目录**（与
+   goffi/nmapffi 同约定，运行期候选路径见 `crates/coreutils/src/dll_paths.rs`）。
 
 ## 运行时行为
 

@@ -79,7 +79,11 @@ Npcap SDK 与 OpenSSL 静态库：
 5. 产物复制到 `src-tauri/binaries/`：三个 DLL + `nmap-data/` + `ca-bundle.crt`
    （ncat 的 SSL 客户端证书束，它在 exe 同目录查找；DLL 形态下
    `GetModuleHandle(0)` 取到宿主 coreutils.exe 路径，故放安装根即可命中），
-   经 `tauri.windows.conf.json` 的 resources 放安装根目录。
+   经 `tauri.windows.conf.json` 的 resources 随包分发：**三个 DLL 放安装根
+   `lib/` 子目录**（与 goffi/qalcffi 同约定，运行期候选路径见
+   `crates/coreutils/src/dll_paths.rs`），**`nmap-data/` 与 `ca-bundle.crt`
+   仍平铺在安装根**（数据/证书目录候选独立于 DLL 约定，见 `nmap_impl.rs`
+   的 `data_dir_candidates_for` 与 ncat 的证书查找）。
 
 数据文件清单（`nmap-data/`，取上游 `Makefile.in` 的 `install-nmap`/`install-nse`
 目标）：`nmap-services`、`nmap-os-db`、`nmap-service-probes`、`nmap-protocols`、
@@ -90,8 +94,9 @@ Npcap SDK 与 OpenSSL 静态库：
 ## 运行时行为
 
 - coreutils.exe 的三个分发臂（硬链接短名 `tools\nmap.exe` / `tools\ncat.exe` /
-  `tools\nping.exe` 或子命令模式）各按 exe 同目录 → 上级目录搜索对应 DLL
-  （与 yqffi/qalcffi 同一套约定）。
+  `tools\nping.exe` 或子命令模式）经共享模块 `crate::dll_paths` 解析 DLL：
+  本级 `lib/` → 上级 `lib/` → 同目录平铺兜底（与 yqffi/qalcffi 同一套约定，
+  依据见该模块文件头）。
 - **nmap** 调用前置 `NMAPDIR`（若用户未设）指向安装根的 `nmap-data/`
   ——上游在 Windows 下默认找 **exe 同目录** 的数据文件，而 DLL 形态下
   `GetModuleFileName(GetModuleHandle(0))` 取到的是宿主 coreutils.exe 路径

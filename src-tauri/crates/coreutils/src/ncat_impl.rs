@@ -40,16 +40,9 @@ mod imp {
 
     static NCAT_MAIN: OnceLock<Result<NcatMainFn, String>> = OnceLock::new();
 
-    /// DLL 候选路径（纯函数，单测覆盖）：exe 同目录 → exe 上级目录。
+    /// DLL 候选路径（共享约定，见 crate::dll_paths）：本级 lib/ → 上级 lib/ → 同目录平铺兜底。
     pub(super) fn dll_candidates_for(exe: Option<&Path>) -> Vec<PathBuf> {
-        let Some(dir) = exe.and_then(|p| p.parent()) else {
-            return Vec::new();
-        };
-        let mut v = vec![dir.join("ncatffi.dll")];
-        if let Some(parent) = dir.parent() {
-            v.push(parent.join("ncatffi.dll"));
-        }
-        v
+        crate::dll_paths::dll_candidates(exe, "ncatffi.dll")
     }
 
     fn load_ncat_main() -> Result<NcatMainFn, String> {
@@ -128,24 +121,24 @@ mod tests {
     #[cfg(windows)]
     use std::path::Path;
 
-    /// 硬链接短名场景：exe 在 tools\ 子目录 → 候选含上级目录（安装根）
+    /// 硬链接短名场景：exe 在 tools\ 子目录 → 上级 lib/ 是安装后的 DLL 位置
     #[test]
     #[cfg(windows)]
     fn dll_candidates_cover_hardlink_shortname_dir() {
         let exe = Path::new(r"C:\app\tools\ncat.exe");
         let c = dll_candidates_for(Some(exe));
-        assert_eq!(c[0], Path::new(r"C:\app\tools\ncatffi.dll"));
-        assert_eq!(c[1], Path::new(r"C:\app\ncatffi.dll"));
+        assert_eq!(c[1], Path::new(r"C:\app\lib\ncatffi.dll"));
     }
 
-    /// coreutils 本体直跑场景：exe 在安装根 → 首候选即同目录
+    /// coreutils 本体直跑场景：exe 在安装根 → 本级 lib/ 命中且排在平铺之前
     #[test]
     #[cfg(windows)]
     fn dll_candidates_cover_install_root() {
         let exe = Path::new(r"C:\app\coreutils.exe");
         let c = dll_candidates_for(Some(exe));
-        assert_eq!(c[0], Path::new(r"C:\app\ncatffi.dll"));
-        assert_eq!(c.len(), 2);
+        assert_eq!(c[0], Path::new(r"C:\app\lib\ncatffi.dll"));
+        assert_eq!(c[2], Path::new(r"C:\app\ncatffi.dll"));
+        assert_eq!(c.len(), 3);
     }
 
     /// 进程路径不可得时不 panic，返回空候选
