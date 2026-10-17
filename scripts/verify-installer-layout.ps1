@@ -46,9 +46,8 @@ $forbiddenRoot = @('veloterm_goffi.dll', 'qalcffi.dll', 'nmapffi.dll')
 $sevenZip = $null
 foreach ($cand in @(
         "$env:ProgramFiles\7-Zip\7z.exe",
-        "${env:ProgramFiles(x86)}\7-Zip\7z.exe",
-        (Join-Path $env:SystemRoot 'system32\tar.exe'))) {
-    if ($cand -and (Test-Path $cand) -and ($cand -like '*7z.exe')) { $sevenZip = $cand; break }
+        "${env:ProgramFiles(x86)}\7-Zip\7z.exe")) {
+    if ($cand -and (Test-Path $cand)) { $sevenZip = $cand; break }
 }
 if (-not $sevenZip) {
     $cmd = Get-Command 7z -ErrorAction SilentlyContinue
@@ -65,23 +64,23 @@ if (-not $sevenZip) {
 }
 Say ("7z        : {0}" -f $sevenZip)
 
+# 用 -slt（技术清单）而非默认列输出解析：默认列格式的字段数随「是否显示压缩后
+# 大小」变化（5 或 6 列），按固定下标取名称会错位；-slt 每行 `Path = <条目>` 稳定。
 $entries = @()
 try {
-    $raw = & $sevenZip l -ba $Installer 2>&1
+    $raw = & $sevenZip l -slt $Installer 2>&1
     foreach ($line in $raw) {
-        # 7z -ba 输出：日期 时间 属性 大小 [压缩后] 名称（名称可能含空格，取末段）
         $t = ([string]$line).Trim()
-        if (-not $t) { continue }
-        $parts = $t -split '\s+'
-        if ($parts.Count -ge 6) {
-            $entries += ($parts[5..($parts.Count - 1)] -join ' ')
-        }
+        if ($t -match '^Path\s*=\s*(.+)$') { $entries += $Matches[1].Trim() }
     }
 } catch {
     Say ("  WARN: 7z failed to list the installer: {0}" -f $_.Exception.Message)
     Say 'RESULT: SKIP'
     exit 0
 }
+# 首条是安装包自身（7z 把归档文件本身列为第一个条目），剔除
+$self = Split-Path $Installer -Leaf
+$entries = @($entries | Where-Object { $_ -ne $self -and -not $_.EndsWith($self) })
 Say ("entries   : {0}" -f $entries.Count)
 if ($entries.Count -eq 0) {
     Say '  WARN: installer listed no entries (unexpected NSIS layout?)'

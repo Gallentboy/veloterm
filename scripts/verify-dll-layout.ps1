@@ -74,7 +74,7 @@ function Assert-Runs([string]$label, [string]$exe, [string[]]$cmdArgs) {
     $ok = ($r.Code -eq 0) -and ($r.Out.Length -gt 0)
     Say ("  [{0}] exit={1} stdout={2}" -f $label, $r.Code, $(if ($r.Out) { $r.Out -replace "`r?`n", ' | ' } else { '(empty)' }))
     if ($r.Err) { Say ("      stderr: " + ($r.Err -replace "`r?`n", ' | ')) }
-    if (-not $ok) { Fail "$label: expected exit 0 with output" }
+    if (-not $ok) { Fail "${label}: expected exit 0 with output" }
 }
 
 # 断言：DLL 缺失时按「命令不可用」惯例退出 2 并给出诊断
@@ -83,7 +83,7 @@ function Assert-Unavailable([string]$label, [string]$exe, [string[]]$cmdArgs) {
     $r = Invoke-Probe $exe $cmdArgs
     $ok = ($r.Code -eq 2) -and ($r.Err -match [regex]::Escape($dllName))
     Say ("  [{0}] exit={1} stderr={2}" -f $label, $r.Code, $(if ($r.Err) { $r.Err -replace "`r?`n", ' | ' } else { '(empty)' }))
-    if (-not $ok) { Fail "$label: expected exit 2 with '$dllName' named on stderr" }
+    if (-not $ok) { Fail "${label}: expected exit 2 with '$dllName' named on stderr" }
 }
 
 # ── 布局 1：lib/ 子目录 + tools\ 硬链接短名（安装后的标准形状）──────────
