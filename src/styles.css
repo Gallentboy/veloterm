@@ -324,3 +324,46 @@ body {
     animation: none;
   }
 }
+
+/*
+ * 「关于」卡片动效（对齐 ZCode Dialog 的 fade+zoom 手感，叠加自上而下的
+ * 浮现位移）：入场 150ms（下移 12px→0 + 淡入 + 0.98→1 缩放），出场 110ms
+ * 反向。入场/出场的起始帧由 AboutWindow 与主窗遮罩（about-visibility 事件）
+ * 同帧触发，两窗动画同步开始不割裂。prefers-reduced-motion 下退化为纯淡入。
+ */
+@keyframes about-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes about-card-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+}
+
+.about-card-in {
+  animation: about-card-in 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.about-card-out {
+  animation: about-card-out 110ms ease-in both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .about-card-in,
+  .about-card-out {
+    animation-duration: 1ms;
+  }
+}
