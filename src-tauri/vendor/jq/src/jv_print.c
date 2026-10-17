@@ -15,9 +15,10 @@
 #include "jv_unicode.h"
 #include "jv_alloc.h"
 #include "jv_private.h"
+#include "util.h"
 
 #ifndef MAX_PRINT_DEPTH
-#define MAX_PRINT_DEPTH (256)
+#define MAX_PRINT_DEPTH (10000)
 #endif
 
 #define ESC "\033"
@@ -27,43 +28,70 @@
 // Color table. See https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
 // for how to choose these. The order is same as jv_kind definition, and
 // the last color is used for object keys.
-static char color_bufs[8][16];
-static const char *color_bufps[8];
-static const char* def_colors[] =
-  {COL("0;90"),    COL("0;39"),      COL("0;39"),     COL("0;39"),
+#define DEFAULT_COLORS \
+  {COL("0;90"),    COL("0;39"),      COL("0;39"),     COL("0;39"),\
    COL("0;32"),    COL("1;39"),      COL("1;39"),     COL("1;34")};
+static const char *const default_colors[] = DEFAULT_COLORS;
+static const char *colors[] = DEFAULT_COLORS;
+#define COLORS_LEN (sizeof(colors) / sizeof(colors[0]))
 #define FIELD_COLOR (colors[7])
 
-static const char **colors = def_colors;
-
-int
-jq_set_colors(const char *c)
-{
-  const char *e;
-  size_t i;
-
-  if (c == NULL)
+static char *colors_buf = NULL;
+int jq_set_colors(const char *code_str) {
+  if (code_str == NULL)
     return 1;
-  colors = def_colors;
-  memset(color_bufs, 0, sizeof(color_bufs));
-  for (i = 0; i < sizeof(def_colors) / sizeof(def_colors[0]); i++)
-    color_bufps[i] = def_colors[i];
-  for (i = 0; i < sizeof(def_colors) / sizeof(def_colors[0]) && *c != '\0'; i++, c = e) {
-    if ((e = strchr(c, ':')) == NULL)
-      e = c + strlen(c);
-    if ((size_t)(e - c) > sizeof(color_bufs[i]) - 4 /* ESC [ m NUL */)
-      return 0;
-    color_bufs[i][0] = ESC[0];
-    color_bufs[i][1] = '[';
-    (void) strncpy(&color_bufs[i][2], c, e - c);
-    if (strspn(&color_bufs[i][2], "0123456789;") < strlen(&color_bufs[i][2]))
-      return 0;
-    color_bufs[i][2 + (e - c)] = 'm';
-    color_bufps[i] = color_bufs[i];
-    if (e[0] == ':')
-      e++;
+
+  // the start of each color code in the env var, and the byte after the end of the last one
+  const char *codes[COLORS_LEN + 1];
+  size_t num_colors;
+  // must be initialized before `goto default_colors`, used later to loop over every color
+  size_t ci = 0;
+
+  for (num_colors = 0;; num_colors++) {
+    codes[num_colors] = code_str;
+    code_str += strspn(code_str, "0123456789;");
+    if (code_str[0] == '\0' || num_colors + 1 >= COLORS_LEN) {
+      break;
+    } else if (code_str[0] != ':') {
+      return 0; // invalid character
+    }
+    code_str++;
   }
-  colors = color_bufps;
+  if (codes[num_colors] != code_str) {
+    // count the last color and store its end (plus one byte for consistency with starts)
+    // an empty last color would be ignored (for cases like "" and "0:")
+    num_colors++;
+    codes[num_colors] = code_str + 1;
+  } else if (num_colors == 0) {
+    if (colors_buf != NULL) {
+      jv_mem_free(colors_buf);
+      colors_buf = NULL;
+    }
+    goto default_colors;
+  }
+
+  colors_buf = jv_mem_realloc(
+    colors_buf,
+    // add ESC '[' 'm' to each string
+    // '\0' is already included in difference of codes
+    codes[num_colors] - codes[0] + 3 * num_colors
+  );
+  char *cb = colors_buf;
+  for (; ci < num_colors; ci++) {
+    colors[ci] = cb;
+    size_t len = codes[ci + 1] - 1 - codes[ci];
+
+    cb[0] = ESC[0];
+    cb[1] = '[';
+    memcpy(cb + 2, codes[ci], len);
+    cb[2 + len] = 'm';
+    cb[3 + len] = '\0';
+
+    cb += len + 4;
+  }
+  default_colors:
+  for (; ci < COLORS_LEN; ci++)
+    colors[ci] = default_colors[ci];
   return 1;
 }
 
@@ -206,7 +234,7 @@ static void jv_dump_term(struct dtoa_context* C, jv x, int flags, int indent, FI
       if (jv_get_kind(msg) == JV_KIND_STRING) {
         put_str("<invalid:", F, S, flags & JV_PRINT_ISATTY);
         jvp_dump_string(msg, flags | JV_PRINT_ASCII, F, S, flags & JV_PRINT_ISATTY);
-        put_str(">", F, S, flags & JV_PRINT_ISATTY);
+        put_char('>', F, S, flags & JV_PRINT_ISATTY);
       } else {
         put_str("<invalid>", F, S, flags & JV_PRINT_ISATTY);
       }
@@ -259,22 +287,18 @@ static void jv_dump_term(struct dtoa_context* C, jv x, int flags, int indent, FI
       put_str("[]", F, S, flags & JV_PRINT_ISATTY);
       break;
     }
-    put_str("[", F, S, flags & JV_PRINT_ISATTY);
-    if (flags & JV_PRINT_PRETTY) {
-      put_char('\n', F, S, flags & JV_PRINT_ISATTY);
-      put_indent(indent + 1, flags, F, S, flags & JV_PRINT_ISATTY);
-    }
+    put_char('[', F, S, flags & JV_PRINT_ISATTY);
     jv_array_foreach(x, i, elem) {
       if (i!=0) {
-        if (flags & JV_PRINT_PRETTY) {
-          put_str(",\n", F, S, flags & JV_PRINT_ISATTY);
-          put_indent(indent + 1, flags, F, S, flags & JV_PRINT_ISATTY);
-        } else {
-          put_str(",", F, S, flags & JV_PRINT_ISATTY);
-        }
+        if (color) put_str(color, F, S, flags & JV_PRINT_ISATTY);
+        put_char(',', F, S, flags & JV_PRINT_ISATTY);
+      }
+      if (color) put_str(COLRESET, F, S, flags & JV_PRINT_ISATTY);
+      if (flags & JV_PRINT_PRETTY) {
+        put_char('\n', F, S, flags & JV_PRINT_ISATTY);
+        put_indent(indent + 1, flags, F, S, flags & JV_PRINT_ISATTY);
       }
       jv_dump_term(C, elem, flags, indent + 1, F, S);
-      if (color) put_str(color, F, S, flags & JV_PRINT_ISATTY);
     }
     if (flags & JV_PRINT_PRETTY) {
       put_char('\n', F, S, flags & JV_PRINT_ISATTY);
@@ -292,10 +316,6 @@ static void jv_dump_term(struct dtoa_context* C, jv x, int flags, int indent, FI
       break;
     }
     put_char('{', F, S, flags & JV_PRINT_ISATTY);
-    if (flags & JV_PRINT_PRETTY) {
-      put_char('\n', F, S, flags & JV_PRINT_ISATTY);
-      put_indent(indent + 1, flags, F, S, flags & JV_PRINT_ISATTY);
-    }
     int first = 1;
     int i = 0;
     jv keyset = jv_null();
@@ -326,14 +346,14 @@ static void jv_dump_term(struct dtoa_context* C, jv x, int flags, int indent, FI
       }
 
       if (!first) {
-        if (flags & JV_PRINT_PRETTY){
-          put_str(",\n", F, S, flags & JV_PRINT_ISATTY);
-          put_indent(indent + 1, flags, F, S, flags & JV_PRINT_ISATTY);
-        } else {
-          put_str(",", F, S, flags & JV_PRINT_ISATTY);
-        }
+        if (color) put_str(color, F, S, flags & JV_PRINT_ISATTY);
+        put_char(',', F, S, flags & JV_PRINT_ISATTY);
       }
       if (color) put_str(COLRESET, F, S, flags & JV_PRINT_ISATTY);
+      if (flags & JV_PRINT_PRETTY) {
+        put_char('\n', F, S, flags & JV_PRINT_ISATTY);
+        put_indent(indent + 1, flags, F, S, flags & JV_PRINT_ISATTY);
+      }
 
       first = 0;
       if (color) put_str(FIELD_COLOR, F, S, flags & JV_PRINT_ISATTY);
@@ -342,11 +362,13 @@ static void jv_dump_term(struct dtoa_context* C, jv x, int flags, int indent, FI
       if (color) put_str(COLRESET, F, S, flags & JV_PRINT_ISATTY);
 
       if (color) put_str(color, F, S, flags & JV_PRINT_ISATTY);
-      put_str((flags & JV_PRINT_PRETTY) ? ": " : ":", F, S, flags & JV_PRINT_ISATTY);
+      put_char(':', F, S, flags & JV_PRINT_ISATTY);
       if (color) put_str(COLRESET, F, S, flags & JV_PRINT_ISATTY);
+      if (flags & JV_PRINT_PRETTY) {
+        put_char(' ', F, S, flags & JV_PRINT_ISATTY);
+      }
 
       jv_dump_term(C, value, flags, indent + 1, F, S);
-      if (color) put_str(color, F, S, flags & JV_PRINT_ISATTY);
     }
     if (flags & JV_PRINT_PRETTY) {
       put_char('\n', F, S, flags & JV_PRINT_ISATTY);
@@ -387,16 +409,34 @@ jv jv_dump_string(jv x, int flags) {
 }
 
 char *jv_dump_string_trunc(jv x, char *outbuf, size_t bufsize) {
-  x = jv_dump_string(x,0);
-  const char* p = jv_string_value(x);
-  const size_t len = strlen(p);
-  strncpy(outbuf, p, bufsize);
-  outbuf[bufsize - 1] = 0;
-  if (len > bufsize - 1 && bufsize >= 4) {
-    // Indicate truncation with '...'
-    outbuf[bufsize - 2]='.';
-    outbuf[bufsize - 3]='.';
-    outbuf[bufsize - 4]='.';
+  assert(bufsize > 0);
+  if (jv_get_kind(x) == JV_KIND_STRING &&
+      (size_t)jv_string_length_bytes(jv_copy(x)) > bufsize) {
+    x = jv_string_slice(x, 0, bufsize);
+  }
+  x = jv_dump_string(x, 0);
+  const char *str = jv_string_value(x);
+  const size_t len = strlen(str);
+  if (len > bufsize - 1 && bufsize >= 8) {
+    char delim = 0;
+    switch (str[0]) {
+    case '"': delim = '"'; break;
+    case '[': delim = ']'; break;
+    case '{': delim = '}'; break;
+    }
+    size_t l = bufsize - (delim ? 5 : 4);  // "...", delim (if any), '\0'
+    const char *s = jvp_utf8_backtrack(str + l, str, NULL);
+    if (s) l = s - str;
+    memcpy(outbuf, str, l);
+    outbuf[l++] = '.';
+    outbuf[l++] = '.';
+    outbuf[l++] = '.';
+    if (delim) outbuf[l++] = delim;
+    outbuf[l] = '\0';
+  } else {
+    size_t l = MIN(len, bufsize - 1);
+    memcpy(outbuf, str, l);
+    outbuf[l] = '\0';
   }
   jv_free(x);
   return outbuf;

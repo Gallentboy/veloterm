@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <assert.h>
 #include "jv.h"
 #include "jv_dtoa.h"
@@ -11,7 +12,7 @@
 typedef const char* presult;
 
 #ifndef MAX_PARSING_DEPTH
-#define MAX_PARSING_DEPTH (256)
+#define MAX_PARSING_DEPTH (10000)
 #endif
 
 #define TRY(x) do {presult msg__ = (x); if (msg__) return msg__; } while(0)
@@ -79,8 +80,9 @@ static void parser_init(struct jv_parser* p, int flags) {
   p->last_seen = JV_LAST_NONE;
   p->output = jv_invalid();
   p->next = jv_invalid();
-  p->tokenbuf = 0;
-  p->tokenlen = p->tokenpos = 0;
+  p->tokenlen = 256;
+  p->tokenbuf = jv_mem_alloc(p->tokenlen);
+  p->tokenpos = 0;
   if ((p->flags & JV_PARSE_SEQ))
     p->st = JV_PARSER_WAITING_FOR_RS;
   else
@@ -418,14 +420,17 @@ static pfunc stream_token(struct jv_parser* p, char ch) {
   return 0;
 }
 
-static void tokenadd(struct jv_parser* p, char c) {
+static pfunc tokenadd(struct jv_parser* p, char c) {
   assert(p->tokenpos <= p->tokenlen);
   if (p->tokenpos >= (p->tokenlen - 1)) {
-    p->tokenlen = p->tokenlen*2 + 256;
+    if (p->tokenlen > INT_MAX / 2)
+      return "Token too long";
+    p->tokenlen *= 2;
     p->tokenbuf = jv_mem_realloc(p->tokenbuf, p->tokenlen);
   }
   assert(p->tokenpos < p->tokenlen);
   p->tokenbuf[p->tokenpos++] = c;
+  return 0;
 }
 
 static int unhex4(char* hex) {
@@ -493,7 +498,7 @@ static pfunc found_string(struct jv_parser* p) {
         return "Invalid escape";
       }
     } else {
-      if (c >= 0 && c <= 0x001f)
+      if (!(c & ~0x1F))
         return "Invalid string: control characters from U+0000 through U+001F must be escaped";
       *out++ = c;
     }
@@ -512,9 +517,11 @@ static pfunc check_literal(struct jv_parser* p) {
   switch (p->tokenbuf[0]) {
   case 't': pattern = "true"; plen = 4; v = jv_true(); break;
   case 'f': pattern = "false"; plen = 5; v = jv_false(); break;
+  case '\'':
+    return "Invalid string literal; expected \", but got '";
   case 'n':
     // if it starts with 'n', it could be a literal "nan"
-    if (p->tokenbuf[1] == 'u') {
+    if (p->tokenpos > 1 && p->tokenbuf[1] == 'u') {
       pattern = "null"; plen = 4; v = jv_null();
     }
   }
@@ -674,7 +681,7 @@ static pfunc scan(struct jv_parser* p, char ch, jv* out) {
     }
     switch (cls) {
     case LITERAL:
-      tokenadd(p, ch);
+      TRY(tokenadd(p, ch));
       break;
     case WHITESPACE:
       break;
@@ -694,7 +701,7 @@ static pfunc scan(struct jv_parser* p, char ch, jv* out) {
       p->st = JV_PARSER_NORMAL;
       if (check_done(p, out)) answer = OK;
     } else {
-      tokenadd(p, ch);
+      TRY(tokenadd(p, ch));
       if (ch == '\\' && p->st == JV_PARSER_STRING) {
         p->st = JV_PARSER_STRING_ESCAPE;
       } else {
@@ -890,8 +897,9 @@ jv jv_parse_sized_custom_flags(const char* string, int length, int flags) {
 
   if (!jv_is_valid(value) && jv_invalid_has_msg(jv_copy(value))) {
     jv msg = jv_invalid_get_msg(value);
-    value = jv_invalid_with_msg(jv_string_fmt("%s (while parsing '%s')",
+    value = jv_invalid_with_msg(jv_string_fmt("%s (while parsing '%.*s')",
                                               jv_string_value(msg),
+                                              length,
                                               string));
     jv_free(msg);
   }

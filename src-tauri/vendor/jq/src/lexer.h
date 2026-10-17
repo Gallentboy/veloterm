@@ -2,9 +2,9 @@
 #define jq_yyHEADER_H 1
 #define jq_yyIN_HEADER 1
 
-#line 5 "src/lexer.h"
+#line 6 "src/lexer.h"
 
-#line 7 "src/lexer.h"
+#line 8 "src/lexer.h"
 
 #define  YY_INT_ALIGNED short int
 
@@ -462,6 +462,7 @@ void yyfree ( void * , yyscan_t yyscanner );
 #define IN_BRACE 3
 #define IN_QQINTERP 4
 #define IN_QQSTRING 5
+#define IN_COMMENT 6
 
 #endif
 
@@ -731,9 +732,9 @@ extern int yylex \
 #undef yyTABLES_NAME
 #endif
 
-#line 131 "src/lexer.l"
+#line 137 "src/lexer.l"
 
 
-#line 737 "src/lexer.h"
+#line 739 "src/lexer.h"
 #undef jq_yyIN_HEADER
 #endif /* jq_yyHEADER_H */

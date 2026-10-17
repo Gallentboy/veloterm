@@ -223,7 +223,7 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         // FFI 直调改名后的 main（内部按 argv[0] 分发 bc/dc，见 vendor/bc-app）
         #[cfg(target_os = "windows")]
         "bc" => bc_app::bc_cmd_main(it),
-        // 仅 Windows：vendor 源码（jqlang/jq 1.7.1 + 捆绑 oniguruma）现场编译的
+        // 仅 Windows：vendor 源码（jqlang/jq 1.8.2 + 捆绑 oniguruma）现场编译的
         // jq CLI；FFI 直调 umain（UTF-8 char** 入口，见 vendor/jq-app）
         #[cfg(target_os = "windows")]
         "jq" => jq_app::jq_cmd_main(it),
