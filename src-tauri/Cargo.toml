@@ -88,6 +88,7 @@ tokio = { version = "1", features = [
 ] }
 uuid = { version = "1", features = ["v4", "serde"] }
 window-vibrancy = "0.8.1"
+fast-socks5 = "1.0.0"
 
 # ── 已迁出的依赖 ──
 # 全部内置命令行工具（uutils/coreutils 全集 + grep/sed/findutils/diffutils/

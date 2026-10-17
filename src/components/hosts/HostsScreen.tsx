@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GroupFormDialog } from '@/components/hosts/GroupFormDialog';
 import { HostFormDialog, type HostFormResult } from '@/components/hosts/HostFormDialog';
+import { PortForwardDialog } from '@/components/hosts/PortForwardDialog';
 import { GroupTreeRow, HostTreeRow } from '@/components/hosts/HostTree';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -54,6 +55,8 @@ export function HostsScreen({
     | { kind: 'group'; id: number; name: string }
     | null
   >(null);
+  // 端口转发管理弹层目标主机
+  const [forwardsHost, setForwardsHost] = useState<HostNode | null>(null);
 
   const handleDeleteHost = (id: number) => {
     const host = hosts.find((item) => item.id === id);
@@ -129,6 +132,7 @@ export function HostsScreen({
                   depth={depth + 1}
                           onConnect={onConnectHost}
                   onOpenSftp={onOpenSftp}
+                  onForwards={setForwardsHost}
                   onDuplicate={(target) => {
                     setDeleteTarget(null);
                     setHostDialog({ mode: 'duplicate', node: target });
@@ -195,6 +199,7 @@ export function HostsScreen({
                   depth={0}
                           onConnect={onConnectHost}
                   onOpenSftp={onOpenSftp}
+                  onForwards={setForwardsHost}
                   onDuplicate={(target) => {
                     setDeleteTarget(null);
                     setHostDialog({ mode: 'duplicate', node: target });
@@ -217,6 +222,10 @@ export function HostsScreen({
           </div>
         )}
       </div>
+
+      {forwardsHost ? (
+        <PortForwardDialog host={forwardsHost} onClose={() => setForwardsHost(null)} />
+      ) : null}
 
       {hostDialog ? (
         <HostFormDialog

@@ -8,6 +8,7 @@ pub mod db;
 pub mod editor_storage;
 pub mod lifecycle;
 pub mod logging;
+pub mod port_forward;
 pub mod sftp;
 pub mod terminal;
 pub mod text_detect;
@@ -27,6 +28,7 @@ pub fn run() {
         // 绕开 WKWebView navigator.clipboard 的粘贴授权弹层（原生「粘贴」按钮）
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(terminal::manager::TerminalManager::new())
+        .manage(port_forward::PortForwardManager::default())
         .manage(sftp::types::SftpState::new())
         .invoke_handler(tauri::generate_handler![
             is_apple_silicon,
@@ -52,6 +54,11 @@ pub fn run() {
             terminal::commands::ssh_remove_known_host,
             terminal::commands::ssh_clear_known_hosts,
             terminal::commands::ssh_resource_snapshot,
+            port_forward::port_forward_list,
+            port_forward::port_forward_save,
+            port_forward::port_forward_delete,
+            port_forward::port_forward_set_enabled,
+            port_forward::port_forward_states,
             ai::ai_provider_list,
             ai::ai_provider_save,
             ai::ai_provider_delete,
