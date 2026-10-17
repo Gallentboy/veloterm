@@ -24,7 +24,7 @@
         "hiddenTitle": true,
         "trafficLightPosition": { "x": 22, "y": 30 },
         "transparent": true,
-        "dragDropEnabled": false
+        "dragDropEnabled": true
       }
     ],
     "security": {

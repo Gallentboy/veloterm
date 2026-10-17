@@ -71,6 +71,7 @@
 - 颜色/字号全部走语义 token（`bg-selected` / `border-hover` / `text-ui-*` 随 `--ui-font-size` 缩放）；选中态不用主色三件套（primary 边框+底色+文字），主色只留给活动指示。
 - Monaco 经 `import * as monaco from 'monaco-editor'` 全量入口（81 语言高亮全离线）；worker 用 `new Worker(new URL(...), { type: 'module' })` 让 Rspack 产独立 chunk，`new URL` 必须内联在 `new Worker` 里。
 - 终端内提示（断开/重连快捷键）直接写 xterm 缓冲，不叠 DOM 覆盖层；就绪钩子命令等首屏输出静止 500ms 再注入（早发会被内核回显 + readline 重绘各显示一次，看到两遍）。
+- **拖放一律走统一管线**（`services/dragDropService.ts` + `hooks/useDropTarget.ts`）：两平台 `dragDropEnabled: true`（原生接管，携带文件绝对路径），wry 会整体接管 WebView 的 DnD——页内 HTML5 dragover/drop **不再触发**，页内拖拽（SFTP 面板互拷、Tab 分栏）同样必须走该管线（dragstart 时 `beginInternalDrag` 存载荷，Drop 按坐标命中注册目标），**严禁新增依赖 HTML5 dataTransfer 读取的 drop 处理**。终端拖入文件 → 路径按目标 shell 格式化（`lib/shellPath.ts`：Windows 按需双引号 / POSIX 反斜杠转义）后 `term.paste` 写入。终端复制/粘贴快捷键：macOS ⌘C/⌘V；Windows Ctrl+Shift+C/V 且裸 Ctrl+V 亦粘贴、Ctrl+C 有选区时复制（conhost/Windows Terminal 语义），右键菜单项带键位指示。
 
 ### 存储
 

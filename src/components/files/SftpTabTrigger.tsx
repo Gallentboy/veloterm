@@ -4,10 +4,11 @@ import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
 import { MarqueeText } from '@/components/ui/MarqueeText';
 import { cn } from '@/lib/utils';
+import {
+  beginInternalDrag,
+  endInternalDrag,
+} from '@/services/dragDropService';
 import type { SftpSessionDescriptor } from '@/services/sftpPanelState';
-
-/** Tab 拖拽分栏的自定义 MIME（与文件拖拽互拷的 MIME 区分） */
-export const SFTP_TAB_DRAG_MIME = 'application/x-veloterm-sftp-tab';
 
 export interface SftpTabTriggerProps {
   session: SftpSessionDescriptor;
@@ -83,15 +84,15 @@ export function SftpTabTrigger({
       data-state={isActive ? 'active' : 'inactive'}
       // 重命名编辑中禁用拖拽，避免选中文本与拖拽手势冲突
       draggable={!isEditing}
-      onDragStart={(event) => {
-        event.dataTransfer.setData(
-          SFTP_TAB_DRAG_MIME,
-          JSON.stringify({ sessionId: session.id }),
-        );
-        event.dataTransfer.effectAllowed = 'move';
+      onDragStart={() => {
+        // 载荷经统一拖放总线登记（原生接管后页内 drop 不再携带 dataTransfer）
+        beginInternalDrag('sftp-tab', { sessionId: session.id });
         onDragStateChange?.(true);
       }}
-      onDragEnd={() => onDragStateChange?.(false)}
+      onDragEnd={() => {
+        endInternalDrag();
+        onDragStateChange?.(false);
+      }}
       onContextMenu={(event) => {
         event.preventDefault();
         onContextMenu?.(event);
