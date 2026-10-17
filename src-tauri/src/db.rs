@@ -241,6 +241,19 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           base_hash TEXT NOT NULL,
           content TEXT NOT NULL,
           updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS port_forwards (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          host_id INTEGER NOT NULL,
+          kind TEXT NOT NULL,
+          bind_host TEXT NOT NULL,
+          bind_port INTEGER NOT NULL,
+          target_host TEXT NOT NULL,
+          target_port INTEGER NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
       );",
     )
     .map_err(|e| format!("failed to initialize schema in SQLCipher database: {e}"))?;
