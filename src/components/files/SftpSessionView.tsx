@@ -549,9 +549,17 @@ export function SftpSessionView({
   // 载荷在 dragstart 时经 beginInternalDrag 登记，Drop 按命中元素分发）
   useDropTarget({
     ref: rootRef,
-    accepts: ['sftp-item'],
+    // 两种落点：远端条目（面板互拷）与 OS 文件（拖入上传——MobaXterm 式，
+    // 原生接管后经统一管线拿绝对路径，复用批量上传入队）
+    accepts: ['sftp-item', 'files'],
     onHoverChange: (hovered) => setIsDropTarget(hovered),
     onDrop: (event) => {
+      if (event.kind === 'files') {
+        if (event.paths.length > 0) {
+          void handleUploadFiles(event.paths);
+        }
+        return;
+      }
       if (event.kind !== 'sftp-item') return;
       const payload = event.payload as SftpItemDragPayload;
       // 放置：校验载荷并入队远端复制（目录拖拽/源目标相同均拒绝并提示）
