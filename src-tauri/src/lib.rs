@@ -147,12 +147,10 @@ pub fn run() {
                 // 存在期间不可交互；配合关于窗 always_on_top，主窗也盖不住它
                 let bounce_handle = app.handle().clone();
                 webview_window.on_window_event(move |event| {
-                    if matches!(event, tauri::WindowEvent::Focused(true)) {
-                        if let Some(about) =
-                            bounce_handle.get_webview_window(about::ABOUT_WINDOW_LABEL)
-                        {
-                            let _ = about.set_focus();
-                        }
+                    if matches!(event, tauri::WindowEvent::Focused(true))
+                        && let Some(about) = bounce_handle.get_webview_window(about::ABOUT_WINDOW_LABEL)
+                    {
+                        let _ = about.set_focus();
                     }
                 });
             }
