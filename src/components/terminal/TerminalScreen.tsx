@@ -325,12 +325,11 @@ export function TerminalScreen({
                   aria-pressed={resourceMonitorOn}
                   aria-label={t('terminal.resourceMonitor.toggleAria')}
                   className={cn(
-                    // 与右侧联动/布局切换按钮同族：28px 带边框圆角胶囊（裸 icon-sm
-                    // 显瘦且与相邻按钮两种视觉语言）
-                    'size-7 items-center justify-center rounded-lg border transition-colors',
+                    // 无边框 28px 圆角图标按钮（与左侧命令面板按钮同族语言）
+                    'size-7 items-center justify-center rounded-lg transition-colors',
                     resourceMonitorOn
-                      ? 'border-border bg-selected text-foreground hover:bg-selected'
-                      : 'border-border/60 text-foreground-subtle hover:text-foreground hover:bg-hover'
+                      ? 'bg-selected text-foreground hover:bg-selected'
+                      : 'text-foreground-subtle hover:text-foreground hover:bg-hover'
                   )}
                 >
                   <Gauge className={cn('size-3.5', resourceMonitorOn && 'text-primary')} />
