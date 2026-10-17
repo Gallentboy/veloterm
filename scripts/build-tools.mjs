@@ -15,7 +15,7 @@
 // 用法：node scripts/build-tools.mjs [--target <triple>]
 // 未指定 target 时取 rustc 默认 host triple。
 
-import { execSync, execFileSync } from 'node:child_process';
+import { execSync, execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -447,6 +447,31 @@ if (!only || only === 'vim') {
   );
   if (!readFileSync(smokeFile, 'utf8').includes('world')) {
     console.error('[build-tools] vim -es 冒烟未产生预期替换结果');
+    process.exit(1);
+  }
+
+  // filetype 加载链冒烟：不带 -u NONE（无用户 vimrc 时加载 defaults.vim →
+  // `filetype on` → filetype.vim 的 BufRead 自动命令链）。上游 9.1 起
+  // filetype 检测走 autoload/dist/ 的 dist#ft#* / dist#script#* 函数——
+  // runtime 树缺件（首次 vendor 曾丢 autoload/dist/ 整目录）时该链报
+  // E117，而 -u NONE 冒烟恰好绕开 defaults.vim、车道全绿（真机开文件
+  // 才弹错）。此档断言 stderr 无 E1xx 错误码且替换仍然生效。
+  const ftSmokeFile = join(vimBuild, 'ft-smoke.txt');
+  writeFileSync(ftSmokeFile, 'hello filetype\n');
+  const ftSmoke = spawnSync(
+    vimRunner,
+    ['-es', '-c', '%s/filetype/ftloaded/', '-c', 'wq', ftSmokeFile],
+    { env: rtEnv, encoding: 'utf8', stdin: 'ignore' },
+  );
+  const ftSmokeErr = String(ftSmoke.stderr ?? '');
+  if (/\bE\d{3}/.test(ftSmokeErr) || ftSmoke.status !== 0) {
+    console.error(
+      `[build-tools] vim filetype 链冒烟报错（runtime 缺件？autoload/dist/ 必须保留）：\n${ftSmokeErr}`,
+    );
+    process.exit(1);
+  }
+  if (!readFileSync(ftSmokeFile, 'utf8').includes('ftloaded')) {
+    console.error('[build-tools] vim filetype 链冒烟未产生预期替换结果');
     process.exit(1);
   }
 
