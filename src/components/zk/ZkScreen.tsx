@@ -16,6 +16,7 @@ import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import {
   ACL_ALL,
   ACL_BITS,
+  listenZkWatch,
   zkAuth,
   zkConnect,
   zkCreate,
@@ -73,6 +74,7 @@ export function ZkScreen() {
   const [detail, setDetail] = useState<ZkNode | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [draftData, setDraftData] = useState('');
+  const [draftEncoding, setDraftEncoding] = useState<'utf8' | 'base64'>('utf8');
   const [draftAcls, setDraftAcls] = useState<ZkAclRule[]>([]);
   const [dirty, setDirty] = useState(false);
   const [aclDirty, setAclDirty] = useState(false);
@@ -145,6 +147,7 @@ export function ZkScreen() {
         const node = await zkGet(sid, path);
         setDetail(node);
         setDraftData(node.data);
+        setDraftEncoding(node.encoding);
         setDraftAcls(node.acls.map((a) => ({ ...a })));
       } catch (e) {
         setError(String(e));
@@ -194,6 +197,44 @@ export function ZkScreen() {
       }
     };
   }, [sessionId]);
+
+  // watch 驱动自动刷新：children 事件重载对应树节点；data 事件在选中且
+  // 未编辑时重载详情（编辑中不覆写，提示外部变更）
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listenZkWatch((msg) => {
+      if (disposed || msg.sessionId !== sessionId) return;
+      if (msg.kind === 'children') {
+        void loadChildren(msg.sessionId, msg.path).catch(() => {
+          // 节点可能已被删除：从树上移除该分支
+          setNodes((current) => {
+            const next = new Map(current);
+            for (const key of next.keys()) {
+              if (key === msg.path || key.startsWith(`${msg.path}/`)) {
+                next.delete(key);
+              }
+            }
+            return next;
+          });
+        });
+      } else if (msg.path === selected) {
+        if (dirty || aclDirty) {
+          setNotice(t('zk.externallyChanged', { path: msg.path }));
+        } else {
+          void selectNode(msg.sessionId, msg.path);
+        }
+      }
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+    // 事件回调内读取的 dirty/aclDirty/selected 取自当次渲染闭包，均为最新值
+  }, [sessionId, selected, dirty, aclDirty, t, loadChildren, selectNode]);
 
   const orderedPaths = useMemo(() => {
     const list: TreeNode[] = [];
@@ -246,7 +287,7 @@ export function ZkScreen() {
     if (!sessionId || !detail) return;
     setError(null);
     try {
-      await zkSetData(sessionId, selected, draftData, detail.stat.version);
+      await zkSetData(sessionId, selected, draftData, draftEncoding, detail.stat.version);
       await selectNode(sessionId, selected);
       setNotice(t('zk.dataSaved', { path: selected }));
     } catch (e) {
@@ -597,7 +638,14 @@ export function ZkScreen() {
                 {/* 数据 */}
                 <div className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-ui-sm text-foreground-subtle select-none">{t('zk.dataTitle')}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-ui-sm text-foreground-subtle select-none">{t('zk.dataTitle')}</span>
+                      {draftEncoding === 'base64' ? (
+                        <span className="rounded-md border border-primary/50 bg-primary/15 px-1.5 py-0.5 text-ui-xs text-foreground select-none">
+                          {t('zk.binaryBadge')}
+                        </span>
+                      ) : null}
+                    </div>
                     <Button
                       size="lg"
                       className="h-7 px-2.5 text-ui-xs"
@@ -614,8 +662,11 @@ export function ZkScreen() {
                       setDirty(true);
                     }}
                     spellCheck={false}
-                    className="h-40 font-mono text-ui-sm"
+                    className={cn('h-40 font-mono text-ui-sm', draftEncoding === 'base64' && 'break-all')}
                   />
+                  {draftEncoding === 'base64' ? (
+                    <p className="text-ui-xs text-foreground-subtlest select-none">{t('zk.binaryHint')}</p>
+                  ) : null}
                 </div>
 
                 {/* 节点信息 */}

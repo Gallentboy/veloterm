@@ -154,6 +154,11 @@ pub fn run() {
                 sftp_state.set_app(app.handle().clone());
             }
 
+            // 注入 AppHandle 到 ZkState，供 zk-watch 事件发射
+            if let Some(zk_state) = app.try_state::<zk::ZkState>() {
+                zk_state.set_app(app.handle().clone());
+            }
+
             // 恢复上次关闭时的窗口大小与位置。配置里的窗口在本函数（Tauri 内部 setup）中先于用户
             // setup 闭包创建，且两者处于同一个事件循环迭代内，因此这里改几何发生在首帧绘制之前，
             // 不会跳变。注：`Manager::get_window` 需要 `unstable` feature，故经 `WebviewWindow` 取底层 `Window`。

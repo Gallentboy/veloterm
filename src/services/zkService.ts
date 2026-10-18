@@ -4,6 +4,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 import type { RelayTransport, SshRelayEndpoint } from '@/hosts/types';
 
@@ -33,9 +34,17 @@ export interface ZkChildren {
 }
 
 export interface ZkNode {
+  /** utf8 有效时为原文；否则为 Base64（encoding 标识） */
   data: string;
+  encoding: 'utf8' | 'base64';
   stat: ZkNodeStat;
   acls: ZkAclRule[];
+}
+
+export interface ZkWatchMsg {
+  sessionId: string;
+  path: string;
+  kind: 'children' | 'data';
 }
 
 export const ACL_BITS = { read: 1, write: 2, create: 4, delete: 8, admin: 16 } as const;
@@ -64,9 +73,16 @@ export function zkSetData(
   sessionId: string,
   path: string,
   data: string,
+  encoding: 'utf8' | 'base64',
   version: number,
 ): Promise<ZkNodeStat> {
-  return invoke('zk_set_data', { sessionId, path, data, version });
+  return invoke('zk_set_data', { sessionId, path, data, encoding, version });
+}
+
+export function listenZkWatch(
+  handler: (msg: ZkWatchMsg) => void,
+): Promise<() => void> {
+  return listen<ZkWatchMsg>('zk-watch', (e) => handler(e.payload));
 }
 
 export function zkCreate(

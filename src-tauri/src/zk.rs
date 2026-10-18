@@ -6,7 +6,7 @@
 //! 回环监听 → 每入连经 dial_relay（VLR3 加密管道）转到 ZK 目标；
 //! ZK 客户端连桥接口即可，重连自动再走中继。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -14,7 +14,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha1::Digest as _;
-use tauri::State;
+use tauri::{Emitter as _, State};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use zookeeper_client::{Acl, AuthId, Client, CreateMode, CreateOptions, Permission};
@@ -22,17 +22,24 @@ use zookeeper_client::{Acl, AuthId, Client, CreateMode, CreateOptions, Permissio
 use crate::terminal::ssh::common::SshRelayEndpoint;
 use crate::terminal::ssh::relay_transport::dial_relay;
 
+/// watch 事件名（前端 listen 用）。
+pub const ZK_WATCH_EVENT: &str = "zk-watch";
+
 /// ZK 会话表（SftpState 同型：tauri manage 注入）。
 pub struct ZkState {
     next_id: AtomicUsize,
     sessions: Mutex<HashMap<String, ZkSession>>,
+    /// AppHandle（setup 后注入）：watch 事件发射用
+    pub app: std::sync::Mutex<Option<tauri::AppHandle>>,
 }
 
-/// 一个 ZK 会话 = 客户端 + （可选）中继桥接任务。
+/// 一个 ZK 会话 = 客户端 + （可选）中继桥接任务 + watch 注册表。
 pub struct ZkSession {
     client: Arc<Client>,
     bridge: Option<tokio::task::JoinHandle<()>>,
     bridge_shutdown: Option<watch::Sender<()>>,
+    /// 已注册的 watch（path + kind），防重复注册；任务退出时自移除
+    watches: Arc<Mutex<HashSet<(String, &'static str)>>>,
 }
 
 impl Default for ZkState {
@@ -43,7 +50,18 @@ impl Default for ZkState {
 
 impl ZkState {
     pub fn new() -> Self {
-        Self { next_id: AtomicUsize::new(1), sessions: Mutex::new(HashMap::new()) }
+        Self {
+            next_id: AtomicUsize::new(1),
+            sessions: Mutex::new(HashMap::new()),
+            app: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// setup 后注入，供 watch 事件发射（SftpState::set_app 同型）。
+    pub fn set_app(&self, app: tauri::AppHandle) {
+        if let Ok(mut slot) = self.app.lock() {
+            *slot = Some(app);
+        }
     }
 
     /// 取会话客户端的克隆句柄（锁内浅拷贝、锁外 await，避免持锁跨 await）。
@@ -57,6 +75,20 @@ impl ZkState {
             .client
             .clone())
     }
+
+    /// 取会话整体（拿 watch 注册表等）。
+    fn session(&self, session_id: &str) -> Option<ZkSessionView> {
+        self.sessions
+            .lock()
+            .ok()?
+            .get(session_id)
+            .map(|s| ZkSessionView { watches: s.watches.clone() })
+    }
+}
+
+/// 会话只读视图（避免锁外持有借用）。
+struct ZkSessionView {
+    watches: Arc<Mutex<HashSet<(String, &'static str)>>>,
 }
 
 /// znode stat（camelCase 给前端）。
@@ -163,6 +195,77 @@ fn zk_err(context: &str, e: zookeeper_client::Error) -> String {
     format!("ZK {context}失败: {e:?}")
 }
 
+/// watch 种类：children（子节点增删）或 data（数据/ACL/删除）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatchKind {
+    Children,
+    Data,
+}
+
+impl WatchKind {
+    fn key(self) -> &'static str {
+        match self {
+            WatchKind::Children => "children",
+            WatchKind::Data => "data",
+        }
+    }
+}
+
+/// 确保（path, kind）的 watch 存在：一次性 watcher 触发后重注册，直至会话断开或
+/// 节点消失；每次触发向前端发射 `zk-watch` 事件 {sessionId, path, kind}。
+/// 任务退出时从注册表自移除，节点重建后下次 list/get 能重新注册。
+fn ensure_watch(
+    state: &ZkState,
+    session_id: &str,
+    client: Arc<Client>,
+    watches: Arc<Mutex<HashSet<(String, &'static str)>>>,
+    path: String,
+    kind: WatchKind,
+) {
+    let key = (path.clone(), kind.key());
+    let already_watched = {
+        let Ok(mut set) = watches.lock() else { return };
+        !set.insert(key)
+    };
+    if already_watched {
+        return; // 已在监听
+    }
+    let app = state.app.lock().ok().and_then(|slot| slot.clone());
+    let session_id = session_id.to_string();
+    tokio::spawn(async move {
+        loop {
+            // 注册一次性 watcher（成功即挂上）
+            let watcher = match kind {
+                WatchKind::Children => match client.get_and_watch_children(&path).await {
+                    Ok((_, _, w)) => w,
+                    Err(_) => break, // 会话断开或节点已删
+                },
+                WatchKind::Data => match client.get_and_watch_data(&path).await {
+                    Ok((_, _, w)) => w,
+                    Err(_) => break,
+                },
+            };
+            let event = watcher.changed().await;
+            if event.session_state.is_terminated() {
+                break;
+            }
+            if let Some(app) = &app {
+                let _ = app.emit(
+                    ZK_WATCH_EVENT,
+                    serde_json::json!({
+                        "sessionId": session_id,
+                        "path": event.path,
+                        "kind": kind.key(),
+                    }),
+                );
+            }
+        }
+        if let Ok(mut set) = watches.lock() {
+            set.remove(&(path, kind.key()));
+        }
+    });
+}
+
 #[tauri::command]
 pub async fn zk_connect(
     state: State<'_, ZkState>,
@@ -238,7 +341,12 @@ pub async fn zk_connect(
         .sessions
         .lock()
         .map_err(|_| "ZK 会话表锁中毒".to_string())?
-        .insert(id.clone(), ZkSession { client: Arc::new(client), bridge, bridge_shutdown });
+        .insert(id.clone(), ZkSession {
+            client: Arc::new(client),
+            bridge,
+            bridge_shutdown,
+            watches: Arc::new(Mutex::new(HashSet::new())),
+        });
     Ok(serde_json::json!({ "sessionId": id }))
 }
 
@@ -280,13 +388,27 @@ pub async fn zk_list(
         .get_children(&path)
         .await
         .map_err(|e| zk_err(&format!("列出子节点 {path} "), e))?;
+    // 挂子节点 watch（幂等）：别的客户端增删子节点时前端自动收到 zk-watch
+    if let Some(session) = state.session(&session_id) {
+        ensure_watch(
+            &state,
+            &session_id,
+            client,
+            session.watches.clone(),
+            path.clone(),
+            WatchKind::Children,
+        );
+    }
     Ok(ZkChildren { children, stat: NodeStat::from_stat(&stat) })
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ZkNode {
+    /// 节点数据：utf8 有效时为原文；否则为 Base64（encoding 标识）。
     pub data: String,
+    /// 数据编码："utf8" | "base64"（二进制节点以 Base64 呈现与编辑，写回时解码）
+    pub encoding: String,
     pub stat: NodeStat,
     pub acls: Vec<AclRule>,
 }
@@ -306,8 +428,29 @@ pub async fn zk_get(
         .get_acl(&path)
         .await
         .map_err(|e| zk_err(&format!("读取 {path} ACL "), e))?;
+    // 二进制安全：非法 UTF-8 的数据以 Base64 呈现，写回时按 encoding 解码，
+    // 杜绝 lossy 转换弄坏序列化二进制（Kafka/dubbo 配置等）
+    let (text, encoding) = match std::str::from_utf8(&data) {
+        Ok(s) => (s.to_string(), "utf8".to_string()),
+        Err(_) => (
+            base64::engine::general_purpose::STANDARD.encode(&data),
+            "base64".to_string(),
+        ),
+    };
+    // 挂数据 watch（幂等）：数据/ACL/删除变更时前端自动收到 zk-watch
+    if let Some(session) = state.session(&session_id) {
+        ensure_watch(
+            &state,
+            &session_id,
+            client,
+            session.watches.clone(),
+            path.clone(),
+            WatchKind::Data,
+        );
+    }
     Ok(ZkNode {
-        data: String::from_utf8_lossy(&data).into_owned(),
+        data: text,
+        encoding,
         stat: NodeStat::from_stat(&stat),
         acls: acls.iter().map(acl_to_rule).collect(),
     })
@@ -319,12 +462,20 @@ pub async fn zk_set_data(
     session_id: String,
     path: String,
     data: String,
+    // "utf8"（原文写回）| "base64"（解码后写回，二进制节点）
+    encoding: Option<String>,
     version: i32,
 ) -> Result<NodeStat, String> {
     let client = state.client(&session_id)?;
+    let bytes: Vec<u8> = match encoding.as_deref().unwrap_or("utf8") {
+        "base64" => base64::engine::general_purpose::STANDARD
+            .decode(data.trim())
+            .map_err(|e| format!("Base64 解码失败（二进制节点需合法 Base64）: {e}"))?,
+        _ => data.into_bytes(),
+    };
     let expected = if version < 0 { None } else { Some(version) };
     let stat = client
-        .set_data(&path, data.as_bytes(), expected)
+        .set_data(&path, &bytes, expected)
         .await
         .map_err(|e| zk_err(&format!("写入 {path} "), e))?;
     Ok(NodeStat::from_stat(&stat))
