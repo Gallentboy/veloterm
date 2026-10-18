@@ -92,6 +92,30 @@ use reflection::server_reflection_request::MessageRequest;
 use reflection::server_reflection_response::MessageResponse;
 use reflection::{ServerReflectionRequest, ServerReflectionResponse};
 
+// ── google.rpc.Status（grpc-status-details-bin 的载荷）：服务端内部异常时
+//    grpc-message 常为空，真实详情（异常消息）在此扩展里，尽力解析展示 ──
+
+mod rpc_status {
+    #[derive(Clone, PartialEq, prost::Message)]
+    pub struct RpcStatus {
+        #[prost(int32, tag = "1")]
+        pub code: i32,
+        #[prost(string, tag = "2")]
+        pub message: String,
+        #[prost(message, repeated, tag = "3")]
+        pub details: Vec<Any>,
+    }
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    pub struct Any {
+        #[prost(string, tag = "1")]
+        pub type_url: String,
+        #[prost(bytes = "vec", tag = "2")]
+        pub value: Vec<u8>,
+    }
+}
+
+
 /// 反射服务的两个版本全名：v1alpha 部署面最广，v1 是现行标准；逐个探测。
 const REFLECTION_SERVICES: [&str; 2] = [
     "grpc.reflection.v1alpha.ServerReflection",
@@ -351,17 +375,46 @@ async fn call_grpc_unary(req: GrpcCallRequest) -> Result<GrpcCallResponse, Strin
         .await
         .map_err(|e| format!("连接就绪失败（{target}）: {e}"))?;
     let response = grpc.unary(request, path, codec).await.map_err(|s| {
-        format!(
-            "gRPC 调用失败 [{}]: {}",
-            s.code(),
-            if s.message().is_empty() { "(无详情)" } else { s.message() }
-        )
+        let detail = format_grpc_status(&s);
+        log::warn!(
+            "grpc_call 一元调用失败 target={target} service={service} method={method}: {s:?}"
+        );
+        format!("gRPC 调用失败 [{code}]: {detail}", code = s.code())
     })?;
 
     // 5. 动态消息 → JSON 出参
     let json_output = serde_json::to_string(&response.into_inner())
         .map_err(|e| format!("出参序列化 JSON 失败: {e}"))?;
+    log::debug!(
+        "grpc_call 成功 target={target} service={service} method={method}，出参 {} 字节",
+        json_output.len()
+    );
     Ok(GrpcCallResponse { json_output })
+}
+
+/// gRPC Status 的可读详情：优先 grpc-message；为空时解析
+/// grpc-status-details-bin（google.rpc.Status，Java/Go 服务端内部异常的真实文案），
+/// 再不行退化到完整 Debug 形态（含 source/metadata，供日志比对）。
+fn format_grpc_status(s: &tonic::Status) -> String {
+    if !s.message().is_empty() {
+        return s.message().to_string();
+    }
+    // tonic 已把 grpc-status-details-bin 解码进 Status::details（google.rpc.Status 线格式）
+    if !s.details().is_empty()
+        && let Ok(detail) = rpc_status::RpcStatus::decode(s.details())
+    {
+        let mut parts = vec![format!(
+            "服务端内部错误 code={}{}",
+            detail.code,
+            if detail.message.is_empty() { String::new() } else { format!(": {}", detail.message) }
+        )];
+        if !detail.details.is_empty() {
+            let urls: Vec<&str> = detail.details.iter().map(|a| a.type_url.as_str()).collect();
+            parts.push(format!("details=[{}]", urls.join(", ")));
+        }
+        return parts.join(" ");
+    }
+    format!("(无详情) Status debug: {s:?}")
 }
 
 /// 反射错误：Unsupported = 该版本反射服务不存在（可试另一版本）。
@@ -409,6 +462,7 @@ async fn reflect_via(
             return Err(ReflectError::Other("反射文件拉取超过 100 轮，疑似依赖环".into()));
         }
         let resp = send_reflection_request(grpc, svc_full, message_request).await?;
+        log::debug!("反射 {svc_full} 收到响应（累计 {} 个文件）", fdps.len());
         let fds = match resp.message_response {
             Some(MessageResponse::FileDescriptorResponse(fds)) => fds,
             Some(MessageResponse::ErrorResponse(err)) => {
@@ -460,24 +514,31 @@ async fn send_reflection_request(
     grpc.ready()
         .await
         .map_err(|e| ReflectError::Other(format!("连接就绪失败: {e}")))?;
-    let response = grpc
+        let response = grpc
         .streaming(tonic::Request::new(stream), path, codec)
         .await
         .map_err(|s| {
+            let detail = format_grpc_status(&s);
+            log::warn!("反射调用失败 {svc_full}: {s:?}");
             if s.code() == tonic::Code::Unimplemented {
-                ReflectError::Unsupported(format!("{svc_full}: {}", s.message()))
+                ReflectError::Unsupported(format!("{svc_full}: {detail}"))
             } else {
                 ReflectError::Other(format!(
                     "反射服务调用失败 [{}]: {}",
                     s.code(),
-                    s.message()
+                    detail
                 ))
             }
         })?;
     let mut inbound = response.into_inner();
     while let Some(item) = inbound.next().await {
         let resp = item.map_err(|s| {
-            ReflectError::Other(format!("反射流中断 [{}]: {}", s.code(), s.message()))
+            log::warn!("反射流中断 {svc_full}: {s:?}");
+            ReflectError::Other(format!(
+                "反射流中断 [{}]: {}",
+                s.code(),
+                format_grpc_status(&s)
+            ))
         })?;
         if let Some(MessageResponse::ErrorResponse(err)) = &resp.message_response {
             return Err(ReflectError::Other(format!(
@@ -495,6 +556,7 @@ async fn send_reflection_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
     use std::convert::Infallible;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
@@ -520,6 +582,14 @@ mod tests {
         #[prost(int32, tag = "2")]
         age: i32,
     }
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    #[allow(dead_code)]
+    struct BoomRequest {}
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    #[allow(dead_code)]
+    struct BoomResponse {}
 
     const TEST_SERVICE: &str = "veloterm.test.UserService";
 
@@ -557,15 +627,31 @@ mod tests {
                     ],
                     ..Default::default()
                 },
+                p::DescriptorProto {
+                    name: Some("BoomRequest".to_string()),
+                    ..Default::default()
+                },
+                p::DescriptorProto {
+                    name: Some("BoomResponse".to_string()),
+                    ..Default::default()
+                },
             ],
             service: vec![p::ServiceDescriptorProto {
                 name: Some("UserService".to_string()),
-                method: vec![p::MethodDescriptorProto {
-                    name: Some("GetUser".to_string()),
-                    input_type: Some(".veloterm.test.GetUserRequest".to_string()),
-                    output_type: Some(".veloterm.test.GetUserResponse".to_string()),
-                    ..Default::default()
-                }],
+                method: vec![
+                    p::MethodDescriptorProto {
+                        name: Some("GetUser".to_string()),
+                        input_type: Some(".veloterm.test.GetUserRequest".to_string()),
+                        output_type: Some(".veloterm.test.GetUserResponse".to_string()),
+                        ..Default::default()
+                    },
+                    p::MethodDescriptorProto {
+                        name: Some("Boom".to_string()),
+                        input_type: Some(".veloterm.test.BoomRequest".to_string()),
+                        output_type: Some(".veloterm.test.BoomResponse".to_string()),
+                        ..Default::default()
+                    },
+                ],
                 ..Default::default()
             }],
             ..Default::default()
@@ -637,6 +723,12 @@ mod tests {
                 .map(str::to_string);
             let body = req.into_body();
             Box::pin(async move {
+                if path == "/veloterm.test.UserService/Boom" {
+                    // 模拟 Java/Go 服务端内部异常：grpc-status 13 + 空 grpc-message +
+                    // grpc-status-details-bin（google.rpc.Status 才有真实文案）
+                    let _ = read_grpc_frame(body).await;
+                    return Ok(grpc_internal_with_details("boom:模拟服务端空指针"));
+                }
                 if path != "/veloterm.test.UserService/GetUser" {
                     return Ok(grpc_trailers_response(12, "Method not found in test server"));
                 }
@@ -729,17 +821,35 @@ mod tests {
 
     /// 200 + grpc 响应帧 + trailers（grpc-status；非 0 带 grpc-message）。
     fn grpc_ok_response(payload: &[u8]) -> http::Response<tonic::body::Body> {
-        build_grpc_response(Some(payload), 0, "")
+        build_grpc_response(Some(payload), 0, "", None)
     }
 
     fn grpc_trailers_response(status: u16, message: &str) -> http::Response<tonic::body::Body> {
-        build_grpc_response(None, status, message)
+        build_grpc_response(None, status, message, None)
     }
 
+    /// INTERNAL + 空 grpc-message + grpc-status-details-bin（google.rpc.Status）。
+    fn grpc_internal_with_details(message: &str) -> http::Response<tonic::body::Body> {
+        let detail = rpc_status::RpcStatus {
+            code: 13,
+            message: message.to_string(),
+            details: vec![],
+        };
+        let encoded = base64::engine::general_purpose::STANDARD.encode(detail.encode_to_vec());
+        build_grpc_response(
+            None,
+            13,
+            "",
+            Some((http::HeaderName::from_static("grpc-status-details-bin"), encoded)),
+        )
+    }
+
+    #[allow(clippy::type_complexity)]
     fn build_grpc_response(
         payload: Option<&[u8]>,
         status: u16,
         message: &str,
+        bin_trailer: Option<(http::HeaderName, String)>,
     ) -> http::Response<tonic::body::Body> {
         let mut trailers = http::HeaderMap::new();
         if let Ok(v) = http::HeaderValue::from_str(&status.to_string()) {
@@ -749,6 +859,11 @@ mod tests {
             && let Ok(v) = http::HeaderValue::from_str(&percent_encode_grpc_message(message))
         {
             trailers.insert("grpc-message", v);
+        }
+        if let Some((name, value)) = bin_trailer
+            && let Ok(v) = http::HeaderValue::from_str(&value)
+        {
+            trailers.insert(name, v);
         }
         let data = match payload {
             Some(p) => grpc_frame(p),
@@ -991,6 +1106,20 @@ mod tests {
         assert!(
             err.contains("连接") || err.contains("transport error"),
             "错误应为传输层失败: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn grpc_call_internal_error_with_details_bin() {
+        // grpc-message 为空的服务端内部错误：真实文案应从 grpc-status-details-bin 解出
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
+        let mut req = base_request(&server.target);
+        req.method = "Boom".to_string();
+        req.json_input = "{}".to_string();
+        let err = grpc_call(req).await.expect_err("Boom 应返回内部错误");
+        assert!(
+            err.contains("boom:模拟服务端空指针"),
+            "错误应包含 details-bin 里的真实文案: {err}"
         );
     }
 
