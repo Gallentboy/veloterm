@@ -270,6 +270,7 @@ function ZkSessionView({
   const [searchQuery, setSearchQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [searchCollapsed, setSearchCollapsed] = useState<Set<string>>(new Set());
+  const [treeFullyLoaded, setTreeFullyLoaded] = useState(false);
   const searchVersionRef = useRef(0);
   const [selected, setSelected] = useState('/');
   const [detail, setDetail] = useState<ZkNode | null>(null);
@@ -316,6 +317,7 @@ function ZkSessionView({
       setHostRecord(host);
       setRelayName(nextRelayName);
       setNodes(new Map());
+      setTreeFullyLoaded(false);
       setSelected('/');
       await loadChildren(res.sessionId, '/');
       await selectNode(res.sessionId, '/');
@@ -453,6 +455,7 @@ function ZkSessionView({
     setSessionId(null);
     setRelayName(null);
     setNodes(new Map());
+    setTreeFullyLoaded(false);
     setDetail(null);
     onBaseTitle(null);
     setNotice(t('zk.disconnected'));
@@ -576,7 +579,10 @@ function ZkSessionView({
         frontier = [...frontier, ...nextFrontier];
       }
     } finally {
-      if (searchVersionRef.current === version) setSearching(false);
+      if (searchVersionRef.current === version) {
+        setSearching(false);
+        setTreeFullyLoaded(true);
+      }
     }
   }, []);
 
@@ -584,6 +590,15 @@ function ZkSessionView({
   useEffect(() => {
     if (!searchQuery.trim()) setSearchCollapsed(new Set());
   }, [searchQuery]);
+
+  // 首次搜索自动全量加载一次（每会话一次）：此后搜索纯内存，刷新按钮手动重拉
+  useEffect(() => {
+    if (!sessionId || !searchQuery.trim() || treeFullyLoaded || searching) return;
+    const timer = setTimeout(() => {
+      void refreshTree(sessionId);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, sessionId, treeFullyLoaded, searching, refreshTree]);
 
   // 搜索本身零网络：仅过滤已缓存的节点（刷新按钮/watch 事件负责把数据带进内存）
 
