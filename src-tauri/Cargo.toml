@@ -90,6 +90,15 @@ uuid = { version = "1", features = ["v4", "serde"] }
 window-vibrancy = "0.8.1"
 fast-socks5 = "1.0.0"
 
+# SSH 中继（veloterm_relay）客户端接入：proto 是线缆协议/鉴权单一实现
+# （服务端与客户端共用，见 relay/ 独立 workspace），传输库与 relay crate 同版本。
+# quinn/rustls 走 aws-lc-rs，与既有 russh 的 aws-lc-sys 构建复用同一份。
+veloterm-relay-proto = { path = "../relay/crates/veloterm-relay-proto" }
+tokio-tungstenite = { version = "0.29", features = ["connect", "handshake"] }
+futures-util = "0.3"
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs", "log"] }
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
+
 # ── 已迁出的依赖 ──
 # 全部内置命令行工具（uutils/coreutils 全集 + grep/sed/findutils/diffutils/
 # ripgrep/fd/sd/frawk/eza/wget/tar，以及 Windows 专属的 openssl-app 与
@@ -99,6 +108,8 @@ fast-socks5 = "1.0.0"
 [dev-dependencies]
 # 传输层单测依赖 tokio paused-clock（start_paused / advance）
 tokio = { version = "1", features = ["test-util"] }
+# relay_dial 集成测试：起真实中继验证 app 侧 dial_relay 握手与字节管道
+veloterm-relay = { path = "../relay/crates/veloterm-relay" }
 
 [lints.clippy]
 panic = "deny"

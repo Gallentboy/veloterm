@@ -11,7 +11,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::terminal::ssh::{SSHTargetAuth, SshHostKeyVerificationMode};
+use crate::terminal::ssh::{RelayTransport, SSHTargetAuth, SshHostKeyVerificationMode, SshRelayEndpoint};
 
 pub type DbPool = Pool<SqliteConnectionManager>;
 
@@ -75,6 +75,10 @@ pub struct HostRecord {
     /// NULL = 未启用。仅存主键 id，命令内容以命令库为准，命令被删后钩子静默失效）
     #[serde(default)]
     pub ready_command_id: Option<usize>,
+    /// SSH 中继（veloterm_relay）：有值时该主机经中继连接（首跳传输替换）。
+    /// secret 存 SQLCipher 加密库；relay_host 为空视为未启用
+    #[serde(default)]
+    pub relay: Option<SshRelayEndpoint>,
     #[serde(default)]
     pub group_ids: Vec<usize>,
     pub created_at: i64,
@@ -207,6 +211,12 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           host_key_verification TEXT NOT NULL DEFAULT 'auto_accept',
           allow_insecure_algos INTEGER NOT NULL DEFAULT 0,
           ready_command_id INTEGER,
+          relay_host TEXT,
+          relay_port INTEGER,
+          relay_transport TEXT,
+          relay_key_id INTEGER,
+          relay_secret TEXT,
+          relay_target TEXT,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
       );
@@ -265,6 +275,23 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
         && !e.to_string().contains("duplicate column")
     {
         return Err(format!("failed to apply column migration `ready_command_id`: {e}"));
+    }
+
+    // SSH 中继六列（relay_host 非空 = 启用；其余列仅在 relay_host 非空时有意义）
+    for col_def in [
+        "relay_host TEXT",
+        "relay_port INTEGER",
+        "relay_transport TEXT",
+        "relay_key_id INTEGER",
+        "relay_secret TEXT",
+        "relay_target TEXT",
+    ] {
+        let sql = format!("ALTER TABLE hosts ADD COLUMN {col_def}");
+        if let Err(e) = conn.execute_batch(&sql)
+            && !e.to_string().contains("duplicate column")
+        {
+            return Err(format!("failed to apply column migration `{col_def}`: {e}"));
+        }
     }
 
     log::info!(
@@ -470,6 +497,58 @@ fn verification_mode_from_str(raw: &str) -> SshHostKeyVerificationMode {
     }
 }
 
+fn relay_transport_to_str(t: RelayTransport) -> &'static str {
+    match t {
+        RelayTransport::Tcp => "tcp",
+        RelayTransport::Ws => "ws",
+        RelayTransport::Quic => "quic",
+    }
+}
+
+fn relay_transport_from_str(raw: &str) -> Option<RelayTransport> {
+    match raw.trim() {
+        "tcp" => Some(RelayTransport::Tcp),
+        "ws" => Some(RelayTransport::Ws),
+        "quic" => Some(RelayTransport::Quic),
+        _ => None,
+    }
+}
+
+/// 行列 → 中继配置。relay_host 为空/缺失返回 None；部分字段缺失（旧库半态）按
+/// 默认值补齐（transport 默认 tcp、port 默认 7300、key_id 默认 1）。
+#[allow(clippy::too_many_arguments)]
+fn row_to_relay(
+    relay_host: Option<&str>,
+    relay_port: Option<i64>,
+    relay_transport: Option<&str>,
+    relay_key_id: Option<i64>,
+    relay_secret: Option<&str>,
+    relay_target: Option<&str>,
+) -> Option<SshRelayEndpoint> {
+    let host = relay_host?.trim().to_string();
+    if host.is_empty() {
+        return None;
+    }
+    let secret = relay_secret?.trim().to_string();
+    if secret.is_empty() {
+        return None;
+    }
+    Some(SshRelayEndpoint {
+        host,
+        port: relay_port
+            .and_then(|p| u16::try_from(p).ok())
+            .unwrap_or(7300),
+        transport: relay_transport
+            .and_then(relay_transport_from_str)
+            .unwrap_or(RelayTransport::Tcp),
+        key_id: relay_key_id.map(|k| k.clamp(0, 255) as u8).unwrap_or(1),
+        secret,
+        target: relay_target
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty()),
+    })
+}
+
 pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
     let conn = pool
         .get()
@@ -519,7 +598,9 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
     let mut host_stmt = conn
         .prepare(
             "SELECT id, name, host, port, username, auth_json, jump_host_id,
-              host_key_verification, allow_insecure_algos, ready_command_id, created_at, updated_at
+              host_key_verification, allow_insecure_algos, ready_command_id,
+              relay_host, relay_port, relay_transport, relay_key_id, relay_secret, relay_target,
+              created_at, updated_at
        FROM hosts
        ORDER BY id ASC",
         )
@@ -532,6 +613,14 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
             let verification_raw: String = row.get(7)?;
             let allow_insecure_int: i64 = row.get(8)?;
             let auth: SSHTargetAuth = serde_json::from_str(&auth_json).unwrap_or_default();
+            let relay = row_to_relay(
+                row.get::<_, Option<String>>(10)?.as_deref(),
+                row.get::<_, Option<i64>>(11)?,
+                row.get::<_, Option<String>>(12)?.as_deref(),
+                row.get::<_, Option<i64>>(13)?,
+                row.get::<_, Option<String>>(14)?.as_deref(),
+                row.get::<_, Option<String>>(15)?.as_deref(),
+            );
             Ok(HostRecord {
                 id,
                 name: row.get(1)?,
@@ -543,9 +632,10 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 host_key_verification: verification_mode_from_str(&verification_raw),
                 allow_insecure_algos: allow_insecure_int != 0,
                 ready_command_id: row.get(9)?,
+                relay,
                 group_ids: groups_by_host.remove(&id).unwrap_or_default(),
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
+                created_at: row.get(16)?,
+                updated_at: row.get(17)?,
             })
         })
         .map_err(|e| format!("failed to query hosts: {e}"))?;
@@ -645,6 +735,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 host_key_verification: SshHostKeyVerificationMode::AutoAccept,
                 allow_insecure_algos: false,
                 ready_command_id: None,
+                relay: None,
                 group_ids,
                 created_at,
                 updated_at,
@@ -711,8 +802,10 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
         tx.execute(
             "INSERT INTO hosts (
           id, name, host, port, username, auth_json, jump_host_id,
-          host_key_verification, allow_insecure_algos, ready_command_id, created_at, updated_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+          host_key_verification, allow_insecure_algos, ready_command_id,
+          relay_host, relay_port, relay_transport, relay_key_id, relay_secret, relay_target,
+          created_at, updated_at
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 host.id,
                 &host.name,
@@ -724,6 +817,12 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                 verification_str,
                 allow_insecure_int,
                 host.ready_command_id,
+                host.relay.as_ref().map(|r| r.host.clone()),
+                host.relay.as_ref().map(|r| i64::from(r.port)),
+                host.relay.as_ref().map(|r| relay_transport_to_str(r.transport)),
+                host.relay.as_ref().map(|r| i64::from(r.key_id)),
+                host.relay.as_ref().map(|r| r.secret.clone()),
+                host.relay.as_ref().and_then(|r| r.target.clone()),
                 host.created_at,
                 host.updated_at,
             ],
@@ -857,9 +956,33 @@ mod tests {
                 host_key_verification: SshHostKeyVerificationMode::AutoAccept,
                 allow_insecure_algos: true,
                 ready_command_id: Some(7),
+                relay: Some(SshRelayEndpoint {
+                    host: "relay.example.com".to_string(),
+                    port: 7300,
+                    transport: RelayTransport::Quic,
+                    key_id: 3,
+                    secret: "ab".repeat(32),
+                    target: Some("linux1.internal:22".to_string()),
+                }),
                 group_ids: vec![1],
                 created_at: 200,
                 updated_at: 200,
+            },
+            HostRecord {
+                id: 2,
+                name: "web-2".to_string(),
+                host: "10.0.1.6".to_string(),
+                port: 22,
+                username: "root".to_string(),
+                auth: SSHTargetAuth::Agent,
+                jump_host_id: Some(1),
+                host_key_verification: SshHostKeyVerificationMode::AutoAccept,
+                allow_insecure_algos: false,
+                ready_command_id: None,
+                relay: None,
+                group_ids: vec![],
+                created_at: 201,
+                updated_at: 201,
             }],
         };
 

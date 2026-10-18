@@ -11,7 +11,9 @@ import type {
   AuthMethod,
   GroupNode,
   HostNode,
+  RelayTransport,
   SshHostKeyVerificationMode,
+  SshRelayEndpoint,
 } from '@/hosts/types';
 import { commandStore, useCommands } from '@/services/commandStore';
 import { cn } from '@/lib/utils';
@@ -23,6 +25,8 @@ export interface HostFormResult {
   username: string;
   auth: AuthConfig;
   jumpHostId: number | null;
+  /** SSH 中继（veloterm_relay）；null = 不经中继 */
+  relay: SshRelayEndpoint | null;
   hostKeyVerification: SshHostKeyVerificationMode;
   allowInsecureAlgos: boolean;
   /** 终端就绪钩子：会话建立后自动执行的命令库命令 id；null = 未启用 */
@@ -55,6 +59,12 @@ const HOST_KEY_POLICIES: Array<{ mode: SshHostKeyVerificationMode; labelKey: str
   { mode: 'ignore', labelKey: 'hosts.form.hostKeyIgnore' },
 ];
 
+const RELAY_TRANSPORTS: Array<{ transport: RelayTransport; labelKey: string }> = [
+  { transport: 'tcp', labelKey: 'hosts.form.relayTransportTcp' },
+  { transport: 'ws', labelKey: 'hosts.form.relayTransportWs' },
+  { transport: 'quic', labelKey: 'hosts.form.relayTransportQuic' },
+];
+
 /** 主机新建/编辑对话框：主机名 + 地址/端口/用户名 + 三种认证方式 + 跳板机/公钥策略/旧版算法兼容 + 所属分组（多选）。 */
 export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSave, onClose }: HostFormDialogProps) {
   const { t } = useTranslation();
@@ -64,6 +74,18 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
   const [username, setUsername] = useState(node?.username ?? '');
   const [auth, setAuth] = useState<AuthConfig>(() => node?.auth ?? { method: 'password', password: '' });
   const [jumpHostId, setJumpHostId] = useState<number | null>(node?.jumpHostId ?? null);
+  // SSH 中继：启用后首跳经 veloterm_relay 建立（与跳板可组合：中继送达链首端点）
+  const [relayEnabled, setRelayEnabled] = useState<boolean>(node?.relay != null);
+  const [relay, setRelay] = useState<SshRelayEndpoint>(
+    node?.relay ?? {
+      host: '',
+      port: 7300,
+      transport: 'tcp',
+      keyId: 1,
+      secret: '',
+      target: null,
+    },
+  );
   const [hostKeyVerification, setHostKeyVerification] = useState<SshHostKeyVerificationMode>(
     node?.hostKeyVerification ?? 'auto_accept',
   );
@@ -123,6 +145,40 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
       readyCommandId != null && commands.some((cmd) => cmd.id === readyCommandId)
         ? readyCommandId
         : null;
+    // 中继字段校验：启用时必填项齐全，secret 必须 64 位十六进制，keyId 0-255
+    let relayResult: SshRelayEndpoint | null = null;
+    if (relayEnabled) {
+      const relayPortNumber = Number(relay.port);
+      const relayKeyIdNumber = Number(relay.keyId);
+      if (!relay.host.trim()) {
+        setError(t('hosts.form.relayHostRequired'));
+        return;
+      }
+      if (!Number.isInteger(relayPortNumber) || relayPortNumber < 1 || relayPortNumber > 65535) {
+        setError(t('hosts.form.relayPortInvalid'));
+        return;
+      }
+      if (!Number.isInteger(relayKeyIdNumber) || relayKeyIdNumber < 0 || relayKeyIdNumber > 255) {
+        setError(t('hosts.form.relayKeyIdInvalid'));
+        return;
+      }
+      if (!/^[0-9a-fA-F]{64}$/.test(relay.secret.trim())) {
+        setError(t('hosts.form.relaySecretInvalid'));
+        return;
+      }
+      if (relay.target != null && relay.target.trim() !== '' && !/^[^:]+:\d{1,5}$/.test(relay.target.trim())) {
+        setError(t('hosts.form.relayTargetInvalid'));
+        return;
+      }
+      relayResult = {
+        host: relay.host.trim(),
+        port: relayPortNumber,
+        transport: relay.transport,
+        keyId: relayKeyIdNumber,
+        secret: relay.secret.trim(),
+        target: relay.target?.trim() ? relay.target.trim() : null,
+      };
+    }
     onSave({
       name: name.trim(),
       host: host.trim(),
@@ -130,6 +186,7 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
       username: username.trim(),
       auth,
       jumpHostId: validJumpHostId,
+      relay: relayResult,
       hostKeyVerification,
       allowInsecureAlgos,
       readyCommandId: validReadyCommandId,
@@ -336,6 +393,113 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
                 }))}
               />
             </FormField>
+
+            {/* SSH 中继（veloterm_relay）：启用后首跳经中继建立 VLR2 流再跑 SSH */}
+            <label
+              className={cn(
+                'flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 transition-colors',
+                relayEnabled
+                  ? 'border-border-hover bg-surface'
+                  : 'border-border hover:bg-surface-hover',
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={relayEnabled}
+                onChange={(e) => setRelayEnabled(e.target.checked)}
+                className="mt-0.5 accent-foreground"
+              />
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5 select-none">
+                <span className="text-ui-sm text-foreground">
+                  {t('hosts.form.relayEnable')}
+                </span>
+                <span className="text-ui-xs text-foreground-subtlest">
+                  {t('hosts.form.relayHint')}
+                </span>
+              </div>
+            </label>
+
+            {relayEnabled ? (
+              <div className="flex flex-col gap-3.5 rounded-lg border border-border p-2.5">
+                <div className="flex gap-3">
+                  <div className="min-w-0 flex-1">
+                    <FormField label={t('hosts.form.relayHost')}>
+                      <TextInput
+                        value={relay.host}
+                        onChange={(e) => setRelay((cur) => ({ ...cur, host: e.target.value }))}
+                        placeholder="relay.example.com"
+                      />
+                    </FormField>
+                  </div>
+                  <div className="w-24 shrink-0">
+                    <FormField label={t('hosts.form.relayPort')}>
+                      <TextInput
+                        type="number"
+                        value={String(relay.port)}
+                        onChange={(e) =>
+                          setRelay((cur) => ({ ...cur, port: Number(e.target.value) }))
+                        }
+                        min={1}
+                        max={65535}
+                      />
+                    </FormField>
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <div className="w-32 shrink-0">
+                    <FormField label={t('hosts.form.relayTransport')}>
+                      <SelectMenu
+                        aria-label={t('hosts.form.relayTransport')}
+                        value={relay.transport}
+                        onChange={(next) =>
+                          setRelay((cur) => ({ ...cur, transport: next as RelayTransport }))
+                        }
+                        options={RELAY_TRANSPORTS.map((item) => ({
+                          value: item.transport,
+                          label: t(item.labelKey),
+                        }))}
+                      />
+                    </FormField>
+                  </div>
+                  <div className="w-24 shrink-0">
+                    <FormField label={t('hosts.form.relayKeyId')}>
+                      <TextInput
+                        type="number"
+                        value={String(relay.keyId)}
+                        onChange={(e) =>
+                          setRelay((cur) => ({ ...cur, keyId: Number(e.target.value) }))
+                        }
+                        min={0}
+                        max={255}
+                      />
+                    </FormField>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <FormField label={t('hosts.form.relaySecret')}>
+                      <PasswordInput
+                        value={relay.secret}
+                        onChange={(e) => setRelay((cur) => ({ ...cur, secret: e.target.value }))}
+                        autoComplete="off"
+                      />
+                    </FormField>
+                  </div>
+                </div>
+
+                <FormField label={`${t('hosts.form.relayTarget')}（${t('common.optional')}）`}>
+                  <TextInput
+                    value={relay.target ?? ''}
+                    onChange={(e) => setRelay((cur) => ({ ...cur, target: e.target.value }))}
+                    placeholder="linux1.internal:22"
+                    spellCheck={false}
+                    className="font-mono"
+                  />
+                </FormField>
+                <p className="text-ui-xs text-foreground-subtlest select-none">
+                  {t('hosts.form.relayTargetHint')}
+                </p>
+              </div>
+            ) : null}
 
             <label
               className={cn(

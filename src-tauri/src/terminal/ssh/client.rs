@@ -848,26 +848,6 @@ impl Connector {
         let first = iter.next().ok_or(ConnectionError::Resolve)?;
 
         let config = self.build_ssh_config(&first);
-        let address_str = format!("{}:{}", first.host, first.port);
-        let address = address_str
-            .to_socket_addrs()
-            .map_err(ConnectionError::Io)
-            .and_then(|mut x| x.next().ok_or(ConnectionError::Resolve))
-            .inspect_err(|e| {
-                log::error!(
-                    "[SSH {}] Cannot resolve address {}: {:?}",
-                    self.id,
-                    address_str,
-                    e
-                )
-            })?;
-        log::info!(
-            "[SSH {}] Connecting to {:?} as {}",
-            self.id,
-            address,
-            first.username
-        );
-
         let (event_tx, event_rx) = unbounded_channel();
         let handler = ClientHandler {
             ssh_options: first.clone(),
@@ -875,11 +855,58 @@ impl Connector {
             known_hosts: self.known_hosts.clone(),
             session_id: self.id,
         };
-        let fut = russh::client::connect(config, address, handler);
-        let (mut session, mut active_rx) = self
-            .wait_for_connection(&first, fut, event_rx, false)
-            .boxed()
-            .await?;
+
+        // 首跳分支：中继（VLR2 握手后的传输流上 connect_stream）或直连 TCP。
+        // 中继把流量送达链首 SSH 端点，后续跳板链逻辑不变。
+        let (mut session, mut active_rx) = match first.relay.clone() {
+            Some(relay_cfg) => {
+                let ssh_endpoint = veloterm_relay_proto::frame::TargetAddr {
+                    host: first.host.clone(),
+                    port: first.port,
+                };
+                log::info!(
+                    "[SSH {}] Connecting via relay {}:{} ({:?}) to {}:{}...",
+                    self.id,
+                    relay_cfg.host,
+                    relay_cfg.port,
+                    relay_cfg.transport,
+                    first.host,
+                    first.port,
+                );
+                let stream = super::relay_transport::dial_relay(&relay_cfg, &ssh_endpoint)
+                    .await
+                    .map_err(|e| ConnectionError::Io(std::io::Error::other(e)))?;
+                let fut = russh::client::connect_stream(config, stream, handler);
+                self.wait_for_connection(&first, fut, event_rx, false)
+                    .boxed()
+                    .await?
+            }
+            None => {
+                let address_str = format!("{}:{}", first.host, first.port);
+                let address = address_str
+                    .to_socket_addrs()
+                    .map_err(ConnectionError::Io)
+                    .and_then(|mut x| x.next().ok_or(ConnectionError::Resolve))
+                    .inspect_err(|e| {
+                        log::error!(
+                            "[SSH {}] Cannot resolve address {}: {:?}",
+                            self.id,
+                            address_str,
+                            e
+                        )
+                    })?;
+                log::info!(
+                    "[SSH {}] Connecting to {:?} as {}",
+                    self.id,
+                    address,
+                    first.username
+                );
+                let fut = russh::client::connect(config, address, handler);
+                self.wait_for_connection(&first, fut, event_rx, false)
+                    .boxed()
+                    .await?
+            }
+        };
 
         for ssh_options in iter {
             let _ = self.tx.send(RCEvent::HopConnected).await;

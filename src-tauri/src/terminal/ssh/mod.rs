@@ -6,6 +6,7 @@ pub mod error;
 pub mod handler;
 pub mod keys;
 pub mod known_hosts;
+pub mod relay_transport;
 
 use crate::lifecycle::{DisconnectReason, LifecycleEmitter, LifecycleKind, emit_ssh_lifecycle};
 

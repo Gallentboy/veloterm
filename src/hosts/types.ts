@@ -20,6 +20,23 @@ export type AuthMethod = AuthConfig['method'];
 /** 主机公钥校验策略（对齐后端 `SshHostKeyVerificationMode`） */
 export type SshHostKeyVerificationMode = 'auto_accept' | 'auto_reject' | 'ignore';
 
+/** 中继入站传输类型（对齐后端 `RelayTransport`，veloterm_relay 的监听协议） */
+export type RelayTransport = 'tcp' | 'ws' | 'quic';
+
+/** SSH 中继配置（veloterm_relay）：有值时该主机经中继连接（首跳传输替换） */
+export interface SshRelayEndpoint {
+  /** 中继服务器地址 */
+  host: string;
+  port: number;
+  transport: RelayTransport;
+  /** 凭证 key_id（veloterm_relay token generate --key-id） */
+  keyId: number;
+  /** 32 字节十六进制 secret（veloterm_relay token generate 生成） */
+  secret: string;
+  /** 显式目标 host:port（需在中继 allow_targets 白名单内）；缺省走中继默认目标 */
+  target?: string | null;
+}
+
 export interface GroupNode {
   id: number;
   /** 父分组 id；null 表示根级 */
@@ -39,6 +56,8 @@ export interface HostNode {
   auth: AuthConfig;
   /** 前置跳板机主机 id；null 或缺省表示直连 */
   jumpHostId?: number | null;
+  /** SSH 中继配置；null 或缺省 = 不经中继（与跳板链可组合：中继送达链首端点） */
+  relay?: SshRelayEndpoint | null;
   /** 主机公钥校验策略；缺省为 'auto_accept'（首次连接自动信任 TOFU） */
   hostKeyVerification?: SshHostKeyVerificationMode;
   /** 是否允许兼容旧版不安全算法（ssh-rsa / dh-group1-sha1 / 3des-cbc 等）；缺省为 false */

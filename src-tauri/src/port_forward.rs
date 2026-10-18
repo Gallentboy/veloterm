@@ -264,6 +264,7 @@ fn resolve_host_chain(pool: &DbPool, host_id: i64) -> Result<Vec<TargetSSHOption
                 auth: hop.auth.clone(),
                 jump_host: None,
                 host_key_verification: hop.host_key_verification,
+                relay: None,
             },
         );
         cursor = hop.jump_host_id;
@@ -276,7 +277,14 @@ fn resolve_host_chain(pool: &DbPool, host_id: i64) -> Result<Vec<TargetSSHOption
         auth: target.auth.clone(),
         jump_host: None,
         host_key_verification: target.host_key_verification,
+        relay: None,
     });
+    // 中继（仅链首生效）：与 TerminalManager 同型，端口转发连接同样可走中继
+    if let Some(relay) = target.relay.clone() {
+        if let Some(first) = chain.first_mut() {
+            first.relay = Some(relay);
+        }
+    }
     Ok(chain)
 }
 

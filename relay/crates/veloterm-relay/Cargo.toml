@@ -23,7 +23,7 @@ anyhow = "1"
 tokio-tungstenite = { version = "0.29", features = ["connect", "handshake"] }
 futures-util = "0.3"
 # quic 监听器（aws-lc-rs 与 russh 同栈）；rcgen 用于未配置证书时启动自签
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "aws-lc-rs", "log"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs", "log"] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
 rustls-pemfile = "2"
 rcgen = "0.13"
