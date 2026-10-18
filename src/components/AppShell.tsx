@@ -534,7 +534,7 @@ export function AppShell() {
                   />
                 ) : page === 'editor' ? (
                   <EditorScreen />
-                ) : page === 'files' || page === 'grpc' ? null : page === 'hosts' ? (
+                ) : page === 'files' || page === 'zk' || page === 'grpc' ? null : page === 'hosts' ? (
                   <HostsScreen
                     onConnectHost={(host) => {
                       createSession({ hostId: host.id, customTitle: host.name });
