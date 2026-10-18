@@ -240,6 +240,7 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
         purpose: '',
         category: '',
         tags: [],
+        platforms: [],
         params: [],
         dangerLevel: 'safe',
         exampleOutput: '',
