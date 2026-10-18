@@ -15,24 +15,19 @@ import {
 } from '@/services/commandService';
 import { commandStore } from '@/services/commandStore';
 
-const CATEGORIES = [
-  { value: '', label: '—' },
-  { value: 'file', label: '文件与目录' },
-  { value: 'text', label: '文本处理' },
-  { value: 'archive', label: '归档与压缩' },
-  { value: 'package', label: '包管理' },
-  { value: 'permission', label: '权限与用户' },
-  { value: 'shell', label: 'Shell 与环境' },
-  { value: 'schedule', label: '定时与作业' },
-  { value: 'network', label: '网络' },
-  { value: 'disk', label: '磁盘' },
-  { value: 'process', label: '进程' },
-  { value: 'system', label: '系统与服务' },
-  { value: 'docker', label: 'Docker' },
-  { value: 'gpu', label: 'GPU' },
-  { value: 'ssh', label: 'SSH' },
-  { value: 'other', label: '其他' },
-];
+/** 分类可选值（展示名走 i18n `commands.categories.*`，与列表页分组同源） */
+const CATEGORY_VALUES = [
+  '', 'file', 'text', 'archive', 'package', 'permission', 'shell', 'schedule',
+  'network', 'disk', 'process', 'system', 'docker', 'gpu', 'ssh', 'other',
+] as const;
+
+/** 适配系统多选的取值与展示序（与后端 normalize_platforms 同序） */
+const PLATFORM_OPTIONS = [
+  { value: 'win', labelKey: 'commands.form.platformWin' },
+  { value: 'linux', labelKey: 'commands.form.platformLinux' },
+  { value: 'mac', labelKey: 'commands.form.platformMac' },
+] as const;
+const PLATFORM_ORDER: string[] = PLATFORM_OPTIONS.map((opt) => opt.value);
 
 const DANGER_OPTIONS: Array<{ value: DangerLevel; label: string }> = [
   { value: 'safe', label: '安全' },
@@ -67,14 +62,32 @@ export function CommandFormDialog({ node, onClose, onSave }: CommandFormDialogPr
   const [tagsInput, setTagsInput] = useState((node?.tags ?? []).join(', '));
   const [params, setParams] = useState<CommandParam[]>(node?.params ?? []);
   const [dangerLevel, setDangerLevel] = useState<DangerLevel>(node?.dangerLevel ?? 'safe');
+  // 适配系统多选（win/linux/mac）；不选/全选语义均为「通用」（后端归一为空）
+  const [platforms, setPlatforms] = useState<ReadonlySet<string>>(() => new Set(node?.platforms ?? []));
+  const togglePlatform = (value: string) => {
+    setPlatforms((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) {
+        next.delete(value);
+      } else {
+        next.add(value);
+      }
+      return next;
+    });
+  };
   const [exampleOutput, setExampleOutput] = useState(node?.exampleOutput ?? '');
   const [isPinned, setIsPinned] = useState(node?.isPinned ?? false);
   const [error, setError] = useState<string | null>(null);
-  // 详细解释的 Markdown 编辑/预览模式（仅编辑态受控输入；预览态渲染纯文本）
-  const [mdPreviewing, setMdPreviewing] = useState(false);
+  // 详细解释的 Markdown 编辑/预览模式（默认预览：打开即可读，编辑显式切换；预览态渲染纯文本）
+  const [mdPreviewing, setMdPreviewing] = useState(true);
 
   // 从命令模板自动提取占位符，同步 params 数组
   const placeholders = useMemo(() => extractPlaceholders(command), [command]);
+
+  const categoryOptions = useMemo(
+    () => CATEGORY_VALUES.map((value) => ({ value, label: value === '' ? '—' : t(`commands.categories.${value}`) })),
+    [t],
+  );
 
   useEffect(() => {
     setParams((current) => {
@@ -108,6 +121,7 @@ export function CommandFormDialog({ node, onClose, onSave }: CommandFormDialogPr
     purpose: purpose.trim(),
     category,
     tags: tagsInput.split(/[，,]/).map((s) => s.trim()).filter(Boolean),
+    platforms: [...platforms].sort((a, b) => PLATFORM_ORDER.indexOf(a) - PLATFORM_ORDER.indexOf(b)),
     params,
     dangerLevel,
     exampleOutput: exampleOutput.trim(),
@@ -170,8 +184,9 @@ export function CommandFormDialog({ node, onClose, onSave }: CommandFormDialogPr
         </>
       }
     >
-      {/* 窗口 ≥ 860px 双列（对话框 760px 不被压缩的临界），窄窗口回落单列堆叠 */}
-      <div className="grid grid-cols-1 items-start gap-x-5 gap-y-3.5 min-[860px]:grid-cols-2">
+      {/* 窗口 ≥ 860px 双列（对话框 760px 不被压缩的临界），窄窗口回落单列堆叠；
+          stretch：两列同高，右列的「详细解释」flex-1 铺满剩余高度，与左列视觉对齐 */}
+      <div className="grid grid-cols-1 items-stretch gap-x-5 gap-y-3.5 min-[860px]:grid-cols-2">
         {/* 左列：命令核心 */}
         <div className="flex min-w-0 flex-col gap-3.5">
           <FormField label={t('commands.form.title')}>
@@ -237,12 +252,12 @@ export function CommandFormDialog({ node, onClose, onSave }: CommandFormDialogPr
           </FormField>
         </div>
 
-        {/* 右列：元信息 */}
+        {/* 右列：元信息（详细解释铺满剩余高度，两列等高） */}
         <div className="flex min-w-0 flex-col gap-3.5">
-          <FormField label={t('commands.form.description')}>
-            <div className="flex flex-col gap-1.5">
+          <FormField label={t('commands.form.description')} className="min-h-0 flex-1">
+            <div className="flex min-h-0 flex-1 flex-col gap-1.5">
               {/* Markdown 编辑 / 预览切换 */}
-              <div className="flex items-center gap-1 self-end">
+              <div className="flex shrink-0 items-center gap-1 self-end">
                 {([false, true] as const).map((mode) => (
                   <button
                     key={String(mode)}
@@ -260,7 +275,7 @@ export function CommandFormDialog({ node, onClose, onSave }: CommandFormDialogPr
                 ))}
               </div>
               {mdPreviewing ? (
-                <div className="scrollbar-slim h-24 overflow-y-auto rounded-md border border-border bg-input px-2.5 py-1.5 text-ui-sm">
+                <div className="scrollbar-slim h-24 max-h-72 flex-auto overflow-y-auto rounded-md border border-border bg-input px-2.5 py-1.5 text-ui-sm">
                   {description.trim() ? (
                     <MarkdownContent content={description} />
                   ) : (
@@ -274,6 +289,7 @@ export function CommandFormDialog({ node, onClose, onSave }: CommandFormDialogPr
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder={'支持 Markdown：`-i` 就地修改、**s/old/new/g** 全局替换\n- 列表项\n```bash\n示例代码块\n```'}
+                  className="max-h-72 flex-auto"
                 />
               )}
             </div>
@@ -294,7 +310,7 @@ export function CommandFormDialog({ node, onClose, onSave }: CommandFormDialogPr
                   aria-label={t('commands.form.category')}
                   value={category}
                   onChange={setCategory}
-                  options={CATEGORIES}
+                  options={categoryOptions}
                 />
               </FormField>
             </div>
@@ -308,6 +324,33 @@ export function CommandFormDialog({ node, onClose, onSave }: CommandFormDialogPr
               </FormField>
             </div>
           </div>
+
+          <FormField label={t('commands.form.platforms')}>
+            <div className="flex flex-col gap-1">
+              {/* 多选胶囊：选中高亮；不选/全选均为「通用」（后端归一为空） */}
+              <div className="flex gap-1.5">
+                {PLATFORM_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    aria-pressed={platforms.has(opt.value)}
+                    onClick={() => togglePlatform(opt.value)}
+                    className={cn(
+                      'flex-1 rounded-lg border px-2 py-1.5 text-ui-sm transition-colors select-none',
+                      platforms.has(opt.value)
+                        ? 'border-border-hover bg-surface text-foreground'
+                        : 'border-border text-foreground-subtle hover:bg-surface-hover',
+                    )}
+                  >
+                    {t(opt.labelKey)}
+                  </button>
+                ))}
+              </div>
+              <span className="text-ui-xs text-foreground-subtlest select-none">
+                {t('commands.form.platformAllHint')}
+              </span>
+            </div>
+          </FormField>
 
           <FormField label={t('commands.form.danger')}>
             <div className="flex gap-1.5">

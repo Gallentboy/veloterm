@@ -18,9 +18,9 @@ import { cn } from '@/lib/utils';
  * - 同类隐患：点「所属分组」标题文字误勾第一个分组、点「认证方式」误选第一项。
  * 单控件场景「点标题聚焦输入框」的小便利让位于正确性（用户点输入框本身即可）。
  */
-export function FormField({ label, children }: { label: ReactNode; children: ReactNode }) {
+export function FormField({ label, children, className }: { label: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className={cn('flex flex-col gap-1.5', className)}>
       <span className="text-ui-sm text-foreground-subtle select-none">{label}</span>
       {children}
     </div>
