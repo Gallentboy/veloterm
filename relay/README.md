@@ -64,7 +64,10 @@ R→C: VLR2 | status   (0=OK 进入纯字节管道)
 - 手动验证车道：推 `test_relay` tag → 四目标产物（linux x86_64/aarch64 musl 静态 +
   win x64/arm64 crt-static）见该 run 的 Artifacts（7 天有效期）。
 - **随 release 发布**：push release 时若 `relay/**` 有变化，publish 流水线自动构建
-  四个二进制并挂到 `app-v<版本>` 的 Releases 页面资产里；relay 无变化则整段跳过。
+  四个二进制并挂到 `app-v<版本>` 的 Releases 页面资产里（命名
+  `veloterm_relay-linux-x86` / `veloterm_relay-linux-aarch64` /
+  `veloterm_relay-x64.exe` / `veloterm_relay-arm64.exe`）；
+  relay 无变化则整段跳过。
 
 ## 测试
 
