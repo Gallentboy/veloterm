@@ -87,7 +87,7 @@
 
 ### 存储
 
-全部数据在 SQLCipher 加密库 `veloterm.db`：表结构变更走「建表批次后的幂等 ALTER（吞 duplicate column）」，新列在 HostRecord / HostNode / mapper / roundtrip 测试四处同步。主机「就绪钩子」只存命令库主键 id，命令删除后钩子静默失效。
+全部数据在 SQLCipher 加密库 `veloterm.db`：表结构变更走「建表批次后的幂等 ALTER（吞 duplicate column）」，新列在 HostRecord / HostNode / mapper / roundtrip 测试四处同步。主机「就绪钩子」只存命令库主键 id，命令删除后钩子静默失效。中继配置（relays 表）与 ZK 主机（zk_hosts 表 + zk_credentials 凭证子表，`(host_id, username)` 唯一、删主机级联删凭证）都是独立实体：中继只存 relay_id 引用，ZK 凭证（digest 用户名/密码，明文存库）由前端「ZK 主机」页管理，使用处（ZK 连接/认证）一律下拉选择不回显手输。
 
 ## 命令速查
 

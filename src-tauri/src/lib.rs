@@ -16,6 +16,7 @@ pub mod text_detect;
 pub mod tools;
 pub mod window_state;
 pub mod zk;
+pub mod zk_hosts;
 
 #[tauri::command]
 fn is_apple_silicon() -> bool {
@@ -75,6 +76,9 @@ pub fn run() {
             relays::relay_list,
             relays::relay_save,
             relays::relay_delete,
+            zk_hosts::zk_host_list,
+            zk_hosts::zk_host_save,
+            zk_hosts::zk_host_delete,
             ai::ai_provider_list,
             ai::ai_provider_save,
             ai::ai_provider_delete,
