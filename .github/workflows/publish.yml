@@ -195,3 +195,175 @@ jobs:
           $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
           $setup = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/VeloTerm_${ver}_x64-setup.exe"
           pwsh -NoProfile -File scripts/verify-installer-layout.ps1 -Installer $setup
+
+  # ── relay 中继程序的四目标发布（relay/** 有变化才构建，产物挂 Releases 页面）──
+  # 与 test-relay.yml 车道同源（构建/冒烟步骤一致），区别：车道是全量验证
+  # （含 cargo test），这里只出产物；变更探测失败/首推/手动派发时保守视为有变化。
+  relay-changes:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      relay: ${{ steps.detect.outputs.relay }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Detect relay path changes
+        id: detect
+        run: |
+          BEFORE="${{ github.event.before }}"
+          # 空值（手动派发）或取不到 before（首推/强推/浅历史）→ 保守视为有变化
+          if [ -z "$BEFORE" ] || git cat-file -e "$BEFORE" 2>/dev/null; then :; else
+            if ! git fetch --no-tags --depth=1 origin "$BEFORE"; then
+              echo "relay=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          fi
+          if [ -z "$BEFORE" ]; then
+            echo "relay=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # 双端树快照直 diff（无需 merge-base，浅取回的 before 即可）
+          if git diff --name-only "$BEFORE" "${{ github.sha }}" -- relay/ | grep -q .; then
+            echo "relay=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relay=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  relay-release-linux:
+    permissions:
+      contents: read
+    needs: relay-changes
+    if: needs.relay-changes.outputs.relay == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: relay
+          key: ${{ matrix.target }}
+      - name: Build release (musl static)
+        working-directory: relay
+        run: cargo build --release -p veloterm-relay --target ${{ matrix.target }}
+      - name: Smoke test binary
+        run: |
+          BIN=./relay/target/${{ matrix.target }}/release/veloterm_relay
+          $BIN --version
+          $BIN token generate --key-id 9 --name ci | grep -E 'secret = "[0-9a-f]{64}"'
+          ldd $BIN 2>&1 | tee /tmp/ldd.out
+          grep -Eq 'not a dynamic executable|statically linked' /tmp/ldd.out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: veloterm_relay-${{ matrix.target }}
+          path: relay/target/${{ matrix.target }}/release/veloterm_relay
+          if-no-files-found: error
+          retention-days: 7
+
+  relay-release-windows:
+    permissions:
+      contents: read
+    needs: relay-changes
+    if: needs.relay-changes.outputs.relay == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            msvc_arch: x64
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            msvc_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: relay
+          key: ${{ matrix.target }}
+      # 内联 vcvars（vswhere + vcvarsall + GITHUB_ENV 导出，无第三方 action）
+      - name: Setup MSVC env (vcvars ${{ matrix.msvc_arch }})
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath  = & $vswhere -latest -products * -property installationPath
+          if (-not $vsPath) { throw "vswhere 未找到 Visual Studio" }
+          $vcvars  = Join-Path $vsPath 'VC\Auxiliary\Build\vcvarsall.bat'
+          Write-Host "vcvars: $vcvars (${{ matrix.msvc_arch }})"
+          cmd /s /c "`"$vcvars`" ${{ matrix.msvc_arch }} && set" | ForEach-Object {
+            if ($_ -match '^(?<k>[^=]+)=(?<v>.*)$') {
+              Add-Content $env:GITHUB_ENV "$($Matches.k)=$($Matches.v)"
+            }
+          }
+      - name: Build release (crt-static)
+        working-directory: relay
+        env:
+          RUSTFLAGS: '-C target-feature=+crt-static'
+        run: cargo build --release -p veloterm-relay --target ${{ matrix.target }}
+        shell: cmd
+      - name: Smoke test binary (crt-static)
+        shell: cmd
+        run: |
+          set BIN=relay\target\${{ matrix.target }}\release\veloterm_relay.exe
+          %BIN% --version
+          %BIN% token generate --key-id 9 --name ci | findstr /C:"secret = "
+          dumpbin /DEPENDENTS %BIN% > dependents.txt
+          type dependents.txt
+          findstr /I "VCRUNTIME api-ms-win-crt" dependents.txt
+          if %ERRORLEVEL% EQU 0 exit /b 1
+          exit /b 0
+      - uses: actions/upload-artifact@v7
+        with:
+          name: veloterm_relay-${{ matrix.target }}
+          path: relay/target/${{ matrix.target }}/release/veloterm_relay.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  # 等应用 release（tauri-action 的 app-v<version> 草稿）产出后，把四个中继
+  # 二进制挂到同一 Releases 页面。应用侧失败则本 job 跳过（needs 短路）。
+  relay-release-attach:
+    permissions:
+      contents: write
+    needs: [relay-changes, relay-release-linux, relay-release-windows, publish-tauri]
+    if: needs.relay-changes.outputs.relay == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: veloterm_relay-*
+          path: relay-bin
+      - name: Attach relay binaries to app release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          TAG="app-v${VER}"
+          # tauri-action 产出的是 draft release（tag 未落地），按 tag_name 在 releases 列表里找
+          RID=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            -q ".[] | select(.tag_name == \"${TAG}\") | .id" | head -1)
+          if [ -z "$RID" ]; then
+            echo "未找到 ${TAG} 对应的 release（tauri-action 未产出或版本异常）"; exit 1
+          fi
+          echo "release id=$RID tag=$TAG"
+          find relay-bin -type f \( -name 'veloterm_relay' -o -name 'veloterm_relay.exe' \) | while read -r f; do
+            NAME="$(basename "$(dirname "$f")")$(case "$f" in *.exe) echo .exe;; esac)"
+            echo "upload: $NAME"
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/${RID}/assets?name=${NAME}" \
+              -H "Content-Type: application/octet-stream" --input "$f"
+          done
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RID}" -q '.html_url'
