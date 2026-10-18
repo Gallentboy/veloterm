@@ -388,6 +388,16 @@ function MenuGrid({
   const dragRef = useRef(drag);
   dragRef.current = drag;
 
+  // 拖拽进行中把光标切成「抓取手」，全局生效（指针移出源卡片也保持）；结束还原
+  useEffect(() => {
+    if (!drag) return;
+    const previous = document.body.style.cursor;
+    document.body.style.cursor = 'grabbing';
+    return () => {
+      document.body.style.cursor = previous;
+    };
+  }, [drag]);
+
   const hitCard = (x: number, y: number): string | null => {
     const container = containerRef.current;
     if (!container) return null;
