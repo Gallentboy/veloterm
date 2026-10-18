@@ -63,14 +63,32 @@ pub async fn dial_relay(
     let secret = Secret::from_hex(relay.secret.trim()).map_err(|e| {
         format!("中继 secret 非法（{e}）：需 veloterm_relay token generate 生成的 64 位十六进制")
     })?;
-    let target = Some(ssh_endpoint.clone());
+    connect_and_handshake(relay, &secret, Some(ssh_endpoint)).await
+}
 
+/// 可达性探测：连传输 + VLR3 握手（不带目标，服务端终局 OK 即证明
+/// 可达 + key_id/secret 鉴权通过），随即断开。供中继配置页「测试连接」用。
+pub async fn probe_relay(relay: &SshRelayEndpoint) -> Result<(), String> {
+    let secret = Secret::from_hex(relay.secret.trim()).map_err(|e| {
+        format!("中继 secret 非法（{e}）：需 veloterm_relay token generate 生成的 64 位十六进制")
+    })?;
+    let stream = connect_and_handshake(relay, &secret, None).await?;
+    drop(stream);
+    Ok(())
+}
+
+/// 三传输连接 + VLR3 握手（target=None 表示不带目标——探测路径）。
+async fn connect_and_handshake(
+    relay: &SshRelayEndpoint,
+    secret: &Secret,
+    target: Option<&TargetAddr>,
+) -> Result<RelayStream, String> {
     match relay.transport {
         RelayTransport::Tcp => {
             let stream = TcpStream::connect((relay.host.as_str(), relay.port))
                 .await
                 .map_err(|e| format!("连接中继 {}:{} 失败: {e}", relay.host, relay.port))?;
-            let enc = client_handshake(stream, relay.key_id, &secret, target.as_ref(), HANDSHAKE_TIMEOUT)
+            let enc = client_handshake(stream, relay.key_id, secret, target, HANDSHAKE_TIMEOUT)
                 .await
                 .map_err(|e| format!("中继握手失败（{}:{}）: {e}", relay.host, relay.port))?;
             Ok(Box::new(enc))
@@ -81,7 +99,7 @@ pub async fn dial_relay(
                 .await
                 .map_err(|e| format!("WebSocket 连接中继 {}:{} 失败: {e}", relay.host, relay.port))?;
             let io = WsIo::new(ws);
-            let enc = client_handshake(io, relay.key_id, &secret, target.as_ref(), HANDSHAKE_TIMEOUT)
+            let enc = client_handshake(io, relay.key_id, secret, target, HANDSHAKE_TIMEOUT)
                 .await
                 .map_err(|e| format!("中继握手失败（{}:{}）: {e}", relay.host, relay.port))?;
             Ok(Box::new(enc))
@@ -97,7 +115,7 @@ pub async fn dial_relay(
                 .map_err(|e| format!("QUIC 打开双向流失败: {e}"))?;
             // conn 与 endpoint 比流活得久（字段持有），否则流立即失效
             let io = BiIo { send, recv, _conn: conn, _endpoint: endpoint };
-            let enc = client_handshake(io, relay.key_id, &secret, target.as_ref(), HANDSHAKE_TIMEOUT)
+            let enc = client_handshake(io, relay.key_id, secret, target, HANDSHAKE_TIMEOUT)
                 .await
                 .map_err(|e| format!("中继握手失败（{}:{}）: {e}", relay.host, relay.port))?;
             Ok(Box::new(enc))

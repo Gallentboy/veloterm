@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pencil, Server, Trash2 } from 'lucide-react';
+import { Loader2, Pencil, PlugZap, Server, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
@@ -10,9 +10,11 @@ import {
   relayDelete,
   relayList,
   relaySave,
+  relayTest,
   type RelayConfig,
 } from '@/services/relayConfigService';
 import type { RelayTransport } from '@/hosts/types';
+import { cn } from '@/lib/utils';
 
 interface RelayFormResult {
   name: string;
@@ -24,6 +26,12 @@ interface RelayFormResult {
   certFingerprint: string | null;
 }
 
+/** 行内测试状态：探测中 / 可达（耗时）/ 失败（原因）。 */
+type TestState =
+  | { kind: 'testing' }
+  | { kind: 'ok'; ms: number }
+  | { kind: 'fail'; message: string };
+
 /** 中继配置管理页：名称 + 地址/端口/传输/凭证列表，新建/编辑/删除。 */
 export function RelaysScreen() {
   const { t } = useTranslation();
@@ -32,6 +40,7 @@ export function RelaysScreen() {
   const [deleting, setDeleting] = useState<RelayConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [testStates, setTestStates] = useState<Record<number, TestState>>({});
 
   const refresh = async () => {
     try {
@@ -71,6 +80,16 @@ export function RelaysScreen() {
       await refresh();
     } catch (e) {
       setError(String(e));
+    }
+  };
+
+  const handleTest = async (record: RelayConfig) => {
+    setTestStates((cur) => ({ ...cur, [record.id]: { kind: 'testing' } }));
+    try {
+      const ms = await relayTest(record);
+      setTestStates((cur) => ({ ...cur, [record.id]: { kind: 'ok', ms } }));
+    } catch (e) {
+      setTestStates((cur) => ({ ...cur, [record.id]: { kind: 'fail', message: String(e) } }));
     }
   };
 
@@ -120,7 +139,43 @@ export function RelaysScreen() {
                   {record.certFingerprint ? ' · pin' : ''}
                 </span>
               </div>
+              {(() => {
+                const state = testStates[record.id];
+                if (!state) return null;
+                if (state.kind === 'testing')
+                  return (
+                    <span className="flex shrink-0 items-center gap-1 text-ui-xs text-foreground-subtle select-none">
+                      <Loader2 className="size-3 animate-spin" />
+                      {t('relays.testing')}
+                    </span>
+                  );
+                if (state.kind === 'ok')
+                  return (
+                    <span className="shrink-0 text-ui-xs text-primary select-none">
+                      {t('relays.testOk', { ms: state.ms })}
+                    </span>
+                  );
+                return (
+                  <span
+                    className="max-w-56 shrink-0 truncate text-ui-xs text-destructive select-none"
+                    title={state.message}
+                  >
+                    {t('relays.testFailed')}
+                  </span>
+                );
+              })()}
               <span className="flex shrink-0 items-center gap-0.5">
+                <ControlHintTooltip title={t('relays.test')} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-7 rounded-lg text-foreground-subtle hover:text-primary"
+                    disabled={testStates[record.id]?.kind === 'testing'}
+                    onClick={() => void handleTest(record)}
+                  >
+                    <PlugZap className="size-3.5" />
+                  </Button>
+                </ControlHintTooltip>
                 <ControlHintTooltip title={t('common.edit')} side="bottom">
                   <Button
                     variant="ghost"
@@ -192,6 +247,8 @@ function RelayFormDialog({
   const [secret, setSecret] = useState(node?.secret ?? '');
   const [fingerprint, setFingerprint] = useState(node?.certFingerprint ?? '');
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: true; ms: number } | { ok: false; message: string } | null>(null);
 
   const handleSave = () => {
     const portNumber = Number(port);
@@ -218,6 +275,32 @@ function RelayFormDialog({
     });
   };
 
+  /** 用表单当前草稿值探测（未保存也可测；secret/地址不全由后端报错）。 */
+  const handleTest = async () => {
+    if (testing) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const ms = await relayTest({
+        id: node?.id ?? 0,
+        name: name.trim() || '(draft)',
+        host: host.trim(),
+        port: Number(port) || 0,
+        transport,
+        keyId: Number(keyId) || 0,
+        secret: secret.trim(),
+        certFingerprint: fingerprint.trim() || null,
+        createdAt: 0,
+        updatedAt: 0,
+      });
+      setTestResult({ ok: true, ms });
+    } catch (e) {
+      setTestResult({ ok: false, message: String(e) });
+    } finally {
+      setTesting(false);
+    }
+  };
+
   return (
     <Modal
       title={node ? t('relays.editTitle') : t('relays.newTitle')}
@@ -225,6 +308,22 @@ function RelayFormDialog({
       className="w-[520px]"
       footer={
         <>
+          <Button variant="outline" size="lg" className="h-8 px-3 text-ui-base" disabled={testing} onClick={() => void handleTest()}>
+            {testing ? <Loader2 className="size-3.5 animate-spin" /> : <PlugZap className="size-3.5" />}
+            {t('relays.test')}
+          </Button>
+          <div className="flex-1" />
+          {testResult ? (
+            <span
+              className={cn(
+                'mr-2 max-w-52 truncate text-ui-xs select-none',
+                testResult.ok ? 'text-primary' : 'text-destructive',
+              )}
+              title={testResult.ok ? undefined : testResult.message}
+            >
+              {testResult.ok ? t('relays.testOk', { ms: testResult.ms }) : t('relays.testFailed')}
+            </span>
+          ) : null}
           <Button variant="ghost" size="lg" className="h-8 px-3 text-ui-base" onClick={onClose}>
             {t('common.cancel')}
           </Button>

@@ -40,6 +40,23 @@ pub fn relay_delete(id: usize) -> Result<(), String> {
     db::delete_relay(&pool()?, id)
 }
 
+/// 测试连接：真实 VLR3 握手探测（可达 + key_id/secret 鉴权 + 传输全验证，
+/// 不带目标随即断开），返回耗时毫秒数。表单未保存的草稿值也可测。
+#[tauri::command]
+pub async fn relay_test(record: RelayRecord) -> Result<u64, String> {
+    let endpoint = SshRelayEndpoint {
+        host: record.host.trim().to_string(),
+        port: record.port,
+        transport: record.transport,
+        key_id: record.key_id,
+        secret: record.secret.trim().to_string(),
+        cert_fingerprint: record.cert_fingerprint,
+    };
+    let started = std::time::Instant::now();
+    crate::terminal::ssh::relay_transport::probe_relay(&endpoint).await?;
+    Ok(started.elapsed().as_millis() as u64)
+}
+
 /// 供各连接组链处引用解析：按 id 取中继端点。
 pub fn endpoint_by_id(relay_id: Option<usize>) -> Option<SshRelayEndpoint> {
     let rid = relay_id?;

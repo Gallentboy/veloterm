@@ -87,6 +87,10 @@ export default {
     empty: 'No relay configurations yet — create one to pick from dropdowns in host form and ZK',
     deleteTitle: 'Delete relay configuration',
     deleteConfirm: 'Delete "{{name}}"? Hosts/ZK connections referencing it fall back to manual entry.',
+    test: 'Test connection',
+    testing: 'Testing…',
+    testOk: 'Reachable ({{ms}} ms)',
+    testFailed: 'Unreachable',
   },
   zkHosts: {
     summary: '{{total}} ZK host(s)',
