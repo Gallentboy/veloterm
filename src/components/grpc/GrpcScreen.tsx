@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Network, Pencil, Play, Plus, SearchCheck, Settings2, Table2, Trash2, TriangleAlert, X } from 'lucide-react';
+import { Loader2, ChevronRight, Network, Pencil, Play, Plus, SearchCheck, Settings2, Table2, Trash2, TriangleAlert, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
@@ -212,6 +212,7 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
   const [tlsPickedId, setTlsPickedId] = useState<number | null>(null);
   const [tlsManaging, setTlsManaging] = useState(false);
   const [bearerToken, setBearerToken] = useState('');
+  const [authExpanded, setAuthExpanded] = useState(false);
   const [headers, setHeaders] = useState<GrpcHeaderPair[]>([]);
   const [timeoutMs, setTimeoutMs] = useState(15000);
   const [calling, setCalling] = useState(false);
@@ -578,9 +579,18 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
             ) : null}
           </div>
 
-          {/* 认证区块 */}
+          {/* 认证区块：默认折叠，点标题展开（已填值在折叠时不丢） */}
           <div className="flex flex-col gap-2.5 rounded-lg border border-border/60 p-3">
-            <span className="text-ui-sm text-foreground-subtle select-none">{t('grpc.authTitle')}</span>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-ui-sm text-foreground-subtle select-none transition-colors hover:text-foreground"
+              onClick={() => setAuthExpanded((v) => !v)}
+            >
+              <ChevronRight className={cn('size-3.5 transition-transform', authExpanded && 'rotate-90')} />
+              {t('grpc.authTitle')}
+            </button>
+            {authExpanded ? (
+              <>
             <FormField label={t('grpc.bearerToken')}>
               <PasswordInput
                 value={bearerToken}
@@ -628,6 +638,8 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
                 {t('grpc.headerAdd')}
               </Button>
             </div>
+              </>
+            ) : null}
           </div>
         </div>
 
