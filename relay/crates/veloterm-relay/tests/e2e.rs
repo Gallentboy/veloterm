@@ -74,13 +74,16 @@ async fn spawn_relay(default: Option<TargetAddr>, allowed: Vec<TargetAddr>) -> (
     (TargetAddr { host: bind.ip().to_string(), port: bind.port() }, tx)
 }
 
-/// 经中继建立一条已握手的流。
-async fn connect_via_relay(relay: &TargetAddr, secret: &Secret, target: Option<&TargetAddr>) -> TcpStream {
-    let mut stream = TcpStream::connect((relay.host.as_str(), relay.port)).await.unwrap();
-    client_handshake(&mut stream, KEY_ID, secret, target, HS_TIMEOUT)
+/// 经中继建立一条已握手的加密流（VLR3：握手后所有字节走加密记录层）。
+async fn connect_via_relay(
+    relay: &TargetAddr,
+    secret: &Secret,
+    target: Option<&TargetAddr>,
+) -> veloterm_relay_proto::crypto::EncryptedStream<TcpStream> {
+    let stream = TcpStream::connect((relay.host.as_str(), relay.port)).await.unwrap();
+    client_handshake(stream, KEY_ID, secret, target, HS_TIMEOUT)
         .await
-        .expect("握手应成功");
-    stream
+        .expect("握手应成功")
 }
 
 #[tokio::test]
@@ -89,7 +92,9 @@ async fn tcp_relay_pipes_bytes_both_ways() {
     let (relay, _relay_keep) = spawn_relay(Some(echo.clone()), vec![]).await;
 
     let mut stream = connect_via_relay(&relay, &test_secret(), None).await;
+    // 加密流写侧缓冲到 flush 才成帧发出（VLR3），写后必须显式 flush
     stream.write_all(b"hello relay").await.unwrap();
+    stream.flush().await.unwrap();
     let mut buf = vec![0u8; 11];
     stream.read_exact(&mut buf).await.unwrap();
     assert_eq!(buf, b"hello relay");
@@ -102,13 +107,11 @@ async fn wrong_secret_is_rejected_with_status() {
 
     let mut stream = TcpStream::connect((relay.host.as_str(), relay.port)).await.unwrap();
     let wrong = Secret::from_bytes([1u8; 32]);
-    let err = client_handshake(&mut stream, KEY_ID, &wrong, None, HS_TIMEOUT)
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        err,
-        veloterm_relay_proto::handshake::ClientHandshakeError::Rejected(Status::AuthFailed)
-    ));
+    let err = match client_handshake(&mut stream, KEY_ID, &wrong, None, HS_TIMEOUT).await {
+        Err(e) => e,
+        Ok(_) => panic!("错误 secret 应鉴权失败"),
+    };
+    assert!(matches!(err, veloterm_relay_proto::handshake::ClientHandshakeError::AuthMismatch));
 }
 
 #[tokio::test]
@@ -120,16 +123,19 @@ async fn target_allowlist_gates_client_supplied_targets() {
 
     // 白名单内：连 echo2 并确认数据走的是 echo2（回显即可确认链路通）
     let mut s = connect_via_relay(&relay, &test_secret(), Some(&echo2)).await;
+    // 加密流写侧缓冲到 flush 才成帧发出（VLR3），写后必须显式 flush
     s.write_all(b"to-echo2").await.unwrap();
+    s.flush().await.unwrap();
     let mut buf = vec![0u8; 8];
     s.read_exact(&mut buf).await.unwrap();
     assert_eq!(buf, b"to-echo2");
 
     // 白名单外：拒绝
     let mut s = TcpStream::connect((relay.host.as_str(), relay.port)).await.unwrap();
-    let err = client_handshake(&mut s, KEY_ID, &test_secret(), Some(&stranger), HS_TIMEOUT)
-        .await
-        .unwrap_err();
+    let err = match client_handshake(&mut s, KEY_ID, &test_secret(), Some(&stranger), HS_TIMEOUT).await {
+        Err(e) => e,
+        Ok(_) => panic!("白名单外目标应被拒"),
+    };
     assert!(matches!(
         err,
         veloterm_relay_proto::handshake::ClientHandshakeError::Rejected(Status::TargetNotAllowed)
@@ -142,9 +148,10 @@ async fn unreachable_target_reports_connect_failed() {
     let (relay, _relay_keep) = spawn_relay(Some(dead), vec![]).await;
 
     let mut s = TcpStream::connect((relay.host.as_str(), relay.port)).await.unwrap();
-    let err = client_handshake(&mut s, KEY_ID, &test_secret(), None, HS_TIMEOUT)
-        .await
-        .unwrap_err();
+    let err = match client_handshake(&mut s, KEY_ID, &test_secret(), None, HS_TIMEOUT).await {
+        Err(e) => e,
+        Ok(_) => panic!("不可达目标应回 ConnectFailed"),
+    };
     assert!(matches!(
         err,
         veloterm_relay_proto::handshake::ClientHandshakeError::Rejected(Status::ConnectFailed)
@@ -241,9 +248,9 @@ mod russh_e2e {
         let sshd = spawn_sshd().await;
         let (relay, _relay_keep) = spawn_relay(Some(sshd), vec![]).await;
 
-        // veloterm 未来的接入形态：VLR2 握手后的 TcpStream 直接喂 connect_stream
-        let mut stream = TcpStream::connect((relay.host.as_str(), relay.port)).await.unwrap();
-        client_handshake(&mut stream, KEY_ID, &test_secret(), None, HS_TIMEOUT)
+        // VLR3：握手后返回加密流，直接喂 connect_stream（SSH 嵌套在加密记录层内）
+        let raw = TcpStream::connect((relay.host.as_str(), relay.port)).await.unwrap();
+        let stream = client_handshake(raw, KEY_ID, &test_secret(), None, HS_TIMEOUT)
             .await
             .unwrap();
 

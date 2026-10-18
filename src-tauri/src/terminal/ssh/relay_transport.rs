@@ -67,24 +67,24 @@ pub async fn dial_relay(
 
     match relay.transport {
         RelayTransport::Tcp => {
-            let mut stream = TcpStream::connect((relay.host.as_str(), relay.port))
+            let stream = TcpStream::connect((relay.host.as_str(), relay.port))
                 .await
                 .map_err(|e| format!("连接中继 {}:{} 失败: {e}", relay.host, relay.port))?;
-            client_handshake(&mut stream, relay.key_id, &secret, target.as_ref(), HANDSHAKE_TIMEOUT)
+            let enc = client_handshake(stream, relay.key_id, &secret, target.as_ref(), HANDSHAKE_TIMEOUT)
                 .await
                 .map_err(|e| format!("中继握手失败（{}:{}）: {e}", relay.host, relay.port))?;
-            Ok(Box::new(stream))
+            Ok(Box::new(enc))
         }
         RelayTransport::Ws => {
             let url = format!("ws://{}:{}/", relay.host, relay.port);
             let (ws, _resp) = tokio_tungstenite::connect_async(url)
                 .await
                 .map_err(|e| format!("WebSocket 连接中继 {}:{} 失败: {e}", relay.host, relay.port))?;
-            let mut io = WsIo::new(ws);
-            client_handshake(&mut io, relay.key_id, &secret, target.as_ref(), HANDSHAKE_TIMEOUT)
+            let io = WsIo::new(ws);
+            let enc = client_handshake(io, relay.key_id, &secret, target.as_ref(), HANDSHAKE_TIMEOUT)
                 .await
                 .map_err(|e| format!("中继握手失败（{}:{}）: {e}", relay.host, relay.port))?;
-            Ok(Box::new(io))
+            Ok(Box::new(enc))
         }
         RelayTransport::Quic => {
             let pin = relay.cert_fingerprint.as_deref().map(parse_fingerprint).transpose()?;
@@ -96,11 +96,11 @@ pub async fn dial_relay(
                 .await
                 .map_err(|e| format!("QUIC 打开双向流失败: {e}"))?;
             // conn 与 endpoint 比流活得久（字段持有），否则流立即失效
-            let mut io = BiIo { send, recv, _conn: conn, _endpoint: endpoint };
-            client_handshake(&mut io, relay.key_id, &secret, target.as_ref(), HANDSHAKE_TIMEOUT)
+            let io = BiIo { send, recv, _conn: conn, _endpoint: endpoint };
+            let enc = client_handshake(io, relay.key_id, &secret, target.as_ref(), HANDSHAKE_TIMEOUT)
                 .await
                 .map_err(|e| format!("中继握手失败（{}:{}）: {e}", relay.host, relay.port))?;
-            Ok(Box::new(io))
+            Ok(Box::new(enc))
         }
     }
 }

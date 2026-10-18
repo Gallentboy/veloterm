@@ -9,6 +9,7 @@
 //! 秘密（[`auth::Secret`]，32 字节）永不上线。
 
 pub mod auth;
+pub mod crypto;
 pub mod error;
 pub mod frame;
 pub mod handshake;

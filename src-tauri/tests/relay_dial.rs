@@ -83,7 +83,9 @@ async fn dial_relay_tcp_handshake_then_pure_pipe() {
     assert!(dial_result.is_ok(), "中继拨号应成功: {:?}", dial_result.as_ref().err());
     let mut stream = dial_result.unwrap();
 
+    // 加密流写侧缓冲到 flush 才成帧发出（VLR3），写后必须显式 flush
     stream.write_all(b"ssh-payload").await.unwrap();
+    stream.flush().await.unwrap();
     let mut buf = vec![0u8; 11];
     stream.read_exact(&mut buf).await.unwrap();
     assert_eq!(buf, b"ssh-payload");

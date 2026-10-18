@@ -11,7 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, watch};
 use veloterm_relay_proto::auth::Secret;
-use veloterm_relay_proto::frame::{Status, TargetAddr};
+use veloterm_relay_proto::frame::TargetAddr;
 use veloterm_relay_proto::handshake::{client_handshake, AuthEntry, ServerAuth};
 
 use veloterm_relay::config::{ListenerProto, ResolvedListener};
@@ -153,12 +153,13 @@ async fn quic_relay_pipes_bytes_both_ways() {
     let echo = spawn_echo_target().await;
     let (relay, _relay_keep) = spawn_quic_relay(Some(echo), vec![]).await;
 
-    let mut stream = open_relayed_stream(relay).await;
-    client_handshake(&mut stream, KEY_ID, &test_secret(), None, HS_TIMEOUT)
+    let mut stream = client_handshake(open_relayed_stream(relay).await, KEY_ID, &test_secret(), None, HS_TIMEOUT)
         .await
         .expect("握手应成功");
     let payload = b"hello quic relay";
+    // 加密流写侧缓冲到 flush 才成帧发出（VLR3），写后必须显式 flush
     stream.write_all(payload).await.unwrap();
+    stream.flush().await.unwrap();
     let mut buf = vec![0u8; payload.len()];
     stream.read_exact(&mut buf).await.unwrap();
     assert_eq!(buf, payload);
@@ -171,13 +172,11 @@ async fn wrong_secret_is_rejected_with_status() {
 
     let mut stream = open_relayed_stream(relay).await;
     let wrong = Secret::from_bytes([1u8; 32]);
-    let err = client_handshake(&mut stream, KEY_ID, &wrong, None, HS_TIMEOUT)
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        err,
-        veloterm_relay_proto::handshake::ClientHandshakeError::Rejected(Status::AuthFailed)
-    ));
+    let err = match client_handshake(&mut stream, KEY_ID, &wrong, None, HS_TIMEOUT).await {
+        Err(e) => e,
+        Ok(_) => panic!("错误 secret 应鉴权失败"),
+    };
+    assert!(matches!(err, veloterm_relay_proto::handshake::ClientHandshakeError::AuthMismatch));
 }
 
 /// QUIC 的本质增益：一条连接并行承载多个独立中继会话（流间互不阻塞）。
@@ -196,23 +195,24 @@ async fn one_connection_multiplexes_independent_sessions() {
 
     // 流 1：默认目标
     let (send1, recv1) = conn.open_bi().await.unwrap();
-    let mut s1 = BiStream::new(send1, recv1);
-    client_handshake(&mut s1, KEY_ID, &test_secret(), None, HS_TIMEOUT)
+    let mut s1 = client_handshake(BiStream::new(send1, recv1), KEY_ID, &test_secret(), None, HS_TIMEOUT)
         .await
         .unwrap();
 
     // 流 2：同连接、白名单内的另一目标——独立握手、独立选路
     let (send2, recv2) = conn.open_bi().await.unwrap();
-    let mut s2 = BiStream::new(send2, recv2);
-    client_handshake(&mut s2, KEY_ID, &test_secret(), Some(&echo2), HS_TIMEOUT)
+    let mut s2 = client_handshake(BiStream::new(send2, recv2), KEY_ID, &test_secret(), Some(&echo2), HS_TIMEOUT)
         .await
         .unwrap();
 
     // 两条流交错读写互不干扰
     let p1 = b"via-default";
     let p2 = b"via-allowlist";
+    // 加密流写侧缓冲到 flush 才成帧发出（VLR3），写后必须显式 flush
     s1.write_all(p1).await.unwrap();
+    s1.flush().await.unwrap();
     s2.write_all(p2).await.unwrap();
+    s2.flush().await.unwrap();
     let mut b1 = vec![0u8; p1.len()];
     let mut b2 = vec![0u8; p2.len()];
     s1.read_exact(&mut b1).await.unwrap();
@@ -311,9 +311,8 @@ mod russh_e2e {
         let sshd = spawn_sshd().await;
         let (relay, _relay_keep) = spawn_quic_relay(Some(sshd), vec![]).await;
 
-        // veloterm 未来的接入形态：VLR2 握手后的流直接喂 connect_stream
-        let mut stream = open_relayed_stream(relay).await;
-        client_handshake(&mut stream, KEY_ID, &test_secret(), None, HS_TIMEOUT)
+        // VLR3：握手后返回加密流，直接喂 connect_stream（SSH 嵌套在加密记录层内）
+        let stream = client_handshake(open_relayed_stream(relay).await, KEY_ID, &test_secret(), None, HS_TIMEOUT)
             .await
             .unwrap();
 
