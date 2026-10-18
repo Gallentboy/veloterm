@@ -205,6 +205,13 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
     refreshProfiles();
   }, [refreshProfiles]);
 
+  // 勾选 TLS 后默认选中第一个配置（若库非空且尚未手选；配置列表晚加载到位时同样生效）
+  useEffect(() => {
+    if (tlsEnabled && tlsPickedId == null && tlsProfiles.length > 0) {
+      setTlsPickedId(tlsProfiles[0]?.id ?? null);
+    }
+  }, [tlsEnabled, tlsPickedId, tlsProfiles]);
+
   const pickedProfile = tlsProfiles.find((p) => p.id === tlsPickedId) ?? null;
 
   const handleCall = useCallback(async () => {
