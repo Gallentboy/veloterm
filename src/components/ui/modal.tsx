@@ -13,17 +13,26 @@ interface ModalProps {
 /** 通用模态框：遮罩 + 面板卡片，Escape/关闭按钮关闭。 */
 export function Modal({ title, children, footer, onClose, className }: ModalProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // 最新回调存 ref：两个 effect 都只在挂载时跑，重渲染不重跑
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // 挂载时聚焦第一个可交互元素。**依赖必须为空**：调用方传的 onClose 多为 inline 箭头
+  // （每次渲染新身份），若进了依赖数组，受控输入每敲一键 effect 就重跑、焦点被
+  // 抢回首元素——症状是「输一个字符就得重新点一次输入框」
+  useEffect(() => {
+    rootRef.current?.querySelector<HTMLElement>('input, textarea, select, button')?.focus();
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onClose();
+        onCloseRef.current();
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    rootRef.current?.querySelector<HTMLElement>('input, textarea, select, button')?.focus();
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  }, []);
 
   return (
     <div
