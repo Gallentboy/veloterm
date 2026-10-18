@@ -4,6 +4,8 @@
 //! - `veloterm_relay init` 生成配置文件（含新凭证；tcp 默认启用，ws/quic 注释待启）
 //! - `veloterm_relay -c relay.toml` 运行（`--check` 仅校验配置）
 //! - `veloterm_relay token generate [--key-id N] [--name NAME]` 生成 32 字节 secret
+//! - `sudo veloterm_relay install` 安装为系统服务（自动识别 systemd；`--dry-run` 预演）
+//! - `sudo veloterm_relay uninstall` 移除服务（默认保留配置与二进制）
 
 use std::sync::Arc;
 
@@ -22,6 +24,7 @@ impl tracing_subscriber::fmt::time::FormatTime for LocalTimer {
     }
 }
 use veloterm_relay::config::{self, ListenerProto};
+use veloterm_relay::install::{self, InstallOptions};
 use veloterm_relay::server;
 use veloterm_relay_proto::auth::Secret;
 
@@ -60,6 +63,33 @@ enum Command {
     Token {
         #[command(subcommand)]
         action: Option<TokenAction>,
+    },
+    /// 安装为系统服务（自动识别 systemd，装配二进制/配置/单元并 enable --now）
+    Install {
+        /// 配置来源（目标 /etc/veloterm/relay.toml 已存在时保留不覆盖）
+        #[arg(short, long)]
+        config: Option<std::path::PathBuf>,
+        /// 以 root 运行服务（默认创建专用系统用户 veloterm-relay）
+        #[arg(long)]
+        user: Option<String>,
+        /// 覆盖已存在的二进制/配置
+        #[arg(long)]
+        force: bool,
+        /// 预演：只打印动作，不落盘不执行命令
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// 移除系统服务（默认保留配置与二进制）
+    Uninstall {
+        /// 一并删除 /etc/veloterm（含凭证，不可恢复）
+        #[arg(long)]
+        purge_config: bool,
+        /// 一并删除已安装的二进制
+        #[arg(long)]
+        purge_bin: bool,
+        /// 预演
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -124,6 +154,20 @@ fn main() -> anyhow::Result<()> {
             println!("secret = \"{}\"", secret.to_hex());
             Ok(())
         }
+        Some(Command::Install { config, user, force, dry_run }) => {
+            let mut opts = InstallOptions::defaults(config.unwrap_or_else(|| cli.config.clone()))?;
+            if let Some(user) = user {
+                opts.service_user = user;
+            }
+            opts.force = force;
+            opts.dry_run = dry_run;
+            install::install(&opts, &Secret::generate().to_hex())
+        }
+        Some(Command::Uninstall { purge_config, purge_bin, dry_run }) => {
+            let mut opts = InstallOptions::defaults(cli.config.clone())?;
+            opts.dry_run = dry_run;
+            install::uninstall(&opts, purge_config, purge_bin)
+        }
         None => run(cli.config, cli.check),
     }
 }
@@ -171,7 +215,7 @@ fn init_config(path: std::path::PathBuf, force: bool) -> anyhow::Result<()> {
         anyhow::bail!("{} 已存在（--force 覆盖）", path.display());
     }
     let secret = Secret::generate();
-    let content = init_config_template(&secret.to_hex());
+    let content = config::init_template(&secret.to_hex());
     // 先生成后写入：模板经 parse+resolve 自校验，坏模板出不了门
     config::parse_toml(&content)?.resolve()?;
     std::fs::write(&path, content)
@@ -180,48 +224,10 @@ fn init_config(path: std::path::PathBuf, force: bool) -> anyhow::Result<()> {
     println!();
     println!("# 后续步骤：");
     println!("  1) 校验：./veloterm_relay -c {} --check", path.display());
-    println!("  2) 启动：./veloterm_relay -c {}", path.display());
+    println!("  2) 系统服务：sudo ./veloterm_relay install --config {}（或直接前台运行）", path.display());
     println!("  3) 客户端：veloterm 主机表单勾选「经中继连接」，填地址/端口/传输(tcp) + keyId 1 + secret");
     println!("     （目标无需任何配置——客户端自动携带所连主机地址）");
     Ok(())
-}
-
-/// init 配置模板：tcp 默认启用，ws/quic 注释待启（去掉行首 "# " 即生效）。
-fn init_config_template(secret_hex: &str) -> String {
-    format!(
-        r####"# veloterm_relay 配置（init 生成）｜校验：veloterm_relay --check｜文档：relay/README.md
-# 目标无需配置：客户端自动携带所连主机地址；allow_targets 为可选白名单
-
-[relay]
-# max_conns = 4096              # 全局并发上限
-# handshake_timeout_secs = 10   # VLR2 握手超时（秒）
-
-# 凭证：每台设备一条，泄露单独删段即吊销（veloterm_relay token generate 可再加）
-[[token]]
-key_id = 1
-name  = "device-1"
-secret = "{secret_hex}"
-
-# ── 监听器：默认启用 tcp；ws/quic 去掉每行行首 "# " 即启用 ──────────────
-
-[[listener]]
-proto = "tcp"
-bind = "0.0.0.0:7300"
-# allow_targets = ["10.0.0.5:22", "linux1.internal:22"]   # 可选：限制凭证可达目标
-
-# ── WebSocket：出口只放行 HTTP(S)、经 Nginx 等反代转 wss 时启用 ────────
-# [[listener]]
-# proto = "ws"
-# bind = "0.0.0.0:7301"
-
-# ── QUIC：公网推荐（内建 TLS 1.3，未配证书自动自签并把指纹打进日志）────
-# [[listener]]
-# proto = "quic"
-# bind = "0.0.0.0:7302"
-# cert = "/path/to/cert.pem"   # 可选；不配则启动自签
-# key  = "/path/to/key.pem"
-"####
-    )
 }
 
 fn run(path: std::path::PathBuf, check_only: bool) -> anyhow::Result<()> {
@@ -328,8 +334,9 @@ async fn serve(resolved: config::ResolvedConfig) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    /// init 配置模板（共享实现见 config::init_template）。
     fn template_for_test() -> String {
-        init_config_template(&"ab".repeat(32))
+        config::init_template(&"ab".repeat(32))
     }
 
     #[test]

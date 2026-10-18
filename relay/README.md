@@ -75,6 +75,42 @@ cargo run -p veloterm-relay -- -c relay.toml --check  # 仅校验配置
   `veloterm_relay-x64.exe` / `veloterm_relay-arm64.exe`）；
   relay 无变化则整段跳过。
 
+## 服务器部署（install 子命令）
+
+单个静态二进制丢上服务器后一条命令完成部署——自动读 `/etc/os-release` 识别发行版、
+检测 systemd（`/run/systemd/system`），装配并启动服务：
+
+```bash
+# 已有编辑好的配置：直接指定（目标 /etc/veloterm/relay.toml 已存在时保留不覆盖）
+sudo ./veloterm_relay install --config relay.toml
+
+# 什么都没有：现场生成含新凭证的模板（打印后编辑 /etc/veloterm/relay.toml 再 restart）
+sudo ./veloterm_relay install
+
+# 先看会做什么，不落盘不执行任何系统命令
+./veloterm_relay install --dry-run
+```
+
+装配布局（centos/ubuntu/debian 等 systemd 发行版一致）：
+
+| 项 | 位置 | 说明 |
+| --- | --- | --- |
+| 二进制 | `/usr/local/bin/veloterm_relay` | 从当前可执行文件复制，0755 |
+| 配置 | `/etc/veloterm/relay.toml` | 0750 目录 / 0600 文件（含凭证 secret） |
+| 服务用户 | `veloterm-relay`（system 用户，nologin） | `--user root` 可跳过 |
+| 单元 | `/etc/systemd/system/veloterm-relay.service` | Restart=on-failure + ProtectSystem 等加固 |
+| 启动 | `systemctl enable --now veloterm-relay` | 日志 `journalctl -u veloterm-relay -f` |
+
+卸载（默认保留配置与二进制，防误灭凭证）：
+
+```bash
+sudo ./veloterm_relay uninstall                 # 停用 + 删单元，保留 /etc/veloterm 与二进制
+sudo ./veloterm_relay uninstall --purge-config --purge-bin   # 全清（凭证不可恢复）
+```
+
+非 systemd 环境（SysV/OpenRC 等）明确报错不猜格式，手写服务脚本即可（本服务就是
+单二进制 + 单配置文件，前台进程，任何 init 体系都容易接）。
+
 ## 测试
 
 ```bash
