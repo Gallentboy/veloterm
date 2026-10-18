@@ -182,6 +182,7 @@ pub async fn sftp_list_dir(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn sftp_download_file(
     session_id: String,
     task_id: usize,
@@ -348,6 +349,7 @@ pub async fn sftp_download_file(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn sftp_upload_file(
     session_id: String,
     task_id: usize,
@@ -515,6 +517,7 @@ pub async fn sftp_upload_file(
 /// 目标侧写同目录临时文件，成功后 rename 原子覆盖；失败/取消保留临时断点，
 /// 重试携带 resume_offset 从断点续传（读写两端 seek 到偏移后续写，幂等覆盖防空洞）。
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn sftp_copy_file(
     state: State<'_, SftpState>,
     task_id: usize,

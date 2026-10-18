@@ -74,12 +74,14 @@ async fn dial_relay_tcp_handshake_then_pure_pipe() {
     let echo = spawn_echo_target().await;
     let (relay, _relay_keep) = spawn_relay_tcp(echo.clone()).await;
 
-    let mut stream = app_lib::terminal::ssh::relay_transport::dial_relay(
-        &relay_endpoint(&relay),
-        &TargetAddr { host: echo.host.clone(), port: echo.port },
-    )
-    .await
-    .unwrap_or_else(|e| panic!("中继拨号应成功: {e}"));
+    let dial_result =
+        app_lib::terminal::ssh::relay_transport::dial_relay(
+            &relay_endpoint(&relay),
+            &TargetAddr { host: echo.host.clone(), port: echo.port },
+        )
+        .await;
+    assert!(dial_result.is_ok(), "中继拨号应成功: {:?}", dial_result.as_ref().err());
+    let mut stream = dial_result.unwrap();
 
     stream.write_all(b"ssh-payload").await.unwrap();
     let mut buf = vec![0u8; 11];
@@ -101,7 +103,7 @@ async fn dial_relay_tcp_rejects_bad_secret() {
     .await;
     let err = match result {
         Err(e) => e,
-        Ok(_) => panic!("错误 secret 应被中继拒绝"),
+        Ok(_) => unreachable!("错误 secret 应被中继拒绝"),
     };
     assert!(err.contains("握手失败"), "{err}");
 }

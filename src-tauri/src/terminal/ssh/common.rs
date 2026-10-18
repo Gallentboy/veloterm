@@ -131,7 +131,7 @@ pub enum SshHostKeyVerificationMode {
 }
 
 /// SSH 目标认证配置（对齐前端 `AuthConfig` 与 Warpgate `SSHTargetAuth`）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "method", rename_all = "lowercase")]
 pub enum SSHTargetAuth {
     Password {
@@ -144,13 +144,8 @@ pub enum SSHTargetAuth {
         #[serde(default)]
         passphrase: Option<String>,
     },
+    #[default]
     Agent,
-}
-
-impl Default for SSHTargetAuth {
-    fn default() -> Self {
-        Self::Agent
-    }
 }
 
 fn default_ssh_port() -> u16 {
