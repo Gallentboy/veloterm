@@ -211,6 +211,102 @@ fn resolve_tls_material(tls_profile_id: Option<usize>) -> Result<Option<TlsMater
     }
 }
 
+/// 出入参的 JSON 结构模板（proto JSON 映射骨架：字段名 camelCase、int64 为字符串、
+/// repeated 为 [单项模板]、map 为 {}、枚举为首个值名；自引用链在深度上限处截断为 {}）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcMethodSchema {
+    pub request_schema: serde_json::Value,
+    pub response_schema: serde_json::Value,
+}
+
+/// 给定服务与方法，经反射生成入参/出参消息的 JSON 结构模板（前端入参骨架填充 +
+/// 出参只读预览）。
+#[tauri::command]
+pub async fn grpc_method_schema(
+    request: GrpcInspectRequest,
+    service: String,
+    method: String,
+) -> Result<GrpcMethodSchema, String> {
+    let tls = resolve_tls_material(request.tls_profile_id)?;
+    let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(15_000));
+    tokio::time::timeout(timeout, grpc_method_schema_inner(request, service, method, tls))
+        .await
+        .map_err(|_| format!("gRPC schema 获取超时（超过 {}ms）", timeout.as_millis()))?
+}
+
+async fn grpc_method_schema_inner(
+    request: GrpcInspectRequest,
+    service: String,
+    method: String,
+    tls: Option<TlsMaterial>,
+) -> Result<GrpcMethodSchema, String> {
+    let target = request.target.trim().to_string();
+    if target.is_empty() {
+        return Err("target 不能为空（host:port）".into());
+    }
+    let (service, method) = (service.trim(), method.trim());
+    if service.is_empty() || method.is_empty() {
+        return Err("服务名与方法名均不能为空".into());
+    }
+    let mut grpc = open_grpc_client(&target, tls).await?;
+    let pool = reflect_descriptor_pool(&mut grpc, service).await?;
+    let svc = pool
+        .get_service_by_name(service)
+        .ok_or_else(|| format!("反射结果中找不到服务 {service}"))?;
+    let method_desc = svc.methods().find(|m| m.name() == method).ok_or_else(|| {
+        format!("服务 {service} 没有方法 {method}")
+    })?;
+    Ok(GrpcMethodSchema {
+        request_schema: message_json_template(&method_desc.input(), 0),
+        response_schema: message_json_template(&method_desc.output(), 0),
+    })
+}
+
+/// 消息 → JSON 骨架。深度上限拦自引用链（A.b: B, B.a: A），截断处给空对象。
+fn message_json_template(desc: &prost_reflect::MessageDescriptor, depth: usize) -> serde_json::Value {
+    const MAX_DEPTH: usize = 12;
+    if depth > MAX_DEPTH {
+        return serde_json::Value::Object(serde_json::Map::new());
+    }
+    let mut map = serde_json::Map::new();
+    for field in desc.fields() {
+        map.insert(field.json_name().to_string(), field_json_template(&field, depth));
+    }
+    serde_json::Value::Object(map)
+}
+
+fn field_json_template(field: &prost_reflect::FieldDescriptor, depth: usize) -> serde_json::Value {
+    use prost_reflect::Kind;
+    if field.is_map() {
+        // map<K, V> 的 JSON 形态是对象；给空对象骨架（键形态因 K 而异，不猜示例键）
+        return serde_json::Value::Object(serde_json::Map::new());
+    }
+    let item = |kind: &Kind, depth: usize| -> serde_json::Value {
+        match kind {
+            Kind::Double | Kind::Float | Kind::Int32 | Kind::Uint32 | Kind::Sint32
+            | Kind::Fixed32 | Kind::Sfixed32 => serde_json::json!(0),
+            // proto JSON 映射：64 位整数是字符串
+            Kind::Int64 | Kind::Uint64 | Kind::Sint64 | Kind::Fixed64 | Kind::Sfixed64 => {
+                serde_json::json!("0")
+            }
+            Kind::Bool => serde_json::json!(false),
+            Kind::String => serde_json::json!(""),
+            Kind::Bytes => serde_json::json!(""),
+            Kind::Enum(en) => serde_json::json!(
+                en.values().next().map(|v| v.name().to_string()).unwrap_or_default()
+            ),
+            Kind::Message(msg) => message_json_template(msg, depth + 1),
+        }
+    };
+    let value = item(&field.kind(), depth);
+    if field.is_list() {
+        serde_json::Value::Array(vec![value])
+    } else {
+        value
+    }
+}
+
 // ── 巡检：list（服务/方法）与 describe（proto 定义文本）──
 
 /// 巡检请求（grpc_list / grpc_describe 共用；与 GrpcCallRequest 同款的连接语义）。
@@ -1445,6 +1541,24 @@ mod tests {
         assert_eq!(get_user.output_type, "veloterm.test.GetUserResponse");
         assert!(!get_user.client_streaming && !get_user.server_streaming);
         assert!(methods.iter().any(|m| m.name == "Boom"), "methods: {methods:?}");
+    }
+
+    #[tokio::test]
+    async fn grpc_method_schema_json_templates() {
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
+        let schema = grpc_method_schema(
+            inspect_request(&server.target),
+            TEST_SERVICE.to_string(),
+            "GetUser".to_string(),
+        )
+        .await
+        .expect("schema 获取应成功");
+        // int64 入参：proto JSON 映射为字符串；int32 出参为数字
+        assert_eq!(schema.request_schema, serde_json::json!({"id": "0"}));
+        assert_eq!(
+            schema.response_schema,
+            serde_json::json!({"name": "", "age": 0})
+        );
     }
 
     #[tokio::test]

@@ -72,6 +72,8 @@ export default {
     methodsSearch: '搜索方法/消息名…',
     methodsEmptyResult: '该服务没有方法（或反射未返回）',
     methodStreaming: '流式',
+    fetchSchema: '获取出入参 JSON 结构（经反射）',
+    responseSchemaTitle: '出参结构（只读预览）',
   },
   relays: {
     summary: '共 {{total}} 个中继配置',

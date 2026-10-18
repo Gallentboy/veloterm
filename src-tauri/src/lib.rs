@@ -85,6 +85,7 @@ pub fn run() {
             grpc_client::grpc_call,
             grpc_client::grpc_list,
             grpc_client::grpc_describe,
+            grpc_client::grpc_method_schema,
             grpc_tls::grpc_tls_list,
             grpc_tls::grpc_tls_save,
             grpc_tls::grpc_tls_delete,

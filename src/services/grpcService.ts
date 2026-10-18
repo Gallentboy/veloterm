@@ -76,6 +76,21 @@ export function grpcDescribe(request: GrpcInspectRequest, symbol: string): Promi
   return invoke('grpc_describe', { request, symbol });
 }
 
+export interface GrpcMethodSchema {
+  /** 入参消息的 JSON 骨架（proto JSON 映射，可编辑填充） */
+  requestSchema: unknown;
+  /** 出参消息的 JSON 骨架（只读预览） */
+  responseSchema: unknown;
+}
+
+export function grpcMethodSchema(
+  request: GrpcInspectRequest,
+  service: string,
+  method: string,
+): Promise<GrpcMethodSchema> {
+  return invoke('grpc_method_schema', { request, service, method });
+}
+
 // ── TLS 配置库（校验域名为唯一 key）──
 
 export interface GrpcTlsProfile {
