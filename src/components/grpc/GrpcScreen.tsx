@@ -15,6 +15,7 @@ import {
   grpcTlsSave,
   type GrpcCallSeed,
   type GrpcHeaderPair,
+  type GrpcMethodSummary,
   type GrpcTlsProfile,
 } from '@/services/grpcService';
 import { cn } from '@/lib/utils';
@@ -181,7 +182,9 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
   const [timeoutMs, setTimeoutMs] = useState(15000);
   const [calling, setCalling] = useState(false);
   const [listing, setListing] = useState(false);
+  const [listingMethods, setListingMethods] = useState(false);
   const [servicesModal, setServicesModal] = useState<string[] | null>(null);
+  const [methodsModal, setMethodsModal] = useState<GrpcMethodSummary[] | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState<number | null>(null);
@@ -268,6 +271,35 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
     }
   }, [listing, target, tlsEnabled, tlsPickedId, timeoutMs, t]);
 
+  const handleListMethods = useCallback(async () => {
+    if (listingMethods) return;
+    const trimmedTarget = target.trim();
+    const trimmedService = service.trim();
+    if (!trimmedTarget || !trimmedService) {
+      setError(t('grpc.validationRequired'));
+      return;
+    }
+    setListingMethods(true);
+    setError(null);
+    try {
+      const result = await grpcList(
+        {
+          target: trimmedTarget,
+          tlsProfileId: tlsEnabled ? tlsPickedId : null,
+          timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.round(timeoutMs) : null,
+        },
+        trimmedService,
+      );
+      if (result.kind === 'methods') {
+        setMethodsModal(result.methods);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setListingMethods(false);
+    }
+  }, [listingMethods, target, service, tlsEnabled, tlsPickedId, timeoutMs, t]);
+
   const prettyResult = useCallback(() => {
     if (result == null) return '';
     try {
@@ -351,13 +383,26 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
           </div>
           <div className="grid grid-cols-2 gap-3">
             <FormField label={t('grpc.service')}>
-              <TextInput
-                value={service}
-                onChange={(e) => setService(e.target.value)}
-                placeholder="com.example.UserService"
-                className="font-mono"
-                spellCheck={false}
-              />
+              <div className="flex gap-2">
+                <TextInput
+                  value={service}
+                  onChange={(e) => setService(e.target.value)}
+                  placeholder="com.example.UserService"
+                  className="font-mono"
+                  spellCheck={false}
+                />
+                <ControlHintTooltip title={t('grpc.listMethods')} side="bottom">
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="h-8 shrink-0 px-2.5"
+                    disabled={listingMethods || !service.trim() || !target.trim()}
+                    onClick={() => void handleListMethods()}
+                  >
+                    {listingMethods ? <Loader2 className="size-3.5 animate-spin" /> : <SearchCheck className="size-3.5" />}
+                  </Button>
+                </ControlHintTooltip>
+              </div>
             </FormField>
             <FormField label={t('grpc.method')}>
               <TextInput
@@ -524,6 +569,18 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
         </div>
       </div>
 
+      {/* 方法列表选择（列出方法弹窗） */}
+      {methodsModal != null ? (
+        <MethodsPickerModal
+          methods={methodsModal}
+          onPick={(name) => {
+            setMethod(name);
+            setMethodsModal(null);
+          }}
+          onClose={() => setMethodsModal(null)}
+        />
+      ) : null}
+
       {/* 服务列表选择（列出服务弹窗） */}
       {servicesModal != null ? (
         <ServicesPickerModal
@@ -594,6 +651,71 @@ function ServicesPickerModal({
                 onClick={() => onPick(name)}
               >
                 {name}
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** 方法列表选择弹窗：搜索过滤 + 点击选中回填方法名（行内附入/出参类型与流式标记）。 */
+function MethodsPickerModal({
+  methods,
+  onPick,
+  onClose,
+}: {
+  methods: GrpcMethodSummary[];
+  onPick: (method: string) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [query, setQuery] = useState('');
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return methods;
+    return methods.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.inputType.toLowerCase().includes(q) ||
+        m.outputType.toLowerCase().includes(q),
+    );
+  }, [methods, query]);
+
+  return (
+    <Modal title={t('grpc.methodsTitle')} onClose={onClose} className="w-[560px]">
+      <div className="flex flex-col gap-3">
+        <TextInput
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('grpc.methodsSearch')}
+          spellCheck={false}
+        />
+        <div className="flex max-h-[46vh] flex-col gap-1 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <p className="py-6 text-center text-ui-sm text-foreground-subtle">
+              {methods.length === 0 ? t('grpc.methodsEmptyResult') : t('grpc.servicesEmpty')}
+            </p>
+          ) : (
+            filtered.map((m) => (
+              <button
+                key={m.name}
+                type="button"
+                className="flex flex-col gap-0.5 rounded-lg border border-border/60 px-3 py-1.5 text-left transition-colors hover:border-border-hover hover:bg-surface-hover"
+                onClick={() => onPick(m.name)}
+              >
+                <span className="font-mono text-ui-sm text-foreground">
+                  {m.name}
+                  {m.clientStreaming || m.serverStreaming ? (
+                    <span className="ml-1.5 rounded border border-primary/50 bg-primary/15 px-1 text-ui-xs text-foreground select-none">
+                      {t('grpc.methodStreaming')}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="truncate font-mono text-ui-xs text-foreground-subtle" title={`${m.inputType} → ${m.outputType}`}>
+                  {m.inputType} → {m.outputType}
+                </span>
               </button>
             ))
           )}
