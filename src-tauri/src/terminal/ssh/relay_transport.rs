@@ -67,14 +67,25 @@ pub async fn dial_relay(
 }
 
 /// 可达性探测：连传输 + VLR3 握手（不带目标，服务端终局 OK 即证明
-/// 可达 + key_id/secret 鉴权通过），随即断开。供中继配置页「测试连接」用。
+/// 可达 + key_id/secret 鉴权通过），随即断开。整体限时 5s（连接+握手，
+/// 超时即视为不可达）——握手内层的 10s 限时被外层先行截断。
 pub async fn probe_relay(relay: &SshRelayEndpoint) -> Result<(), String> {
+    const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
     let secret = Secret::from_hex(relay.secret.trim()).map_err(|e| {
         format!("中继 secret 非法（{e}）：需 veloterm_relay token generate 生成的 64 位十六进制")
     })?;
-    let stream = connect_and_handshake(relay, &secret, None).await?;
-    drop(stream);
-    Ok(())
+    let probe = connect_and_handshake(relay, &secret, None);
+    match tokio::time::timeout(PROBE_TIMEOUT, probe).await {
+        Ok(result) => {
+            let stream = result?;
+            drop(stream);
+            Ok(())
+        }
+        Err(_) => Err(format!(
+            "连接中继 {}:{} 超时（5 秒）：视为不可达",
+            relay.host, relay.port
+        )),
+    }
 }
 
 /// 三传输连接 + VLR3 握手（target=None 表示不带目标——探测路径）。
