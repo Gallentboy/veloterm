@@ -39,6 +39,43 @@ export function grpcCall(request: GrpcCallRequest): Promise<GrpcCallResponse> {
   return invoke('grpc_call', { request });
 }
 
+// ── 巡检：list（列服务 / 列方法）、describe（符号 proto 定义文本）──
+
+export interface GrpcInspectRequest {
+  /** 目标地址 host:port */
+  target: string;
+  /** TLS 配置库引用；null = 明文 h2c */
+  tlsProfileId: number | null;
+  /** 整体超时毫秒；缺省 15s */
+  timeoutMs?: number | null;
+}
+
+export interface GrpcMethodSummary {
+  name: string;
+  /** 入参消息全名 */
+  inputType: string;
+  /** 出参消息全名 */
+  outputType: string;
+  clientStreaming: boolean;
+  serverStreaming: boolean;
+}
+
+/** list 二态结果：service 传 null 列服务全名；传服务名列方法摘要。 */
+export type GrpcListResult =
+  | { kind: 'services'; services: string[] }
+  | { kind: 'methods'; methods: GrpcMethodSummary[] };
+
+export function grpcList(
+  request: GrpcInspectRequest,
+  service: string | null,
+): Promise<GrpcListResult> {
+  return invoke('grpc_list', { request, service });
+}
+
+export function grpcDescribe(request: GrpcInspectRequest, symbol: string): Promise<string> {
+  return invoke('grpc_describe', { request, symbol });
+}
+
 // ── TLS 配置库（校验域名为唯一 key）──
 
 export interface GrpcTlsProfile {
