@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Network, Pencil, Play, Plus, Settings2, Trash2, X } from 'lucide-react';
+import { Loader2, Network, Pencil, Play, Plus, SearchCheck, Settings2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { FormField, PasswordInput, TextArea, TextInput } from '@/components/hosts/formFields';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { writeClipboardText } from '@/lib/clipboard';
 import {
   grpcCall,
+  grpcList,
   grpcTlsDelete,
   grpcTlsList,
   grpcTlsSave,
@@ -178,6 +180,8 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
   const [headers, setHeaders] = useState<GrpcHeaderPair[]>([]);
   const [timeoutMs, setTimeoutMs] = useState(15000);
   const [calling, setCalling] = useState(false);
+  const [listing, setListing] = useState(false);
+  const [servicesModal, setServicesModal] = useState<string[] | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState<number | null>(null);
@@ -236,6 +240,34 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
     }
   }, [calling, target, service, method, tlsEnabled, tlsPickedId, jsonInput, bearerToken, headers, timeoutMs, t]);
 
+  const handleListServices = useCallback(async () => {
+    if (listing) return;
+    const trimmedTarget = target.trim();
+    if (!trimmedTarget) {
+      setError(t('grpc.validationRequired'));
+      return;
+    }
+    setListing(true);
+    setError(null);
+    try {
+      const result = await grpcList(
+        {
+          target: trimmedTarget,
+          tlsProfileId: tlsEnabled ? tlsPickedId : null,
+          timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.round(timeoutMs) : null,
+        },
+        null,
+      );
+      if (result.kind === 'services') {
+        setServicesModal(result.services);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setListing(false);
+    }
+  }, [listing, target, tlsEnabled, tlsPickedId, timeoutMs, t]);
+
   const prettyResult = useCallback(() => {
     if (result == null) return '';
     try {
@@ -287,13 +319,26 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
         <div className="flex w-[46%] min-w-[420px] flex-col gap-3.5 overflow-y-auto border-r border-border/50 p-4">
           <div className="grid grid-cols-2 gap-3">
             <FormField label={t('grpc.target')}>
-              <TextInput
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                placeholder="10.0.0.1:50051"
-                className="font-mono"
-                spellCheck={false}
-              />
+              <div className="flex gap-2">
+                <TextInput
+                  value={target}
+                  onChange={(e) => setTarget(e.target.value)}
+                  placeholder="10.0.0.1:50051"
+                  className="font-mono"
+                  spellCheck={false}
+                />
+                <ControlHintTooltip title={t('grpc.listServices')} side="bottom">
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="h-8 shrink-0 px-2.5"
+                    disabled={listing || !target.trim()}
+                    onClick={() => void handleListServices()}
+                  >
+                    {listing ? <Loader2 className="size-3.5 animate-spin" /> : <SearchCheck className="size-3.5" />}
+                  </Button>
+                </ControlHintTooltip>
+              </div>
             </FormField>
             <FormField label={t('grpc.timeoutMs')}>
               <TextInput
@@ -479,6 +524,18 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
         </div>
       </div>
 
+      {/* 服务列表选择（列出服务弹窗） */}
+      {servicesModal != null ? (
+        <ServicesPickerModal
+          services={servicesModal}
+          onPick={(name) => {
+            setService(name);
+            setServicesModal(null);
+          }}
+          onClose={() => setServicesModal(null)}
+        />
+      ) : null}
+
       {/* TLS 配置管理 */}
       {tlsManaging ? (
         <TlsManageModal
@@ -493,6 +550,56 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
         />
       ) : null}
     </div>
+  );
+}
+
+/** 服务列表选择弹窗：搜索过滤 + 点击选中回填服务全名。 */
+function ServicesPickerModal({
+  services,
+  onPick,
+  onClose,
+}: {
+  services: string[];
+  onPick: (service: string) => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [query, setQuery] = useState('');
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return services;
+    return services.filter((s) => s.toLowerCase().includes(q));
+  }, [services, query]);
+
+  return (
+    <Modal title={t('grpc.servicesTitle')} onClose={onClose} className="w-[520px]">
+      <div className="flex flex-col gap-3">
+        <TextInput
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('grpc.servicesSearch')}
+          spellCheck={false}
+        />
+        <div className="flex max-h-[46vh] flex-col gap-1 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <p className="py-6 text-center text-ui-sm text-foreground-subtle">
+              {services.length === 0 ? t('grpc.servicesEmptyResult') : t('grpc.servicesEmpty')}
+            </p>
+          ) : (
+            filtered.map((name) => (
+              <button
+                key={name}
+                type="button"
+                className="rounded-lg border border-border/60 px-3 py-1.5 text-left font-mono text-ui-sm text-foreground transition-colors hover:border-border-hover hover:bg-surface-hover"
+                onClick={() => onPick(name)}
+              >
+                {name}
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 

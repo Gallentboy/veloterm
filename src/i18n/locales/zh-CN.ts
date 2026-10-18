@@ -62,6 +62,11 @@ export default {
     newTab: '新建调用',
     noTabs: '没有打开的 gRPC 调用',
     seedTlsHint: '原文为 https 地址——如服务端启用 TLS，请在下方勾选并选择配置',
+    listServices: '列出服务（经反射）',
+    servicesTitle: '服务列表',
+    servicesSearch: '搜索服务名…',
+    servicesEmpty: '没有匹配的服务',
+    servicesEmptyResult: '服务器未返回任何服务（或未开反射）',
   },
   relays: {
     summary: '共 {{total}} 个中继配置',

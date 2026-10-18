@@ -62,6 +62,11 @@ export default {
     newTab: 'New call',
     noTabs: 'No open gRPC calls',
     seedTlsHint: 'Source was an https address — enable TLS below if the server requires it',
+    listServices: 'List services (via reflection)',
+    servicesTitle: 'Services',
+    servicesSearch: 'Search services…',
+    servicesEmpty: 'No matching services',
+    servicesEmptyResult: 'Server returned no services (or reflection is off)',
   },
   relays: {
     summary: '{{total}} relay configuration(s)',
