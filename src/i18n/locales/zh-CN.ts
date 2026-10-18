@@ -132,7 +132,7 @@ export default {
     treeTitle: '节点树',
     searchPlaceholder: '搜索节点…',
     searchRefreshing: '正在刷新整棵树…',
-    searchNoMatch: '缓存中无匹配——未加载的层级不参与搜索，点上方刷新拉全树',
+    searchNoMatch: '无匹配节点（首次搜索会自动加载整棵树，数据有变动可点刷新）',
     refreshTree: '刷新整棵树（搜索只查内存缓存）',
     selectNode: '在左侧选择节点',
     loading: '加载中…',

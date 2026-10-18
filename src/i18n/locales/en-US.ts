@@ -132,7 +132,7 @@ export default {
     treeTitle: 'ZNode Tree',
     searchPlaceholder: 'Search nodes…',
     searchRefreshing: 'Refreshing whole tree…',
-    searchNoMatch: 'No match in cache — unloaded levels are not searched; press refresh above to load the full tree',
+    searchNoMatch: 'No match (the first search loads the whole tree automatically; press refresh if data changed)',
     refreshTree: 'Refresh whole tree (search only reads the in-memory cache)',
     selectNode: 'Select a node on the left',
     loading: 'Loading…',
