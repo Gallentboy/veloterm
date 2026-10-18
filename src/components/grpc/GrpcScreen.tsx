@@ -207,6 +207,7 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
   const [service, setService] = useState(initialSeed?.service ?? '');
   const [method, setMethod] = useState('');
   const [jsonInput, setJsonInput] = useState('{}');
+  const [inputMode, setInputMode] = useState<'json' | 'text'>('json');
   const [tlsEnabled, setTlsEnabled] = useState(false);
   const [tlsProfiles, setTlsProfiles] = useState<GrpcTlsProfile[]>([]);
   const [tlsPickedId, setTlsPickedId] = useState<number | null>(null);
@@ -272,6 +273,7 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
         service: service.trim(),
         method: method.trim(),
         jsonInput,
+        inputMode,
         bearerToken: bearerToken.trim() || null,
         headers: extraHeaders,
         timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.round(timeoutMs) : null,
@@ -285,7 +287,7 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
     } finally {
       setCalling(false);
     }
-  }, [calling, target, service, method, tlsEnabled, tlsPickedId, jsonInput, bearerToken, headers, timeoutMs, t]);
+  }, [calling, target, service, method, tlsEnabled, tlsPickedId, jsonInput, inputMode, bearerToken, headers, timeoutMs, t]);
 
   const handleListServices = useCallback(async () => {
     if (listing) return;
@@ -502,14 +504,34 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
               </div>
             </FormField>
           </div>
-          <FormField label={t('grpc.jsonInput')}>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-ui-sm text-foreground-subtle select-none">{t('grpc.jsonInput')}</span>
+              <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                {(['json', 'text'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={cn(
+                      'rounded px-1.5 py-0.5 text-ui-xs select-none transition-colors',
+                      inputMode === mode
+                        ? 'bg-surface text-foreground'
+                        : 'text-foreground-subtle hover:text-foreground',
+                    )}
+                    onClick={() => setInputMode(mode)}
+                  >
+                    {mode === 'json' ? t('grpc.inputModeJson') : t('grpc.inputModeText')}
+                  </button>
+                ))}
+              </div>
+            </div>
             <TextArea
               value={jsonInput}
               onChange={(e) => setJsonInput(e.target.value)}
-              placeholder='{"id": 1}'
+              placeholder={inputMode === 'json' ? '{"id": 1}' : t('grpc.textPlaceholder')}
               spellCheck={false}
             />
-          </FormField>
+          </div>
           {responseSchema != null ? (
             <div className="flex flex-col gap-1.5">
               <span className="text-ui-sm text-foreground-subtle select-none">

@@ -22,6 +22,8 @@ export interface GrpcCallRequest {
   method: string;
   /** JSON 入参；空串 = 空消息 */
   jsonInput: string;
+  /** "text" = 纯文本模式（入参消息只有一个 string 字段时自动包装）；缺省 = JSON */
+  inputMode?: string | null;
   /** Bearer token → authorization: Bearer <token> */
   bearerToken?: string | null;
   /** 附加自定义 metadata */

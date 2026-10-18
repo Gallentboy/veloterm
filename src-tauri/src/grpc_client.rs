@@ -141,6 +141,10 @@ pub struct GrpcCallRequest {
     /// JSON 入参（缺省/空白视为 "{}" 空消息）
     #[serde(default)]
     pub json_input: String,
+    /// 入参模式："text" = 纯文本（要求入参消息只有一个 string 字段，自动包装）；
+    /// 其他/缺省 = json_input 按 JSON 解析
+    #[serde(default)]
+    pub input_mode: Option<String>,
     /// Bearer token → authorization: Bearer <token>
     #[serde(default)]
     pub bearer_token: Option<String>,
@@ -305,6 +309,40 @@ fn field_json_template(field: &prost_reflect::FieldDescriptor, depth: usize) -> 
     } else {
         value
     }
+}
+
+/// 纯文本入参包装：入参消息恰好只有一个 string 字段时包成 `{"字段名": 文本}`；
+/// 空文本包装为空消息 `{}`；其他消息形态报错并列出实际字段（明确不支持的原因）。
+fn wrap_text_input(desc: &prost_reflect::MessageDescriptor, text: &str) -> Result<String, String> {
+    let fields: Vec<prost_reflect::FieldDescriptor> = desc.fields().collect();
+    if fields.len() != 1 || !matches!(fields.first().map(|f| f.kind()), Some(prost_reflect::Kind::String)) {
+        let summary: Vec<String> = fields
+            .iter()
+            .map(|f| format!("{}({})", f.name(), match f.kind() {
+                prost_reflect::Kind::String => "string",
+                prost_reflect::Kind::Bool => "bool",
+                prost_reflect::Kind::Int32 | prost_reflect::Kind::Sint32 | prost_reflect::Kind::Sfixed32 => "int32",
+                prost_reflect::Kind::Int64 | prost_reflect::Kind::Sint64 | prost_reflect::Kind::Sfixed64 => "int64",
+                prost_reflect::Kind::Message(_) => "message",
+                prost_reflect::Kind::Enum(_) => "enum",
+                _ => "其他",
+            }))
+            .collect();
+        return Err(format!(
+            "纯文本模式要求入参消息只有一个 string 字段，{} 实际字段：{}",
+            desc.full_name(),
+            if summary.is_empty() { "（空消息）".to_string() } else { summary.join(", ") }
+        ));
+    }
+    if text.is_empty() {
+        return Ok("{}".to_string());
+    }
+    let field = fields.first().map(|f| (f.json_name().to_string(), serde_json::Value::String(text.to_string())));
+    let mut obj = serde_json::Map::new();
+    if let Some((name, value)) = field {
+        obj.insert(name, value);
+    }
+    Ok(serde_json::Value::Object(obj).to_string())
 }
 
 // ── 巡检：list（服务/方法）与 describe（proto 定义文本）──
@@ -603,11 +641,17 @@ async fn call_grpc_unary_inner(
         )
     })?;
 
-    // 3. JSON 入参 → 动态消息（proto JSON 语义：字段 camelCase、int64 字符串）
-    let json_input = if req.json_input.trim().is_empty() {
+    // 3. JSON 入参 → 动态消息（proto JSON 语义：字段 camelCase、int64 字符串）；
+    //    纯文本模式：入参消息只有一个 string 字段时自动包装，否则报错
+    let json_effective = if req.input_mode.as_deref() == Some("text") {
+        wrap_text_input(&method_desc.input(), &req.json_input)?
+    } else {
+        req.json_input.clone()
+    };
+    let json_input = if json_effective.trim().is_empty() {
         "{}"
     } else {
-        req.json_input.trim()
+        json_effective.trim()
     };
     let mut de = serde_json::Deserializer::from_str(json_input);
     let input: prost_reflect::DynamicMessage =
@@ -921,6 +965,18 @@ mod tests {
     #[allow(dead_code)]
     struct BoomResponse {}
 
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct EchoRequest {
+        #[prost(string, tag = "1")]
+        message: String,
+    }
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct EchoResponse {
+        #[prost(string, tag = "1")]
+        reply: String,
+    }
+
     const TEST_SERVICE: &str = "veloterm.test.UserService";
 
     fn test_fdp() -> prost_types::FileDescriptorProto {
@@ -965,6 +1021,16 @@ mod tests {
                     name: Some("BoomResponse".to_string()),
                     ..Default::default()
                 },
+                p::DescriptorProto {
+                    name: Some("EchoRequest".to_string()),
+                    field: vec![field("message", 1, p::field_descriptor_proto::Type::String)],
+                    ..Default::default()
+                },
+                p::DescriptorProto {
+                    name: Some("EchoResponse".to_string()),
+                    field: vec![field("reply", 1, p::field_descriptor_proto::Type::String)],
+                    ..Default::default()
+                },
             ],
             service: vec![p::ServiceDescriptorProto {
                 name: Some("UserService".to_string()),
@@ -979,6 +1045,12 @@ mod tests {
                         name: Some("Boom".to_string()),
                         input_type: Some(".veloterm.test.BoomRequest".to_string()),
                         output_type: Some(".veloterm.test.BoomResponse".to_string()),
+                        ..Default::default()
+                    },
+                    p::MethodDescriptorProto {
+                        name: Some("Echo".to_string()),
+                        input_type: Some(".veloterm.test.EchoRequest".to_string()),
+                        output_type: Some(".veloterm.test.EchoResponse".to_string()),
                         ..Default::default()
                     },
                 ],
@@ -1058,6 +1130,18 @@ mod tests {
                     // grpc-status-details-bin（google.rpc.Status 才有真实文案）
                     let _ = read_grpc_frame(body).await;
                     return Ok(grpc_internal_with_details("boom:模拟服务端空指针"));
+                }
+                if path == "/veloterm.test.UserService/Echo" {
+                    let payload = match read_grpc_frame(body).await {
+                        Ok(p) => p,
+                        Err(e) => return Ok(grpc_trailers_response(13, &format!("bad frame: {e}"))),
+                    };
+                    let request = match EchoRequest::decode(payload.as_slice()) {
+                        Ok(r) => r,
+                        Err(e) => return Ok(grpc_trailers_response(13, &format!("bad payload: {e}"))),
+                    };
+                    let response = EchoResponse { reply: format!("echo:{}", request.message) };
+                    return Ok(grpc_ok_response(&response.encode_to_vec()));
                 }
                 if path != "/veloterm.test.UserService/GetUser" {
                     return Ok(grpc_trailers_response(12, "Method not found in test server"));
@@ -1316,6 +1400,7 @@ mod tests {
             service: "veloterm.test.UserService".to_string(),
             method: "GetUser".to_string(),
             json_input: r#"{"id": 1}"#.to_string(),
+            input_mode: None,
             bearer_token: None,
             headers: vec![],
             timeout_ms: Some(5_000),
@@ -1331,6 +1416,27 @@ mod tests {
         let text = format_grpc_status(&s);
         assert!(text.contains("未返回详细原因"), "text: {text}");
         assert!(!text.contains("Status debug"), "text: {text}");
+    }
+
+    #[tokio::test]
+    async fn grpc_call_text_input_wraps_single_string_field() {
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
+        let mut req = base_request(&server.target);
+        req.method = "Echo".to_string();
+        req.json_input = "你好 gRPC".to_string();
+        req.input_mode = Some("text".to_string());
+        let resp = call_grpc_unary(req, None).await.expect("纯文本模式 Echo 应成功");
+        assert!(resp.json_output.contains("echo:你好 gRPC"), "resp: {}", resp.json_output);
+    }
+
+    #[tokio::test]
+    async fn grpc_call_text_input_rejects_multi_field_message() {
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
+        let mut req = base_request(&server.target); // GetUser 入参是 int64 字段（非单 string）
+        req.json_input = "raw text".to_string();
+        req.input_mode = Some("text".to_string());
+        let err = call_grpc_unary(req, None).await.expect_err("非单 string 消息纯文本应报错");
+        assert!(err.contains("只有一个 string 字段"), "err: {err}");
     }
 
     #[tokio::test]
