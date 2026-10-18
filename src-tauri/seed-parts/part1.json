@@ -1,0 +1,556 @@
+[
+  {
+    "tool": "awk",
+    "title": "awk：按列切分与汇总文本，做轻量报表统计",
+    "command": "awk {{program}} {{file}}",
+    "description": "awk 是面向「记录-字段」的文本处理语言：逐行（记录）读入、按分隔符拆字段，对匹配模式的行执行动作，适合取列、过滤、分组求和等列级运算。\n\n**语法**\n\n```\nawk [-F sepstring] [-v assignment]... program [argument...]\nawk [-F sepstring] -f progfile [-f progfile]... [-v assignment]... [argument...]\n```\n\n**常用选项与语言要素**\n\n- `-F sepstring` — 定义输入字段分隔符，等价于 `-v FS=sepstring`（默认为空格）\n- `-v assignment` — 在程序执行前（含 BEGIN 之前）给变量赋值，可重复\n- `-f progfile` — 从文件读取 awk 程序，多个文件按顺序拼接；`-` 表示标准输入\n- `pattern { action }` — 程序基本结构；省略 pattern 匹配每一行，省略 action 等价 `{ print }`\n- `BEGIN` / `END` — BEGIN 在读入第一条记录前执行，END 在最后一条记录处理后执行\n- 内置变量 — `$0` 整行、`$1..$n` 各字段、`NF` 当前记录字段数、`NR` 当前记录序号、`FS`/`OFS` 输入/输出字段分隔符\n- 常用函数 — `print`/`printf`、`length`、`substr`、`index`、`split`、`sub`/`gsub`、`match`、`tolower`/`toupper`、`int`、`atan2`/`cos`/`sin`/`exp`/`log`/`sqrt`/`rand`/`srand`\n- 运算符 — `= += -= *= /= %= ^=` 与 `++`/`--`，数值比较与字符串拼接（并置）\n\n**示例**\n\n```bash\nawk '{print $1}' data.txt                  # 打印第 1 列\nawk -F: '{print $1}' passwd.txt             # 以 : 为分隔符取第 1 列\nawk '$3 > 100 {print $1}' data.txt          # 条件过滤后取列\nawk '{sum += $2} END {print sum}' data.txt  # 对第 2 列求和\n```\n\n**注意**\n\n- 本项目内嵌实现语义遵循 POSIX awk 标准；gawk 专属扩展（如 `gensub`、`--csv`）不可移植，避免使用。\n- 在 cmd 中程序体要用双引号包裹（单引号在 cmd 中不是引号），程序内字符串写成 `\\\"` 形式。\n- 默认分隔符是空白（空格/TAB 混合），显式分隔符才用 `-F`；`print` 的输出分隔符由 OFS 控制（默认空格）。\n\n> 文档依据：https://pubs.opengroup.org/onlinepubs/9699919799/utilities/awk.html",
+    "purpose": "按列切分/汇总日志与表格数据，做轻量报表统计",
+    "category": "text",
+    "tags": ["awk", "列处理", "报表"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "program", "label": "awk 程序", "description": "pattern { action } 结构的程序体，如 {print $1}", "required": true, "default": "", "example": "{print $1}" },
+      { "name": "file", "label": "输入文件", "description": "要处理的文本文件路径", "required": true, "default": "", "example": "data.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "a\nb",
+    "source": "https://pubs.opengroup.org/onlinepubs/9699919799/utilities/awk.html"
+  },
+  {
+    "tool": "basenc",
+    "title": "basenc：在 base64/base32/base16 等多种编码间转换数据",
+    "command": "basenc --base64 {{file}}",
+    "description": "basenc 把文件或标准输入的数据转换成（或从）多种常见编码形式，用可打印 ASCII 表示二进制数据。\n\n**语法**\n\n```\nbasenc encoding [option]... [file]\nbasenc encoding --decode [option]... [file]\n```\n\n其中 encoding 必须指定其一：`--base64`、`--base64url`、`--base32`、`--base32hex`、`--base16`、`--base2lsbf`、`--base2msbf`、`--z85`（另有较新的 `--base58`）。\n\n**常用选项**\n\n- `--base64` — RFC 4648 第 4 节标准 base64（与 base64 命令相同）\n- `--base64url` — 文件与 URL 安全的 base64，用 `_` 和 `-` 代替 `+` 和 `/`（RFC 4648 第 5 节）\n- `--base32` — RFC 4648 第 6 节 base32（与 base32 命令相同）\n- `--base32hex` — 扩展十六进制字母表的 base32（RFC 4648 第 7 节）\n- `--base16` — 十六进制编码（RFC 4648 第 8 节）\n- `--base2lsbf` / `--base2msbf` — 二进制串，分别按每字节最低/最高位在前\n- `--z85` — ZeroMQ 规范的 Z85 编码；编码输入须为 4 字节倍数，解码须为 5 字符倍数\n- `-d, --decode` — 解码模式；`-i, --ignore-garbage` 解码时忽略非字母表字符；`-w, --wrap=N` 输出折行宽度\n\n**示例**\n\n```bash\nbasenc --base64 data.txt            # 文件内容编码为 base64\nprintf hi | basenc --base64         # 输出 aGk=\nbasenc --base16 -d                  # 从 stdin 解码十六进制\nprintf hi | basenc --base2msbf      # 输出 0110100001101001\n```\n\n**注意**\n\n- 与 base32/base64/basenc 家族里的纯 Rust 命令（base32hex/base64url/hex 等）互补，本命令是 GNU coreutils 的多编码合一入口。\n- `--z85` 对输入长度有整除要求，不满足会直接报错。\n- 编码/解码是可逆转换，不改写输入文件，输出走 stdout，可安全重定向。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/basenc-invocation.html",
+    "purpose": "在 base64/base32/base16/z85 等编码间转换文本或二进制数据",
+    "category": "text",
+    "tags": ["basenc", "编码", "base64"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "输入文件", "description": "要编码的文件路径；省略时读标准输入", "required": true, "default": "", "example": "data.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/basenc-invocation.html"
+  },
+  {
+    "tool": "cat",
+    "title": "cat：查看文件内容、拼接文件与行编号",
+    "command": "cat -n {{file}}",
+    "description": "cat 把每个文件（无文件时读标准输入）原样复制到标准输出，是查看小文件、拼接文件、暴露不可见字符的基础工具。\n\n**语法**\n\n```\ncat [option]... [file]...\n```\n\n**常用选项**\n\n- `-n` — 给所有输出行编号，从 1 开始\n- `-b` — 只给非空行编号（生效时覆盖 -n 的行为）\n- `-E` — 在每行末尾显示 `$`；CRLF 行尾会显示成 `^M$`\n- `-T` — 把 TAB 字符显示为 `^I`\n- `-A` — 等价于 `-vET`，一次暴露全部不可见字符\n- `-s` — 把连续相邻的空行压缩为一个空行\n- `-v` — 用 `^` 与 `M-` 记法显示非打印字符（换行与 TAB 除外）\n- `-u` — 被忽略（POSIX 兼容保留）\n\n**示例**\n\n```bash\ncat -n notes.txt            # 带行号查看\ncat -A app.conf             # 暴露 TAB(^I) 与 CRLF(^M$)\ncat -s messy.log            # 压缩连续空行\ncat a.txt b.txt > all.txt   # 拼接（> 会覆盖目标文件）\n```\n\n**注意**\n\n- 无分页能力，大文件请配 less；`cat file > file` 会先截断源文件导致清空，绝对不要写。\n- Windows 文本常为 CRLF 行尾，`cat -A` 看到 `^M$` 即可确认。\n- cmd 自带 `type` 只能原样输出，没有编号与压缩空行能力。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/cat-invocation.html",
+    "purpose": "快速查看小文件内容、拼接多个文件或给行编号",
+    "category": "text",
+    "tags": ["cat", "查看", "拼接"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "目标文件", "description": "要查看的文件路径", "required": true, "default": "", "example": "notes.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "     1\thello\n     2\tworld",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/cat-invocation.html"
+  },
+  {
+    "tool": "comm",
+    "title": "comm：对比两个已排序文件，输出独有行与公共行",
+    "command": "comm {{file1}} {{file2}}",
+    "description": "comm 逐行比较两个已排序文件，输出三列：仅 file1 有的行、仅 file2 有的行、两文件共有的行，是求交集/差集的利器。\n\n**语法**\n\n```\ncomm [option]... file1 file2\n```\n\n**常用选项**\n\n- `-1` — 不输出第 1 列（file1 独有的行）\n- `-2` — 不输出第 2 列（file2 独有的行）\n- `-3` — 不输出第 3 列（两文件共有的行）\n- `--check-order` — 输入未按序排列时报错退出\n- `--nocheck-order` — 不检查输入是否有序（默认）\n- `--output-delimiter=str` — 相邻列之间用 str 分隔（默认单个 TAB；空串表示用 NUL 分隔）\n- `--total` — 额外输出一行各列计数与 total 汇总\n- `-z, --zero-terminated` — 行以 NUL 而非换行分隔\n\n**示例**\n\n```bash\ncomm a.txt b.txt              # 三列对比\ncomm -12 a.txt b.txt          # 交集：两边都有的行\ncomm -23 a.txt b.txt          # 差集：只在 a.txt 的行\ncomm -3 a.txt b.txt           # 只看独有行，隐藏公共行\n```\n\n**注意**\n\n- 两个输入必须按同一字典序（LC_COLLATE）排好序，`sort` 的输出可直接喂入；未排序时结果不可靠且默认不报错。\n- 第 2 列带一个前导 TAB、第 3 列带两个前导 TAB，后续处理时注意剥离。\n- `-` 可作为文件名表示标准输入（但两个都是 `-` 不行）。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/comm-invocation.html",
+    "purpose": "对比两个已排序文件，找出 Only-in-A / Only-in-B / 交集",
+    "category": "text",
+    "tags": ["comm", "对比", "交集"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file1", "label": "文件一", "description": "第一个已排序文件", "required": true, "default": "", "example": "a.txt" },
+      { "name": "file2", "label": "文件二", "description": "第二个已排序文件", "required": true, "default": "", "example": "b.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "apple\n\t\tbanana\n\tcherry",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/comm-invocation.html"
+  },
+  {
+    "tool": "csplit",
+    "title": "csplit：按行号或正则边界把文件切分成多个小文件",
+    "command": "csplit -s {{file}} {{pattern}}",
+    "description": "csplit 按给定的行号或匹配模式把输入切成零个或多个输出文件（默认名 xx00、xx01…），按序拼接可还原原文件。\n\n**语法**\n\n```\ncsplit [option]... input pattern...\n```\n\n**常用选项**\n\n- `-f prefix` — 输出文件名前缀（默认 `xx`）\n- `-b format` — 后缀格式，须恰含一个 printf 风格转换（如 `%03d`）；使用后忽略 --digits\n- `-n digits` — 后缀数字位数（默认 2）\n- `-k, --keep-files` — 出错时不删除已生成的输出文件\n- `-s, --quiet, --silent` — 不打印各输出文件的字节数\n- `-z, --elide-empty-files` — 不生成空输出文件（序号仍连续）\n- `--suppress-matched` — 不输出匹配到边界的那一行\n\n**边界（pattern）写法**\n\n- `N` — 输出到第 N 行之前（不含第 N 行）\n- `/regexp/[offset]` — 切到下一条匹配行之前，offset 为 +N/-N 行偏移\n- `%%regexp%%[offset]` — 同上但该段不写文件（跳过）\n- `{N}` / `{*}` — 把前一个模式重复 N 次或直到输入耗尽\n\n**示例**\n\n```bash\ncsplit -s dump.txt '/^====$/' {*}   # 按 ==== 分隔线切段\ncsplit -f part- log.txt 1000 {10}   # 每 1000 行一段，前缀 part-\ncsplit -z all.txt '%^HEADER$%'      # 跳过文件头再切\n```\n\n**注意**\n\n- 会在当前目录创建输出文件（改变目录状态），注意前缀与既有文件冲突。\n- 出错时默认删除本次已生成的文件，想保留现场加 `-k`。\n- 上例 `{*)` 中 `*` 在某些 shell 会被展开，cmd 中无此问题，但正则里的 `^` `$` 在 cmd 中建议用双引号包裹整段模式。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/csplit-invocation.html",
+    "purpose": "按分隔线或固定行数把大文件切成多个小文件",
+    "category": "text",
+    "tags": ["csplit", "切分", "文件拆分"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "输入文件", "description": "要切分的文件路径，- 表示标准输入", "required": true, "default": "", "example": "dump.txt" },
+      { "name": "pattern", "label": "边界模式", "description": "行号或 /正则/ 边界，如 /^====$/ 或 1000", "required": true, "default": "", "example": "/^====$/" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/csplit-invocation.html"
+  },
+  {
+    "tool": "cut",
+    "title": "cut：按分隔符或列位置截取每行的部分字段",
+    "command": "cut -d {{delim}} -f {{fields}} {{file}}",
+    "description": "cut 按字节、字符或字段三种方式选取每行的指定部分，是提取 CSV 列、冒号分隔字段的快捷工具。\n\n**语法**\n\n```\ncut option... [file]...\n```\n\n**常用选项**\n\n- `-f list` — 只输出列表中的字段（默认以 TAB 为分隔符）\n- `-d character` — 指定输入字段分隔符（默认 TAB；空串表示 NUL）\n- `-b list` — 只输出列表中的字节位置\n- `-c list` — 只输出列表中的字符位置\n- `-s, --only-delimited` — 配合 -f，不输出不含分隔符的行\n- `--complement` — 反选：输出未选中的字节/字符/字段\n- `-O string, --output-delimiter=string` — 输出字段分隔符（默认同输入分隔符）\n- `-z, --zero-terminated` — 行以 NUL 而非换行分隔\n\n**列表（list）写法**\n\n`N` 第 N 项；`N-` 从第 N 项到行尾；`N-M` 范围；`-M` 从头到第 M 项；逗号分隔可组合（编号从 1 起）。\n\n**示例**\n\n```bash\ncut -d: -f1 users.txt           # 以 : 分隔取第 1 列\ncut -d, -f2-5 data.csv          # 取第 2 到 5 列\ncut -c1-10 lines.txt            # 每行前 10 个字符\ncut -d, -f1 --complement d.csv  # 除第 1 列外全部\n```\n\n**注意**\n\n- 不指定 `-d` 时 `-f` 以 TAB 分隔而不是空格；多空格对齐的列请用 awk。\n- `-c` 按字符、`-b` 按字节：UTF-8 中文一个字符占 3 字节，用 `-b` 会截出乱码。\n- 行内没有分隔符时 `-f` 默认输出整行，加 `-s` 可跳过这些行。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/cut-invocation.html",
+    "purpose": "提取 CSV / 冒号分隔文件中的指定列",
+    "category": "text",
+    "tags": ["cut", "截取", "列"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "delim", "label": "分隔符", "description": "字段分隔符，单个字符，如 : 或 ,", "required": true, "default": "", "example": ":" },
+      { "name": "fields", "label": "字段列表", "description": "字段编号，如 1、2、2-5、1,3", "required": true, "default": "", "example": "1" },
+      { "name": "file", "label": "输入文件", "description": "要处理的文件路径", "required": true, "default": "", "example": "users.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "alice\nbob",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/cut-invocation.html"
+  },
+  {
+    "tool": "expand",
+    "title": "expand：把 TAB 展开为等宽空格",
+    "command": "expand -t {{width}} {{file}}",
+    "description": "expand 把文件（或标准输入）中的 TAB 转换为对齐到制表位所需数量的空格后输出，用于统一缩进格式。\n\n**语法**\n\n```\nexpand [option]... [file]...\n```\n\n**常用选项**\n\n- `-t tab1[,tab2]...` — 设定制表位：只给一个数表示每隔多少列一个制表位（默认 8）；给多个数则在指定列（从 0 计）设点。GNU 扩展：末项 `/N` 表示其后按 N 递增重复（如 `--tabs=2,4,/8`）；末项 `+N` 表示在最后一个显式制表位基础上偏移递增（如 `--tabs=1,+8` 即 1、9、17…）\n- `-i, --initial` — 只转换每行位于所有非空白字符之前的行首 TAB\n- `-` — 文件名传 `-` 表示读标准输入\n\n默认行为等价于 `-t 8`（每 8 列一个制表位）；退格符会被保留并使列计数回退。\n\n**示例**\n\n```bash\nexpand -t 4 code.txt          # TAB 按 4 列展开\nexpand -t 2,4,8 conf.yml      # 非均匀制表位展开\nexpand -i -t 8 src.c          # 只展开行首缩进 TAB\n```\n\n**注意**\n\n- 只转换 TAB，已有的空格不受影响；想把空格换回 TAB 用 unexpand。\n- Makefile 的命令行必须以 TAB 开头，对它跑 expand 会直接破坏构建，切勿使用。\n- Windows 记事本类编辑器常用 4 列 TAB，交接文件前用 `-t 4` 统一是常见做法。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/expand-invocation.html",
+    "purpose": "把源码/配置里的 TAB 统一展开为空格",
+    "category": "text",
+    "tags": ["expand", "TAB", "缩进"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "width", "label": "制表位宽度", "description": "每隔多少列一个制表位，常用 4 或 8", "required": true, "default": "", "example": "4" },
+      { "name": "file", "label": "输入文件", "description": "要展开 TAB 的文件路径", "required": true, "default": "", "example": "code.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "a   b",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/expand-invocation.html"
+  },
+  {
+    "tool": "expr",
+    "title": "expr：求值整数算术、字符串运算与比较表达式",
+    "command": "expr {{expression}}",
+    "description": "expr 对表达式求值并把结果写到标准输出，常用于脚本中的整数运算、字符串长度/子串/定位和条件比较。\n\n**语法**\n\n```\nexpr operand ...\n```\n\n每个运算符、括号与操作数都必须是独立的参数（用引号包裹）；GNU 实现使用多精度算术，超出机器位宽也能算。\n\n**常用运算符（按优先级从高到低）**\n\n- `match string regex` — 等价于 `string : regex`：regex 按基本正则且隐式前缀 `^`；无 `\\( \\)` 时返回匹配字符数（失败为 0），有则返回该子表达式匹配的内容\n- `index string charset` — 返回 string 中首次出现 charset 中字符的位置，找不到返回 0\n- `length string` — 返回字符串长度\n- `substr string position length` — 取从 position 起（1 计）最长 length 个字符的子串；参数为负、零或非数字时返回空串\n- `* / %` — 乘、除、取余；两参数转整数，失败报错\n- `+ -` — 加、减\n- 比较运算 `< <= = == != >= >` — 成立返回 1，否则返回 0；先按整数比较，不行再按 LC_COLLATE 字典序（`==` 是 `=` 的同义词）\n- `&` — 两边都非空非 0 返回第一个参数，否则返回 0（短路）\n- `|` — 第一个参数非空非 0 返回它，否则看第二个，再否则 0（短路）\n\n**示例**\n\n```bash\nexpr 2 + 3                    # 输出 5\nexpr length \"hello world\"     # 输出 11\nexpr substr abcdef 2 3        # 输出 bcd\nexpr 10 / 3                   # 输出 3\n```\n\n**注意**\n\n- 退出码：0 表达式非空非 0；1 表达式为空或 0；2 表达式非法；3 内部错误（如算术溢出）。在脚本里判断的是退出码而非 stdout。\n- cmd 中 `|` `&` `<` `>` `^` 是元字符，整个表达式务必用双引号包裹或逐段转义。\n- 乘法符号 `*` 在 cmd 中不会被通配展开（cmd 不做 glob），这点比 POSIX shell 省心。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/expr-invocation.html",
+    "purpose": "脚本里做整数运算、取子串与条件判断",
+    "category": "text",
+    "tags": ["expr", "算术", "表达式"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "expression", "label": "表达式", "description": "各 token 空格分隔的表达式，如 \"2 + 3\"", "required": true, "default": "", "example": "2 + 3" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "5",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/expr-invocation.html"
+  },
+  {
+    "tool": "factor",
+    "title": "factor：分解质因数",
+    "command": "factor {{number}}",
+    "description": "factor 对每个给定的正整数输出其质因数分解；不给数字时从标准输入逐个读取（换行、TAB 或空格分隔）。\n\n**语法**\n\n```\nfactor [option]... [number]...\n```\n\n**常用选项**\n\n- `-h, --exponents` — 用 `p^e` 形式输出：重复 e 次的质数 p 合并为一项，而不是重复打印 e 遍\n- （无数字参数时）从 stdin 读取 — 数字以空白分隔，逐行输出分解结果\n\n**输出格式**：`N: p1 p2 p3 ...`，质因数按升序重复列出。\n\n**示例**\n\n```bash\nfactor 3000                      # 3000: 2 2 2 3 5 5 5\nfactor --exponents 3000          # 3000: 2^3 3 5^3\necho 1024 9973 | factor          # 从 stdin 批量分解\n```\n\n**注意**\n\n- GNU 实现使用多精度算术，超大整数也能分解（耗时另说）。\n- 质数输入时输出为其自身（如 `factor 13` → `13: 13`）。\n- 纯计算命令，无文件副作用。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/factor-invocation.html",
+    "purpose": "快速分解质因数、验证素数",
+    "category": "text",
+    "tags": ["factor", "质因数", "计算"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "number", "label": "正整数", "description": "要分解的正整数", "required": true, "default": "", "example": "3000" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "3000: 2 2 2 3 5 5 5",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/factor-invocation.html"
+  },
+  {
+    "tool": "fmt",
+    "title": "fmt：把段落文本重排为指定宽度的行",
+    "command": "fmt -w {{width}} {{file}}",
+    "description": "fmt 通过填充与合并行，把输入重排为不超过给定宽度的行（段落级重排），常用于整理纯文本说明、提交说明。\n\n**语法**\n\n```\nfmt [option]... [file]...\n```\n\n**常用选项**\n\n- `-w width` — 目标行宽（默认 75）\n- `-g goal` — 首选行宽目标（默认比 width 短 7%）\n- `-s, --split-only` — 只拆分长行，不合并短行\n- `-u, --uniform-spacing` — 词间压成单个空格、句间两个空格\n- `-c, --crown-margin` — 保留段落前两行的缩进（后续行按第二行缩进对齐）\n- `-t, --tagged-paragraph` — 标签段落模式：首行缩进不同于第二行时视为独立段落\n- `-p prefix` — 只处理以 prefix 开头的行（前缀剥离后重排再接回），适合处理程序注释\n\n**示例**\n\n```bash\nfmt -w 72 notes.txt        # 重排为 72 列宽\nfmt -s -w 80 readme.txt    # 只拆长行不动短行\nfmt -p '# ' -w 60 src.c    # 只重排 # 注释行\n```\n\n**注意**\n\n- fmt 会合并和断开行，是「重写」式工具：代码、Markdown 表格、diff 等结构敏感内容不要跑 fmt。\n- 空行与缩进是段落边界信号，格式化邮件/文档时保留原始空行可避免整篇被并成一段。\n- 与 fold 不同：fold 只机械折长行，不做段落合并。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/fmt-invocation.html",
+    "purpose": "把长段落纯文本重排成固定宽度",
+    "category": "text",
+    "tags": ["fmt", "重排", "段落"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "width", "label": "行宽", "description": "目标最大行宽（列数）", "required": true, "default": "", "example": "72" },
+      { "name": "file", "label": "输入文件", "description": "要重排的文本文件", "required": true, "default": "", "example": "notes.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/fmt-invocation.html"
+  },
+  {
+    "tool": "fold",
+    "title": "fold：把超长行按固定宽度折行",
+    "command": "fold -s -w {{width}} {{file}}",
+    "description": "fold 把超过指定宽度的行折断输出（默认 80 列），`-s` 可让断点落在词边界，适合查看超长日志行、单行 JSON。\n\n**语法**\n\n```\nfold [option]... [file]...\n```\n\n**常用选项**\n\n- `-w width` — 最大行宽（列数），默认 80\n- `-s, --spaces` — 在词边界断行：断点选在最大行宽前最后一个空白之后；没有空白才在行宽处硬断\n- `-b, --bytes` — 按字节计数（TAB、退格、回车各按 1 列计）\n- `-c, --characters` — 按字符计数（宽字符会显得更长）\n\n默认按「列」计数：TAB 按制表宽度占多列，退格使计数回退，回车把计数归零。\n\n**示例**\n\n```bash\nfold -w 80 long.log          # 超过 80 列即折行\nfold -s -w 100 report.txt    # 尽量在空格处断行\nfold -c -w 40 zh.txt         # 中文按字符计数折行\n```\n\n**注意**\n\n- fold 只折行、不合并短行（要段落重排用 fmt），也不会去掉行内已有换行。\n- `-s` 断行时空白保留在行尾（断在空白之后）。\n- 中文等多字节文本默认按列计数与终端显示宽度不完全一致，需按字节用 `-b`、按字符用 `-c` 区分。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/fold-invocation.html",
+    "purpose": "把超长日志行/单行 JSON 折行查看",
+    "category": "text",
+    "tags": ["fold", "折行", "宽度"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "width", "label": "行宽", "description": "每段最大列数", "required": true, "default": "", "example": "80" },
+      { "name": "file", "label": "输入文件", "description": "要折行的文件路径", "required": true, "default": "", "example": "long.log" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "aaa bbb \nccc ddd",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/fold-invocation.html"
+  },
+  {
+    "tool": "grep",
+    "title": "grep：在文件或管道中按正则搜索匹配行",
+    "command": "grep -nE {{pattern}} {{file}}",
+    "description": "grep 逐行搜索匹配模式的行并输出，是文本过滤的第一入口；配 `-E` 用扩展正则、配 `-r` 递归目录、配上下文选项排错最顺手。\n\n**语法**\n\n```\ngrep [option]... [patterns] [file]...\n```\n\n**常用选项**\n\n- `-E, --extended-regexp` — 按扩展正则（ERE）解释模式；`-F` 按固定字符串（不解析正则）；默认是基本正则（BRE）\n- `-i` — 忽略大小写\n- `-v` — 反选：输出不匹配的行\n- `-n` — 输出加行号前缀\n- `-c` — 只输出匹配行数\n- `-l` — 只输出含匹配的文件名（配合 -r 快速定位）\n- `-o` — 只输出匹配到的片段（每段一行）\n- `-r` — 递归搜索目录（不跟符号链接；`-R` 跟随所有符号链接）\n- `-A/-B/-C num` — 额外输出匹配行后/前/前后 num 行上下文\n- `-w` — 只匹配完整单词；`-x` 只匹配整行\n\n**退出码**：0 有匹配；1 无匹配；2 出错。\n\n**示例**\n\n```bash\ngrep -nE \"ERROR|WARN\" app.log        # 行号 + 扩展正则\ngrep -rn \"TODO\" src/                 # 递归搜目录\ngrep -v \"^#\" conf.txt                # 排除注释行\ngrep -c \"404\" access.log             # 统计匹配数\ngrep -A 3 \"Exception\" app.log        # 带后 3 行上下文\n```\n\n**注意**\n\n- 含 `|` `(` `)` `^` 的模式在 cmd 中要整体用双引号包裹（`|` 是管道元字符）。\n- cmd 自带的 findstr 语法完全不同（无标准 ERE），不要混用；本项目提供 GNU grep 语义。\n- 搜含正则元字符的字面串（如 `1.2.3`）用 `-F`，否则 `.` 会匹配任意字符。\n\n> 文档依据：https://www.gnu.org/software/grep/manual/grep.html",
+    "purpose": "日志排错时快速过滤出错误行",
+    "category": "text",
+    "tags": ["grep", "搜索", "正则"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "pattern", "label": "正则表达式", "description": "ERE 正则，如 ERROR|WARN", "required": true, "default": "", "example": "ERROR|WARN" },
+      { "name": "file", "label": "目标文件", "description": "要搜索的文件路径", "required": true, "default": "", "example": "app.log" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "12:ERROR connection refused\n47:ERROR timeout",
+    "source": "https://www.gnu.org/software/grep/manual/grep.html"
+  },
+  {
+    "tool": "head",
+    "title": "head：查看文件开头若干行或字节",
+    "command": "head -n {{count}} {{file}}",
+    "description": "head 输出每个文件的前 10 行（默认），可用行数或字节数控制，是确认文件内容、取样数据的第一步。\n\n**语法**\n\n```\nhead [option]... [file]...\n```\n\n**常用选项**\n\n- `-n num, --lines=[-]num` — 输出前 num 行；num 前带 `-` 表示「除最后 num 行外全部」（GNU 扩展）\n- `-c num, --bytes=[-]num` — 输出前 num 字节，同样支持 `-` 前缀；支持 b(512)/K(1024)/KB(1000)/M/G 等后缀\n- `-q, --quiet` — 多文件时不打印 `==> 文件名 <==` 头\n- `-v, --verbose` — 总是打印文件名头\n- `-z, --zero-terminated` — 行以 NUL 而非换行分隔（配 find -print0）\n\n**示例**\n\n```bash\nhead -n 20 app.log           # 前 20 行\nhead -c 256 data.bin         # 前 256 字节\nhead -n -5 full.log          # 除最后 5 行外全部\nhead -q -n 1 *.log           # 每个日志各取第一行\n```\n\n**注意**\n\n- `-n -5` 负数形式是 GNU 扩展；`-c` 按字节截断，多字节字符可能被切半个（乱码）。\n- 旧式写法 `head -5 file` 仍兼容可用。\n- cmd 没有等价命令，PowerShell 的 `Get-Content -TotalCount N` 语义相近但语法不同。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/head-invocation.html",
+    "purpose": "快速查看文件开头几行确认内容",
+    "category": "text",
+    "tags": ["head", "头部", "取样"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "count", "label": "行数", "description": "要输出的前 N 行", "required": true, "default": "", "example": "3" },
+      { "name": "file", "label": "目标文件", "description": "要查看的文件路径", "required": true, "default": "", "example": "nums.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "1\n2\n3",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/head-invocation.html"
+  },
+  {
+    "tool": "join",
+    "title": "join：按公共字段合并两个已排序文件（类 SQL JOIN）",
+    "command": "join -t {{delim}} {{file1}} {{file2}}",
+    "description": "join 对两个按 join 字段排好序的文件做等值连接：对每对 join 字段相同的输入行输出一行合并结果，输出顺序是 join 字段在前。\n\n**语法**\n\n```\njoin [option]... file1 file2\n```\n\n默认：join 字段是每行第 1 个字段；输入字段以一个或多个空白分隔（忽略行首空白）；输出字段以空格分隔；输出 = join 字段 + file1 其余字段 + file2 其余字段。\n\n**常用选项**\n\n- `-t char` — 用 char 作为输入与输出字段分隔符（精确匹配每个出现）；`-t ''` 表示整行作为键（同 sort 默认行为）\n- `-1 field` / `-2 field` — 分别指定 file1 / file2 的 join 字段；两文件同字段号可用 `-j field`\n- `-a file-number` — 除公共行外，也输出该文件中无法配对的行（`-a 1 -a 2` 即并集）\n- `-v file-number` — 只输出该文件中无法配对的行，不输出连接行（两边都取即对称差）\n- `-e string` — 用 string 填补缺失的输入字段（配合 -o 使用）\n- `-o format` — 自定义输出：逗号/空白分隔的 `FILENUM.FIELD` 或 `0`（join 字段）列表；关键字 `auto` 按输入行字段数输出\n- `--header` — 每个文件首行视为表头，连接后原样作为首行输出\n- `--check-order` / `--nocheck-order` — 是否检查输入有序（默认不检查）\n- `-z, --zero-terminated` — 行以 NUL 分隔\n\n**示例**\n\n```bash\njoin -t, a.csv b.csv              # 逗号分隔按第 1 列连接\njoin -t: -1 3 -2 1 f1 f2          # f1 第 3 列连 f2 第 1 列\njoin -a 1 -o auto -e NULL a.csv b.csv   # 左连接并补空值\n```\n\n**注意**\n\n- 两个输入必须先按 join 字段用同一字典序排序（如 `sort -t, -k1,1`），否则丢配对；`--check-order` 可显式报错兜底。\n- 处理带表头的 CSV 时加 `--header`，可避免表头行被当数据。\n- `-` 可作为其中一个文件名表示标准输入。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/join-invocation.html",
+    "purpose": "按公共键列合并两个 CSV/TSV（等值连接）",
+    "category": "text",
+    "tags": ["join", "合并", "关联"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "delim", "label": "分隔符", "description": "字段分隔符，单个字符，如 , 或制表符", "required": true, "default": "", "example": "," },
+      { "name": "file1", "label": "文件一", "description": "已按 join 字段排序的第一个文件", "required": true, "default": "", "example": "a.csv" },
+      { "name": "file2", "label": "文件二", "description": "已按 join 字段排序的第二个文件", "required": true, "default": "", "example": "b.csv" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "1,apple,red",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/join-invocation.html"
+  },
+  {
+    "tool": "nl",
+    "title": "nl：给文件加行号输出",
+    "command": "nl -ba {{file}}",
+    "description": "nl 把文件（或标准输入）加行号后输出，可精细控制哪些行编号、编号格式与分隔符；默认只对正文非空行编号。\n\n**语法**\n\n```\nnl [option]... [file]...\n```\n\n**常用选项**\n\n- `-b style` — 正文行的编号样式：`a` 全部行；`t` 只编非空行（默认）；`n` 不编号；`pBRE` 只编匹配基本正则 BRE 的行\n- `-n format` — 编号格式：`ln` 左对齐无前导零；`rn` 右对齐无前导零（默认）；`rz` 右对齐补零\n- `-s string` — 编号与正文之间的分隔串（默认 TAB）\n- `-w number` — 编号占宽（默认 6）\n- `-v number` — 每个逻辑页的起始编号（默认 1，可为负）\n- `-i number` — 编号增量（默认 1，可为负）\n- `-p` — 逻辑页分节时不重置编号\n- `-d cd` — 逻辑页分隔符的组成字符（默认 `\\:`）\n- `-f style` / `-h style` — 页脚/页眉行的编号样式（默认 n 不编号）\n\n**示例**\n\n```bash\nnl -ba file.txt            # 所有行编号（含空行）\nnl -s' | ' file.txt        # 编号后接 \" | \" 分隔\nnl -v 100 -i 10 list.txt   # 从 100 起、步进 10\n```\n\n**注意**\n\n- 默认正文样式是 `t`（空行不编号），等价效果 cat -n 才是全部行；要连空行一起编需 `-ba`。\n- 所有输入文件被视为同一文档连续编号；逻辑页分隔符（`\\:` 系列）触发分节重编号，`-p` 可关闭。\n- 与 cat -n 的区别在于可控性：格式、起值、步进、正则选择性编号都是 nl 独有。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/nl-invocation.html",
+    "purpose": "给配置或代码片段加行号输出，便于评审引用",
+    "category": "text",
+    "tags": ["nl", "行号", "编号"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "目标文件", "description": "要编号的文件路径", "required": true, "default": "", "example": "notes.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "     1\thello\n     2\tworld",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/nl-invocation.html"
+  },
+  {
+    "tool": "numfmt",
+    "title": "numfmt：在原始数字与人类可读单位（K/M/G）之间换算",
+    "command": "numfmt --to={{unit}} {{number}}",
+    "description": "numfmt 读取各种表示形式的数字并按要求重新格式化，典型场景是字节数与 `4G`、`1.5M` 这类人类可读单位之间的互转，还能按字段处理整列数据。\n\n**语法**\n\n```\nnumfmt [option]... [number]\n```\n\n**常用选项**\n\n- `--from=unit` — 按单位解释输入：`none` 不换算（默认，带后缀报错）；`si` 千进（K=1000 起）；`iec` 1024 进单字母（G=1073741824）；`iec-i` 1024 进双字母（Ki/Mi）；`auto` 只能用于 --from，单字母按 SI、双字母按 IEC\n- `--to=unit` — 输出按单位换算（同样支持 none/si/iec/iec-i）\n- `--from-unit=n` / `--to-unit=n` — 输入/输出的基本单位大小（默认 1，如按 512 字节块计数时用 `--from-unit=512`）\n- `--round=method` — 换算舍入：`up`、`down`、`from-zero`（默认）、`towards-zero`、`nearest`\n- `--field=n` — 转换第 n 个输入字段（默认 1），支持 cut 风格范围（N、N-、N-M 等）\n- `-d, --delimiter=d` — 指定字段分隔符（默认换行或空白）\n- `--padding=n` — 输出补空格到 n 字符（正数右对齐、负数左对齐）\n- `--suffix=suffix` — 输出附加后缀并允许输入带该后缀\n- `--grouping` — 按本地化规则加千分位（POSIX/C 区域无效果）\n- `--header[=n]` — 前 n 行（默认 1）原样输出不转换（跳过表头）\n\n**示例**\n\n```bash\nnumfmt --to=iec 1048576         # 输出 1.0M\nnumfmt --to=si 1536             # 输出 1.6K\ndu -k | numfmt --from=iec --to=si   # 转换单位口径\nnumfmt --field=2 --to=iec < disks.txt   # 只换第 2 列\n```\n\n**注意**\n\n- 处理 `ls -h` / `df -h` 输出用 `--from=iec`；混排单位（1M 与 1Mi 混在一列）用 `--from=auto`。\n- 不加 --from 时输入带 K/M 后缀会直接报错，这是刻意设计。\n- 无参数时从标准输入逐行读取，适合放管道末尾整列换算。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/numfmt-invocation.html",
+    "purpose": "把字节数换算成 K/M/G 可读值，或反向解析",
+    "category": "text",
+    "tags": ["numfmt", "单位换算", "数字格式化"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "unit", "label": "输出单位", "description": "si（千进）/ iec（1024 进单字母）/ iec-i（Ki/Mi）", "required": true, "default": "", "example": "iec" },
+      { "name": "number", "label": "数字", "description": "要换算的数字", "required": true, "default": "", "example": "1536" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "1.5K",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/numfmt-invocation.html"
+  },
+  {
+    "tool": "od",
+    "title": "od：以十六进制/八进制等格式转储文件字节",
+    "command": "od -t {{format}} {{file}}",
+    "description": "od（octal dump）把文件内容按指定格式逐字节转储，附带字节偏移地址，是检查编码、BOM、不可见字符与二进制内容的底牌工具。\n\n**语法**\n\n```\nod [option]... [file]...\nod [-abcdfilosx]... [file] [[+]offset[.][b]]\nod [option]... --traditional [file] [[+]offset[.][b] [[+]label[.][b]]]\n```\n\n**常用选项**\n\n- `-t type, --format=type` — 输出格式，可叠加：`a` 命名字符、`c` 可打印字符加转义、`d` 有符号十进制、`u` 无符号十进制、`o` 八进制、`x` 十六进制、`f` 浮点；类型后可跟 C/S/I/L 尺寸或数字（如 `-t x1`、`-t dI`），末尾加 `z` 同时附印可打印字符\n- `-A radix, --address-radix=radix` — 偏移进制：`d` 十进制、`o` 八进制（默认）、`x` 十六进制、`n` 不显示\n- `-j bytes, --skip-bytes=bytes` — 跳过前 bytes 字节（支持 b/K/M 后缀）\n- `-N bytes, --read-bytes=bytes` — 只输出前 bytes 字节\n- `-S bytes, --strings=bytes` — 只输出至少 bytes 个连续可打印字符组成的字符串（省略 bytes 时默认 3）\n- `-v, --output-duplicates` — 不把连续相同行折叠成 `*`\n- `-w n, --width=n` — 每行转储 n 字节（默认 16）\n\n**示例**\n\n```bash\nod -t x1 file.bin              # 单字节十六进制转储\nod -c file.txt                 # 按字符显示转义（看 CRLF/制表符）\nod -A d -t x1 -N 16 utf8.txt   # 十进制偏移、只看前 16 字节（查 BOM）\nod -S 8 binary.dat             # 抽取其中的可打印字符串\n```\n\n**注意**\n\n- 默认格式是八进制偏移加按 C short 大小的八进制数，日常查码用 `-t x1` / `-c` 更直观。\n- 判断文件是否带 UTF-8 BOM：`od -t x1 -N 3 file` 看开头是否 `ef bb bf`。\n- cmd 没有等价命令；PowerShell 的 Format-Hex 语义相近但选项体系不同。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/od-invocation.html",
+    "purpose": "十六进制查看文件原始字节、排查编码与不可见字符",
+    "category": "text",
+    "tags": ["od", "十六进制", "转储"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "format", "label": "格式", "description": "-t 的类型串，如 x1（十六进制单字节）、c（字符）", "required": true, "default": "", "example": "x1" },
+      { "name": "file", "label": "目标文件", "description": "要转储的文件路径", "required": true, "default": "", "example": "data.bin" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "0000000 41 0a\n0000002",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/od-invocation.html"
+  },
+  {
+    "tool": "paste",
+    "title": "paste：按分隔符把多行拼接成一行或并排合并多文件",
+    "command": "paste -s -d {{delim}} {{file}}",
+    "description": "paste 把多个文件的对应行并排合并（默认以 TAB 分隔），`-s` 则把单个文件的各行串成一行，是构造单行列表、合并列数据的轻量工具。\n\n**语法**\n\n```\npaste [option]... [file]...\n```\n\n**常用选项**\n\n- `-d delim-list` — 依次使用列表中的字符作分隔符（替代默认 TAB）；列表用尽后从头循环。支持转义：`\\0` 空串、`\\n`、`\\t`、`\\\\`（GNU 另支持 `\\b` `\\f` `\\r` `\\v`）\n- `-s, --serial` — 串行模式：一次处理一个文件，把该文件各行连成一行，而不是各文件各取一行并行合并\n- `-z, --zero-terminated` — 行以 NUL 而非换行分隔\n\n默认行为：并排合并各文件对应行，除最后一个输入文件外每行的换行符替换为分隔符；`-` 表示标准输入。\n\n**示例**\n\n```bash\npaste -s -d, list.txt        # 多行并成一行，逗号分隔\npaste -sd ' ' words.txt      # 多行并成一行，空格分隔\npaste -d: names.txt ids.txt  # 两文件对应行以 : 拼接\nprintf '1\\n2\\n3\\n' | paste - -   # 同一流两两配对成行\n```\n\n**注意**\n\n- `-s` 串行与默认并行的区别：`-s` 是「文件内各行相连」，默认是「跨文件同行相连」。\n- 生成单行逗号列表（如 ID 列表拼进 IN 子句）是 paste 最常见用法。\n- 分隔符列表循环使用：`-d ',;'` 时第 1 个分隔用 `,`、第 2 个用 `;`、第 3 个又回到 `,`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/paste-invocation.html",
+    "purpose": "把一列值拼成单行逗号分隔列表",
+    "category": "text",
+    "tags": ["paste", "合并", "分隔符"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "delim", "label": "分隔符", "description": "行间分隔字符，如 , 或空格", "required": true, "default": "", "example": "," },
+      { "name": "file", "label": "输入文件", "description": "要拼接的文件路径", "required": true, "default": "", "example": "list.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "a,b",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/paste-invocation.html"
+  },
+  {
+    "tool": "pr",
+    "title": "pr：把文本分页、分栏排版成可打印格式",
+    "command": "pr -t -W {{width}} {{file}}",
+    "description": "pr 把文件分页（页眉含文件名/日期/页码）并可选多栏输出，也可把多个文件并排合并到各栏，用于生成打印版或并排对比视图。\n\n**语法**\n\n```\npr [option]... [file]...\n```\n\n**常用选项**\n\n- `-l page_length` — 页长（含页眉页脚行，默认 66 行，正文 56 行）\n- `-W page_width` — 页宽，有无分栏选项都生效（默认 72）\n- `-t` — 不打印页眉页脚，也不把页尾补满\n- `-T` — 不打印页眉页脚，并去掉输入中的换页符（完全取消分页）\n- `-h header` — 用指定字符串替换页眉中的文件名\n- `-d` — 输出双倍行距\n- `-n[digits]` — 加行号（默认 5 位）\n- `-m` — 并排合并所有文件，每文件占一栏\n- `-columns` — 单文件输出 columns 栏（默认 1）；配 `-a` 横向填充\n- `-o margin` — 每行左侧缩进 margin 列\n- `+first_page:last_page` — 只输出指定页区间\n\n**示例**\n\n```bash\npr -t -W 100 report.txt        # 免页眉、100 列宽排版\npr -2 -t -W 120 long.txt       # 双栏显示\npr -m -t a.txt b.txt           # 两文件并排对比\npr -o 5 -n doc.txt | more      # 缩进加行号后分页查看\n```\n\n**注意**\n\n- 输出含动态日期/页码的页眉，不做重定向仅查看时建议 `-t` 关掉页眉更干净。\n- cmd 无对应命令；pr 的分页输出对接行式打印场景，日常更多用它的 `-m` 并排与多栏能力。\n- `-w` 只影响多栏文本的栏宽计算，`-W` 才是总页宽，优先用 `-W`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/pr-invocation.html",
+    "purpose": "把长文本分栏/分页排版或并排对比两个文件",
+    "category": "text",
+    "tags": ["pr", "分页", "分栏"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "width", "label": "页宽", "description": "输出总宽度（列数）", "required": true, "default": "", "example": "100" },
+      { "name": "file", "label": "输入文件", "description": "要排版的文件路径", "required": true, "default": "", "example": "report.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/pr-invocation.html"
+  },
+  {
+    "tool": "ptx",
+    "title": "ptx：为文本生成关键字排列索引（permuted index）",
+    "command": "ptx -w {{width}} {{file}}",
+    "description": "ptx 读取文本文件，为其中每个关键字生成带上下文的排列索引行（关键字居中、左右上下文分列），常用于给文档制作可检索的关键字索引。\n\n**语法**\n\n```\nptx [option ...] [file ...]\nptx -G [option ...] [input [output]]\n```\n\n**常用选项**\n\n- `-G, --traditional` — 关闭全部 GNU 扩展、回到传统 System V 模式（默认始终启用 GNU 扩展）\n- `-f, --ignore-case` — 排序时把小写折成大写（忽略大小写）\n- `-g number, --gap-size=number` — 输出行各字段间的最小空白间隙\n- `-w number, --width=number` — 每条索引行的最大输出宽度\n- `-A, --auto-reference` — 自动引用：每行附 `文件名:行号` 形式的出处\n- `-F string, --flag-truncation=string` — 截断标记串（默认 `/`，空串关闭标记）\n- `-M string, --macro-name=string` — 生成 nroff/troff/TeX 宏输出时的宏名（默认 `xx`）\n- `-T` — 输出适配 TeX 处理的格式（如 `\\xx {tail}{before}{keyword}{after}{head}{ref}`）\n\n**示例**\n\n```bash\nptx -w 80 doc.txt             # 80 列宽的关键字索引\nptx -A -w 100 guide.txt       # 带 文件:行号 自动引用\nptx -f -w 72 notes.txt        # 忽略大小写的索引\n```\n\n**注意**\n\n- 传统模式（-G）下第二个位置参数是输出文件且内容会被破坏（System V 兼容行为），日常保持 GNU 模式即可。\n- 索引行格式对齐由 `-w`/`-g` 控制，输出行数多，建议重定向到文件再查看。\n- GNU 模式下多个输入文件视作拼接但保留分文件引用（配 -A 时引用会带文件名）。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/ptx-invocation.html",
+    "purpose": "为文档批量生成关键字上下文索引",
+    "category": "text",
+    "tags": ["ptx", "索引", "关键字"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "width", "label": "行宽", "description": "每条索引行的最大宽度（列数）", "required": true, "default": "", "example": "80" },
+      { "name": "file", "label": "输入文件", "description": "要生成索引的文本文件", "required": true, "default": "", "example": "doc.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/ptx-invocation.html"
+  },
+  {
+    "tool": "sd",
+    "title": "sd：用现代正则做直观的查找替换",
+    "command": "sd {{find}} {{replace}} {{file}}",
+    "description": "sd 是直观的 find & replace CLI：默认替换每处匹配、使用现代正则语法（无需 sed 的 `g` 标志与转义负担），给出文件参数时直接就地改写。\n\n**语法**\n\n```\nsd [OPTIONS] <find> <replace-with> [files]...\n```\n\n**常用选项**\n\n- `-F, --fixed-strings` — 关闭正则，按字面字符串匹配（含 `((([])))` 等元字符时用）\n- `-A, --across` — 允许模式跨行匹配（如把换行替换成逗号）\n- `-p` — 预览变更（不写入文件，先看差异再执行）\n- `--` — 标志结束，其后的参数按位置参数处理\n\n**替换串语法**：`$1`/`$2` 引用索引捕获组，`$name` 引用命名捕获组，`${name}` 消除歧义，`$$` 转义字面 `$`。\n\n**示例**\n\n```bash\nsd 'window.fetch' 'fetch' http.js        # 文件内全部替换（就地改写）\nsd -p 'window.fetch' 'fetch' http.js     # 先预览变更\necho \"sample with /path/\" | sd '.*(/.*/)' '$1'   # 管道模式只输出替换结果\nsd '(\\w+)\\s+\\+(\\w+)' 'cmd: $1, ch: $2' notes.txt   # 捕获组重组\nsd -A '\\n' ',' list.txt                  # 换行替换为逗号\n```\n\n**注意**\n\n- 给出文件参数时会就地改写文件内容：务必先 `sd -p` 预览，或提前备份。\n- 与 sed 不同：默认全量替换（无 `/g` 尾标志）、正则为现代语法、无分隔符冲突问题；本项目内嵌 Rust 版 sd。\n- 不给文件参数时走标准输入/输出（管道模式），此时不写任何文件。\n\n> 文档依据：https://github.com/chmln/sd",
+    "purpose": "用熟悉的正则语法批量查找替换文件内容",
+    "category": "text",
+    "tags": ["sd", "替换", "正则"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "find", "label": "查找模式", "description": "正则表达式（-F 时为字面串）", "required": true, "default": "", "example": "window.fetch" },
+      { "name": "replace", "label": "替换为", "description": "替换文本，$1/$name 引用捕获组", "required": true, "default": "", "example": "fetch" },
+      { "name": "file", "label": "目标文件", "description": "要就地改写的文件路径", "required": true, "default": "", "example": "http.js" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "",
+    "source": "https://github.com/chmln/sd"
+  },
+  {
+    "tool": "sed",
+    "title": "sed：流式替换、删除与抽取文本行（不改原文件）",
+    "command": "sed {{script}} {{file}}",
+    "description": "sed 是流编辑器：逐行读入、按脚本处理、输出到标准输出。日常九成用法是 `s/旧/新/` 替换、`d` 删除与 `-n` + `p` 抽取；本模板为流式用法，不改写源文件。\n\n**语法**\n\n```\nsed OPTIONS... [SCRIPT] [INPUTFILE]...\n```\n\n**常用选项**\n\n- `-n, --quiet, --silent` — 关闭自动打印，配合 `p` 命令只输出指定行\n- `-e script` — 追加一段脚本（可多次拼接）\n- `-f script-file` — 从文件读取脚本\n- `-i[SUFFIX], --in-place[=SUFFIX]` — 就地编辑文件；给 SUFFIX 则先备份（如 `-i.bak`）。会改写源文件，慎用\n- `-E, -r, --regexp-extended` — 使用扩展正则（POSIX 推荐用 `-E`）\n- `-s, --separate` — 各文件当独立流处理（行号、`$` 均按文件计）\n- `-z, --null-data` — 行以 NUL 分隔\n- `-u, --unbuffered` — 最小缓冲，降低管道延迟\n\n**脚本要点**：`s/regexp/replacement/g` 替换（g 全部、数字指定第 N 处、p 打印、i/I 忽略大小写）；`d` 删除；`p` 打印；地址可以是行号 `N`、`$` 末行、`/regexp/`、`first~step`（如 `1~2` 奇数行）、`addr1,addr2` 区间、`addr!` 取反。\n\n**示例**\n\n```bash\nsed 's/foo/bar/g' file.txt        # 全局替换（输出到屏幕）\nsed -n '5,10p' file.txt           # 只打印第 5-10 行\nsed '/^#/d' conf.txt              # 删除注释行\nsed -n '/ERROR/p' app.log         # 只输出含 ERROR 的行\nsed -E 's/(a+)b/\\1c/' file.txt    # 扩展正则捕获组\n```\n\n**注意**\n\n- 本模板流式输出不改文件；要就地改写须显式 `-i`（建议 `-i.bak` 先留备份），此时属确认级操作。\n- 本项目内嵌 GNU sed：`-i` 可裸用；BSD/macOS 的 sed `-i` 必须带后缀参数，跨环境脚本要注意。\n- cmd 中含 `/` `^` `|` 的脚本建议整体用双引号包裹（如 `sed \"s/a/b/\" file`）。\n\n> 文档依据：https://www.gnu.org/software/sed/manual/sed.html",
+    "purpose": "流式替换或抽取文本行，批量改写前先预览效果",
+    "category": "text",
+    "tags": ["sed", "流编辑", "替换"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "script", "label": "sed 脚本", "description": "编辑命令，如 s/旧/新/g 或 /^#/d", "required": true, "default": "", "example": "s/foo/BAZ/g" },
+      { "name": "file", "label": "输入文件", "description": "要处理的文件路径（本模板不改写它）", "required": true, "default": "", "example": "msg.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "BAZ bar",
+    "source": "https://www.gnu.org/software/sed/manual/sed.html"
+  },
+  {
+    "tool": "seq",
+    "title": "seq：生成数字序列",
+    "command": "seq {{first}} {{last}}",
+    "description": "seq 输出从 first 到 last（步进 increment）的数字序列，每行一个，默认从 1 开始、步进 1，是批量编号、循环取样的基础发生器。\n\n**语法**\n\n```\nseq [option]... last\nseq [option]... first last\nseq [option]... first increment last\n```\n\n**常用选项**\n\n- `-f format` — 用 printf 风格浮点格式输出（如 `%03g`），须恰含一个浮点转换（%a %e %f %g 等）\n- `-s string` — 数字间用 string 分隔（默认换行）；输出总是以换行结尾\n- `-w, --equal-width` — 用前导零补齐到相同宽度（建议各操作数都用定点十进制写法）\n\n**默认值**：first 与 increment 缺省均为 1；increment 不允许为 0；格式默认按操作数推导（全定点时为 `%.pf`，否则 `%g`）；当再加一次 increment 会超过 last 时停止。\n\n**示例**\n\n```bash\nseq 10                  # 1 到 10\nseq 1 2 9               # 奇数 1 3 5 7 9\nseq -w 1 100            # 等宽补零\nseq -s, 1 5             # 输出 1,2,3,4,5\n```\n\n**注意**\n\n- cmd 无内置等价命令（PowerShell 有 `1..10` 区间语法但无格式化/分隔选项）。\n- `seq 5 -1 1` 可倒序（increment 为负）；`seq 1 0 5` 会报错（步进不可为 0）。\n- 与 bash/zsh 的 `{1..10}` 相比，seq 是独立命令，任何 shell 里都能用。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/seq-invocation.html",
+    "purpose": "生成编号序列、配合 for 循环批量执行",
+    "category": "text",
+    "tags": ["seq", "序列", "编号"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "first", "label": "起始值", "description": "序列起点", "required": true, "default": "", "example": "1" },
+      { "name": "last", "label": "结束值", "description": "序列终点（含）", "required": true, "default": "", "example": "10" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/seq-invocation.html"
+  },
+  {
+    "tool": "shuf",
+    "title": "shuf：随机打乱输入行或做随机抽样",
+    "command": "shuf -e {{items}}",
+    "description": "shuf 输出输入行的一个随机排列（每种排列等概率），也能有放回抽样、限定条数，是抽奖、随机抽样、打乱测试顺序的标准工具。\n\n**语法**\n\n```\nshuf [option]... [file]\nshuf -e [option]... [arg]...\nshuf -i lo-hi [option]...\n```\n\n**常用选项**\n\n- `-e, --echo` — 把每个命令行参数当作一行输入\n- `-i lo-hi, --input-range=lo-hi` — 把 lo 到 hi 的整数范围当作输入\n- `-n count, --head-count=count` — 最多输出 count 行（抽样）\n- `-r, --repeat` — 有放回抽样（输出不再是排列；不配 -n 会无限输出）\n- `-o output-file` — 写入文件而非标准输出；输入会先全部读入，因此 `shuf -o F < F` 可安全原地打乱\n- `--random-source=file` — 用 file 作为随机源（可复现实验）\n- `-z, --zero-terminated` — 行以 NUL 分隔\n\n默认无参数时从标准输入逐行读取。\n\n**示例**\n\n```bash\nshuf names.txt                # 打乱文件行序\nshuf -e apple banana cherry   # 打乱命令行参数\nshuf -n 3 -e a b c d e        # 随机抽 3 个\nshuf -i 1-100 -n 5           # 从 1-100 随机取 5 个数\n```\n\n**注意**\n\n- 输出是随机的，每次运行结果不同；需要可复现用 `--random-source` 提供固定随机流。\n- 全量读入后输出，超大文件会占内存；`-r` 无 `-n` 会一直输出，务必配管道或 -n 使用。\n- cmd 没有等价命令；PowerShell 的 `Get-Random` 语义相近。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/shuf-invocation.html",
+    "purpose": "随机打乱名单或随机抽样（抽奖/测试顺序）",
+    "category": "text",
+    "tags": ["shuf", "随机", "打乱"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "items", "label": "条目列表", "description": "空格分隔的各个条目，每项作为一行输入", "required": true, "default": "", "example": "apple banana cherry" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/shuf-invocation.html"
+  },
+  {
+    "tool": "sort",
+    "title": "sort：按字典序/数值/指定列排序文本行",
+    "command": "sort -t {{delim}} -k {{key}} {{file}}",
+    "description": "sort 对文本行排序：默认整行字典序，可切换数值、人类可读数、月份、版本号等口径，并可用 -k 精确到「第几字段的第几个字符」。\n\n**语法**\n\n```\nsort [option]... [file]...\n```\n\n**常用选项**\n\n- `-t separator` — 字段分隔符（默认空白分隔）\n- `-k pos1[,pos2]` — 排序键：每个 pos 形如 `f[.c][opts]`，f 是字段号（1 起）、c 是字段内字符位置；opts 可用 `n/d/f/b/M/h/V/r` 等（如 `-k2,2n` 只按第 2 字段数值比）\n- `-n, --numeric-sort` — 按数值比较；`-h` 按人类可读数（K/M/G，配 df/du）；`-V` 按版本号；`-M` 按月份名\n- `-r` — 逆序\n- `-u` — 相同键只输出第一条；`-f` — 忽略大小写；`-b` — 忽略键的前导空白\n- `-s, --stable` — 稳定排序，关闭「最后手段」整行比较\n- `-o file` — 结果写入 file（可与输入同名，安全原地排序）\n- `-c` / `-C` — 检查是否已排序（-c 报首行乱序，-C 静默），乱序退出码 1\n- `-m` — 合并已排序文件（不再排序）\n- `-z` — 行以 NUL 分隔\n\n**示例**\n\n```bash\nsort -t, -k2,2n data.csv        # CSV 按第 2 列数值排\nsort -rn sizes.txt              # 数值逆序\nsort -k2 data.txt               # 按第 2 字段起到行尾排\nsort -u names.txt               # 排序并去重\nsort -o f.txt f.txt             # 安全原地排序\n```\n\n**注意**\n\n- 默认受 locale 排序规则影响，脚本中要可预测结果请加 `LC_ALL=C`（纯字节序）。\n- `sort file > file` 会先截断文件导致清空，原地排序务必用 `-o file`。\n- `-k2` 默认比较「第 2 字段到行尾」，只想比第 2 字段要写 `-k2,2`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/sort-invocation.html",
+    "purpose": "对数据文件按指定列与口径排序",
+    "category": "text",
+    "tags": ["sort", "排序", "数值"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "delim", "label": "分隔符", "description": "字段分隔符，单个字符，如 , 或 :", "required": true, "default": "", "example": "," },
+      { "name": "key", "label": "排序键", "description": "-k 键定义，如 2,2n（第 2 字段按数值）", "required": true, "default": "", "example": "2,2n" },
+      { "name": "file", "label": "输入文件", "description": "要排序的文件路径", "required": true, "default": "", "example": "data.csv" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "a,1\nb,2",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/sort-invocation.html"
+  },
+  {
+    "tool": "tac",
+    "title": "tac：逆序输出文件的行（倒着看）",
+    "command": "tac {{file}}",
+    "description": "tac 把每个文件的记录（默认行）倒序复制到标准输出，名字即 cat 反写；看「最新在最上面」的倒序日志、反向遍历配置时最省事。\n\n**语法**\n\n```\ntac [option]... [file]...\n```\n\n**常用选项**\n\n- `-s separator, --separator=separator` — 用 separator 作为记录分隔符（默认换行；空分隔符按 NUL 处理）\n- `-b, --before` — 分隔符附着在它所前置的记录开头（默认附着在前一记录末尾）\n- `-r, --regex` — 把分隔串按正则解释\n\n**示例**\n\n```bash\ntac app.log                  # 行序倒置\ntac -s ';' stmts.txt         # 以 ; 为记录边界倒序\nseq 1 5 | tac                # 输出 5 4 3 2 1\n```\n\n**注意**\n\n- tac 只反转行序，不反转行内字符（反转字符的是 rev）。\n- 管道等不可定位（non-seekable）输入会缓冲到临时目录（TMPDIR，缺省 /tmp），超大流要注意磁盘占用。\n- cmd 无等价命令；PowerShell 需 `Get-Content file | Select-Object -Last ... -Reverse` 组合。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/tac-invocation.html",
+    "purpose": "倒序查看日志（最新事件排到最前）",
+    "category": "text",
+    "tags": ["tac", "逆序", "倒序"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "目标文件", "description": "要逆序输出的文件路径", "required": true, "default": "", "example": "nums.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "3\n2\n1",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/tac-invocation.html"
+  },
+  {
+    "tool": "tail",
+    "title": "tail：查看文件末尾若干行或实时跟踪增长",
+    "command": "tail -n {{count}} {{file}}",
+    "description": "tail 输出每个文件的最后 10 行（默认），`-f` 可持续跟踪文件增长，是运维看日志的第一命令。\n\n**语法**\n\n```\ntail [option]... [file]...\n```\n\n**常用选项**\n\n- `-n num, --lines=[+]num` — 输出最后 num 行；num 带 `+` 前缀表示从第 num 行开始输出到结尾（如 `-n +2` 跳过首行）\n- `-c num, --bytes=[+]num` — 按字节取最后 num 字节；`+num` 从第 num 字节开始\n- `-f, --follow` — 循环读取文件末尾追加内容；缺省跟踪文件描述符（--follow=descriptor）\n- `-F` — 等价 `--follow=name --retry`：按文件名跟踪并在文件被删除/轮转后重开（生产日志必用）\n- `--retry` — 文件暂不可访问时持续重试\n- `--pid=pid` — 指定的写进程退出后 tail 随之退出\n- `-s number` — 跟随模式下轮询间隔秒数（默认 1.0）\n- `-q` / `-v` — 不打印 / 总是打印文件名头\n- `-z, --zero-terminated` — 行以 NUL 分隔\n\n**示例**\n\n```bash\ntail -n 50 app.log           # 最后 50 行\ntail -n +2 data.csv          # 跳过表头输出其余行\ntail -F app.log              # 跟踪日志（抗轮转）\ntail -f app.log | grep ERROR # 边跟边过滤\n```\n\n**注意**\n\n- 跟踪生产日志用 `-F` 而不是 `-f`：日志轮转（改名重建）后 `-f` 仍盯着旧文件句柄会跟丢。\n- `-n +2` 的 `+` 表示「从第 2 行开始到结尾」，与「最后 2 行」完全不同。\n- cmd 无等价命令；PowerShell 的 `Get-Content -Tail N -Wait` 相近但无轮转重开语义。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/tail-invocation.html",
+    "purpose": "查看日志尾部或实时跟踪新增日志行",
+    "category": "text",
+    "tags": ["tail", "尾部", "跟踪"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "count", "label": "行数", "description": "要输出的最后 N 行", "required": true, "default": "", "example": "2" },
+      { "name": "file", "label": "目标文件", "description": "要查看的文件路径", "required": true, "default": "", "example": "nums.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "4\n5",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/tail-invocation.html"
+  },
+  {
+    "tool": "tee",
+    "title": "tee：把管道数据同时写到文件与标准输出",
+    "command": "tee -a {{file}}",
+    "description": "tee 把标准输入复制到标准输出，同时写入参数指定的每个文件，用于在管道链中途留存数据副本（边看边存）。\n\n**语法**\n\n```\ntee [option]... [file]...\n```\n\n**常用选项**\n\n- `-a, --append` — 追加到文件末尾而非覆盖\n- `-i, --ignore-interrupts` — 忽略中断信号（Ctrl-C 不打断 tee 自身）\n- `-p, --output-error[=mode]` — 输出出错时的策略：`warn`、`warn-nopipe`（默认，写坏管道仅告警）、`exit`、`exit-nopipe`\n\n文件不存在则创建；已存在且未加 `-a` 时会被覆盖。\n\n**示例**\n\n```bash\ndmesg | tee boot.log            # 屏幕看的同时存文件\n./run.sh 2>&1 | tee -a run.log  # 追加保存运行日志\nmake 2>&1 | tee build.log       # 构建输出边看边存\nvmstat 1 | tee stats.txt        # 持续输出中途留副本\n```\n\n**注意**\n\n- 不加 `-a` 会覆盖已有文件内容（属确认级操作）；追加场景务必带 `-a`。\n- 文件名参数 `-` 按字面文件名处理（不是标准输出的别名），这是与多数工具不同的 POSIX 行为。\n- PowerShell 有功能对应的 Tee-Object，但参数体系不同；cmd 无内建等价物。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/tee-invocation.html",
+    "purpose": "管道执行过程输出同时留档备查",
+    "category": "text",
+    "tags": ["tee", "管道", "分流"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "输出文件", "description": "要写入（追加）的文件路径", "required": true, "default": "", "example": "run.log" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "hello",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/tee-invocation.html"
+  },
+  {
+    "tool": "tr",
+    "title": "tr：转换、删除或压缩字符",
+    "command": "tr {{set1}} {{set2}}",
+    "description": "tr 对标准输入做字符级转换（SET1 到 SET2 逐一映射）、删除（-d）或压缩重复（-s）后输出，大小写转换、去控制符、压空白一行搞定。\n\n**语法**\n\n```\ntr [option]... string1 [string2]\n```\n\n**常用选项**\n\n- `-d, --delete` — 删除 string1 中的字符，不做转换\n- `-s, --squeeze-repeats` — 把最后指定的字符集中重复出现的字符压缩为一个\n- `-c, -C, --complement` — 用 string1 的补集（升序）替代 string1 本身；多字节 locale 下慎用\n- `-t, --truncate-set1` — 把 string1 截断到 string2 的长度\n\n**集合写法**\n\n- 范围：`a-z`、`A-Z`、`0-9`（升序展开）\n- 字符类：`[:alnum:]` `[:alpha:]` `[:blank:]` `[:cntrl:]` `[:digit:]` `[:graph:]` `[:lower:]` `[:print:]` `[:punct:]` `[:space:]` `[:upper:]` `[:xdigit:]`\n- 转义：`\\a` `\\b` `\\f` `\\n` `\\r` `\\t` `\\v` `\\\\` 及八进制 `\\ooo`（1-3 位）\n- 重复：`[c*n]` 在 string2 中展开为 n 个 c；`[c*]` 自动补齐到 string1 的长度\n\n**示例**\n\n```bash\necho hello | tr a-z A-Z          # HELLO\ntr -d '\\r' < dos.txt              # 删除 CR（dos2unix 效果）\ntr -s ' ' < line.txt              # 连续空格压成一个\ncat access.log | tr -cd '0-9\\n'   # 只保留数字与换行\n```\n\n**注意**\n\n- tr 只从标准输入读数据（不接受文件参数），配合 `< 文件` 或管道使用。\n- 字符类必须写在括号表达式中（`[:digit:]` 而不是 `digit`），且在 cmd 中整个参数建议加双引号。\n- `-c` 的补集语义在多字节 locale 下不总是清晰可移植，处理二进制/单字节数据最稳。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/tr-invocation.html",
+    "purpose": "大小写转换、删 CR、压缩空白等字符级清理",
+    "category": "text",
+    "tags": ["tr", "字符转换", "清理"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "set1", "label": "源字符集", "description": "待处理的字符集合，如 a-z 或 [:digit:]", "required": true, "default": "", "example": "a-z" },
+      { "name": "set2", "label": "目标字符集", "description": "映射目标集合，如 A-Z", "required": true, "default": "", "example": "A-Z" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "HELLO",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/tr-invocation.html"
+  },
+  {
+    "tool": "tsort",
+    "title": "tsort：按偏序依赖关系做拓扑排序",
+    "command": "tsort {{file}}",
+    "description": "tsort 对给定的偏序关系（成对的字符串）做拓扑排序，输出一个满足全部先后约束的全序；构建顺序、依赖解析、调用图排序都用它。\n\n**语法**\n\n```\ntsort [option] [file]\n```\n\n**输入格式**：由空白分隔的字符串对（每对一行或多对同行均可），表示前者先于后者；无文件参数时读标准输入。存在循环依赖时会向标准错误报告环并失败。\n\n**选项**：无常用选项（POSIX.1-2024 规定接受并忽略 `-w`；另有 --help/--version）。\n\n**示例**\n\n```bash\nprintf 'a b\\nb c\\n' | tsort       # 输出 a b c\ntsort deps.txt                    # 文件版依赖排序\ntsort call-graph.txt | tac        # 反转后让定义排在使用之前\n```\n\n**注意**\n\n- 输入只需表达约束对，不必传递闭合；等价于把偏序补成任一可行全序。\n- 出现环（循环依赖）时报错退出，需先解开环再排序。\n- 与 sort 完全不同：sort 按内容比较排，tsort 按关系约束排。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/tsort-invocation.html",
+    "purpose": "根据依赖对列表计算安装/构建顺序",
+    "category": "text",
+    "tags": ["tsort", "拓扑排序", "依赖"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "依赖对文件", "description": "每行若干空白分隔的字符串对", "required": true, "default": "", "example": "deps.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "a\nb\nc",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/tsort-invocation.html"
+  },
+  {
+    "tool": "uniq",
+    "title": "uniq：统计或去除相邻重复行",
+    "command": "uniq -c {{file}}",
+    "description": "uniq 对相邻的重复输入行去重并可计数，配合 sort 先排序是统计「每个值出现多少次」的经典组合。\n\n**语法**\n\n```\nuniq [option]... [input [output]]\n```\n\n**常用选项**\n\n- `-c, --count` — 在行首标注该行连续出现的次数\n- `-d, --repeated` — 只输出有重复的行（每组一条）\n- `-D, --all-repeated[=method]` — 输出全部重复行（method：none/prepend/separate 控制组间空行）\n- `-u, --unique` — 只输出从未重复的行\n- `-i, --ignore-case` — 比较时忽略大小写\n- `-f n, --skip-fields=n` — 比较前跳过前 n 个字段\n- `-s n, --skip-chars=n` — 比较前跳过前 n 个字符（先字段后字符）\n- `-w n, --check-chars=n` — 每行最多比较前 n 个字符\n- `--group[=method]` — 输出所有行并以空行分组（separate/prepend/append/both）\n- `-z, --zero-terminated` — 行以 NUL 分隔\n\n**示例**\n\n```bash\nsort words.txt | uniq -c          # 去重并计数\nsort words.txt | uniq -c | sort -rn  # 出现次数 TOP 榜\ncut -d: -f1 log | sort | uniq -d  # 找出重复的用户名\nuniq -f 1 data.txt                # 忽略第 1 个字段判重\n```\n\n**注意**\n\n- 只检测相邻重复：输入未排序时非相邻的重复会被漏掉，几乎总是先 sort；`sort -u` 与 `sort | uniq` 结果相同且更快。\n- `-c` 统计的是连续出现次数，未排序输入会被拆成多段计数。\n- 可选第二参数是输出文件（uniq in.txt out.txt），不给则写标准输出。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/uniq-invocation.html",
+    "purpose": "统计每个值的出现次数、找出重复项",
+    "category": "text",
+    "tags": ["uniq", "去重", "计数"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "输入文件", "description": "建议先排序的输入文件路径", "required": true, "default": "", "example": "words.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "      2 a\n      1 b",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/uniq-invocation.html"
+  },
+  {
+    "tool": "unexpand",
+    "title": "unexpand：把行首空格压缩为 TAB",
+    "command": "unexpand -t {{width}} {{file}}",
+    "description": "unexpand 把每行开头的空白（空格/TAB）在能对齐到制表位的前提下转换成尽量少的 TAB 后输出，与 expand 互为逆操作，用于还原缩进。\n\n**语法**\n\n```\nunexpand [option]... [file]...\n```\n\n**常用选项**\n\n- `-t tab1[,tab2]...` — 设定制表位（默认每 8 列一个）：单个数值表示间隔，多个数值表示从 0 计的显式列位。GNU 扩展：末项 `/N` 表示此后按 N 递增重复，末项 `+N` 表示在最后一个显式制表位上偏移递增。该选项隐含启用 `-a`\n- `-a, --all` — 也转换行中（非空白字符之后）紧邻制表位前的「两个及以上连续空格」序列\n- `--first-only` — 只转换行首空白序列（覆盖 -a）\n\n默认只转换每行行首、位于所有非空白字符之前的空白；退格符被保留并使列计数回退。\n\n**示例**\n\n```bash\nunexpand -t 4 code.txt        # 4 列制表位压缩缩进\nunexpand --first-only f.txt   # 只动行首，行中空格保留\nunexpand -a -t 8 doc.txt      # 行中对齐空格也转 TAB\n```\n\n**注意**\n\n- 默认仅处理行首缩进；要把行中的对齐空格也转成 TAB 必须显式 `-a`（或用 -t 隐含开启）。\n- 不是所有空格都能换 TAB：只有能被制表位整除的空白段才会转换，剩余尾随空格保留。\n- 与 expand 配对使用：expand 展开、unexpand 还原，处理他人提交的「全空格缩进」代码时很好用。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/unexpand-invocation.html",
+    "purpose": "把空格缩进的代码还原为 TAB 缩进",
+    "category": "text",
+    "tags": ["unexpand", "TAB", "缩进"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "width", "label": "制表位宽度", "description": "每隔多少列一个制表位，常用 4 或 8", "required": true, "default": "", "example": "4" },
+      { "name": "file", "label": "输入文件", "description": "要压缩缩进的文件路径", "required": true, "default": "", "example": "code.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "\tx",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/unexpand-invocation.html"
+  },
+  {
+    "tool": "wc",
+    "title": "wc：统计文件的行数、单词数与字节数",
+    "command": "wc -l {{file}}",
+    "description": "wc 统计每个文件的换行符数、单词数、字节数（默认三者都输出），是清点数据规模的第一条命令。\n\n**语法**\n\n```\nwc [option]... [file]...\n```\n\n**常用选项**\n\n- `-l, --lines` — 只输出换行符计数（末行无换行符时不计入）\n- `-w, --words` — 只输出单词计数\n- `-c, --bytes` — 只输出字节数\n- `-m, --chars` — 只输出字符数（按当前 locale；编码错误不计数）\n- `-L, --max-line-length` — 只输出最长行的显示宽度（TAB 按 8 列计，不可打印字符宽度记 0）\n- `--total=when` — 汇总行输出时机：auto（默认）/always/only/never\n- `--files0-from=file` — 从 file 读 NUL 分隔的文件名列表（列表超长时用）\n\n默认输出顺序为：换行符数、单词数、字符数、字节数、最大行宽（按启用的项依次打印）。\n\n**示例**\n\n```bash\nwc -l app.log            # 只统计行数\nwc README.md             # 行/词/字节 三项\nls *.log | wc -l         # 数文件个数\ncat a b | wc -c          # 统计合并字节数\n```\n\n**注意**\n\n- `-l` 数的是换行符个数：末行没有换行符时视觉行数会比计数多 1。\n- `-c` 是字节、`-m` 是字符：UTF-8 中文两者相差数倍，统计「篇幅」用 -m。\n- `wc -l file` 输出带文件名；只要纯数字用重定向 `wc -l < file` 或管道 `cat file | wc -l`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/wc-invocation.html",
+    "purpose": "统计日志行数、清点数据规模",
+    "category": "text",
+    "tags": ["wc", "统计", "行数"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "目标文件", "description": "要统计的文件路径", "required": true, "default": "", "example": "app.log" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "2049 app.log",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/wc-invocation.html"
+  }
+]

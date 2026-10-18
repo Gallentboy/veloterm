@@ -370,6 +370,11 @@ pub fn init_db(app_handle: &AppHandle, master_key: &str) -> Result<DbPool, Strin
 
     let db_path = app_data_dir.join(DEFAULT_DB_FILE_NAME);
     let pool = init_db_at_path(&db_path, master_key)?;
+    // 内置预置命令播种（幂等差量，见 command_library::seed_builtin_commands）；
+    // 失败仅告警不阻断启动——命令库自身功能不受影响
+    if let Err(e) = crate::command_library::seed_builtin_commands(&pool) {
+        log::warn!("[DB] 内置预置命令播种失败（不影响启动）: {e}");
+    }
     let _ = GLOBAL_DB_POOL.set(pool.clone());
     Ok(pool)
 }
