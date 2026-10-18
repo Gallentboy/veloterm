@@ -6,8 +6,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-import type { RelayTransport, SshRelayEndpoint } from '@/hosts/types';
-
 export interface ZkNodeStat {
   czxid: number;
   mzxid: number;
@@ -52,9 +50,9 @@ export const ACL_ALL = 31;
 
 export function zkConnect(
   endpoints: string,
-  relay: SshRelayEndpoint | null,
+  relayId: number | null,
 ): Promise<{ sessionId: string }> {
-  return invoke('zk_connect', { endpoints, relay });
+  return invoke('zk_connect', { endpoints, relayId });
 }
 
 export function zkDisconnect(sessionId: string): Promise<void> {
@@ -116,5 +114,3 @@ export function zkDigestId(user: string, password: string): Promise<string> {
 export function zkAuth(sessionId: string, user: string, password: string): Promise<void> {
   return invoke('zk_auth', { sessionId, user, password });
 }
-
-export type { RelayTransport, SshRelayEndpoint };

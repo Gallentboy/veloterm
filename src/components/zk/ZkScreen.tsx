@@ -32,7 +32,6 @@ import {
   type ZkAclRule,
   type ZkNode,
 } from '@/services/zkService';
-import type { RelayTransport, SshRelayEndpoint } from '@/hosts/types';
 import { relayList, type RelayConfig } from '@/services/relayConfigService';
 import { cn } from '@/lib/utils';
 
@@ -194,33 +193,15 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
   const [relayEnabled, setRelayEnabled] = useState(false);
   const [relayConfigs, setRelayConfigs] = useState<RelayConfig[]>([]);
   const [relayPickedId, setRelayPickedId] = useState<number | null>(null);
-  const [relay, setRelay] = useState<SshRelayEndpoint>({
-    host: '',
-    port: 7300,
-    transport: 'tcp',
-    keyId: 1,
-    secret: '',
-    certFingerprint: null,
-  });
+  const [relayName, setRelayName] = useState<string | null>(null);
 
-  // 中继库（侧栏「中继」页）加载一次，供下拉选择
+  // 中继库（侧栏「中继」页）加载一次，供下拉选择；只存 id，字段不回显前端
   useEffect(() => {
     void relayList().then(setRelayConfigs).catch(() => {
-      // 库不可用时退回手动输入
+      // 库不可用时保持空列表，只能直连
     });
   }, []);
 
-  const applyRelayConfig = (config: RelayConfig) => {
-    setRelayPickedId(config.id);
-    setRelay({
-      host: config.host,
-      port: config.port,
-      transport: config.transport,
-      keyId: config.keyId,
-      secret: config.secret,
-      certFingerprint: config.certFingerprint ?? null,
-    });
-  };
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -248,10 +229,10 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
   const [aclAddDigestUser, setAclAddDigestUser] = useState('');
   const [aclAddDigestPass, setAclAddDigestPass] = useState('');
 
-  const buildRelay = useCallback((): SshRelayEndpoint | null => {
+  const buildRelayId = (): number | null => {
     if (!relayEnabled) return null;
-    return { ...relay, certFingerprint: relay.certFingerprint || null };
-  }, [relayEnabled, relay]);
+    return relayPickedId;
+  };
 
   const loadChildren = useCallback(
     async (sid: string, path: string) => {
@@ -314,12 +295,20 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
   );
 
   const handleConnect = async () => {
+    const relayId = buildRelayId();
+    if (relayEnabled && relayId == null) {
+      setError(t('zk.relayPickRequired'));
+      return;
+    }
     setConnecting(true);
     setError(null);
     setNotice(null);
     try {
-      const res = await zkConnect(endpoints, buildRelay());
+      const res = await zkConnect(endpoints, relayId);
       setSessionId(res.sessionId);
+      setRelayName(
+        relayId != null ? (relayConfigs.find((r) => r.id === relayId)?.name ?? null) : null,
+      );
       setNodes(new Map());
       setSelected('/');
       await loadChildren(res.sessionId, '/');
@@ -341,6 +330,7 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
       }
     }
     setSessionId(null);
+    setRelayName(null);
     setNodes(new Map());
     setDetail(null);
     onBaseTitle(null);
@@ -579,9 +569,9 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
             <span className="flex items-center gap-1.5 text-ui-sm text-primary select-none">
               <Database className="size-3.5" />
               <span className="font-mono">{endpoints}</span>
-              {relayEnabled ? (
+              {relayName ? (
                 <span className="text-ui-xs text-foreground-subtle">
-                  {t('zk.viaRelay', { host: relay.host, port: relay.port })}
+                  {t('zk.viaRelay', { name: relayName })}
                 </span>
               ) : null}
             </span>
@@ -621,76 +611,28 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
               {t('zk.useRelay')}
             </label>
             {relayEnabled ? (
-              <>
-                {relayConfigs.length > 0 ? (
-                  <div className="w-48">
-                    <SelectMenu
-                      aria-label={t('zk.relayPicker')}
-                      value={relayPickedId != null ? String(relayPickedId) : ''}
-                      onChange={(next) => {
-                        if (next === '') {
-                          setRelayPickedId(null);
-                          return;
-                        }
-                        const config = relayConfigs.find((r) => String(r.id) === next);
-                        if (config) applyRelayConfig(config);
-                      }}
-                      options={[
-                        { value: '', label: t('zk.relayManual') },
-                        ...relayConfigs.map((r) => ({
-                          value: String(r.id),
-                          label: r.name,
-                          description: `${r.host}:${r.port} · ${r.transport.toUpperCase()}`,
-                        })),
-                      ]}
-                    />
-                  </div>
-                ) : null}
-                <TextInput
-                  value={relay.host}
-                  onChange={(e) => {
-                    setRelayPickedId(null);
-                    setRelay((cur) => ({ ...cur, host: e.target.value }));
-                  }}
-                  placeholder="relay.example.com"
-                  className="w-44"
-                />
-                <div className="w-24">
-                  <TextInput
-                    type="number"
-                    value={String(relay.port)}
-                    onChange={(e) => setRelay((cur) => ({ ...cur, port: Number(e.target.value) }))}
-                  />
-                </div>
-                <div className="w-32">
+              relayConfigs.length > 0 ? (
+                <div className="w-48">
                   <SelectMenu
-                    aria-label={t('zk.relayTransport')}
-                    value={relay.transport}
-                    onChange={(next) => setRelay((cur) => ({ ...cur, transport: next as RelayTransport }))}
+                    aria-label={t('zk.relayPicker')}
+                    value={relayPickedId != null ? String(relayPickedId) : ''}
+                    onChange={(next) => {
+                      const config = relayConfigs.find((r) => String(r.id) === next);
+                      setRelayPickedId(config ? config.id : null);
+                    }}
                     options={[
-                      { value: 'tcp', label: 'TCP' },
-                      { value: 'ws', label: 'WebSocket' },
-                      { value: 'quic', label: 'QUIC' },
+                      { value: '', label: t('zk.relayPickPlaceholder') },
+                      ...relayConfigs.map((r) => ({
+                        value: String(r.id),
+                        label: r.name,
+                        description: `${r.host}:${r.port} · ${r.transport.toUpperCase()}`,
+                      })),
                     ]}
                   />
                 </div>
-                <div className="w-20">
-                  <TextInput
-                    type="number"
-                    value={String(relay.keyId)}
-                    onChange={(e) => setRelay((cur) => ({ ...cur, keyId: Number(e.target.value) }))}
-                    min={0}
-                    max={255}
-                  />
-                </div>
-                <div className="w-56">
-                  <PasswordInput
-                    value={relay.secret}
-                    onChange={(e) => setRelay((cur) => ({ ...cur, secret: e.target.value }))}
-                    autoComplete="off"
-                  />
-                </div>
-              </>
+              ) : (
+                <span className="text-ui-xs text-foreground-subtle">{t('zk.relayEmptyHint')}</span>
+              )
             ) : null}
             <Button
               size="lg"
