@@ -1,6 +1,7 @@
 //! veloterm_relay —— veloterm SSH 中继服务端。
 //!
 //! 用法：
+//! - `veloterm_relay init` 生成配置文件（含新凭证；tcp 默认启用，ws/quic 注释待启）
 //! - `veloterm_relay -c relay.toml` 运行（`--check` 仅校验配置）
 //! - `veloterm_relay token generate [--key-id N] [--name NAME]` 生成 32 字节 secret
 
@@ -31,6 +32,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// 生成配置文件（含新凭证；tcp 默认启用，ws/quic 注释待启）
+    Init {
+        /// 输出路径（默认 relay.toml，与 -c 一致）
+        #[arg(short, long)]
+        out: Option<std::path::PathBuf>,
+        /// 覆盖已存在的文件
+        #[arg(long)]
+        force: bool,
+    },
     /// 凭证管理（不带子命令时等同 generate）
     Token {
         #[command(subcommand)]
@@ -52,6 +62,7 @@ enum TokenAction {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Some(Command::Init { out, force }) => init_config(out.unwrap_or_else(|| cli.config.clone()), force),
         Some(Command::Token { action }) => {
             let (key_id, name) = match action {
                 Some(TokenAction::Generate { key_id, name }) => (key_id, name),
@@ -68,6 +79,97 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         None => run(cli.config, cli.check),
+    }
+}
+
+/// init 子命令：生成含新凭证的配置模板。
+/// 不会被覆盖：目标文件已存在时报错退出（--force 覆盖）。
+fn init_config(path: std::path::PathBuf, force: bool) -> anyhow::Result<()> {
+    if path.exists() && !force {
+        anyhow::bail!("{} 已存在（--force 覆盖）", path.display());
+    }
+    let secret = Secret::generate();
+    let content = init_config_template(&secret.to_hex());
+    // 先生成后写入：模板经 parse+resolve 自校验，坏模板出不了门
+    config::parse_toml(&content)?.resolve()?;
+    std::fs::write(&path, content)
+        .with_context(|| format!("写入 {} 失败", path.display()))?;
+    println!("已生成 {}", path.display());
+    println!();
+    println!("# 后续步骤：");
+    println!("  1) 校验：./veloterm_relay -c {} --check", path.display());
+    println!("  2) 启动：./veloterm_relay -c {}", path.display());
+    println!("  3) 客户端：veloterm 主机表单勾选「经中继连接」，填地址/端口/传输(tcp) + keyId 1 + secret");
+    println!("     （目标无需任何配置——客户端自动携带所连主机地址）");
+    Ok(())
+}
+
+/// init 配置模板：tcp 默认启用，ws/quic 注释待启（去掉行首 "# " 即生效）。
+fn init_config_template(secret_hex: &str) -> String {
+    format!(
+        r####"# veloterm_relay 配置（init 生成）｜校验：veloterm_relay --check｜文档：relay/README.md
+# 目标无需配置：客户端自动携带所连主机地址；allow_targets 为可选白名单
+
+[relay]
+# max_conns = 4096              # 全局并发上限
+# handshake_timeout_secs = 10   # VLR2 握手超时（秒）
+
+# 凭证：每台设备一条，泄露单独删段即吊销（veloterm_relay token generate 可再加）
+[[token]]
+key_id = 1
+name  = "device-1"
+secret = "{secret_hex}"
+
+# ── 监听器：默认启用 tcp；ws/quic 去掉每行行首 "# " 即启用 ──────────────
+
+[[listener]]
+proto = "tcp"
+bind = "0.0.0.0:7300"
+# allow_targets = ["10.0.0.5:22", "linux1.internal:22"]   # 可选：限制凭证可达目标
+
+# ── WebSocket：出口只放行 HTTP(S)、经 Nginx 等反代转 wss 时启用 ────────
+# [[listener]]
+# proto = "ws"
+# bind = "0.0.0.0:7301"
+
+# ── QUIC：公网推荐（内建 TLS 1.3，未配证书自动自签并把指纹打进日志）────
+# [[listener]]
+# proto = "quic"
+# bind = "0.0.0.0:7302"
+# cert = "/path/to/cert.pem"   # 可选；不配则启动自签
+# key  = "/path/to/key.pem"
+"####
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn template_for_test() -> String {
+        init_config_template(&"ab".repeat(32))
+    }
+
+    #[test]
+    fn init_template_parses_resolves_and_defaults_to_tcp_only() {
+        let content = template_for_test();
+        let resolved = config::parse_toml(&content).unwrap().resolve().unwrap();
+        // 只有 tcp 一个生效监听器（ws/quic 处于注释态）
+        assert_eq!(resolved.listeners.len(), 1);
+        assert_eq!(resolved.listeners[0].proto, ListenerProto::Tcp);
+        assert_eq!(resolved.listeners[0].bind.port(), 7300);
+        assert_eq!(resolved.auth.len(), 1);
+    }
+
+    #[test]
+    fn init_template_mentions_commented_ws_and_quic() {
+        let content = template_for_test();
+        assert!(content.contains("# proto = \"ws\""));
+        assert!(content.contains("# proto = \"quic\""));
+        // 三个端口互不冲突
+        for port in ["7300", "7301", "7302"] {
+            assert!(content.contains(port));
+        }
     }
 }
 
