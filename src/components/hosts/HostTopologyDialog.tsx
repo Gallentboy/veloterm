@@ -12,72 +12,14 @@ import {
   type RuleStatus,
 } from '@/services/portForwardService';
 import { onSshEvent, type LifecycleEvent } from '@/services/sshLifecycle';
-import type { HostNode, SshRelayEndpoint } from '@/hosts/types';
+import { chainStateFromEvent, resolveChain } from '@/hosts/topology';
+import type { HostNode } from '@/hosts/types';
 import { cn } from '@/lib/utils';
-
-/** 拓扑链节点（主链上的一个端点） */
-interface ChainNode {
-  kind: 'local' | 'relay' | 'jump' | 'target';
-  label: string;
-  sub: string;
-  relay?: SshRelayEndpoint;
-  hostId?: number;
-}
-
-/** 整链实时状态（来自 SSH lifecycle 事件，按 hostId 过滤取最新） */
-type ChainState = 'idle' | 'connecting' | 'active' | 'error';
 
 interface HostTopologyDialogProps {
   host: HostNode;
   hosts: HostNode[];
   onClose: () => void;
-}
-
-/** 由 hosts 数据推导连接链：本机 →（中继）→ 跳板链 → 目标（防环：visited 集合） */
-function resolveChain(host: HostNode, hosts: HostNode[]): ChainNode[] {
-  const byId = new Map(hosts.map((item) => [item.id, item]));
-  const jumps: ChainNode[] = [];
-  const visited = new Set<number>([host.id]);
-  let cursor = host.jumpHostId ?? null;
-  while (cursor != null && !visited.has(cursor)) {
-    visited.add(cursor);
-    const hop = byId.get(cursor);
-    if (!hop) break;
-    jumps.unshift({ kind: 'jump', label: hop.name, sub: `${hop.host}:${hop.port}`, hostId: hop.id });
-    cursor = hop.jumpHostId ?? null;
-  }
-
-  const nodes: ChainNode[] = [
-    { kind: 'local', label: 'local', sub: 'veloterm' },
-  ];
-  if (host.relay) {
-    nodes.push({
-      kind: 'relay',
-      label: host.relay.host,
-      sub: `${host.relay.port} · ${host.relay.transport.toUpperCase()}`,
-      relay: host.relay,
-    });
-  }
-  nodes.push(...jumps);
-  nodes.push({ kind: 'target', label: host.name, sub: `${host.host}:${host.port}`, hostId: host.id });
-  return nodes;
-}
-
-function chainStateFromEvent(event: LifecycleEvent | null): ChainState {
-  if (!event) return 'idle';
-  switch (event.kind) {
-    case 'connecting':
-      return 'connecting';
-    case 'connected':
-    case 'shell-ready':
-      return 'active';
-    case 'failed':
-      return 'error';
-    case 'disconnected':
-      return 'idle';
-    default:
-      return 'idle';
-  }
 }
 
 const NODE_ICONS = { local: Monitor, relay: Share2, jump: Box, target: Gauge } as const;
