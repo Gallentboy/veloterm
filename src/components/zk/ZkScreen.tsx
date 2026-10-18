@@ -683,8 +683,12 @@ function ZkSessionView({
   };
 
   // 节点数据是 gRPC 服务地址（https://host:port/服务名 形态）时，数据区底部出一键调用入口
+  // 展示条件（均需满足）：① 数据文本是 gRPC 服务地址 ② 节点的上级目录名是 server
+  // （注册中心的约定层级：…/server/<服务节点>，避免普通 URL 配置节点也出按钮）
+  const parentDirName = selected.slice(0, selected.lastIndexOf('/')).split('/').pop() ?? '';
+  const parentIsServer = parentDirName.toLowerCase() === 'server';
   const grpcServiceSeed =
-    draftEncoding === 'utf8' ? parseGrpcServiceUrl(draftData) : null;
+    draftEncoding === 'utf8' && parentIsServer ? parseGrpcServiceUrl(draftData) : null;
   const grpcSeed =
     grpcServiceSeed && onOpenGrpcCall ? (
       <div className="flex items-center gap-2">
