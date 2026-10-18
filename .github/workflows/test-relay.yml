@@ -55,7 +55,11 @@ jobs:
         run: |
           ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay --version
           ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay token generate --key-id 9 --name ci | grep -E 'secret = "[0-9a-f]{64}"'
-          file ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay | grep -i 'statically linked'
+          file ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay
+          # 权威静态判定：ldd 对静态二进制输出 "not a dynamic executable"
+          # （file 的措辞随 PIE/strip 形态变化，不作断言依据）
+          ldd ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay 2>&1 | tee /tmp/ldd.out
+          grep -q 'not a dynamic executable' /tmp/ldd.out
 
       - name: Upload relay artifact
         uses: actions/upload-artifact@v7
