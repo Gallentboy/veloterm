@@ -381,7 +381,8 @@ jobs:
               *) echo "未知目标: $TARGET"; exit 1;;
             esac
             echo "upload: $ASSET"
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/${RID}/assets?name=${ASSET}" \
-              -H "Content-Type: application/octet-stream" --input "$f"
+            # gh release upload 正确处理 uploads.github.com 上传端点（资产上传在
+            # api.github.com 上是 307 重定向，gh api 裸 POST 会 404）；--clobber 覆盖
+            gh release upload "$TAG" "$f#$ASSET" --clobber
           done
           gh api "repos/${GITHUB_REPOSITORY}/releases/${RID}" -q '.html_url'
