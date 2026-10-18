@@ -6,6 +6,7 @@ pub mod commands;
 pub mod common;
 pub mod db;
 pub mod editor_storage;
+pub mod grpc_client;
 pub mod lifecycle;
 pub mod logging;
 pub mod port_forward;
@@ -79,6 +80,7 @@ pub fn run() {
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,
             zk_hosts::zk_host_delete,
+            grpc_client::grpc_call,
             ai::ai_provider_list,
             ai::ai_provider_save,
             ai::ai_provider_delete,

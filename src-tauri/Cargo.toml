@@ -102,6 +102,14 @@ rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", 
 zookeeper-client = "0.2"
 sha1 = "0.10"
 base64 = "0.22"
+# gRPC 客户端（tonic + prost-reflect 动态消息）：服务器反射取 schema，
+# JSON ↔ protobuf 动态编解码做一元调用；tls-aws-lc 与 quinn/russh 同 provider
+# （rustls 双 provider feature 并存会让运行期无法选定默认 CryptoProvider 而 panic）
+tonic = { version = "0.13", features = ["tls-aws-lc", "tls-native-roots"] }
+prost = "0.13"
+prost-types = "0.13"
+prost-reflect = { version = "0.15", features = ["serde"] }
+http = "1"
 
 # ── 已迁出的依赖 ──
 # 全部内置命令行工具（uutils/coreutils 全集 + grep/sed/findutils/diffutils/
@@ -114,6 +122,9 @@ base64 = "0.22"
 tokio = { version = "1", features = ["test-util"] }
 # relay_dial 集成测试：起真实中继验证 app 侧 dial_relay 握手与字节管道
 veloterm-relay = { path = "../relay/crates/veloterm-relay" }
+# grpc_call 回环测试：自签证书（TLS 车道；FileDescriptorProto 构造在主依赖 prost-types）
+rcgen = "0.13"
+http-body-util = "0.1"
 
 [lints.clippy]
 panic = "deny"
