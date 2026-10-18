@@ -456,7 +456,7 @@ function MenuGrid({
             role="checkbox"
             aria-checked={visible}
             className={cn(
-              'relative flex cursor-pointer select-none touch-none items-center gap-2 rounded-lg border px-3 py-2 transition-colors',
+              'relative flex cursor-grab select-none touch-none items-center gap-2 rounded-lg border px-3 py-2 transition-colors',
               visible
                 ? 'border-border bg-surface/40 text-foreground hover:border-border-hover'
                 : 'border-border/40 text-foreground-subtlest opacity-60 hover:opacity-80',
