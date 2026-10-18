@@ -98,6 +98,10 @@ tokio-tungstenite = { version = "0.29", features = ["connect", "handshake"] }
 futures-util = "0.3"
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs", "log"] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
+# ZooKeeper 客户端（纯 Rust/tokio，支持 ACL 与认证）；sha1+base64 计算 digest scheme id
+zookeeper-client = "0.2"
+sha1 = "0.10"
+base64 = "0.22"
 
 # ── 已迁出的依赖 ──
 # 全部内置命令行工具（uutils/coreutils 全集 + grep/sed/findutils/diffutils/

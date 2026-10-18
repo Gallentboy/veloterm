@@ -13,6 +13,7 @@ import { EditorScreen } from '@/components/editor/EditorScreen';
 import { FilesScreen } from '@/components/files/FilesScreen';
 import { GroupsScreen } from '@/components/hosts/GroupsScreen';
 import { HostsScreen } from '@/components/hosts/HostsScreen';
+import { ZkScreen } from '@/components/zk/ZkScreen';
 import { SettingsScreen } from '@/components/SettingsScreen';
 import { TerminalScreen } from '@/components/terminal';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
@@ -528,6 +529,8 @@ export function AppShell() {
                   <GroupsScreen />
                 ) : page === 'commands' ? (
                   <CommandsScreen />
+                ) : page === 'zk' ? (
+                  <ZkScreen />
                 ) : (
                   <SettingsScreen />
                 )}
