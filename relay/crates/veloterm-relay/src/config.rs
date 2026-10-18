@@ -66,6 +66,14 @@ pub struct ListenerEntry {
     pub target: Option<String>,
     #[serde(default)]
     pub allow_targets: Vec<String>,
+    /// UDP 会话空闲回收秒数
+    #[serde(default)]
+    pub udp_idle_timeout_secs: Option<u64>,
+    /// QUIC 证书/私钥 PEM 路径（不配则启动时自签并日志指纹）
+    #[serde(default)]
+    pub cert: Option<String>,
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 /// 校验后的运行时配置。
@@ -80,14 +88,20 @@ pub struct ResolvedConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListenerProto {
     Tcp,
+    Ws,
+    Udp,
+    Quic,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResolvedListener {
     pub proto: ListenerProto,
     pub bind: SocketAddr,
     pub default_target: Option<TargetAddr>,
     pub allowed: Vec<TargetAddr>,
+    pub udp_idle_timeout: Duration,
+    pub tls_cert: Option<std::path::PathBuf>,
+    pub tls_key: Option<std::path::PathBuf>,
 }
 
 pub fn parse_toml(text: &str) -> anyhow::Result<FileConfig> {
@@ -117,11 +131,9 @@ impl FileConfig {
         for (i, l) in self.listener.into_iter().enumerate() {
             let proto = match l.proto.as_str() {
                 "tcp" => ListenerProto::Tcp,
-                "udp" | "ws" | "quic" => bail!(
-                    "listener[{}] proto=\"{}\" 尚未实现（后续阶段放开，当前仅 tcp）",
-                    i,
-                    l.proto
-                ),
+                "ws" => ListenerProto::Ws,
+                "udp" => ListenerProto::Udp,
+                "quic" => ListenerProto::Quic,
                 other => bail!("listener[{}] proto=\"{}\" 未知（tcp/udp/ws/quic）", i, other),
             };
             let bind: SocketAddr = l
@@ -138,12 +150,29 @@ impl FileConfig {
                     i
                 );
             }
+            if !matches!(proto, ListenerProto::Udp) && l.udp_idle_timeout_secs.is_some() {
+                bail!("listener[{}] udp_idle_timeout_secs 只适用于 udp 监听器", i);
+            }
+            if !matches!(proto, ListenerProto::Quic) && (l.cert.is_some() || l.key.is_some()) {
+                bail!("listener[{}] cert/key 只适用于 quic 监听器", i);
+            }
+            if proto == ListenerProto::Quic && l.cert.is_some() != l.key.is_some() {
+                bail!("listener[{}] cert 与 key 必须同时配置", i);
+            }
             let allowed = l
                 .allow_targets
                 .iter()
                 .map(|t| parse_target(i, t))
                 .collect::<Result<Vec<_>, _>>()?;
-            listeners.push(ResolvedListener { proto, bind, default_target, allowed });
+            listeners.push(ResolvedListener {
+                proto,
+                bind,
+                default_target,
+                allowed,
+                udp_idle_timeout: Duration::from_secs(l.udp_idle_timeout_secs.unwrap_or(60)),
+                tls_cert: l.cert.map(std::path::PathBuf::from),
+                tls_key: l.key.map(std::path::PathBuf::from),
+            });
         }
 
         Ok(ResolvedConfig {
@@ -180,7 +209,7 @@ mod tests {
         .unwrap();
         assert!(no_token.resolve().is_err());
 
-        // 未实现的 proto
+        // 未知 proto（tcp/udp/ws/quic 之外）
         let future = parse_toml(&format!(
             r#"
             [relay]
@@ -189,14 +218,14 @@ mod tests {
             name = "x"
             secret = "{secret64}"
             [[listener]]
-            proto = "quic"
+            proto = "grpc"
             bind = "0.0.0.0:7300"
             target = "a:22"
             "#
         ))
         .unwrap();
         let err = future.resolve().unwrap_err().to_string();
-        assert!(err.contains("尚未实现"), "{err}");
+        assert!(err.contains("未知"), "{err}");
 
         // 既无 target 也无 allow_targets
         let nowhere = parse_toml(&format!(

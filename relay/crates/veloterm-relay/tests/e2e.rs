@@ -58,6 +58,9 @@ async fn spawn_relay(default: Option<TargetAddr>, allowed: Vec<TargetAddr>) -> (
         bind,
         default_target: default,
         allowed,
+        udp_idle_timeout: Duration::from_secs(60),
+        tls_cert: None,
+        tls_key: None,
     };
     let (tx, rx) = tokio::sync::watch::channel(());
     tokio::spawn(server::run_tcp_on(
