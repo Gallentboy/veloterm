@@ -202,7 +202,7 @@ pub async fn run_ws_on(
     handshake_timeout: Duration,
     mut shutdown: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
-    info!(bind = %tcp.local_addr()?, 默认目标 = ?listener.default_target, "ws listener ready");
+    info!(bind = %tcp.local_addr()?, "ws listener ready");
 
     let policy = TargetPolicy {
         default_target: listener.default_target.clone(),

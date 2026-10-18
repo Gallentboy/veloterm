@@ -60,7 +60,7 @@ pub async fn serve_quic(
     mut shutdown: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
     let bind = endpoint.local_addr().context("获取 QUIC 本地地址失败")?;
-    info!(%bind, 默认目标 = ?listener.default_target, "quic listener ready");
+    info!(%bind, "quic listener ready");
 
     let policy = TargetPolicy {
         default_target: listener.default_target.clone(),

@@ -50,6 +50,7 @@ pub async fn serve_stream<S>(
     if send_status(&mut io, Status::Ok).await.is_err() {
         return; // 客户端在终局状态前跑了
     }
+    info!(peer, %target, principal, "中继连接成功");
 
     let _ = outbound.set_nodelay(true);
     match tokio::io::copy_bidirectional(&mut io, &mut outbound).await {
@@ -57,9 +58,14 @@ pub async fn serve_stream<S>(
             peer, %target, principal,
             up_bytes = up, down_bytes = down,
             duration_ms = started.elapsed().as_millis() as u64,
-            "relay session closed"
+            "中继连接断开"
         ),
-        Err(e) => warn!(peer, %target, error = %e, "搬运中断"),
+        Err(e) => warn!(
+            peer, %target, principal,
+            error = %e,
+            duration_ms = started.elapsed().as_millis() as u64,
+            "中继连接断开（搬运中断）"
+        ),
     }
 }
 
@@ -86,7 +92,7 @@ pub async fn run_tcp_on(
     handshake_timeout: Duration,
     mut shutdown: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
-    info!(bind = %tcp.local_addr()?, 默认目标 = ?listener.default_target, "tcp listener ready");
+    info!(bind = %tcp.local_addr()?, "tcp listener ready");
 
     let policy = TargetPolicy {
         default_target: listener.default_target.clone(),
