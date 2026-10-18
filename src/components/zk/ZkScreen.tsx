@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Database,
   FilePlus,
+  Loader2,
   Network,
   Plus,
   RefreshCw,
@@ -265,6 +266,9 @@ function ZkSessionView({
   const [notice, setNotice] = useState<string | null>(null);
 
   const [nodes, setNodes] = useState<Map<string, TreeNode>>(new Map());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const searchVersionRef = useRef(0);
   const [selected, setSelected] = useState('/');
   const [detail, setDetail] = useState<ZkNode | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -498,21 +502,146 @@ function ZkSessionView({
     // 事件回调内读取的 dirty/aclDirty/selected 取自当次渲染闭包，均为最新值
   }, [sessionId, selected, dirty, aclDirty, t, loadChildren, selectNode]);
 
+  /** 搜索态的后台子树拉取：BFS 全量加载（跳过已加载，批量并发；上限 5000 节点
+   *  防失控），不动 expanded——过滤视图不依赖展开标记，命中祖先自动可见。 */
+  const searchLoadSubtree = useCallback(async (sid: string) => {
+    const version = ++searchVersionRef.current;
+    setSearching(true);
+    try {
+      let frontier = ['/'];
+      let visited = 0;
+      while (frontier.length > 0 && visited < 5000) {
+        if (searchVersionRef.current !== version) return;
+        const batch = frontier.slice(0, 24);
+        frontier = frontier.slice(batch.length);
+        const results = await Promise.all(
+          batch.map(async (p) => {
+            try {
+              return { p, res: await zkList(sid, p) } as const;
+            } catch {
+              return null; // 节点可能已被删除/无权限：跳过继续搜兄弟分支
+            }
+          }),
+        );
+        const newChildren: string[] = [];
+        setNodes((current) => {
+          const next = new Map(current);
+          for (const item of results) {
+            if (!item) continue;
+            const existing = next.get(item.p);
+            const childNames = [...item.res.children].sort();
+            for (const name of childNames) {
+              const childPath = item.p === '/' ? `/${name}` : `${item.p}/${name}`;
+              if (!next.has(childPath)) {
+                next.set(childPath, {
+                  name,
+                  path: childPath,
+                  depth: childPath.split('/').length - 1,
+                  expanded: false,
+                  loaded: false,
+                  children: [],
+                  ephemeral: false,
+                });
+              }
+              newChildren.push(childPath);
+            }
+            next.set(item.p, {
+              name: existing?.name ?? (item.p === '/' ? '/' : (item.p.split('/').pop() ?? item.p)),
+              path: item.p,
+              depth: item.p === '/' ? 0 : item.p.split('/').length - 1,
+              expanded: existing?.expanded ?? false,
+              loaded: true,
+              children: childNames,
+              ephemeral: item.res.stat.ephemeralOwner !== 0,
+            });
+          }
+          return next;
+        });
+        visited += batch.length;
+        frontier = [...frontier, ...newChildren];
+      }
+    } finally {
+      if (searchVersionRef.current === version) setSearching(false);
+    }
+  }, []);
+
+  // 搜索防抖：清空即取消在途回收；新词 300ms 后触发子树拉取
+  useEffect(() => {
+    if (!sessionId) return;
+    const q = searchQuery.trim();
+    if (!q) {
+      searchVersionRef.current += 1;
+      setSearching(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      void searchLoadSubtree(sessionId);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, sessionId, searchLoadSubtree]);
+
+  const searchLower = searchQuery.trim().toLowerCase();
+  const isSearchHit = useCallback(
+    (node: TreeNode) =>
+      searchLower.length > 0 &&
+      (node.name.toLowerCase().includes(searchLower) || node.path.toLowerCase().includes(searchLower)),
+    [searchLower],
+  );
+
   const orderedPaths = useMemo(() => {
-    const list: TreeNode[] = [];
-    const walk = (path: string) => {
-      const node = nodes.get(path);
-      if (!node) return;
-      list.push(node);
-      if (node.expanded && node.loaded) {
-        for (const child of node.children) {
-          walk(path === '/' ? `/${child}` : `${path}/${child}`);
+    if (searchLower.length === 0) {
+      const list: TreeNode[] = [];
+      const walk = (path: string) => {
+        const node = nodes.get(path);
+        if (!node) return;
+        list.push(node);
+        if (node.expanded && node.loaded) {
+          for (const child of node.children) {
+            walk(path === '/' ? `/${child}` : `${path}/${child}`);
+          }
+        }
+      };
+      walk('/');
+      return list;
+    }
+    // 搜索态：命中 = 名字或路径含关键词；可见 = 命中 ∪ 祖先（自动展开）
+    const visible = new Set<string>();
+    for (const node of nodes.values()) {
+      if (
+        node.name.toLowerCase().includes(searchLower) ||
+        node.path.toLowerCase().includes(searchLower)
+      ) {
+        visible.add(node.path);
+        let p = node.path;
+        while (p !== '/' && p.length > 0) {
+          p = p.slice(0, p.lastIndexOf('/')) || '/';
+          if (visible.has(p)) break;
+          visible.add(p);
         }
       }
-    };
-    walk('/');
-    return list;
-  }, [nodes]);
+    }
+    return [...visible]
+      .sort()
+      .map((p) => nodes.get(p))
+      .filter((n): n is TreeNode => n != null);
+  }, [nodes, searchLower]);
+
+  /** 搜索态点选：选中节点 + 展开其祖先链 + 清空搜索回到正常树视图（选中行可见）。 */
+  const pickFromSearch = useCallback((path: string) => {
+    setNodes((current) => {
+      const next = new Map(current);
+      let p = path;
+      while (p.length > 0 && p !== '/') {
+        const n = next.get(p);
+        if (n && !n.expanded) next.set(p, { ...n, expanded: true });
+        p = p.slice(0, p.lastIndexOf('/')) || '/';
+      }
+      const root = next.get('/');
+      if (root && !root.expanded) next.set('/', { ...root, expanded: true });
+      return next;
+    });
+    setSearchQuery('');
+  }, []);
 
   const toggleExpand = async (node: TreeNode) => {
     if (!sessionId) return;
@@ -870,7 +999,43 @@ function ZkSessionView({
                 </Button>
               </ControlHintTooltip>
             </div>
+            {/* 实时搜索：防抖后后台拉全子树（突破懒加载），过滤视图自动展开祖先链 */}
+            <div className="px-3 pb-1.5">
+              <div className="relative">
+                <TextInput
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={t('zk.searchPlaceholder')}
+                  className="h-7 pr-7 font-mono text-ui-xs"
+                  spellCheck={false}
+                />
+                <span className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center">
+                  {searching ? (
+                    <Loader2 className="size-3 animate-spin text-foreground-subtle" />
+                  ) : searchQuery ? (
+                    <button
+                      type="button"
+                      aria-label={t('common.close')}
+                      onClick={() => setSearchQuery('')}
+                      className="text-foreground-subtlest hover:text-foreground"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  ) : null}
+                </span>
+              </div>
+              {searching && searchQuery.trim() ? (
+                <span className="mt-1 block text-ui-xs text-foreground-subtlest select-none">
+                  {t('zk.searchLoading')}
+                </span>
+              ) : null}
+            </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
+              {searchQuery.trim() && orderedPaths.length === 0 && !searching ? (
+                <div className="px-2 py-4 text-center text-ui-xs text-foreground-subtlest select-none">
+                  {t('zk.searchNoMatch')}
+                </div>
+              ) : null}
               {orderedPaths.map((node) => (
                 <div
                   key={node.path}
@@ -883,7 +1048,10 @@ function ZkSessionView({
                   <button
                     type="button"
                     className="flex h-full min-w-0 flex-1 items-center gap-1 text-left"
-                    onClick={() => void selectNode(sessionId, node.path)}
+                    onClick={() => {
+                      void selectNode(sessionId, node.path);
+                      if (searchQuery.trim()) pickFromSearch(node.path);
+                    }}
                   >
                     <span className="w-3.5 shrink-0 text-foreground-subtle">
                       {node.children.length > 0 || !node.loaded ? (
@@ -896,7 +1064,10 @@ function ZkSessionView({
                           }}
                         >
                           <ChevronRight
-                            className={cn('size-3 transition-transform', node.expanded && 'rotate-90')}
+                            className={cn(
+                              'size-3 transition-transform',
+                              (searchQuery.trim() || node.expanded) && 'rotate-90',
+                            )}
                           />
                         </button>
                       ) : null}
@@ -904,7 +1075,11 @@ function ZkSessionView({
                     <span
                       className={cn(
                         'truncate font-mono text-ui-sm',
-                        node.ephemeral ? 'text-primary' : 'text-foreground',
+                        isSearchHit(node)
+                          ? 'font-medium text-primary'
+                          : node.ephemeral
+                            ? 'text-primary'
+                            : 'text-foreground',
                       )}
                       title={node.path}
                     >
