@@ -16,6 +16,7 @@ import { HostsScreen } from '@/components/hosts/HostsScreen';
 import { RelaysScreen } from '@/components/relays/RelaysScreen';
 import { ZkScreen } from '@/components/zk/ZkScreen';
 import { ZkHostsScreen } from '@/components/zkhosts/ZkHostsScreen';
+import { GrpcScreen } from '@/components/grpc/GrpcScreen';
 import { SettingsScreen } from '@/components/SettingsScreen';
 import { TerminalScreen } from '@/components/terminal';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
@@ -505,6 +506,10 @@ export function AppShell() {
                 <div className={cn('h-full min-h-0 w-full', page !== 'zk' && 'hidden')}>
                   <ZkScreen isVisible={page === 'zk'} />
                 </div>
+                {/* gRPC 调试视图持久挂载：切换页面保持表单输入（目标/TLS/认证配置） */}
+                <div className={cn('h-full min-h-0 w-full', page !== 'grpc' && 'hidden')}>
+                  <GrpcScreen />
+                </div>
                 {page === 'home' ? (
                   <WelcomeScreen
                     onNewTerminal={handleOpenNewTerminal}
@@ -520,7 +525,7 @@ export function AppShell() {
                   />
                 ) : page === 'editor' ? (
                   <EditorScreen />
-                ) : page === 'files' ? null : page === 'hosts' ? (
+                ) : page === 'files' || page === 'grpc' ? null : page === 'hosts' ? (
                   <HostsScreen
                     onConnectHost={(host) => {
                       createSession({ hostId: host.id, customTitle: host.name });

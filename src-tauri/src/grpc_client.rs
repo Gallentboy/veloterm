@@ -127,6 +127,7 @@ pub struct GrpcCallRequest {
     pub timeout_ms: Option<u64>,
 }
 
+/** TLS 配置：信任根、客户端身份（mTLS）、SNI 域名全部可选组合。 */
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GrpcTlsConfig {
@@ -136,6 +137,12 @@ pub struct GrpcTlsConfig {
     /// SNI / 证书校验域名；缺省取 target 的 host 部分
     #[serde(default)]
     pub server_name: Option<String>,
+    /// mTLS 客户端证书（PEM 文本）；与 client_key_pem 必须成对出现
+    #[serde(default)]
+    pub client_cert_pem: Option<String>,
+    /// mTLS 客户端私钥（PEM 文本，PKCS8/RSA/EC）；与 client_cert_pem 必须成对出现
+    #[serde(default)]
+    pub client_key_pem: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -259,6 +266,17 @@ async fn call_grpc_unary(req: GrpcCallRequest) -> Result<GrpcCallResponse, Strin
                 cfg = cfg.ca_certificate(tonic::transport::Certificate::from_pem(pem));
             }
             None => cfg = cfg.with_native_roots(),
+        }
+        match (&tls.client_cert_pem, &tls.client_key_pem) {
+            (Some(cert), Some(key)) => {
+                cfg = cfg.identity(tonic::transport::Identity::from_pem(cert, key));
+            }
+            (None, None) => {}
+            _ => {
+                return Err(
+                    "mTLS 客户端证书与私钥必须成对提供（clientCertPem + clientKeyPem）".into(),
+                );
+            }
         }
         if let Some(name) = tls.server_name.as_deref().filter(|n| !n.trim().is_empty()) {
             cfg = cfg.domain_name(name.trim());
@@ -485,7 +503,7 @@ mod tests {
     use http_body_util::BodyExt as _;
     use tonic::codegen::Service;
     use tonic::server::NamedService;
-    use tonic::transport::{Identity, ServerTlsConfig};
+    use tonic::transport::Identity;
 
     // ── 测试业务协议：veloterm.test.UserService/GetUser ──
 
@@ -766,6 +784,14 @@ mod tests {
         V1,
     }
 
+    /// 服务端 TLS 形态：明文 / 普通 TLS / 强制客户端证书（mTLS）
+    #[derive(Clone)]
+    enum TlsMode {
+        None,
+        Plain,
+        Mutual(String), // 客户端 CA PEM
+    }
+
     struct TestServer {
         target: String,
         ca_pem: Option<String>,
@@ -774,7 +800,7 @@ mod tests {
 
     async fn spawn_test_server(
         reflection: ReflectionVersion,
-        tls: bool,
+        tls: TlsMode,
         expect_authorization: Option<String>,
     ) -> TestServer {
         let seen = Arc::new(Mutex::new(None));
@@ -800,16 +826,23 @@ mod tests {
             Some((accepted, l))
         });
         let mut server = tonic::transport::Server::builder();
-        if tls {
+        let client_ca = match &tls {
+            TlsMode::Mutual(ca) => Some(ca.clone()),
+            _ => None,
+        };
+        if !matches!(tls, TlsMode::None) {
             ensure_tls_provider();
             let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
             let cert_pem = cert.cert.pem();
             let key_pem = cert.key_pair.serialize_pem();
             ca_pem = Some(cert_pem.clone());
-            let identity = Identity::from_pem(cert_pem, key_pem);
-            server = server
-                .tls_config(ServerTlsConfig::new().identity(identity))
-                .unwrap();
+            let mut tls_config =
+                tonic::transport::ServerTlsConfig::new().identity(Identity::from_pem(cert_pem, key_pem));
+            if let Some(client_ca) = client_ca {
+                tls_config = tls_config
+                    .client_ca_root(tonic::transport::Certificate::from_pem(client_ca));
+            }
+            server = server.tls_config(tls_config).unwrap();
         }
         tokio::spawn(async move {
             let _ = server.serve_with_incoming(routes, incoming).await;
@@ -840,7 +873,7 @@ mod tests {
     async fn grpc_call_plaintext_roundtrip_with_bearer() {
         let server = spawn_test_server(
             ReflectionVersion::V1Alpha,
-            false,
+            TlsMode::None,
             Some("Bearer tok-123".to_string()),
         )
         .await;
@@ -864,7 +897,7 @@ mod tests {
     async fn grpc_call_rejects_wrong_token() {
         let server = spawn_test_server(
             ReflectionVersion::V1Alpha,
-            false,
+            TlsMode::None,
             Some("Bearer tok-123".to_string()),
         )
         .await;
@@ -876,11 +909,13 @@ mod tests {
 
     #[tokio::test]
     async fn grpc_call_tls_with_self_signed_ca() {
-        let server = spawn_test_server(ReflectionVersion::V1Alpha, true, None).await;
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::Plain, None).await;
         let mut req = base_request(&server.target);
         req.tls = Some(GrpcTlsConfig {
             ca_pem: server.ca_pem.clone(),
             server_name: Some("localhost".to_string()),
+            client_cert_pem: None,
+            client_key_pem: None,
         });
         let resp = grpc_call(req).await.expect("自定义 CA 的 TLS 调用应成功");
         assert!(resp.json_output.contains("Alice"));
@@ -888,12 +923,14 @@ mod tests {
 
     #[tokio::test]
     async fn grpc_call_tls_with_wrong_ca_fails() {
-        let server = spawn_test_server(ReflectionVersion::V1Alpha, true, None).await;
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::Plain, None).await;
         let wrong_ca = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
         let mut req = base_request(&server.target);
         req.tls = Some(GrpcTlsConfig {
             ca_pem: Some(wrong_ca.cert.pem()),
             server_name: Some("localhost".to_string()),
+            client_cert_pem: None,
+            client_key_pem: None,
         });
         let err = grpc_call(req).await.expect_err("错误 CA 应握手失败");
         assert!(err.contains("连接"), "错误应为连接失败: {err}");
@@ -902,7 +939,7 @@ mod tests {
     #[tokio::test]
     async fn grpc_call_reflection_v1_fallback() {
         // 只挂 v1 反射：dual-try 应在 v1alpha UNIMPLEMENTED 后落到 v1 成功
-        let server = spawn_test_server(ReflectionVersion::V1, false, None).await;
+        let server = spawn_test_server(ReflectionVersion::V1, TlsMode::None, None).await;
         let resp = grpc_call(base_request(&server.target))
             .await
             .expect("仅 v1 反射时也应成功");
@@ -910,8 +947,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn grpc_call_mtls_with_client_cert() {
+        // 服务端强制客户端证书：客户端证书的 CA（此处直接用自签证书自身）交给服务端校验
+        let client_cert =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let server = spawn_test_server(
+            ReflectionVersion::V1Alpha,
+            TlsMode::Mutual(client_cert.cert.pem()),
+            None,
+        )
+        .await;
+        let mut req = base_request(&server.target);
+        req.tls = Some(GrpcTlsConfig {
+            ca_pem: server.ca_pem.clone(),
+            server_name: Some("localhost".to_string()),
+            client_cert_pem: Some(client_cert.cert.pem()),
+            client_key_pem: Some(client_cert.key_pair.serialize_pem()),
+        });
+        let resp = grpc_call(req).await.expect("携带客户端证书的 mTLS 调用应成功");
+        assert!(resp.json_output.contains("Alice"));
+    }
+
+    #[tokio::test]
+    async fn grpc_call_mtls_missing_client_cert_fails() {
+        let client_cert =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let server = spawn_test_server(
+            ReflectionVersion::V1Alpha,
+            TlsMode::Mutual(client_cert.cert.pem()),
+            None,
+        )
+        .await;
+        let mut req = base_request(&server.target);
+        req.tls = Some(GrpcTlsConfig {
+            ca_pem: server.ca_pem.clone(),
+            server_name: Some("localhost".to_string()),
+            client_cert_pem: None,
+            client_key_pem: None,
+        });
+        let err = grpc_call(req).await.expect_err("缺客户端证书应握手失败");
+        // 服务端在 TLS 握手阶段拒连：tonic 客户端表现为首个 RPC 的 transport error
+        // （TCP/TLS 握手不总能前移到 connect 阶段）
+        assert!(
+            err.contains("连接") || err.contains("transport error"),
+            "错误应为传输层失败: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn grpc_call_without_reflection_reports_unsupported() {
-        let server = spawn_test_server(ReflectionVersion::None, false, None).await;
+        let server = spawn_test_server(ReflectionVersion::None, TlsMode::None, None).await;
         let err = grpc_call(base_request(&server.target))
             .await
             .expect_err("无反射服务应报错");
@@ -923,7 +1008,7 @@ mod tests {
 
     #[tokio::test]
     async fn grpc_call_method_not_found_lists_available() {
-        let server = spawn_test_server(ReflectionVersion::V1Alpha, false, None).await;
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
         let mut req = base_request(&server.target);
         req.method = "GetUserX".to_string();
         let err = grpc_call(req).await.expect_err("方法名错误应报错");
@@ -935,7 +1020,7 @@ mod tests {
 
     #[tokio::test]
     async fn grpc_call_bad_json_input_type_mismatch() {
-        let server = spawn_test_server(ReflectionVersion::V1Alpha, false, None).await;
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
         let mut req = base_request(&server.target);
         req.json_input = r#"{"id": "not-a-number"}"#.to_string();
         let err = grpc_call(req).await.expect_err("入参类型错误应报错");
