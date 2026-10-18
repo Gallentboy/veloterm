@@ -29,6 +29,7 @@ import {
   zkDisconnect,
   zkGet,
   zkList,
+  type ZkChildren,
   zkSetAcl,
   zkSetData,
   type ZkAclRule,
@@ -523,15 +524,28 @@ function ZkSessionView({
             }
           }),
         );
-        const newChildren: string[] = [];
+        // 先纯计算本批更新与下一层 frontier，再一次性应用——**严禁在 setNodes
+        // 的 updater 里做副作用**：React 18 的 updater 延迟到渲染期执行，届时
+        // BFS 循环早已带着空的 children 列表退出（首版 bug：只能搜到第一层）
+        const updates = results
+          .filter((r): r is { p: string; res: ZkChildren } => r != null)
+          .map((r) => ({
+            path: r.p,
+            childNames: [...r.res.children].sort(),
+            ephemeral: r.res.stat.ephemeralOwner !== 0,
+          }));
+        const nextFrontier: string[] = [];
+        for (const u of updates) {
+          for (const name of u.childNames) {
+            nextFrontier.push(u.path === '/' ? `/${name}` : `${u.path}/${name}`);
+          }
+        }
         setNodes((current) => {
           const next = new Map(current);
-          for (const item of results) {
-            if (!item) continue;
-            const existing = next.get(item.p);
-            const childNames = [...item.res.children].sort();
-            for (const name of childNames) {
-              const childPath = item.p === '/' ? `/${name}` : `${item.p}/${name}`;
+          for (const u of updates) {
+            const existing = next.get(u.path);
+            for (const name of u.childNames) {
+              const childPath = u.path === '/' ? `/${name}` : `${u.path}/${name}`;
               if (!next.has(childPath)) {
                 next.set(childPath, {
                   name,
@@ -543,22 +557,21 @@ function ZkSessionView({
                   ephemeral: false,
                 });
               }
-              newChildren.push(childPath);
             }
-            next.set(item.p, {
-              name: existing?.name ?? (item.p === '/' ? '/' : (item.p.split('/').pop() ?? item.p)),
-              path: item.p,
-              depth: item.p === '/' ? 0 : item.p.split('/').length - 1,
+            next.set(u.path, {
+              name: existing?.name ?? (u.path === '/' ? '/' : (u.path.split('/').pop() ?? u.path)),
+              path: u.path,
+              depth: u.path === '/' ? 0 : u.path.split('/').length - 1,
               expanded: existing?.expanded ?? false,
               loaded: true,
-              children: childNames,
-              ephemeral: item.res.stat.ephemeralOwner !== 0,
+              children: u.childNames,
+              ephemeral: u.ephemeral,
             });
           }
           return next;
         });
         visited += batch.length;
-        frontier = [...frontier, ...newChildren];
+        frontier = [...frontier, ...nextFrontier];
       }
     } finally {
       if (searchVersionRef.current === version) setSearching(false);
@@ -1060,6 +1073,8 @@ function ZkSessionView({
                           className="flex size-3.5 items-center justify-center hover:text-foreground"
                           onClick={(e) => {
                             e.stopPropagation();
+                            // 搜索态箭头仅作层级指示（过滤视图无视 expanded，点了也不变）
+                            if (searchQuery.trim()) return;
                             void toggleExpand(node);
                           }}
                         >
