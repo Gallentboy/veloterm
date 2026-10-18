@@ -1,0 +1,524 @@
+[
+  {
+    "tool": "arch",
+    "title": "arch：打印机器硬件架构名（等价 uname -m）",
+    "command": "arch",
+    "description": "打印机器硬件名，GNU 手册明确其「等价于 uname -m」；用于快速确认本机 CPU 架构（x86_64 / aarch64 等）或脚本架构分支。\n\n**语法**\n\n```\narch [option]\n```\n\n**常用选项**\n\n- 仅接受公共选项：`--help` / `--version`（架构输出不带任何选项）\n- 等价命令：`uname -m`\n\n**示例**\n\n```\narch\nx86_64\n\nuname -m\nx86_64\n```\n\n**注意**\n\n- GNU 手册注明 arch 并非默认安装（可移植脚本建议直接用 `uname -m`）。\n- 本集成为 uutils 跨平台实现，Windows 上输出当前进程架构，以实机为准。\n- 架构相同才能复用二进制依赖（如 DLL），排查工具链问题时先看这里。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/arch-invocation.html",
+    "purpose": "快速确认本机 CPU 架构（x86_64/aarch64），脚本做架构分支。",
+    "category": "system",
+    "tags": ["架构", "系统信息", "uname"],
+    "platforms": ["win"],
+    "params": [],
+    "dangerLevel": "safe",
+    "exampleOutput": "x86_64",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/arch-invocation.html"
+  },
+  {
+    "tool": "bat",
+    "title": "bat：带语法高亮与 Git 标记的 cat 替代（查看文件）",
+    "command": "bat \"{{file}}\"",
+    "description": "bat 是 cat 的克隆：打印文件内容并带语法高亮、Git 变更标记（侧栏）、行号与自动分页；当输出被管道或重定向时自动退化为普通 cat，不污染下游。\n\n**语法**\n\n```\nbat [OPTIONS] [FILE]...\n```\n\n**常用选项**\n\n- `-n`：只显示行号（无其他装饰）\n- `-p` / `--plain`：纯净输出，适合管道与复制\n- `-A` / `--show-all`：显示并高亮不可见字符\n- `-l <语言>`：显式指定语法（如 `-l json`、`-l rs`）\n- `--style=numbers,changes`：定制输出组件\n- `--line-range=:500`：只显示前 500 行\n- `--paging=never`：禁用自动分页\n- `--list-languages` / `--list-themes`：列出支持的语言/主题\n\n**示例**\n\n```\nbat README.md\nbat -l json config.json\nbat --line-range=:200 src/main.rs\n```\n\n**注意**\n\n- bat 属本项目 OWN_ARGV 家族（解析器直读自身进程命令行）：仅 `bat` 短名（tools 目录硬链接）可用，不要经 `coreutils bat` 子命令形式调用。\n- 管道中自动禁用装饰，可放心 `bat 文件 | rg 关键字`。\n- 完整配色需要 TrueColor 终端（Windows Terminal 满足，老 conhost 会降级）。\n\n> 文档依据：https://github.com/sharkdp/bat",
+    "purpose": "带语法高亮地查看源码/配置文件，快速定位行号。",
+    "category": "file",
+    "tags": ["cat 替代", "语法高亮", "查看文件"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件路径", "description": "要查看的文件", "required": true, "default": "README.md", "example": "README.md" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "     1   # VeloTerm\n     2   内置 BusyBox 模式 GNU 工具链…",
+    "source": "https://github.com/sharkdp/bat"
+  },
+  {
+    "tool": "date",
+    "title": "date：显示/格式化日期时间（GNU 格式串）",
+    "command": "date {{format}}",
+    "description": "不带参数按本地化默认格式打印当前时间；带 `+格式串` 时按说明符精确控制输出，是脚本里生成时间戳、日志文件名后缀的标准做法。\n\n**语法**\n\n```\ndate [option]... [+format]\n```\n\n**常用选项**\n\n- `-d <时间串>`：显示时间串描述的时间而非现在（支持 yesterday、'25 Dec' 等）\n- `-u`：按 UTC 输出\n- `-I[FMT]`：ISO 8601 输出（hours/minutes/seconds/ns）\n- `-R`：RFC 5322 邮件头格式\n- `--rfc-3339=seconds`：RFC 3339 时间戳\n- `-r <文件>`：显示文件最后修改时间\n- `-s <时间串>`：设置系统时间（需管理员）\n\n常用格式说明符：`%Y` 年、`%m` 月、`%d` 日、`%H` 时、`%M` 分、`%S` 秒、`%F`（= %Y-%m-%d）、`%T`（= %H:%M:%S）、`%s` Epoch 秒、`%Z` 时区缩写、`%A` 星期全名、`%j` 年内第几天、`%N` 纳秒。\n\n**示例**\n\n```\ndate +%F_%T\ndate -d \"1970-01-01 00:02:00 +0000\" +%s\ndate -u -d @1595289600 \"+%F %T %z\"\n```\n\n**注意**\n\n- cmd.exe 里 date 是内建命令：交互终端直接输 `date`（无参）会命中内建并提示输入新日期（回车跳过）；使用 GNU 语义请带格式串或显式调用 date.exe。\n- 格式串以 `+` 开头，含空格时整体加引号。\n- `-s` 设置系统时间需要管理员权限。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/date-invocation.html",
+    "purpose": "取当前时间/生成时间戳（日志文件名、版本号后缀）。",
+    "category": "system",
+    "tags": ["时间", "格式化", "时间戳"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "format", "label": "输出格式串", "description": "以 + 开头的 GNU date 格式串；留空输出默认格式", "required": false, "default": "+%Y-%m-%d", "example": "+%Y-%m-%d %H:%M:%S" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "2026-10-18",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/date-invocation.html"
+  },
+  {
+    "tool": "echo",
+    "title": "echo：向标准输出打印文本",
+    "command": "echo {{text}}",
+    "description": "把各参数以空格连接后打印到标准输出，默认结尾换行；`-n` 不换行，`-e` 解释反斜杠转义，`-E` 显式关闭转义（默认）。\n\n**语法**\n\n```\necho [option]... [string]...\n```\n\n**常用选项**\n\n- `-n`：不输出结尾换行\n- `-e`：解释转义序列（`\\n` 换行、`\\t` 制表、`\\\\` 反斜杠、`\\xhh` 十六进制字节等）\n- `-E`：不解释转义（默认；与 -e 同时给出时后者生效）\n- 选项必须写在内容之前；`--` 没有特殊含义，会当普通字符串打印\n\n**示例**\n\n```\necho hello world\necho -n no-newline\necho -e \"line1\\nline2\"\n```\n\n**注意**\n\n- cmd.exe 的 echo 是内建：交互输入 `echo -n hi` 会原样打印 `-n hi`（内建不认识选项）；需要 GNU 语义请显式调用工具链的 echo.exe（完整路径）。\n- 打印未知或变量内容建议改用 printf——echo 无法区分选项与内容（GNU 手册原话：不建议用 echo 打印未知/变量参数）。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/echo-invocation.html",
+    "purpose": "向终端或管道输出提示文本。",
+    "category": "shell",
+    "tags": ["输出", "shell", "基础"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "text", "label": "文本内容", "description": "要打印的内容", "required": false, "default": "hello world", "example": "hello world" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "hello world",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/echo-invocation.html"
+  },
+  {
+    "tool": "env",
+    "title": "env：查看或以修改后的环境变量运行命令",
+    "command": "env {{vars}} {{command}}",
+    "description": "不带命令时打印全部环境变量（作用同 printenv）；带 `变量=值` 时在修改后的环境中运行指定命令，是脚本做「临时变量 / 干净环境」的标准入口。\n\n**语法**\n\n```\nenv [option]... [name=value]... [command [args]...]\n```\n\n**常用选项**\n\n- `-i`：以空环境启动（清空全部继承变量）\n- `-u <名称>`：从环境中删除指定变量\n- `-C <目录>`：先切换目录再执行命令\n- `-0`：打印模式下每行以 NUL 结尾\n- `-S <字符串>`：拆分字符串为多个参数（shebang 场景）\n- `-v`：逐步调试输出\n\n**示例**\n\n```\nenv\nenv LANG=C sort test.txt\nenv -u TEMP eza\n```\n\n**注意**\n\n- 变量赋值从左到右生效，后写的覆盖先写的；`变量=`（空值）不等于删除变量。\n- 退出码：0 正常；125 env 自身失败；126/127 命令不可调用/找不到；其余为命令自身退出码。\n- cmd.exe 无 env 内建，直接调用即可。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/env-invocation.html",
+    "purpose": "查看全部环境变量，或以临时变量/干净环境运行命令。",
+    "category": "shell",
+    "tags": ["环境变量", "shell", "运行环境"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "vars", "label": "变量赋值", "description": "形如 KEY=VALUE 的赋值（可多个，空格分隔）；留空则不修改变量", "required": false, "default": "LANG=C", "example": "LANG=C" },
+      { "name": "command", "label": "要运行的命令", "description": "在修改后的环境中运行的命令；留空则仅打印当前环境", "required": false, "default": "", "example": "eza" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "PATH=C:\\Windows\\system32;C:\\Windows;…\nLANG=C",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/env-invocation.html"
+  },
+  {
+    "tool": "false",
+    "title": "false：什么都不做，返回失败退出码 1",
+    "command": "false",
+    "description": "不执行任何动作，仅返回退出码 1。GNU 手册特别说明：即便传 `--help` 或 `--version` 也照样以失败退出——它永远是「失败」占位符。\n\n**语法**\n\n```\nfalse [option]\n```\n\n**常用选项**\n\n- `--help` / `--version`：仍以非零退出码结束（false 的特殊行为）\n\n**示例**\n\n```\nfalse && echo 不可达\nfalse || echo 兜底分支\n```\n\n**注意**\n\n- 多数 shell 有同名内建，脚本里通常命中内建；本工具链版本为 uutils 跨平台实现。\n- 可移植脚本不应假设退出码恒为 1（手册注明个别非 GNU 系统返回大于 1 的值）。\n- 与 true 成对：测试脚本布尔逻辑、构造空失败分支。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/false-invocation.html",
+    "purpose": "脚本占位：构造必定失败的分支、测试 && 与 || 语义。",
+    "category": "shell",
+    "tags": ["退出码", "占位", "shell"],
+    "platforms": ["win"],
+    "params": [],
+    "dangerLevel": "safe",
+    "exampleOutput": "（无输出，退出码 1）",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/false-invocation.html"
+  },
+  {
+    "tool": "fd",
+    "title": "fd：快速递归查找文件（find 的现代替代）",
+    "command": "fd \"{{pattern}}\" {{path}}",
+    "description": "按正则匹配文件名做并行递归查找：默认忽略隐藏文件与 .gitignore 规则、智能大小写；不带模式时列出全部文件。速度与默认体验都显著优于 find。\n\n**语法**\n\n```\nfd [options] [pattern] [path]\n```\n\n**常用选项**\n\n- `-e <扩展名>`：按扩展名过滤（如 `-e rs`）\n- `-H` / `-I`：包含隐藏文件 / 无视 ignore 规则（`-u` 等于两者叠加）\n- `-t f|d|l|x`：按类型过滤（文件/目录/符号链接/可执行）\n- `-d N`：限制递归深度\n- `-g`：用 glob 匹配替代正则\n- `-x <命令>`：对每个结果并行执行命令（占位符 `{}` `{.}` `{/}` `{//}`）\n- `-X <命令>`：把全部结果一次性作为参数执行\n- `-E <glob>`：排除匹配项\n- `-l`：长格式列表\n\n**示例**\n\n```\nfd -e rs config\nfd -H -I -g \"**/.git/config\"\nfd -e zip -x unzip\n```\n\n**注意**\n\n- fd 属本项目 OWN_ARGV 家族：仅 `fd` 短名（tools 目录硬链接）可用，`coreutils fd` 子命令模式不支持。\n- 匹配的是文件名不是文件内容——搜内容用 rg。\n- 默认尊重 .gitignore 且跳过隐藏文件，查配置/仓库内部文件记得 `-H` 或 `-u`。\n\n> 文档依据：https://github.com/sharkdp/fd",
+    "purpose": "按名字/扩展名/类型快速查找文件（find 替代）。",
+    "category": "file",
+    "tags": ["find 替代", "查找文件", "递归"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "pattern", "label": "文件名模式", "description": "正则（可用 -g 切 glob）；留空匹配全部", "required": false, "default": "", "example": "config" },
+      { "name": "path", "label": "搜索起点", "description": "从哪个目录开始递归", "required": false, "default": ".", "example": "src" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "src\\config.rs\nsrc\\config_test.rs",
+    "source": "https://github.com/sharkdp/fd"
+  },
+  {
+    "tool": "hostid",
+    "title": "hostid：以十六进制打印当前主机标识（32 位）",
+    "command": "hostid",
+    "description": "打印当前主机的 32 位十六进制数字标识（GNU 手册示例输出 1bac013d）；某些系统上该值与主机 IP 相关，但手册明确「并非总是如此」，也不保证全局唯一。\n\n**语法**\n\n```\nhostid [option]\n```\n\n**常用选项**\n\n- 仅接受公共选项：`--help` / `--version`\n- 不接受任何参数\n\n**示例**\n\n```\nhostid\n1bac013d\n```\n\n**注意**\n\n- 手册提示该值与 inet 地址「有时相关、并非总是」；不要当全局唯一键使用。\n- 依赖 gethostid 能力的系统才安装此命令（可移植脚本不应依赖其存在）；本集成为 uutils 跨平台实现，Windows 上的取值口径以实机输出为准。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/hostid-invocation.html",
+    "purpose": "取主机十六进制标识作脚本里的机器键。",
+    "category": "system",
+    "tags": ["主机标识", "系统信息", "十六进制"],
+    "platforms": ["win"],
+    "params": [],
+    "dangerLevel": "safe",
+    "exampleOutput": "1bac013d",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/hostid-invocation.html"
+  },
+  {
+    "tool": "hostname",
+    "title": "hostname：打印（或设置）当前主机名",
+    "command": "hostname",
+    "description": "无参数时打印当前主机系统名；GNU 语义中带一个参数则把主机名设置为该字符串（需要相应权限）。\n\n**语法**\n\n```\nhostname [name]\n```\n\n**常用选项**\n\n- 仅接受公共选项：`--help` / `--version`\n- 无参数 = 查看；带参数 = 设置（需权限）\n\n**示例**\n\n```\nhostname\nDESKTOP-ABC1234\n```\n\n**注意**\n\n- Windows 自带 C:\\Windows\\System32\\hostname.exe（只读、不能设置），终端里输入 hostname 命中哪个取决于 PATH 解析顺序；两者打印语义一致。\n- 在 Windows 上改机器名建议用系统设置或 PowerShell 的 Rename-Computer。\n- 主机名常用于日志标记与远程连接核对（确认「我连的是哪台」）。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/hostname-invocation.html",
+    "purpose": "确认当前机器的主机名（核对连到了哪台机器）。",
+    "category": "system",
+    "tags": ["主机名", "系统信息", "网络"],
+    "platforms": ["win"],
+    "params": [],
+    "dangerLevel": "safe",
+    "exampleOutput": "DESKTOP-ABC1234",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/hostname-invocation.html"
+  },
+  {
+    "tool": "kill",
+    "title": "kill：向进程发送信号（默认 SIGTERM，-9 强制终止）",
+    "command": "kill {{signal}} {{pid}}",
+    "description": "按 PID 向进程发送信号：不指定信号时发送 TERM(15) 请求进程优雅退出；`kill -9 PID` 是最后手段的强制终止。信号可写名字（TERM/KILL/HUP）或编号。\n\n**语法**\n\n```\nkill [-s signal | -signal] pid...\nkill (-l | -t) [signal]...\n```\n\n**常用选项**\n\n- `-s <信号>`：指定信号名或编号（如 `-s TERM`）\n- `-9`：强制终止（SIGKILL，不可捕获）\n- `-l`：列出全部信号名；带参数时做编号与名称互转（`kill -l 9` 输出 KILL）\n- `-t`：打印「编号/名称/描述」信号表\n- PID 形态：`n` 指定进程；`0` 当前进程组；`-1` 所有可发信号的进程（危险）；`-n` 进程组\n\n**示例**\n\n```\nkill 1234\nkill -9 1234\nkill -l\nkill -l 9\n```\n\n**注意**\n\n- 先 TERM 后 KILL：-9 无法被捕获，进程来不及保存数据/释放锁；确认 TERM 无效再升级。\n- Windows 上信号体系与 Unix 不同（TERM/KILL 映射为进程终止）；按名字找 PID 用本工具链 `ps -C 名称`。\n- `kill -1` 类目标慎用；负数 PID 前建议加 `--` 分隔。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/kill-invocation.html",
+    "purpose": "按 PID 终止/通知进程（先 TERM 后 KILL）。",
+    "category": "process",
+    "tags": ["信号", "终止进程", "PID"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "signal", "label": "信号", "description": "信号选项，留空发默认 TERM；常用 -9 强杀", "required": false, "default": "", "example": "-9" },
+      { "name": "pid", "label": "进程 PID", "description": "目标进程号（ps 查得，可多个空格分隔）", "required": true, "default": "1234", "example": "1234" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "（成功无输出，退出码 0；PID 不存在时报错 no such process）",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/kill-invocation.html"
+  },
+  {
+    "tool": "more",
+    "title": "more：分页查看文本文件（空格翻屏，q 退出）",
+    "command": "more \"{{file}}\"",
+    "description": "一次一屏地显示文本：空格下一屏、b 回退、`/字符串` 搜索、q 退出。手册自述其为「原始分页器」（更强大的是 less；本项目查看文件场景推荐 bat）。\n\n**语法**\n\n```\nmore [options] file...\n```\n\n**常用选项**\n\n- `-d`：按错键时显示提示而非响铃\n- `-s`：把多个连续空行压成一行\n- `-n <行数>`：每屏行数\n- `+<行号>`：从指定行开始显示\n- `+/<字符串>`：先定位到首个匹配再显示\n- `-p` / `-c`：清屏/重绘式翻页\n- `-l`：遇换页符(^L)不暂停\n\n交互键：空格下一屏、回车下一行、b 回退、`/模式` 搜索、n 重复搜索、= 显示行号、q 退出。\n\n**示例**\n\n```\nmore release-notes.md\neza -la | more\n```\n\n**注意**\n\n- GNU coreutils 手册无 more（它属 util-linux 家族）；本集成为 uutils 的 more，语义子集以实机为准。\n- Windows 自带 System32\\more.com，PATH 顺序决定命中哪个，基本用法一致。\n- 无文件参数时从标准输入读——长命令输出接管道分页正合适。\n\n> 文档依据：https://man7.org/linux/man-pages/man1/more.1.html",
+    "purpose": "分页翻看长文本文件或长命令输出。",
+    "category": "file",
+    "tags": ["分页", "查看文件", "翻页"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件路径", "description": "要分页查看的文件；留空则从标准输入读", "required": true, "default": "release-notes.md", "example": "release-notes.md" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "--More--(12%)",
+    "source": "https://man7.org/linux/man-pages/man1/more.1.html"
+  },
+  {
+    "tool": "nice",
+    "title": "nice：以调整后的优先级运行命令",
+    "command": "nice -n {{n}} {{command}}",
+    "description": "以调整后的 niceness 运行命令：niceness 越高优先级越低（范围约 -20..19，手册注明只是「给调度器的建议」）；默认调整为 10。不带命令运行时仅打印当前 niceness。\n\n**语法**\n\n```\nnice [option]... [command [arg]...]\n```\n\n**常用选项**\n\n- `-n <数值>`：指定调整量（默认 10；正数降低优先级，负数提高但需要权限）\n- 无命令裸跑：打印当前 niceness 后退出\n\n**示例**\n\n```\nnice\n0\nnice -n 19 ffmpeg -i in.mp4 out.mp4\n```\n\n**注意**\n\n- 负值（提高优先级）需要管理员权限：普通用户指定的负值会被当 0 处理并告警；超出范围的值会被钳到上下限。\n- 改「已运行进程」的优先级要用 renice（本项目未内置；Windows 对应场景用任务管理器设置优先级）。\n- Windows 调度模型与 Unix niceness 不同，实际降优先级效果以平台实现为准。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/nice-invocation.html",
+    "purpose": "让批处理/转码等重活降低优先级，避免卡住前台。",
+    "category": "process",
+    "tags": ["优先级", "调度", "后台任务"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "n", "label": "调整量", "description": "niceness 调整值，正数降低优先级", "required": false, "default": "10", "example": "10" },
+      { "name": "command", "label": "要运行的命令", "description": "以调整后优先级执行的命令", "required": true, "default": "ping -n 2 127.0.0.1", "example": "ffmpeg -i in.mp4 out.mp4" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "0",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/nice-invocation.html"
+  },
+  {
+    "tool": "nohup",
+    "title": "nohup：忽略挂断信号运行命令（关终端不中断）",
+    "command": "nohup {{command}}",
+    "description": "让命令忽略 SIGHUP 挂断信号持续运行：stdout 若是终端则追加到 nohup.out（不可写则落到 $HOME/nohup.out），stderr 跟随 stdout，stdin 若是终端被重定向为不可读。注意 nohup 本身不把命令放到后台。\n\n**语法**\n\n```\nnohup command [arg]...\n```\n\n**常用选项**\n\n- 仅 `--help` / `--version`（须写在命令名之前）\n- 输出控制靠普通重定向：`nohup 命令 > 日志` 即可指定落盘位置\n\n**示例**\n\n```\nnohup backup.bat\nnohup make > make.log\n```\n\n**注意**\n\n- nohup 不自带后台：Unix 下要手动加 `&`；cmd.exe 没有 `&` 后台语法，长任务建议重定向输出后用 `start /b` 或保持终端开启。\n- nohup.out 是追加不是覆盖，注意体积；建议显式重定向到日志文件。\n- 退出码：125 nohup 自身失败、126/127 命令不可调用/找不到，其余为命令自身退出码。\n- Windows 无 SIGHUP，本命令价值主要体现在输出重定向与退出码约定上。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html",
+    "purpose": "让长任务在终端关闭后继续跑（输出落 nohup.out）。",
+    "category": "process",
+    "tags": ["挂断", "后台运行", "长任务"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "command", "label": "要运行的命令", "description": "需要免挂断运行的命令", "required": true, "default": "backup.bat", "example": "backup.bat" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "（输出追加到 nohup.out，终端关闭后进程继续运行）",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/nohup-invocation.html"
+  },
+  {
+    "tool": "nproc",
+    "title": "nproc：打印当前进程可用的处理单元数",
+    "command": "nproc {{flags}}",
+    "description": "打印当前进程可用的处理单元数（可能小于在线 CPU 数，受亲和性与配额约束），GNU 手册保证结果大于 0；常用于设定并行构建的作业数。\n\n**语法**\n\n```\nnproc [option]\n```\n\n**常用选项**\n\n- `--all`：打印系统安装的处理器数（忽略环境变量与配额）\n- `--ignore=N`：从结果中再扣除 N 个（尽量满足）\n\n**示例**\n\n```\nnproc\n8\nnproc --all\nnproc --ignore=2\n```\n\n**注意**\n\n- OMP_NUM_THREADS / OMP_THREAD_LIMIT 会约束返回值；容器 CPU 配额也会压缩可用数。\n- 常见搭配是并行构建：cmd 下 `for /f %i in ('nproc') do make -j%i`（Git Bash 里直接 `make -j$(nproc)`）。\n- 本集成为 uutils 跨平台实现。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/nproc-invocation.html",
+    "purpose": "查可用 CPU 数，设定并行任务数（如 make -j）。",
+    "category": "system",
+    "tags": ["CPU 数", "并行度", "系统信息"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "flags", "label": "选项", "description": "可留空；--all 查安装总数", "required": false, "default": "", "example": "--all" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "8",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/nproc-invocation.html"
+  },
+  {
+    "tool": "onefetch",
+    "title": "onefetch：终端输出 Git 仓库信息卡片（语言统计/贡献者）",
+    "command": "onefetch \"{{path}}\"",
+    "description": "在终端打印 Git 仓库的信息卡片：项目名、HEAD、语言占比、提交数、作者、许可等；官方 README 明确「完全离线工作，聚焦性能与可定制」。\n\n**语法**\n\n```\nonefetch [options] [path]\n```\n\n**常用选项**\n\n- `-T, --type <TYPE>...`：按语言类型过滤（programming/markup/prose/data；默认前两类）\n- `-d, --disabled-fields <FIELD>...`：隐藏指定信息行\n- `-o, --output <FORMAT>`：以 json / yaml 输出\n- `-l, --languages`：列出支持的语言\n- `-t, --text-colors <X>...`：定制各部位文字颜色\n- `--no-art`：隐藏 ASCII 图形\n- `--no-merges`：统计时忽略合并提交\n- `-a, --ascii-language <语言>`：指定 ASCII logo 语言\n\n**示例**\n\n```\nonefetch\nonefetch -T programming\nonefetch --no-art -o json\n```\n\n**注意**\n\n- onefetch 属本项目 OWN_ARGV 家族：仅 `onefetch` 短名（tools 目录硬链接）可用，子命令模式不支持。\n- 需在 Git 仓库内运行（或显式传仓库路径）；纯 Rust 栈（gix + tokei），离线无网络请求。\n- 默认不含 prose/data 类语言（Markdown/JSON 等），要统计需 `-T` 显式带上。\n\n> 文档依据：https://github.com/o2sh/onefetch",
+    "purpose": "在终端一屏总览 Git 仓库：语言占比、提交量、贡献者。",
+    "category": "other",
+    "tags": ["Git 仓库", "统计", "语言占比"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "仓库路径", "description": "Git 仓库目录；默认当前目录", "required": false, "default": ".", "example": "." }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "Project: veloterm (HEAD -> release)\nLanguages: Rust 82.3% | TypeScript 14.1% | CSS 2.1%\nCommits: 1204 | Authors: 8 (shown 3)",
+    "source": "https://github.com/o2sh/onefetch"
+  },
+  {
+    "tool": "parallel",
+    "title": "parallel：并行执行命令（GNU parallel 风格，::: 传参）",
+    "command": "parallel {{command}} ::: {{args}}",
+    "description": "把多组参数分发给同一命令并行执行：`:::` 直接在命令行给参数表（或从 stdin 每行一组），`{}` 占位符引用当前参数，省略时自动追加到命令尾部。**本实现为 rust-parallel（tokio 并行执行器），兼容 GNU parallel 常用子集**。\n\n**语法**\n\n```\nparallel [options] [command [模板]] ::: 参数...\n命令 | parallel [options] [command]\n```\n\n**常用选项**\n\n- `-j N`：并行作业数\n- `-k`：按输入顺序输出结果\n- `--dry-run`：只打印将执行的命令，不执行\n- `--tag`：给每行输出加参数标签\n- `-a <文件>`：从文件读参数\n- `-N N`：每条命令消费 N 个参数\n- 占位符：`{}` 整行、`{.}` 去扩展名、`{/}` 基名、`{//}` 父目录\n\n**示例**\n\n```\nparallel echo ::: a b c\nfd -e zip | parallel unzip\nparallel -j 4 echo {} ::: 1 2 3 4\n```\n\n**注意**\n\n- 本实现为 rust-parallel 子集：:::、stdin 喂参、{}、-j、-k、--dry-run 等常用面可用；GNU 的 --pipe 分块、--link 等完整特性不保证，复杂需求以 GNU parallel 文档为对照基准。\n- parallel 属 OWN_ARGV 家族：仅 `parallel` 短名（tools 目录硬链接）可用。\n- 并行任务写同一输出文件会竞争，建议按参数分文件或用 -k 串行化输出。\n\n> 文档依据：https://gnu.org/software/parallel/parallel.html",
+    "purpose": "批量参数并行执行同一命令（批量压缩/转换/请求）。",
+    "category": "shell",
+    "tags": ["并行", "批量执行", "xargs 替代"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "command", "label": "命令模板", "description": "要并行执行的命令，用 {} 引用当前参数（单参数时可省略）", "required": true, "default": "echo", "example": "echo" },
+      { "name": "args", "label": "参数表", "description": "::: 之后的参数列表（空格分隔，每项一个作业）", "required": true, "default": "a b c", "example": "a b c" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "a\nb\nc",
+    "source": "https://gnu.org/software/parallel/parallel.html"
+  },
+  {
+    "tool": "printenv",
+    "title": "printenv：打印环境变量的值",
+    "command": "printenv {{var}}",
+    "description": "打印全部或指定环境变量：不带参数时每个变量一行（名字=值）；带变量名时只打印存在的变量值，不存在的静默跳过（以退出码 1 提示）。\n\n**语法**\n\n```\nprintenv [option] [variable]...\n```\n\n**常用选项**\n\n- `-0`：每行以 NUL 而非换行结尾（供程序解析含换行的值）\n- 与 env 的区别：printenv 只打印、不执行命令\n- 可一次传多个变量名，按序输出存在的\n\n**示例**\n\n```\nprintenv PATH\nprintenv\nprintenv -0\n```\n\n**注意**\n\n- 退出码：0 全部找到、1 有变量不存在、2 写错误——适合脚本探测「变量是否已设置」。\n- 打印单变量时输出不含变量名也没有引号；全量打印时按 shell-escape 风格引用。\n- cmd.exe 的 set 也列出变量（含内建），printenv 输出更适合管道处理。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/printenv-invocation.html",
+    "purpose": "查看单个或全部环境变量的值。",
+    "category": "shell",
+    "tags": ["环境变量", "查看", "shell"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "var", "label": "变量名", "description": "要查看的变量；留空打印全部", "required": false, "default": "PATH", "example": "PATH" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "C:\\Windows\\system32;C:\\Windows;…",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/printenv-invocation.html"
+  },
+  {
+    "tool": "printf",
+    "title": "printf：按格式串精确输出（比 echo 可控）",
+    "command": "printf \"{{format}}\" {{args}}",
+    "description": "按 C 风格格式串格式化参数并输出：格式串会被复用直到耗尽所有参数，缺参按空串/0 处理；转义与格式说明符都在格式串里解释，是脚本输出表格、对齐文本、日志行的首选。\n\n**语法**\n\n```\nprintf format [argument]...\n```\n\n**常用格式说明符**\n\n- `%s` 字符串、`%d`/`%i` 整数、`%x` 十六进制、`%o` 八进制、`%f` 浮点\n- `%b`：解释参数中的反斜杠转义\n- 宽度与对齐：`%10s` 右对齐 10 列、`%-10s` 左对齐、`%08d` 补零\n\n转义序列：`\\n` 换行、`\\t` 制表、`\\\\` 反斜杠、`\\xhh` 十六进制字节、`\\c` 截断后续输出。\n\n**示例**\n\n```\nprintf \"%s = %s\\n\" answer 42\nprintf \"%-8s|%8s|\\n\" key value\nprintf \"%08d\\n\" 42\n```\n\n**注意**\n\n- 格式串务必整体加引号（含空格/反斜杠时必须）。\n- `%s\\n` 里的 `\\n` 由 printf 解释，无需 shell 二次转义。\n- bash/zsh 有 printf 内建、行为基本一致；cmd 无内建，直接命中工具链版本。\n- GNU 手册建议：打印未知/变量内容时用 printf 替代 echo。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/printf-invocation.html",
+    "purpose": "按格式串精确输出对齐文本（表格、日志行）。",
+    "category": "shell",
+    "tags": ["格式化输出", "shell", "转义"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "format", "label": "格式串", "description": "printf 格式串（含 %s/%d 与 \\n 等转义）", "required": true, "default": "%s\\n", "example": "%s = %s\\n" },
+      { "name": "args", "label": "参数", "description": "依次填入格式串的参数", "required": false, "default": "answer 42", "example": "answer 42" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "answer = 42",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/printf-invocation.html"
+  },
+  {
+    "tool": "ps",
+    "title": "ps：查看进程快照（本项目自研实现，语义对齐 ps/top）",
+    "command": "ps {{flags}}",
+    "description": "列出系统进程快照：默认输出 PID / PPID / %CPU / %MEM / RSS(MB) / STAT / COMMAND 列。**本项目自研实现，输出语义对齐 tasklist/top**，Windows 下默认即列出全部进程。\n\n**语法**\n\n```\nps [options]\n```\n\n**常用选项**\n\n- `-ef` / `-f`：完整格式（UID/PID/PPID/%CPU/TIME/CMD）\n- `aux`：BSD 风格（USER/PID/%CPU/%MEM/VSZ/RSS/STAT/TIME/COMMAND，按 CPU 降序）\n- `-p <PID>[,PID...]`：按 PID 过滤（支持 `-p123` 附着与 `--pid=123` 附值形态）\n- `-C <名称>`：按进程名**或完整命令行**子串过滤（忽略大小写——`java -jar x.jar` 搜 x.jar 也能命中）\n- `--sort=[-]cpu|[-]mem|[-]pid`：排序（- 前缀为降序）\n- `-V`：版本\n\n**示例**\n\n```\nps\nps -ef\nps -C WeChat\nps --sort=-mem\n```\n\n**注意**\n\n- 自研实现（sysinfo 采集）：CPU% 需两次采样，命令内部自带约 120ms 微延时刷新，首轮输出即有占比。\n- 拿不到命令行的进程 COMMAND 列退化为进程名（exe 名）。\n- 找 PID 配合 kill；看实时刷新用 top。\n\n> 文档依据：https://learn.microsoft.com/windows-server/administration/windows-commands/tasklist",
+    "purpose": "查看进程快照：找 PID、按名称/命令行过滤进程。",
+    "category": "process",
+    "tags": ["进程列表", "PID", "进程查看"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "flags", "label": "选项", "description": "可留空列出全部；常用 -ef / aux / -C 名称 / --sort=-mem", "required": false, "default": "", "example": "--sort=-mem" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "    PID    PPID   %CPU   %MEM   RSS(MB) STAT     COMMAND\n   4212    1284    2.3    1.1     87.5 S        WeChat.exe",
+    "source": "https://learn.microsoft.com/windows-server/administration/windows-commands/tasklist"
+  },
+  {
+    "tool": "rg",
+    "title": "rg：ripgrep 递归正则搜索（比 grep 快得多的代码搜索）",
+    "command": "rg -n \"{{pattern}}\" {{path}}",
+    "description": "按行递归搜索正则模式：默认搜当前目录，自动跳过 .gitignore 命中的文件与隐藏文件；为代码搜索优化，是 grep 的高速替代。\n\n**语法**\n\n```\nrg [OPTIONS] PATTERN [PATH...]\n```\n\n**常用选项**\n\n- `-n`：显示行号\n- `-i` 忽略大小写；`-S` 智能大小写（模式含大写才区分）\n- `-F`：按字面字符串搜索（不当正则）\n- `-w`：整词匹配\n- `-c`：只统计各文件命中行数；`-o`：只输出匹配部分\n- `-t <类型>`：按文件类型过滤（如 `-t rust`）；`--type-list` 列出全部类型\n- `-g <glob>`：路径 glob 过滤（`-g '*.toml'`；`!` 前缀排除）\n- `-C N`：显示匹配处上下各 N 行\n- `--hidden` / `--no-ignore`：搜隐藏文件 / 无视 ignore 规则（`-u`/`-uu`/`-uuu` 逐级放开）\n- `-r <串>`：仅替换显示文本（不改文件），支持 `$1` 捕获组\n- `--files`：只列出将被搜索的文件\n\n**示例**\n\n```\nrg -n \"TODO|FIXME\" src\nrg -i -t rust unsafe\nrg lexopt -g '*.toml'\n```\n\n**注意**\n\n- rg 属本项目 OWN_ARGV 家族：仅 `rg` 短名（tools 目录硬链接）可用，`coreutils rg` 子命令模式不支持。\n- 默认尊重 .gitignore 且跳过隐藏文件——查配置类文件记得 `--hidden` 或 `-u`。\n- 正则里 Windows 路径分隔符要写双反斜杠（`\\` 是正则转义符）。\n\n> 文档依据：https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md",
+    "purpose": "在代码/文本里递归正则搜索（grep 的高速替代）。",
+    "category": "text",
+    "tags": ["ripgrep", "搜索", "代码检索"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "pattern", "label": "正则表达式", "description": "搜索模式", "required": true, "default": "TODO|FIXME", "example": "TODO|FIXME" },
+      { "name": "path", "label": "搜索路径", "description": "文件或目录，省略则当前目录", "required": false, "default": ".", "example": "src" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "src/main.rs:42: // TODO refactor error handling",
+    "source": "https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md"
+  },
+  {
+    "tool": "rg",
+    "title": "rg 进阶：按文件类型过滤并展开上下文查看命中处",
+    "command": "rg -n -C {{context}} -t {{type}} \"{{pattern}}\"",
+    "description": "组合三件套定位代码：`-t` 收窄文件类型、`-C` 展开命中处上下文、`-n` 带行号——审代码、追调用点时比只看命中行好用得多。\n\n**语法**\n\n```\nrg [OPTIONS] PATTERN [PATH...]\n```\n\n**常用选项**\n\n- `-t <类型>` / `-T <类型>`：只搜 / 排除该类型（如 `-t rust`）\n- `-t all`：匹配全部类型\n- `-C N`：显示匹配行上下各 N 行\n- `--type-list`：列出全部内置类型名\n- `-g <glob>`：与类型过滤叠加的路径过滤（AND 关系）\n\n**示例**\n\n```\nrg -n -C 3 -t rust unwrap\nrg -n -C 2 -t toml version Cargo.toml\nrg --type-list\n```\n\n**注意**\n\n- 仅 `rg` 短名（tools 目录硬链接）可用（OWN_ARGV 家族），子命令模式不支持。\n- 类型名以 `rg --type-list` 输出为准，不同版本可用的类型不同。\n- 排除生成的代码用 `-T`（如 `-T vendored`）比 `-g '!dir'` 更简洁。\n\n> 文档依据：https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md",
+    "purpose": "按文件类型收窄搜索并展开上下文，追调用点/审代码。",
+    "category": "text",
+    "tags": ["ripgrep", "上下文", "文件类型"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "context", "label": "上下文行数", "description": "命中处前后各显示的行数", "required": false, "default": "3", "example": "3" },
+      { "name": "type", "label": "文件类型", "description": "rg 内置类型名（rg --type-list 查看）", "required": false, "default": "rust", "example": "rust" },
+      { "name": "pattern", "label": "正则表达式", "description": "搜索模式", "required": true, "default": "unwrap", "example": "unwrap" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "src/lib.rs:11-    let cfg = load();\nsrc/lib.rs:12:    let x = cfg.unwrap();\nsrc/lib.rs:13-    drop(x);",
+    "source": "https://github.com/BurntSushi/ripgrep/blob/master/GUIDE.md"
+  },
+  {
+    "tool": "sleep",
+    "title": "sleep：暂停指定时长（脚本延时）",
+    "command": "sleep {{duration}}",
+    "description": "让脚本暂停指定时长：默认单位秒，支持 s/m/h/d 后缀，多个参数相加；支持小数（如 0.5 秒）。\n\n**语法**\n\n```\nsleep number[smhd]...\n```\n\n**常用选项**\n\n- 仅 `--help` / `--version`\n- 后缀：`s` 秒（默认）、`m` 分、`h` 时、`d` 天\n- 多参数取总和：`sleep 2m 30s`\n\n**示例**\n\n```\nsleep 5\nsleep 2m 30s\nsleep 0.5\n```\n\n**注意**\n\n- cmd.exe 内建的 timeout（`timeout /t 5`）也能等待，但它是交互式的且 stdin 被重定向时会报错；脚本/管道场景用 sleep 更稳。\n- 轮询间隔、重试退避的标准写法：`sleep 2 && 重试命令`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/sleep-invocation.html",
+    "purpose": "脚本里延时等待（轮询间隔、重试退避）。",
+    "category": "shell",
+    "tags": ["延时", "等待", "脚本"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "duration", "label": "时长", "description": "数字（默认秒）或带 s/m/h/d 后缀", "required": true, "default": "1", "example": "5" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "（静默等待 5 秒后返回，退出码 0）",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/sleep-invocation.html"
+  },
+  {
+    "tool": "test",
+    "title": "test：条件判断（文件/字符串/数值比较，退出码定真假）",
+    "command": "test {{expression}}",
+    "description": "求值条件表达式并以退出码给出真假（0 真 / 1 假 / 2 出错），是 shell 脚本 if/while 的判定基础；`[ 表达式 ]` 是它的等价写法（本工具链未提供 `[` 短名，用 test 即可）。\n\n**语法**\n\n```\ntest expression\n```\n\n**常用判断**\n\n- 文件：`-e` 存在、`-f` 普通文件、`-d` 目录、`-s` 非空、`-r`/`-w`/`-x` 可读/写/执行、`-L` 符号链接、`-nt`/`-ot` 新旧比较\n- 字符串：`-z` 空串、`-n` 非空、`=` 相等、`!=` 不等\n- 数值（整数）：`-eq`、`-ne`、`-lt`、`-le`、`-gt`、`-ge`\n- 连接词：`!` 取反、`-a` 且、`-o` 或（GNU 手册建议改用 shell 的 && / ||）\n\n**示例**\n\n```\ntest -d C:\\Windows && echo is-dir\ntest -z \"\" && echo empty\ntest 3 -lt 5 && echo less\n```\n\n**注意**\n\n- 空表达式恒为假；单个非空参数即真。\n- 数值比较只接受纯整数（可带负号），`0x100` 这类会报「integer expression expected」。\n- cmd.exe 批处理有自己的 if 语法；test 主要用于跨平台脚本（Git Bash/CI）场景。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/test-invocation.html",
+    "purpose": "脚本条件判断：文件/字符串/数值比较。",
+    "category": "shell",
+    "tags": ["条件判断", "退出码", "脚本"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "expression", "label": "条件表达式", "description": "test 表达式（如 -d 目录 / -z 空串 / 1 -eq 1）", "required": true, "default": "-d C:\\Windows", "example": "-d C:\\Windows" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "（无输出；表达式为真退出码 0，为假退出码 1，出错 2）",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/test-invocation.html"
+  },
+  {
+    "tool": "timeout",
+    "title": "timeout：限时运行命令，超时自动终止",
+    "command": "timeout {{duration}} {{command}}",
+    "description": "运行命令并在超过时限后杀掉它：默认发 TERM，可配 `-k` 再补 KILL；时长支持 s/m/h/d 后缀（默认秒），可带小数，0 表示不限时。\n\n**语法**\n\n```\ntimeout [option]... duration command [arg]...\n```\n\n**常用选项**\n\n- `-s <信号>`：超时改发指定信号（默认 TERM）\n- `-k <时长>`：初始信号发出后再等该时长补发 KILL\n- `-p`：超时时保留命令自身退出码（不返回 124）\n- `-f`：前台模式（命令可交互、能响应 Ctrl-C）\n- `-v`：把发出的信号报告到 stderr\n\n**示例**\n\n```\ntimeout 5 ping -n 30 127.0.0.1\ntimeout -s INT 5 app.exe\ntimeout -k 3 10 build.bat\n```\n\n**注意**\n\n- cmd.exe 的 timeout 是内建（等待 N 秒用）：交互输入 `timeout 5 命令` 会命中内建而非本工具；需要 GNU 语义请显式调用 timeout.exe（完整路径）。\n- 退出码：124 超时、125 timeout 自身失败、126/127 命令不可调用/找不到、137 涉及 KILL。\n- 给网络探测、构建脚本等可能挂起的命令加保险的标准姿势。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/timeout-invocation.html",
+    "purpose": "给可能挂起的命令加时限保险。",
+    "category": "process",
+    "tags": ["超时", "限时运行", "保险"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "duration", "label": "时限", "description": "数字（默认秒）或带 s/m/h/d 后缀", "required": true, "default": "10", "example": "10" },
+      { "name": "command", "label": "要运行的命令", "description": "被限时的命令", "required": true, "default": "ping -n 30 127.0.0.1", "example": "ping -n 30 127.0.0.1" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "（超过时限仍未结束则被终止，退出码 124）",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/timeout-invocation.html"
+  },
+  {
+    "tool": "top",
+    "title": "top：实时进程与资源监控（本项目自研实现，-b 出快照）",
+    "command": "top {{flags}}",
+    "description": "实时刷新 CPU、内存、交换分区与进程列表的资源监控视图。**本项目自研实现，输出语义对齐 top**：交互模式支持按键排序与滚动，`-b` 批处理模式输出文本快照（适合管道与记录）。\n\n**语法**\n\n```\ntop [options]\n```\n\n**常用选项**\n\n- `-b`：批处理模式（无交互、文本输出）\n- `-n <N>`：刷新 N 轮后退出（批处理下默认 1 轮）\n- `-d <秒>`：刷新间隔（默认 2.0 秒）\n- `-p <PID>`：只监控指定进程\n- `-V`：版本\n\n交互按键：q/Esc 退出、c 按 CPU 排序、m 按内存排序、p 按 PID 排序、方向键（k/j）滚动、PageUp/PageDown 翻页、空格立即刷新。\n\n**示例**\n\n```\ntop -b -n 1\ntop -b -n 3 -d 5\ntop -p 4212\n```\n\n**注意**\n\n- 自研实现（sysinfo + crossterm）：交互式 TUI 需要真实终端；非终端/管道环境自动转批处理输出。\n- CPU% 依赖两次采样差分，首轮显示前有约 100ms 采样间隔。\n- 一次性定位吃内存/CPU 的进程也可用 `ps --sort=-mem` / `ps aux`。\n\n> 文档依据：https://learn.microsoft.com/windows-server/administration/windows-commands/tasklist",
+    "purpose": "实时看 CPU/内存与进程排行；-b 出文本快照。",
+    "category": "process",
+    "tags": ["资源监控", "实时", "进程排行"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "flags", "label": "选项", "description": "默认 -b -n 1 出一次快照；交互模式留空 flags 但需真实终端", "required": false, "default": "-b -n 1", "example": "-b -n 1" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "top - up 02:14,  183 tasks,  Sort: %CPU\nMiB Mem :  16384 total,   9216 used | Swap:  2048 total,   128 used\n    PID    PPID   %CPU   %MEM   RSS(MB) STAT     COMMAND\n   4212    1284   12.4    5.3    871.0 R        WeChat.exe",
+    "source": "https://learn.microsoft.com/windows-server/administration/windows-commands/tasklist"
+  },
+  {
+    "tool": "true",
+    "title": "true：什么都不做，返回成功退出码 0",
+    "command": "true",
+    "description": "不执行任何动作，仅返回退出码 0；常作脚本占位符与永真条件。\n\n**语法**\n\n```\ntrue [option]\n```\n\n**常用选项**\n\n- 仅 `--help` / `--version`\n\n**示例**\n\n```\ntrue && echo ok\nwhile true; do ...; done\n```\n\n**注意**\n\n- 多数 shell 有同名内建（脚本里也可用 `:` 占位）；本工具链版本为 uutils 跨平台实现。\n- 手册注明仅当 `--version` 的输出写出错（如重定向到满盘）时才可能非零退出。\n- 与 false 成对：测试布尔逻辑、构造空成功分支。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/true-invocation.html",
+    "purpose": "脚本占位：空操作/永真条件。",
+    "category": "shell",
+    "tags": ["退出码", "占位", "shell"],
+    "platforms": ["win"],
+    "params": [],
+    "dangerLevel": "safe",
+    "exampleOutput": "（无输出，退出码 0）",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/true-invocation.html"
+  },
+  {
+    "tool": "tty",
+    "title": "tty：打印标准输入连接的终端名",
+    "command": "tty",
+    "description": "打印连接到标准输入的终端文件名；stdin 不是终端时输出 `not a tty`。更常用的是它的退出码——0 表示终端、1 表示非终端，可在脚本里探测运行环境。\n\n**语法**\n\n```\ntty [option]\n```\n\n**常用选项**\n\n- `-s` / `--silent` / `--quiet`：不打印任何内容，只给退出码\n\n**示例**\n\n```\ntty\ntty -s && echo interactive\n```\n\n**注意**\n\n- 退出码语义：0 stdin 是终端、1 非终端、2 参数错误、3 写错误、4 终端名不可得。\n- 在管道/重定向下运行会输出 `not a tty`——这正是它的探测价值。\n- Windows 终端（ConPTY）下终端名的具体形态以实现输出为准；判断交互环境优先看退出码。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/tty-invocation.html",
+    "purpose": "探测标准输入是否连接到交互终端。",
+    "category": "system",
+    "tags": ["终端", "stdin", "探测"],
+    "platforms": ["win"],
+    "params": [],
+    "dangerLevel": "safe",
+    "exampleOutput": "（stdin 是终端 → 打印终端名、退出码 0；否则打印 not a tty、退出码 1）",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/tty-invocation.html"
+  },
+  {
+    "tool": "uname",
+    "title": "uname：打印系统内核/架构信息（uname -a 全量）",
+    "command": "uname {{flags}}",
+    "description": "打印系统标识信息：默认只打印内核名（等价 `-s`），`-a` 依序输出内核名/节点名/内核发行版/内核版本/机器架构等；脚本最常用 `-m`（架构）与 `-r`（内核版本）。\n\n**语法**\n\n```\nuname [option]...\n```\n\n**常用选项**\n\n- `-a`：全部信息（未知项省略）\n- `-s` 内核名、`-n` 节点名（主机名）、`-r` 内核发行版、`-v` 内核版本\n- `-m`：机器硬件架构（x86_64 / aarch64；等价 arch 命令）\n- `-o`：操作系统名\n- `-p` / `-i`：处理器类型 / 硬件平台（不可得时输出 unknown，手册注明不可移植）\n\n**示例**\n\n```\nuname -a\nuname -m\nuname -r\n```\n\n**注意**\n\n- 多选项输出顺序固定：内核名、节点名、发行版、版本、机器、处理器、硬件平台、操作系统名。\n- 内核版本串可能含空格，别对 `-a` 输出做无脑按列切分。\n- 各字段取值随平台实现而异（Windows 上按系统能力映射），跨平台脚本只取明确需要的字段。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/uname-invocation.html",
+    "purpose": "查系统内核名/版本/架构（uname -a 全量）。",
+    "category": "system",
+    "tags": ["系统信息", "内核", "架构"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "flags", "label": "选项", "description": "可组合；默认 -a 全量输出", "required": false, "default": "-a", "example": "-a" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "Windows DESKTOP-ABC1234 10.0.19045 x86_64",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/uname-invocation.html"
+  },
+  {
+    "tool": "uptime",
+    "title": "uptime：系统开机时长与负载概览",
+    "command": "uptime",
+    "description": "打印当前时间、系统已运行时长、登录用户数与 1/5/15 分钟负载平均（手册示例格式如 `14:07 up 3:35, 3 users, load average: 1.39, 1.15, 1.04`），巡检时快速判断机器状态。\n\n**语法**\n\n```\nuptime [option]\n```\n\n**常用选项**\n\n- 仅 `--help` / `--version`（GNU coreutils 版；procps 发行版的 -p/-s 扩展不属于它）\n\n**示例**\n\n```\nuptime\n14:07  up 3:35, 3 users, load average: 1.39, 1.15, 1.04\n```\n\n**注意**\n\n- 负载口径随系统而异：有的只算可运行进程，Linux 还计入不可中断睡眠（等 I/O）的进程。\n- Windows 上负载的采样实现与 Linux 内核口径不同，看趋势不看绝对值。\n- 要看「哪个进程在吃资源」用 top 或 `ps --sort=-mem`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/uptime-invocation.html",
+    "purpose": "看开机时长与负载趋势。",
+    "category": "system",
+    "tags": ["开机时长", "负载", "巡检"],
+    "platforms": ["win"],
+    "params": [],
+    "dangerLevel": "safe",
+    "exampleOutput": "14:07  up 3:35, 3 users, load average: 1.39, 1.15, 1.04",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/uptime-invocation.html"
+  },
+  {
+    "tool": "wget",
+    "title": "wget：从网络下载文件（断点续传/限速）",
+    "command": "wget \"{{url}}\"",
+    "description": "从 URL 下载文件到当前目录：默认按原文件名保存，支持断点续传、限速、重试与从文件批量下载。本集成为 wget-rs 库封装（Rust 实现），常用参数对齐 GNU wget。\n\n**语法**\n\n```\nwget [option]... [URL]...\n```\n\n**常用选项**\n\n- `-O <文件>`：保存为指定文件（`-O -` 输出到 stdout）\n- `-c`：断点续传（需服务端支持 Range）\n- `-q`：静默模式\n- `-P <目录>`：指定保存目录\n- `-t <N>`：重试次数（默认 20；0/inf 无限）\n- `-T <秒>`：网络超时（覆盖 DNS/连接/读取）\n- `--limit-rate=200k`：限速下载\n- `-i <文件>`：从文件读 URL 批量下载（`-` 读 stdin）\n- `-b`：转入后台（输出进 wget-log）\n- `--spider`：只探测 URL 可达，不下载\n\n**示例**\n\n```\nwget https://example.com/file.zip\nwget -c --limit-rate=200k -t 10 https://example.com/big.iso\nwget -q -O - https://example.com/api | jq .\n```\n\n**注意**\n\n- 本集成为 wget-rs 封装：单文件下载/续传/限速等常用面可用，递归镜像（-r）等高级特性可能不完整，以实际行为为准。\n- 手册安全提示：不要把含密码的 URL 写在命令行（进程列表可见）；用 `wget -i -` 从 stdin 喂入。\n- 断点续传前确认服务端支持 Range，否则 `-c` 可能整体重下。\n\n> 文档依据：https://www.gnu.org/software/wget/manual/wget.html",
+    "purpose": "下载文件：断点续传、限速、批量。",
+    "category": "network",
+    "tags": ["下载", "网络", "断点续传"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "url", "label": "下载地址", "description": "文件的 http/https/ftp URL", "required": true, "default": "https://example.com/file.zip", "example": "https://example.com/file.zip" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "'file.zip' saved [1048576/1048576]",
+    "source": "https://www.gnu.org/software/wget/manual/wget.html"
+  },
+  {
+    "tool": "which",
+    "title": "which：在 PATH 中定位可执行文件（本项目自研）",
+    "command": "which {{command}}",
+    "description": "对每个给定的命令名，按 PATH 顺序查找并打印第一个命中的可执行文件全路径；找不到时输出告警并返回退出码 1。**本项目自研实现**：Windows 下自动尝试 PATHEXT 扩展名（无扩展名及 .exe/.bat/.cmd/.com）。\n\n**语法**\n\n```\nwhich command [command...]\n```\n\n**常用选项**\n\n- 无额外选项；可一次传多个命令名，逐个输出命中的路径\n\n**示例**\n\n```\nwhich rg\nwhich rg bat fd\n```\n\n**注意**\n\n- 只查 PATH 中的外部可执行文件，不含 shell 内建与别名（cmd 的 echo/date、PowerShell 的函数都不在其列）。\n- Windows 语义近亲：cmd 的 where.exe、PowerShell 的 Get-Command。\n- 排查「命令到底跑的哪一个」时注意 PATH 顺序——System32 在前会遮蔽同名工具。\n\n> 文档依据：https://en.wikipedia.org/wiki/Which_(command)",
+    "purpose": "确认某命令在 PATH 里实际命中的是哪个文件。",
+    "category": "shell",
+    "tags": ["PATH", "定位命令", "自研"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "command", "label": "命令名", "description": "要定位的可执行文件名（可多个空格分隔）", "required": true, "default": "rg", "example": "rg" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "C:\\Program Files\\VeloTerm\\tools\\rg.exe",
+    "source": "https://en.wikipedia.org/wiki/Which_(command)"
+  },
+  {
+    "tool": "whoami",
+    "title": "whoami：打印当前有效用户名（等价 id -un）",
+    "command": "whoami",
+    "description": "打印与当前有效用户 ID 关联的用户名，GNU 手册注明「等价于 id -un」；在提权会话与远程会话里核对身份最常用。\n\n**语法**\n\n```\nwhoami [option]\n```\n\n**常用选项**\n\n- 仅 `--help` / `--version`\n\n**示例**\n\n```\nwhoami\ndesktop-abc1234\\zhangyue\n```\n\n**注意**\n\n- Windows 自带 System32\\whoami.exe（输出「计算机\\用户」形态），PATH 顺序决定命中哪个，语义一致。\n- 核对「当前是不是管理员权限」更直接的方式是单看用户名后缀或用 whoami /groups（系统版）。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/whoami-invocation.html",
+    "purpose": "核对当前会话的运行用户。",
+    "category": "system",
+    "tags": ["用户", "身份", "系统信息"],
+    "platforms": ["win"],
+    "params": [],
+    "dangerLevel": "safe",
+    "exampleOutput": "desktop-abc1234\\zhangyue",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/whoami-invocation.html"
+  },
+  {
+    "tool": "yes",
+    "title": "yes：持续重复输出字符串（默认 y，用于自动应答）",
+    "command": "yes {{string}}",
+    "description": "无限重复打印参数（默认 `y`）加换行，直到被杀掉：常接管道给交互式问 yes/no 的命令自动应答；下游关闭管道（写错误）时以退出码 1 自然结束。\n\n**语法**\n\n```\nyes [string]...\n```\n\n**常用选项**\n\n- 仅 `--help` / `--version`\n- 多个参数以空格连接成一行重复输出\n\n**示例**\n\n```\nyes | rm -ri olddir\nyes n | cp -ri a b\nyes -- --help\n```\n\n（最后一条演示用 `--` 打印以 `-` 开头的字符串）\n\n**注意**\n\n- 裸跑 yes 会无限刷屏，Ctrl+C 终止；管道场景由下游关闭管道自然结束。\n- 要打印以 `-` 开头的串用 `yes -- -xxx`，否则会被当选项。\n- 自动应答（`yes | 命令`）对 rm -i / cp -i 这类逐项确认的命令最常用；cmd 管道下同样可用。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/yes-invocation.html",
+    "purpose": "给交互式命令自动应答 y（管道喂数）。",
+    "category": "shell",
+    "tags": ["自动应答", "重复输出", "管道"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "string", "label": "重复内容", "description": "要重复输出的字符串；留空输出 y", "required": false, "default": "", "example": "y" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "y\ny\ny …（Ctrl+C 停止）",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/yes-invocation.html"
+  }
+]
