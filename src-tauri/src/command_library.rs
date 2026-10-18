@@ -74,6 +74,10 @@ pub struct CommandRecord {
     pub category: String,
     /// 自由标签 JSON 数组（如 ["sed","替换"]） */
     pub tags: Vec<String>,
+    /// 适配系统多选（win/linux/mac，子集；空 = 通用全部平台）。
+    /// 存量数据与旧导出文件无此字段，serde 默认空（语义即通用），导入导出天然兼容 */
+    #[serde(default)]
+    pub platforms: Vec<String>,
     /// 结构化参数说明 */
     pub params: Vec<CommandParam>,
     pub danger_level: DangerLevel,
@@ -119,6 +123,12 @@ fn ensure_table(pool: &DbPool) -> Result<(), String> {
     {
         return Err(format!("failed to apply column migration `uuid`: {e}"));
     }
+    // 适配系统多选（win/linux/mac）：后期新增列，同样幂等 ALTER；默认 '[]' = 通用全部
+    if let Err(e) = conn.execute_batch("ALTER TABLE commands ADD COLUMN platforms TEXT NOT NULL DEFAULT '[]';")
+        && !e.to_string().contains("duplicate column")
+    {
+        return Err(format!("failed to apply column migration `platforms`: {e}"));
+    }
     // 存量行一次性回填 v4 形态 uuid（8-4-4-4-12，SQL 内生成）——必须在建唯一索引前完成
     conn.execute_batch(
         "UPDATE commands
@@ -132,9 +142,24 @@ fn ensure_table(pool: &DbPool) -> Result<(), String> {
     Ok(())
 }
 
+/// 适配系统取值清洗：仅保留 win/linux/mac，去重后按固定序排列；
+/// 全选与空在读取侧归一为空（语义即「通用」，展示与导入导出无需携带冗余值）
+fn normalize_platforms(raw: &[String]) -> Vec<String> {
+    const ORDER: [&str; 3] = ["win", "linux", "mac"];
+    let mut picked: Vec<&str> = ORDER
+        .into_iter()
+        .filter(|p| raw.iter().any(|r| r.eq_ignore_ascii_case(p)))
+        .collect();
+    if picked.len() == ORDER.len() {
+        picked.clear();
+    }
+    picked.into_iter().map(str::to_string).collect()
+}
+
 fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<CommandRecord> {
     let tags_json: String = row.get("tags")?;
     let params_json: String = row.get("params")?;
+    let platforms_json: String = row.get("platforms")?;
     let danger_str: String = row.get("danger_level")?;
     let last_used: Option<i64> = row.get("last_used_at")?;
     let is_pinned: i64 = row.get("is_pinned")?;
@@ -154,6 +179,9 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<CommandRecord> {
         purpose: row.get("purpose")?,
         category: row.get("category")?,
         tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+        platforms: normalize_platforms(
+            &serde_json::from_str::<Vec<String>>(&platforms_json).unwrap_or_default(),
+        ),
         params: serde_json::from_str(&params_json).unwrap_or_default(),
         danger_level,
         example_output: row.get("example_output")?,
@@ -169,15 +197,12 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<CommandRecord> {
 
 /// 全字段模糊搜索；keyword 为 None/空时返回全量。
 /// 排序：is_pinned DESC → usage_count DESC → last_used_at DESC
-#[tauri::command]
-pub fn command_list(
-    keyword: Option<String>,
-    state: State<'_, DbPool>,
-) -> Result<Vec<CommandRecord>, String> {
-    ensure_table(&state)?;
-    let conn = state.get().map_err(|e| e.to_string())?;
+///（核心与 Tauri 包装分离，供命令与测试共用）
+fn list_records(pool: &DbPool, keyword: Option<&str>) -> Result<Vec<CommandRecord>, String> {
+    ensure_table(pool)?;
+    let conn = pool.get().map_err(|e| e.to_string())?;
 
-    let kw = keyword.unwrap_or_default().trim().to_string();
+    let kw = keyword.unwrap_or_default().trim();
     if kw.is_empty() {
         let mut stmt = conn
             .prepare(
@@ -207,6 +232,14 @@ pub fn command_list(
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn command_list(
+    keyword: Option<String>,
+    state: State<'_, DbPool>,
+) -> Result<Vec<CommandRecord>, String> {
+    list_records(&state, keyword.as_deref())
 }
 
 /// 获取下一个可用 id（新记录前端传 0，后端分配）
@@ -248,12 +281,14 @@ fn save_command_impl(record: &mut CommandRecord, pool: &DbPool) -> Result<(), St
         record.uuid = Uuid::new_v4().to_string();
     }
     record.updated_at = chrono_now_ms();
+    // 适配系统入列前同样清洗（保持与读取侧一致的归一形态）
+    record.platforms = normalize_platforms(&record.platforms);
 
     let conn = pool.get().map_err(|e| e.to_string())?;
     conn.execute(
         "INSERT INTO commands (id, uuid, title, command, description, purpose, category, tags, params,
-         danger_level, example_output, usage_count, last_used_at, is_pinned, created_at, updated_at)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
+         danger_level, example_output, usage_count, last_used_at, is_pinned, created_at, updated_at, platforms)
+       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
        ON CONFLICT(id) DO UPDATE SET
          title = excluded.title,
          command = excluded.command,
@@ -265,7 +300,8 @@ fn save_command_impl(record: &mut CommandRecord, pool: &DbPool) -> Result<(), St
          danger_level = excluded.danger_level,
          example_output = excluded.example_output,
          is_pinned = excluded.is_pinned,
-         updated_at = excluded.updated_at",
+         updated_at = excluded.updated_at,
+         platforms = excluded.platforms",
         rusqlite::params![
             record.id as i64,
             record.uuid,
@@ -287,6 +323,7 @@ fn save_command_impl(record: &mut CommandRecord, pool: &DbPool) -> Result<(), St
             record.is_pinned as i64,
             record.created_at,
             record.updated_at,
+            serde_json::to_string(&record.platforms).unwrap_or_else(|_| "[]".to_string()),
         ],
     )
     .map_err(|e| e.to_string())?;
@@ -1114,6 +1151,7 @@ mod tests {
             purpose: String::new(),
             category: String::new(),
             tags: Vec::new(),
+            platforms: Vec::new(),
             params: Vec::new(),
             danger_level: DangerLevel::Safe,
             example_output: String::new(),
@@ -1192,6 +1230,48 @@ mod tests {
         let json = serde_json::to_string(&param).unwrap();
         let parsed: CommandParam = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, param);
+    }
+
+    // ── 适配系统多选（platforms）──
+
+    #[test]
+    fn platforms_save_and_list_roundtrip() {
+        let pool = test_pool();
+        ensure_table(&pool).expect("ensure_table should succeed");
+        let mut record = blank_record("仅 Linux 命令", "systemctl status {{unit}}");
+        record.platforms = vec!["linux".to_string()];
+        save_command_impl(&mut record, &pool).expect("save should succeed");
+
+        let all = list_records(&pool, None).expect("list should succeed");
+        let saved = all.iter().find(|r| r.title == "仅 Linux 命令").expect("saved row");
+        assert_eq!(saved.platforms, vec!["linux".to_string()]);
+
+        // 更新为 win+mac 子集：UPSERT 分支同步 platforms
+        let mut updated = saved.clone();
+        updated.platforms = vec!["mac".into(), "win".into()];
+        save_command_impl(&mut updated, &pool).expect("update should succeed");
+        let all = list_records(&pool, None).expect("list should succeed");
+        let saved = all.iter().find(|r| r.title == "仅 Linux 命令").expect("updated row");
+        assert_eq!(saved.platforms, vec!["win".to_string(), "mac".to_string()]);
+    }
+
+    #[test]
+    fn platforms_normalize_and_legacy_default() {
+        // 清洗：非法值丢弃、大小写归一、去重；全选归一为空（通用）
+        assert_eq!(
+            normalize_platforms(&["Linux".into(), "bsd".into(), "linux".into(), "WIN".into()]),
+            vec!["win".to_string(), "linux".to_string()]
+        );
+        assert!(normalize_platforms(&["win".into(), "mac".into(), "linux".into()]).is_empty());
+        assert!(normalize_platforms(&[]).is_empty());
+
+        // 旧导出/旧负载无 platforms 字段：serde 缺省为空，语义即通用
+        let legacy = r#"{"id":0,"uuid":"","title":"t","command":"ls","description":"",
+            "purpose":"","category":"","tags":[],"params":[],"dangerLevel":"safe",
+            "exampleOutput":"","usageCount":0,"lastUsedAt":null,"isPinned":false,
+            "createdAt":0,"updatedAt":0}"#;
+        let parsed: CommandRecord = serde_json::from_str(legacy).expect("legacy json should parse");
+        assert!(parsed.platforms.is_empty());
     }
 
     // ── VTCD 二进制容器 ──

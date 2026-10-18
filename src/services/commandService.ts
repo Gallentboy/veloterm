@@ -21,6 +21,8 @@ export interface CommandRecord {
   purpose: string;
   category: string;
   tags: string[];
+  /** 适配系统多选（win/linux/mac 子集；空 = 通用全部平台，旧数据/旧导入后端补默认） */
+  platforms: string[];
   params: CommandParam[];
   dangerLevel: DangerLevel;
   exampleOutput: string;
