@@ -1043,7 +1043,7 @@ function ZkSessionView({
                 </span>
               ) : null}
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-2">
               {searchQuery.trim() && orderedPaths.length === 0 && !searching ? (
                 <div className="px-2 py-4 text-center text-ui-xs text-foreground-subtlest select-none">
                   {t('zk.searchNoMatch')}
@@ -1056,7 +1056,7 @@ function ZkSessionView({
                     'group flex h-7 items-center gap-1 rounded-lg pr-1 transition-colors',
                     selected === node.path ? 'bg-selected' : 'hover:bg-surface-hover',
                   )}
-                  style={{ paddingLeft: `${node.depth * 14 + 4}px` }}
+                  style={{ paddingLeft: `${node.depth * 14}px` }}
                 >
                   <button
                     type="button"
