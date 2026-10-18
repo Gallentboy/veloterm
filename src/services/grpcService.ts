@@ -66,3 +66,30 @@ export function grpcTlsSave(record: GrpcTlsProfile): Promise<GrpcTlsProfile> {
 export function grpcTlsDelete(id: number): Promise<void> {
   return invoke('grpc_tls_delete', { id });
 }
+
+/** gRPC 调用种子：ZK 节点数据识别出服务地址后，一键带去 gRPC 页新 tab 自动填充。 */
+export interface GrpcCallSeed {
+  /** host:port */
+  target: string;
+  /** 服务全名（URL path 段） */
+  service: string;
+  /** 原文是 https:// 则为 true（提示 TLS 可能需要开启） */
+  tls: boolean;
+}
+
+/** 识别 gRPC 服务地址：`https?://host:port/服务全名?...` 或裸 `host:port/服务全名`。
+ *  服务段必须含点（至少一层包名）才算命中，避免误报普通 URL/路径。 */
+export function parseGrpcServiceUrl(text: string): GrpcCallSeed | null {
+  const trimmed = text.trim();
+  const match = trimmed.match(
+    /^(https?:\/\/)?([A-Za-z0-9._-]+):(\d{1,5})\/([A-Za-z0-9_.$-]+?)(?:[/?#].*)?$/,
+  );
+  if (!match) return null;
+  const service = match[4] ?? '';
+  if (!service.includes('.')) return null;
+  return {
+    target: `${match[2]}:${match[3]}`,
+    service,
+    tls: (match[1] ?? '').toLowerCase().startsWith('https'),
+  };
+}

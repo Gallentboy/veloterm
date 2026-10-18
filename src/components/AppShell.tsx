@@ -504,7 +504,16 @@ export function AppShell() {
                 </div>
                 {/* ZooKeeper 视图持久挂载（同 SFTP）：切换页面保持会话/树/编辑状态 */}
                 <div className={cn('h-full min-h-0 w-full', page !== 'zk' && 'hidden')}>
-                  <ZkScreen isVisible={page === 'zk'} />
+                  <ZkScreen
+                    isVisible={page === 'zk'}
+                    onOpenGrpcCall={(seed) => {
+                      // 与 GrpcScreen 的监听约定：收到种子即新增 tab 并自动填充
+                      window.dispatchEvent(
+                        new CustomEvent('veloterm:grpc-open-call', { detail: seed }),
+                      );
+                      setPage('grpc');
+                    }}
+                  />
                 </div>
                 {/* gRPC 调试视图持久挂载：切换页面保持表单输入（目标/TLS/认证配置） */}
                 <div className={cn('h-full min-h-0 w-full', page !== 'grpc' && 'hidden')}>

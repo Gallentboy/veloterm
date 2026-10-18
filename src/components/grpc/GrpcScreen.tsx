@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Network, Pencil, Play, Plus, Settings2, Trash2 } from 'lucide-react';
+import { Loader2, Network, Pencil, Play, Plus, Settings2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
@@ -11,21 +11,166 @@ import {
   grpcTlsDelete,
   grpcTlsList,
   grpcTlsSave,
+  type GrpcCallSeed,
   type GrpcHeaderPair,
   type GrpcTlsProfile,
 } from '@/services/grpcService';
 import { cn } from '@/lib/utils';
 
-/**
- * gRPC 调试页：一元调用（服务名 + 方法名 + JSON 入参 → JSON 出参），schema 经
- * 服务器反射获取。TLS 走配置库（校验域名为 key，只能下拉选择、要用先保存，
- * CA/证书/私钥由后端按 id 解析）；认证（Bearer/metadata）直接可配。
- * 表单状态组件内留存（页面常驻挂载，切页不丢）。
- */
+/** 会话 tab：seed 是建 tab 时携带的自动填充种子（ZK 节点的一键调用入口），
+ *  GrpcSessionView 挂载时消费一次 */
+interface GrpcTab {
+  key: number;
+  customTitle: string | null;
+  baseTitle: string | null;
+  seed: GrpcCallSeed | null;
+}
+
+/** gRPC 调试页（多 tab）：一元调用（服务名 + 方法名 + JSON 入参 → JSON 出参），
+ * schema 经服务器反射获取；TLS 走配置库（校验域名为 key，只能下拉选择）。
+ * 会话视图常驻隐藏（切页/切 tab 状态保留）；tab 双击重命名；每次外部入口
+ * （ZK 节点数据一键调用）都新开 tab。 */
 export function GrpcScreen() {
   const { t } = useTranslation();
-  const [target, setTarget] = useState('127.0.0.1:50051');
-  const [service, setService] = useState('');
+  const [tabs, setTabs] = useState<GrpcTab[]>([{ key: 1, customTitle: null, baseTitle: null, seed: null }]);
+  const [activeKey, setActiveKey] = useState(1);
+  const nextKeyRef = useRef(2);
+  const [renamingKey, setRenamingKey] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  const addTab = useCallback((seed: GrpcCallSeed | null = null) => {
+    const key = nextKeyRef.current;
+    nextKeyRef.current += 1;
+    setTabs((current) => [
+      ...current,
+      { key, customTitle: null, baseTitle: seed?.target ?? null, seed },
+    ]);
+    setActiveKey(key);
+  }, []);
+
+  const closeTab = useCallback((key: number) => {
+    setTabs((current) => {
+      const idx = current.findIndex((tab) => tab.key === key);
+      const next = current.filter((tab) => tab.key !== key);
+      if (key === activeKey) {
+        const neighbor = next[Math.min(idx, next.length - 1)];
+        setActiveKey(neighbor ? neighbor.key : 0);
+      }
+      return next;
+    });
+  }, [activeKey]);
+
+  const commitRename = useCallback(() => {
+    if (renamingKey == null) return;
+    const key = renamingKey;
+    const value = renameValue.trim();
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.key === key ? { ...tab, customTitle: value.length > 0 ? value : null } : tab,
+      ),
+    );
+    setRenamingKey(null);
+  }, [renamingKey, renameValue]);
+
+  // ZK 页「gRPC 调用」入口（AppShell dispatch + setPage）：每次点击都新开一个 tab 自动填充
+  useEffect(() => {
+    const onOpenCall = (event: Event) => {
+      const seed = (event as CustomEvent<GrpcCallSeed>).detail;
+      if (seed && seed.target) {
+        addTab(seed);
+      }
+    };
+    window.addEventListener('veloterm:grpc-open-call', onOpenCall);
+    return () => window.removeEventListener('veloterm:grpc-open-call', onOpenCall);
+  }, [addTab]);
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* tab 栏 */}
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/50 px-2">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {tabs.map((tab) => (
+            <div
+              key={tab.key}
+              className={cn(
+                'group/tab flex h-7 shrink-0 items-center gap-1 rounded-lg border px-2 transition-colors',
+                tab.key === activeKey
+                  ? 'border-border-hover bg-surface'
+                  : 'border-transparent text-foreground-subtle hover:bg-surface-hover',
+              )}
+              onClick={() => setActiveKey(tab.key)}
+              onDoubleClick={() => {
+                setRenamingKey(tab.key);
+                setRenameValue(tab.customTitle ?? tab.baseTitle ?? '');
+              }}
+            >
+              <Network className="size-3.5 shrink-0" />
+              {renamingKey === tab.key ? (
+                <input
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitRename();
+                    if (e.key === 'Escape') setRenamingKey(null);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-36 rounded border border-border bg-background px-1 text-ui-xs text-foreground outline-none"
+                />
+              ) : (
+                <span className="max-w-52 truncate text-ui-sm select-none">
+                  {tab.customTitle ?? tab.baseTitle ?? t('grpc.newTab')}
+                </span>
+              )}
+              <button
+                type="button"
+                className="shrink-0 rounded p-0.5 text-foreground-subtlest opacity-0 transition-opacity group-hover/tab:opacity-100 hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTab(tab.key);
+                }}
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground"
+            onClick={() => addTab()}
+            title={t('grpc.newTab')}
+          >
+            <Plus className="size-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* 会话视图（常驻隐藏，状态保留） */}
+      {tabs.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center gap-2 select-none">
+          <span className="text-ui-sm text-foreground-subtlest">{t('grpc.noTabs')}</span>
+          <Button variant="outline" size="lg" className="h-7 px-2.5 text-ui-xs" onClick={() => addTab()}>
+            {t('grpc.newTab')}
+          </Button>
+        </div>
+      ) : (
+        tabs.map((tab) => (
+          <div key={tab.key} className={cn('flex min-h-0 flex-1 flex-col', tab.key !== activeKey && 'hidden')}>
+            <GrpcSessionView initialSeed={tab.seed} />
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+/** 单个 gRPC 调用会话：表单（目标/服务/方法/TLS 配置库/认证）+ 结果，
+ *  全部状态内部留存；initialSeed 在挂载时消费一次（自动填充 target/service）。 */
+function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null }) {
+  const { t } = useTranslation();
+  const [target, setTarget] = useState(initialSeed?.target ?? '127.0.0.1:50051');
+  const [service, setService] = useState(initialSeed?.service ?? '');
   const [method, setMethod] = useState('');
   const [jsonInput, setJsonInput] = useState('{}');
   const [tlsEnabled, setTlsEnabled] = useState(false);
@@ -117,12 +262,13 @@ export function GrpcScreen() {
   }, []);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {/* 工具栏 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-2">
-        <Network className="size-4 text-primary" />
         <span className="text-ui-sm font-medium text-foreground select-none">{t('grpc.title')}</span>
-        <span className="text-ui-xs text-foreground-subtlest select-none">{t('grpc.subtitle')}</span>
+        {initialSeed?.tls ? (
+          <span className="text-ui-xs text-foreground-subtlest select-none">{t('grpc.seedTlsHint')}</span>
+        ) : null}
         <div className="flex-1" />
         <Button
           size="lg"
@@ -483,7 +629,7 @@ function TlsProfileForm({
   onCancel,
 }: {
   initial: GrpcTlsProfile;
-  onSaved: (saved: GrpcTlsProfile) => void;
+  onSaved: () => void;
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
@@ -509,14 +655,14 @@ function TlsProfileForm({
     }
     setSaving(true);
     try {
-      const saved = await grpcTlsSave({
+      await grpcTlsSave({
         ...initial,
         serverName: serverName.trim(),
         caPem: caPem.trim() || null,
         clientCertPem: clientCertPem.trim() || null,
         clientKeyPem: clientKeyPem.trim() || null,
       });
-      onSaved(saved);
+      onSaved();
     } catch (e) {
       setError(String(e));
     } finally {

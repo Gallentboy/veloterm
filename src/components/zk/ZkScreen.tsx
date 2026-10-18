@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Database,
   FilePlus,
+  Network,
   Plus,
   RefreshCw,
   Trash2,
@@ -34,6 +35,7 @@ import {
 } from '@/services/zkService';
 import { relayList, type RelayConfig } from '@/services/relayConfigService';
 import { zkHostList, type ZkHostRecord } from '@/services/zkHostsService';
+import { parseGrpcServiceUrl, type GrpcCallSeed } from '@/services/grpcService';
 import { cn } from '@/lib/utils';
 
 interface TreeNode {
@@ -65,7 +67,14 @@ interface ZkTab {
 
 /** ZooKeeper 管理页：多 tab 外壳（会话视图常驻，切页/切 tab 状态均保留）。
  * tab 双击重命名；关 tab = 断开会话；加号新建连接。 */
-export function ZkScreen({ isVisible = true }: { isVisible?: boolean }) {
+export function ZkScreen({
+  isVisible = true,
+  onOpenGrpcCall,
+}: {
+  isVisible?: boolean;
+  /** 节点数据是 gRPC 服务地址时一键带去 gRPC 页（AppShell 负责跳页） */
+  onOpenGrpcCall?: (seed: GrpcCallSeed) => void;
+}) {
   const { t } = useTranslation();
   const [tabs, setTabs] = useState<ZkTab[]>([
     { key: 1, customTitle: null, baseTitle: null, pendingHost: null },
@@ -207,6 +216,7 @@ export function ZkScreen({ isVisible = true }: { isVisible?: boolean }) {
             <ZkSessionView
               autoConnectHost={tab.pendingHost}
               onBaseTitle={(title) => setBaseTitle(tab.key, title)}
+              onOpenGrpcCall={onOpenGrpcCall}
             />
           </div>
         ))
@@ -219,10 +229,12 @@ export function ZkScreen({ isVisible = true }: { isVisible?: boolean }) {
 function ZkSessionView({
   autoConnectHost,
   onBaseTitle,
+  onOpenGrpcCall,
 }: {
   /** 建 tab 时携带的已保存主机：挂载时自动连接（回填 endpoints/中继 + 自动认证），仅消费一次 */
   autoConnectHost?: ZkHostRecord | null;
   onBaseTitle: (title: string | null) => void;
+  onOpenGrpcCall?: (seed: GrpcCallSeed) => void;
 }) {
   const { t } = useTranslation();
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -673,6 +685,30 @@ function ZkSessionView({
     setAclDirty(true);
   };
 
+  // 节点数据是 gRPC 服务地址（https://host:port/服务名 形态）时，数据区底部出一键调用入口
+  const grpcServiceSeed =
+    draftEncoding === 'utf8' ? parseGrpcServiceUrl(draftData) : null;
+  const grpcSeed =
+    grpcServiceSeed && onOpenGrpcCall ? (
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="lg"
+          className="h-7 px-2.5 text-ui-xs"
+          onClick={() => onOpenGrpcCall(grpcServiceSeed)}
+        >
+          <Network className="size-3.5" />
+          {t('zk.grpcCall')}
+        </Button>
+        <span
+          className="truncate font-mono text-ui-xs text-foreground-subtlest select-none"
+          title={grpcServiceSeed.service}
+        >
+          {grpcServiceSeed.service}
+        </span>
+      </div>
+    ) : null;
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* 连接工具栏 */}
@@ -939,6 +975,7 @@ function ZkSessionView({
                   {draftEncoding === 'base64' ? (
                     <p className="text-ui-xs text-foreground-subtlest select-none">{t('zk.binaryHint')}</p>
                   ) : null}
+                  {draftEncoding === 'utf8' ? grpcSeed : null}
                 </div>
 
                 {/* 节点信息 */}
