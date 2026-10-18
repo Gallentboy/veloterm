@@ -503,9 +503,10 @@ function ZkSessionView({
     // 事件回调内读取的 dirty/aclDirty/selected 取自当次渲染闭包，均为最新值
   }, [sessionId, selected, dirty, aclDirty, t, loadChildren, selectNode]);
 
-  /** 搜索态的后台子树拉取：BFS 全量加载（跳过已加载，批量并发；上限 5000 节点
-   *  防失控），不动 expanded——过滤视图不依赖展开标记，命中祖先自动可见。 */
-  const searchLoadSubtree = useCallback(async (sid: string) => {
+  /** 全量刷新子树（唯一走网络的路径，由树标题行的刷新按钮触发）：
+   *  BFS 重拉整棵树拿最新状态（批量并发，上限 5000 节点防失控）。搜索本身
+   *  只做内存过滤——搜不到未加载层级时点一次刷新即可把整树纳入缓存。 */
+  const refreshTree = useCallback(async (sid: string) => {
     const version = ++searchVersionRef.current;
     setSearching(true);
     try {
@@ -520,7 +521,7 @@ function ZkSessionView({
             try {
               return { p, res: await zkList(sid, p) } as const;
             } catch {
-              return null; // 节点可能已被删除/无权限：跳过继续搜兄弟分支
+              return null; // 节点可能已被删除/无权限：跳过继续拉兄弟分支
             }
           }),
         );
@@ -578,20 +579,7 @@ function ZkSessionView({
     }
   }, []);
 
-  // 搜索防抖：清空即取消在途回收；新词 300ms 后触发子树拉取
-  useEffect(() => {
-    if (!sessionId) return;
-    const q = searchQuery.trim();
-    if (!q) {
-      searchVersionRef.current += 1;
-      setSearching(false);
-      return;
-    }
-    const timer = setTimeout(() => {
-      void searchLoadSubtree(sessionId);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery, sessionId, searchLoadSubtree]);
+  // 搜索本身零网络：仅过滤已缓存的节点（刷新按钮/watch 事件负责把数据带进内存）
 
   const searchLower = searchQuery.trim().toLowerCase();
   const isSearchHit = useCallback(
@@ -1000,17 +988,33 @@ function ZkSessionView({
           {/* 左：znode 树 */}
           <div className="flex w-80 shrink-0 flex-col border-r border-border/50">
             <div className="flex items-center justify-between px-3 py-1.5">
-              <span className="text-ui-sm text-foreground-subtle select-none">{t('zk.treeTitle')}</span>
-              <ControlHintTooltip title={t('zk.createTitle')} side="bottom">
-                <Button
-                  variant="ghost"
-                  size="lg"
-                  className="h-7 px-2 text-ui-xs"
-                  onClick={() => setCreating(true)}
-                >
-                  <FilePlus className="size-3.5" />
-                </Button>
-              </ControlHintTooltip>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="text-ui-sm text-foreground-subtle select-none">{t('zk.treeTitle')}</span>
+                {searching ? <Loader2 className="size-3 animate-spin text-foreground-subtle" /> : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-0.5">
+                <ControlHintTooltip title={t('zk.refreshTree')} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-7 rounded-lg text-foreground-subtle hover:text-foreground"
+                    disabled={searching || !sessionId}
+                    onClick={() => void refreshTree(sessionId)}
+                  >
+                    <RefreshCw className="size-3.5" />
+                  </Button>
+                </ControlHintTooltip>
+                <ControlHintTooltip title={t('zk.createTitle')} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="lg"
+                    className="h-7 px-2 text-ui-xs"
+                    onClick={() => setCreating(true)}
+                  >
+                    <FilePlus className="size-3.5" />
+                  </Button>
+                </ControlHintTooltip>
+              </div>
             </div>
             {/* 实时搜索：防抖后后台拉全子树（突破懒加载），过滤视图自动展开祖先链 */}
             <div className="px-3 pb-1.5">
@@ -1039,7 +1043,7 @@ function ZkSessionView({
               </div>
               {searching && searchQuery.trim() ? (
                 <span className="mt-1 block text-ui-xs text-foreground-subtlest select-none">
-                  {t('zk.searchLoading')}
+                  {t('zk.searchRefreshing')}
                 </span>
               ) : null}
             </div>
