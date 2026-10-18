@@ -14,6 +14,7 @@ pub mod terminal;
 pub mod text_detect;
 pub mod tools;
 pub mod window_state;
+pub mod zk;
 
 #[tauri::command]
 fn is_apple_silicon() -> bool {
@@ -30,6 +31,7 @@ pub fn run() {
         .manage(terminal::manager::TerminalManager::new())
         .manage(port_forward::PortForwardManager::default())
         .manage(sftp::types::SftpState::new())
+        .manage(zk::ZkState::new())
         .invoke_handler(tauri::generate_handler![
             is_apple_silicon,
             about::show_about_window,
@@ -59,6 +61,16 @@ pub fn run() {
             port_forward::port_forward_delete,
             port_forward::port_forward_set_enabled,
             port_forward::port_forward_states,
+            zk::zk_connect,
+            zk::zk_disconnect,
+            zk::zk_list,
+            zk::zk_get,
+            zk::zk_set_data,
+            zk::zk_create,
+            zk::zk_delete,
+            zk::zk_set_acl,
+            zk::zk_digest_id,
+            zk::zk_auth,
             ai::ai_provider_list,
             ai::ai_provider_save,
             ai::ai_provider_delete,

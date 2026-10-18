@@ -1,0 +1,883 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  ChevronRight,
+  Database,
+  FilePlus,
+  RefreshCw,
+  Trash2,
+  Unplug,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Modal } from '@/components/ui/modal';
+import { SelectMenu } from '@/components/ui/SelectMenu';
+import { FormField, PasswordInput, TextArea, TextInput } from '@/components/hosts/formFields';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
+import {
+  ACL_ALL,
+  ACL_BITS,
+  zkAuth,
+  zkConnect,
+  zkCreate,
+  zkDelete,
+  zkDigestId,
+  zkDisconnect,
+  zkGet,
+  zkList,
+  zkSetAcl,
+  zkSetData,
+  type ZkAclRule,
+  type ZkNode,
+} from '@/services/zkService';
+import type { RelayTransport, SshRelayEndpoint } from '@/hosts/types';
+import { cn } from '@/lib/utils';
+
+interface TreeNode {
+  name: string;
+  path: string;
+  depth: number;
+  expanded: boolean;
+  loaded: boolean;
+  children: string[];
+  ephemeral: boolean;
+}
+
+const PERM_KEYS = ['read', 'write', 'create', 'delete', 'admin'] as const;
+type PermKey = (typeof PERM_KEYS)[number];
+
+function timeOf(ms: number): string {
+  if (ms === 0) return '—';
+  return new Date(ms).toLocaleString();
+}
+
+/** ZooKeeper 管理页：连接（直连/经中继）+ znode 树 + 数据/ACL 编辑。 */
+export function ZkScreen() {
+  const { t } = useTranslation();
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [endpoints, setEndpoints] = useState('127.0.0.1:2181');
+  const [relayEnabled, setRelayEnabled] = useState(false);
+  const [relay, setRelay] = useState<SshRelayEndpoint>({
+    host: '',
+    port: 7300,
+    transport: 'tcp',
+    keyId: 1,
+    secret: '',
+    certFingerprint: null,
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const [nodes, setNodes] = useState<Map<string, TreeNode>>(new Map());
+  const [selected, setSelected] = useState('/');
+  const [detail, setDetail] = useState<ZkNode | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [draftData, setDraftData] = useState('');
+  const [draftAcls, setDraftAcls] = useState<ZkAclRule[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const [aclDirty, setAclDirty] = useState(false);
+
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newData, setNewData] = useState('');
+  const [newEphemeral, setNewEphemeral] = useState(false);
+  const [newSequential, setNewSequential] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [authing, setAuthing] = useState(false);
+  const [authUser, setAuthUser] = useState('');
+  const [authPass, setAuthPass] = useState('');
+  const [aclAddScheme, setAclAddScheme] = useState<string>('world');
+  const [aclAddId, setAclAddId] = useState('anyone');
+  const [aclAddDigestUser, setAclAddDigestUser] = useState('');
+  const [aclAddDigestPass, setAclAddDigestPass] = useState('');
+
+  const buildRelay = useCallback((): SshRelayEndpoint | null => {
+    if (!relayEnabled) return null;
+    return { ...relay, certFingerprint: relay.certFingerprint || null };
+  }, [relayEnabled, relay]);
+
+  const loadChildren = useCallback(
+    async (sid: string, path: string) => {
+      const res = await zkList(sid, path);
+      setNodes((current) => {
+        const next = new Map(current);
+        const existing = next.get(path);
+        const childNames = [...res.children].sort();
+        const ephemeralOwner = res.stat.ephemeralOwner !== 0;
+        next.set(path, {
+          name: path === '/' ? '/' : (path.split('/').pop() ?? path),
+          path,
+          depth: path === '/' ? 0 : path.split('/').length - 1,
+          expanded: existing?.expanded ?? true,
+          loaded: true,
+          children: childNames,
+          ephemeral: ephemeralOwner,
+        });
+        // 子节点占位（未加载）
+        for (const name of childNames) {
+          const childPath = path === '/' ? `/${name}` : `${path}/${name}`;
+          if (!next.has(childPath)) {
+            next.set(childPath, {
+              name,
+              path: childPath,
+              depth: path === '/' ? 1 : path.split('/').length,
+              expanded: false,
+              loaded: false,
+              children: [],
+              ephemeral: false,
+            });
+          }
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const selectNode = useCallback(
+    async (sid: string, path: string) => {
+      setSelected(path);
+      setDetailLoading(true);
+      setDetail(null);
+      setDirty(false);
+      setAclDirty(false);
+      try {
+        const node = await zkGet(sid, path);
+        setDetail(node);
+        setDraftData(node.data);
+        setDraftAcls(node.acls.map((a) => ({ ...a })));
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setDetailLoading(false);
+      }
+    },
+    [],
+  );
+
+  const handleConnect = async () => {
+    setConnecting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await zkConnect(endpoints, buildRelay());
+      setSessionId(res.sessionId);
+      setNodes(new Map());
+      setSelected('/');
+      await loadChildren(res.sessionId, '/');
+      await selectNode(res.sessionId, '/');
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (sessionId) {
+      try {
+        await zkDisconnect(sessionId);
+      } catch {
+        // 幂等
+      }
+    }
+    setSessionId(null);
+    setNodes(new Map());
+    setDetail(null);
+    setNotice(t('zk.disconnected'));
+  };
+
+  useEffect(() => {
+    return () => {
+      if (sessionId) {
+        void zkDisconnect(sessionId);
+      }
+    };
+  }, [sessionId]);
+
+  const orderedPaths = useMemo(() => {
+    const list: TreeNode[] = [];
+    const walk = (path: string) => {
+      const node = nodes.get(path);
+      if (!node) return;
+      list.push(node);
+      if (node.expanded && node.loaded) {
+        for (const child of node.children) {
+          walk(path === '/' ? `/${child}` : `${path}/${child}`);
+        }
+      }
+    };
+    walk('/');
+    return list;
+  }, [nodes]);
+
+  const toggleExpand = async (node: TreeNode) => {
+    if (!sessionId) return;
+    setNodes((current) => {
+      const next = new Map(current);
+      const existing = next.get(node.path);
+      if (existing) {
+        next.set(node.path, { ...existing, expanded: !existing.expanded });
+      }
+      return next;
+    });
+    if (!node.loaded) {
+      try {
+        await loadChildren(sessionId, node.path);
+      } catch (e) {
+        setError(String(e));
+      }
+    }
+  };
+
+  const refresh = async () => {
+    if (!sessionId) return;
+    setError(null);
+    try {
+      await loadChildren(sessionId, selected === '/' ? '/' : selected.split('/').slice(0, -1).join('/') || '/');
+      await loadChildren(sessionId, selected);
+      await selectNode(sessionId, selected);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const saveData = async () => {
+    if (!sessionId || !detail) return;
+    setError(null);
+    try {
+      await zkSetData(sessionId, selected, draftData, detail.stat.version);
+      await selectNode(sessionId, selected);
+      setNotice(t('zk.dataSaved', { path: selected }));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const saveAcls = async () => {
+    if (!sessionId || !detail) return;
+    setError(null);
+    try {
+      await zkSetAcl(sessionId, selected, draftAcls, detail.stat.aversion);
+      await selectNode(sessionId, selected);
+      setNotice(t('zk.aclSaved', { path: selected }));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!sessionId || !newName.trim()) return;
+    setError(null);
+    try {
+      const res = await zkCreate(
+        sessionId,
+        selected,
+        newName,
+        newData,
+        newEphemeral,
+        newSequential,
+      );
+      setCreating(false);
+      setNewName('');
+      setNewData('');
+      setNewEphemeral(false);
+      setNewSequential(false);
+      setNotice(t('zk.created', { path: res.createdPath }));
+      // 刷新父节点并选中新节点
+      await loadChildren(sessionId, selected);
+      const parent = nodes.get(selected);
+      if (parent && !parent.expanded) {
+        setNodes((current) => {
+          const next = new Map(current);
+          const p = next.get(selected);
+          if (p) next.set(selected, { ...p, expanded: true });
+          return next;
+        });
+      }
+      await loadChildren(sessionId, selected);
+      await selectNode(sessionId, res.createdPath);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!sessionId || !deleting) return;
+    setError(null);
+    try {
+      const target = deleting;
+      setDeleting(null);
+      await zkDelete(sessionId, target);
+      setNotice(t('zk.deleted', { path: target }));
+      const parentPath = target.split('/').slice(0, -1).join('/') || '/';
+      await loadChildren(sessionId, parentPath);
+      await selectNode(sessionId, parentPath);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleAuth = async () => {
+    if (!sessionId) return;
+    setError(null);
+    try {
+      await zkAuth(sessionId, authUser, authPass);
+      setAuthing(false);
+      setNotice(t('zk.authOk'));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const addAclRule = async () => {
+    setError(null);
+    try {
+      let id = aclAddId.trim();
+      if (aclAddScheme === 'digest') {
+        if (!aclAddDigestUser || !aclAddDigestPass) {
+          setError(t('zk.aclDigestRequired'));
+          return;
+        }
+        id = await zkDigestId(aclAddDigestUser, aclAddDigestPass);
+      } else if (aclAddScheme === 'auth') {
+        id = '';
+      } else if (aclAddScheme === 'world') {
+        id = 'anyone';
+      }
+      setDraftAcls((current) => [
+        ...current,
+        { scheme: aclAddScheme, id, perms: ACL_ALL },
+      ]);
+      setAclDirty(true);
+      setAclAddId(aclAddScheme === 'ip' ? '' : 'anyone');
+      setAclAddDigestUser('');
+      setAclAddDigestPass('');
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const toggleAclPerm = (index: number, key: PermKey) => {
+    setDraftAcls((current) =>
+      current.map((rule, i) =>
+        i === index ? { ...rule, perms: rule.perms ^ ACL_BITS[key] } : rule,
+      ),
+    );
+    setAclDirty(true);
+  };
+
+  const removeAclRule = (index: number) => {
+    setDraftAcls((current) => current.filter((_, i) => i !== index));
+    setAclDirty(true);
+  };
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* 连接工具栏 */}
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/50 px-4 py-2">
+        {sessionId ? (
+          <>
+            <span className="flex items-center gap-1.5 text-ui-sm text-primary select-none">
+              <Database className="size-3.5" />
+              <span className="font-mono">{endpoints}</span>
+              {relayEnabled ? (
+                <span className="text-ui-xs text-foreground-subtle">
+                  {t('zk.viaRelay', { host: relay.host, port: relay.port })}
+                </span>
+              ) : null}
+            </span>
+            <div className="flex-1" />
+            <ControlHintTooltip title={t('zk.authTitle')} side="bottom">
+              <Button variant="outline" size="lg" className="h-7 px-2.5 text-ui-xs" onClick={() => setAuthing(true)}>
+                {t('zk.auth')}
+              </Button>
+            </ControlHintTooltip>
+            <ControlHintTooltip title={t('zk.refresh')} side="bottom">
+              <Button variant="outline" size="lg" className="h-7 px-2.5 text-ui-xs" onClick={() => void refresh()}>
+                <RefreshCw className="size-3.5" />
+              </Button>
+            </ControlHintTooltip>
+            <ControlHintTooltip title={t('zk.disconnect')} side="bottom">
+              <Button variant="outline" size="lg" className="h-7 px-2.5 text-ui-xs" onClick={() => void handleDisconnect()}>
+                <Unplug className="size-3.5" />
+              </Button>
+            </ControlHintTooltip>
+          </>
+        ) : (
+          <>
+            <TextInput
+              value={endpoints}
+              onChange={(e) => setEndpoints(e.target.value)}
+              placeholder="host:2181"
+              className="w-64 font-mono"
+              spellCheck={false}
+            />
+            <label className="flex items-center gap-1.5 text-ui-sm text-foreground select-none">
+              <input
+                type="checkbox"
+                checked={relayEnabled}
+                onChange={(e) => setRelayEnabled(e.target.checked)}
+                className="accent-foreground"
+              />
+              {t('zk.useRelay')}
+            </label>
+            {relayEnabled ? (
+              <>
+                <TextInput
+                  value={relay.host}
+                  onChange={(e) => setRelay((cur) => ({ ...cur, host: e.target.value }))}
+                  placeholder="relay.example.com"
+                  className="w-44"
+                />
+                <div className="w-24">
+                  <TextInput
+                    type="number"
+                    value={String(relay.port)}
+                    onChange={(e) => setRelay((cur) => ({ ...cur, port: Number(e.target.value) }))}
+                  />
+                </div>
+                <div className="w-32">
+                  <SelectMenu
+                    aria-label={t('zk.relayTransport')}
+                    value={relay.transport}
+                    onChange={(next) => setRelay((cur) => ({ ...cur, transport: next as RelayTransport }))}
+                    options={[
+                      { value: 'tcp', label: 'TCP' },
+                      { value: 'ws', label: 'WebSocket' },
+                      { value: 'quic', label: 'QUIC' },
+                    ]}
+                  />
+                </div>
+                <div className="w-20">
+                  <TextInput
+                    type="number"
+                    value={String(relay.keyId)}
+                    onChange={(e) => setRelay((cur) => ({ ...cur, keyId: Number(e.target.value) }))}
+                    min={0}
+                    max={255}
+                  />
+                </div>
+                <div className="w-56">
+                  <PasswordInput
+                    value={relay.secret}
+                    onChange={(e) => setRelay((cur) => ({ ...cur, secret: e.target.value }))}
+                    autoComplete="off"
+                  />
+                </div>
+              </>
+            ) : null}
+            <Button
+              size="lg"
+              className="h-7 px-3 text-ui-xs"
+              disabled={connecting}
+              onClick={() => void handleConnect()}
+            >
+              {connecting ? t('zk.connecting') : t('zk.connect')}
+            </Button>
+          </>
+        )}
+      </div>
+
+      {(error || notice) && (
+        <div
+          className={cn(
+            'flex shrink-0 items-center gap-2 border-b px-4 py-1.5 text-ui-xs',
+            error
+              ? 'border-destructive/20 bg-destructive/10 text-destructive'
+              : 'border-border/50 bg-surface/40 text-foreground-subtle',
+          )}
+        >
+          <span className="min-w-0 flex-1 truncate">{error ?? notice}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setNotice(null);
+            }}
+            className="opacity-70 hover:opacity-100"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* 主体：树 + 详情 */}
+      {sessionId ? (
+        <div className="flex min-h-0 flex-1">
+          {/* 左：znode 树 */}
+          <div className="flex w-80 shrink-0 flex-col border-r border-border/50">
+            <div className="flex items-center justify-between px-3 py-1.5">
+              <span className="text-ui-sm text-foreground-subtle select-none">{t('zk.treeTitle')}</span>
+              <ControlHintTooltip title={t('zk.createTitle')} side="bottom">
+                <Button
+                  variant="ghost"
+                  size="lg"
+                  className="h-7 px-2 text-ui-xs"
+                  onClick={() => setCreating(true)}
+                >
+                  <FilePlus className="size-3.5" />
+                </Button>
+              </ControlHintTooltip>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
+              {orderedPaths.map((node) => (
+                <div
+                  key={node.path}
+                  className={cn(
+                    'group flex h-7 items-center gap-1 rounded-lg pr-1 transition-colors',
+                    selected === node.path ? 'bg-selected' : 'hover:bg-surface-hover',
+                  )}
+                  style={{ paddingLeft: `${node.depth * 14 + 4}px` }}
+                >
+                  <button
+                    type="button"
+                    className="flex h-full min-w-0 flex-1 items-center gap-1 text-left"
+                    onClick={() => void selectNode(sessionId, node.path)}
+                  >
+                    <span className="w-3.5 shrink-0 text-foreground-subtle">
+                      {node.children.length > 0 || !node.loaded ? (
+                        <button
+                          type="button"
+                          className="flex size-3.5 items-center justify-center hover:text-foreground"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void toggleExpand(node);
+                          }}
+                        >
+                          <ChevronRight
+                            className={cn('size-3 transition-transform', node.expanded && 'rotate-90')}
+                          />
+                        </button>
+                      ) : null}
+                    </span>
+                    <span
+                      className={cn(
+                        'truncate font-mono text-ui-sm',
+                        node.ephemeral ? 'text-primary' : 'text-foreground',
+                      )}
+                      title={node.path}
+                    >
+                      {node.name}
+                    </span>
+                  </button>
+                  {node.path !== '/' ? (
+                    <button
+                      type="button"
+                      className="shrink-0 p-1 text-foreground-subtlest opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
+                      onClick={() => setDeleting(node.path)}
+                      title={t('zk.deleteTitle')}
+                    >
+                      <Trash2 className="size-3" />
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 右：节点详情（数据 / 信息 / ACL） */}
+          <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+            {detailLoading ? (
+              <div className="p-4 text-ui-sm text-foreground-subtlest">{t('zk.loading')}</div>
+            ) : detail ? (
+              <div className="flex flex-col gap-4 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-ui-base text-foreground" title={selected}>
+                    {selected}
+                  </span>
+                  <span className="shrink-0 text-ui-xs text-foreground-subtle select-none">
+                    {t('zk.stat.version')}: {detail.stat.version} ·{' '}
+                    {t('zk.stat.children')}: {detail.stat.numChildren} ·{' '}
+                    {t('zk.stat.bytes')}: {detail.stat.dataLength}
+                    {detail.stat.ephemeralOwner !== 0 ? ` · ${t('zk.stat.ephemeral')}` : ''}
+                  </span>
+                </div>
+
+                {/* 数据 */}
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-ui-sm text-foreground-subtle select-none">{t('zk.dataTitle')}</span>
+                    <Button
+                      size="lg"
+                      className="h-7 px-2.5 text-ui-xs"
+                      disabled={!dirty}
+                      onClick={() => void saveData()}
+                    >
+                      {t('common.save')}
+                    </Button>
+                  </div>
+                  <TextArea
+                    value={draftData}
+                    onChange={(e) => {
+                      setDraftData(e.target.value);
+                      setDirty(true);
+                    }}
+                    spellCheck={false}
+                    className="h-40 font-mono text-ui-sm"
+                  />
+                </div>
+
+                {/* 节点信息 */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-ui-sm text-foreground-subtle select-none">{t('zk.statTitle')}</span>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 rounded-lg border border-border p-2.5 text-ui-xs md:grid-cols-3">
+                    {[
+                      ['czxid', String(detail.stat.czxid)],
+                      ['mzxid', String(detail.stat.mzxid)],
+                      ['ctime', timeOf(detail.stat.ctime)],
+                      ['mtime', timeOf(detail.stat.mtime)],
+                      ['version', String(detail.stat.version)],
+                      ['cversion', String(detail.stat.cversion)],
+                      ['aversion', String(detail.stat.aversion)],
+                      [
+                        'ephemeralOwner',
+                        detail.stat.ephemeralOwner === 0 ? '—' : String(detail.stat.ephemeralOwner),
+                      ],
+                      ['dataLength', String(detail.stat.dataLength)],
+                      ['numChildren', String(detail.stat.numChildren)],
+                    ].map(([k, v]) => (
+                      <div key={k} className="flex items-center gap-2">
+                        <span className="w-28 shrink-0 font-mono text-foreground-subtle">{k}</span>
+                        <span className="min-w-0 truncate font-mono text-foreground">{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ACL */}
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-ui-sm text-foreground-subtle select-none">{t('zk.aclTitle')}</span>
+                    <Button
+                      size="lg"
+                      className="h-7 px-2.5 text-ui-xs"
+                      disabled={!aclDirty}
+                      onClick={() => void saveAcls()}
+                    >
+                      {t('common.save')}
+                    </Button>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {draftAcls.map((rule, index) => (
+                      <div
+                        key={`${rule.scheme}:${rule.id}:${index}`}
+                        className="flex items-center gap-2 rounded-lg border border-border px-2.5 py-1.5"
+                      >
+                        <span className="w-44 shrink-0 truncate font-mono text-ui-sm text-foreground">
+                          {rule.scheme}:{rule.id || '—'}
+                        </span>
+                        <div className="flex flex-1 flex-wrap gap-1">
+                          {PERM_KEYS.map((key) => (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => toggleAclPerm(index, key)}
+                              className={cn(
+                                'rounded-md border px-1.5 py-0.5 text-ui-xs transition-colors',
+                                rule.perms & ACL_BITS[key]
+                                  ? 'border-primary/50 bg-primary/15 text-foreground'
+                                  : 'border-border text-foreground-subtlest hover:text-foreground-subtle',
+                              )}
+                            >
+                              {t(`zk.aclPerm.${key}`)}
+                            </button>
+                          ))}
+                        </div>
+                        <span className="w-8 shrink-0 text-center font-mono text-ui-xs text-foreground-subtle">
+                          {rule.perms}
+                        </span>
+                        <button
+                          type="button"
+                          className="shrink-0 text-foreground-subtlest hover:text-destructive"
+                          onClick={() => removeAclRule(index)}
+                        >
+                          <Trash2 className="size-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  {/* 新增规则 */}
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border px-2.5 py-2">
+                    <div className="w-32 shrink-0">
+                      <SelectMenu
+                        aria-label={t('zk.aclScheme')}
+                        value={aclAddScheme}
+                        onChange={setAclAddScheme}
+                        options={[
+                          { value: 'world', label: 'world' },
+                          { value: 'auth', label: 'auth' },
+                          { value: 'digest', label: 'digest' },
+                          { value: 'ip', label: 'ip' },
+                        ]}
+                      />
+                    </div>
+                    {aclAddScheme === 'digest' ? (
+                      <>
+                        <div className="w-32">
+                          <TextInput
+                            value={aclAddDigestUser}
+                            onChange={(e) => setAclAddDigestUser(e.target.value)}
+                            placeholder={t('zk.aclUser')}
+                            spellCheck={false}
+                          />
+                        </div>
+                        <div className="w-36">
+                          <PasswordInput
+                            value={aclAddDigestPass}
+                            onChange={(e) => setAclAddDigestPass(e.target.value)}
+                            autoComplete="new-password"
+                          />
+                        </div>
+                      </>
+                    ) : aclAddScheme === 'ip' ? (
+                      <div className="w-44">
+                        <TextInput
+                          value={aclAddId}
+                          onChange={(e) => setAclAddId(e.target.value)}
+                          placeholder="192.168.1.0/24"
+                          spellCheck={false}
+                          className="font-mono"
+                        />
+                      </div>
+                    ) : null}
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      className="h-7 px-2.5 text-ui-xs"
+                      onClick={() => void addAclRule()}
+                    >
+                      {t('zk.aclAdd')}
+                    </Button>
+                    <span className="text-ui-xs text-foreground-subtlest select-none">
+                      {t('zk.aclAddHint')}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 text-ui-sm text-foreground-subtlest">{t('zk.selectNode')}</div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-1 items-center justify-center text-ui-sm text-foreground-subtlest select-none">
+          {t('zk.notConnected')}
+        </div>
+      )}
+
+      {/* 新建节点 */}
+      {creating ? (
+        <Modal
+          title={t('zk.createTitle')}
+          onClose={() => setCreating(false)}
+          className="w-[480px]"
+          footer={
+            <>
+              <Button variant="ghost" size="lg" className="h-8 px-3 text-ui-base" onClick={() => setCreating(false)}>
+                {t('common.cancel')}
+              </Button>
+              <Button size="lg" className="h-8 px-3 text-ui-base" onClick={() => void handleCreate()}>
+                {t('common.save')}
+              </Button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-3.5">
+            <FormField label={t('zk.nodeName')}>
+              <TextInput
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="mynode"
+                spellCheck={false}
+                className="font-mono"
+              />
+            </FormField>
+            <FormField label={t('zk.dataTitle')}>
+              <TextArea
+                value={newData}
+                onChange={(e) => setNewData(e.target.value)}
+                spellCheck={false}
+                className="h-24 font-mono text-ui-sm"
+              />
+            </FormField>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-1.5 text-ui-sm text-foreground select-none">
+                <input
+                  type="checkbox"
+                  checked={newEphemeral}
+                  onChange={(e) => setNewEphemeral(e.target.checked)}
+                  className="accent-foreground"
+                />
+                {t('zk.ephemeral')}
+              </label>
+              <label className="flex items-center gap-1.5 text-ui-sm text-foreground select-none">
+                <input
+                  type="checkbox"
+                  checked={newSequential}
+                  onChange={(e) => setNewSequential(e.target.checked)}
+                  className="accent-foreground"
+                />
+                {t('zk.sequential')}
+              </label>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {/* 删除确认 */}
+      {deleting ? (
+        <Modal
+          title={t('zk.deleteTitle')}
+          onClose={() => setDeleting(null)}
+          className="w-[420px]"
+          footer={
+            <>
+              <Button variant="ghost" size="lg" className="h-8 px-3 text-ui-base" onClick={() => setDeleting(null)}>
+                {t('common.cancel')}
+              </Button>
+              <Button variant="destructive" size="lg" className="h-8 px-3 text-ui-base" onClick={() => void handleDelete()}>
+                {t('common.delete')}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-ui-sm text-foreground">{t('zk.deleteConfirm', { path: deleting })}</p>
+        </Modal>
+      ) : null}
+
+      {/* digest 认证 */}
+      {authing ? (
+        <Modal
+          title={t('zk.authTitle')}
+          onClose={() => setAuthing(false)}
+          className="w-[420px]"
+          footer={
+            <>
+              <Button variant="ghost" size="lg" className="h-8 px-3 text-ui-base" onClick={() => setAuthing(false)}>
+                {t('common.cancel')}
+              </Button>
+              <Button size="lg" className="h-8 px-3 text-ui-base" onClick={() => void handleAuth()}>
+                {t('zk.auth')}
+              </Button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-3.5">
+            <p className="text-ui-xs text-foreground-subtlest">{t('zk.authHint')}</p>
+            <FormField label={t('zk.aclUser')}>
+              <TextInput value={authUser} onChange={(e) => setAuthUser(e.target.value)} spellCheck={false} />
+            </FormField>
+            <FormField label={t('zk.authPassword')}>
+              <PasswordInput
+                value={authPass}
+                onChange={(e) => setAuthPass(e.target.value)}
+                autoComplete="new-password"
+              />
+            </FormField>
+          </div>
+        </Modal>
+      ) : null}
+    </div>
+  );
+}
