@@ -388,13 +388,12 @@ function MenuGrid({
   const dragRef = useRef(drag);
   dragRef.current = drag;
 
-  // 拖拽进行中把光标切成「抓取手」，全局生效（指针移出源卡片也保持）；结束还原
+  // 拖拽进行中：body 挂全局类，样式表用 !important 压过一切元素级 cursor
   useEffect(() => {
     if (!drag) return;
-    const previous = document.body.style.cursor;
-    document.body.style.cursor = 'grabbing';
+    document.body.classList.add('veloterm-pointer-dragging');
     return () => {
-      document.body.style.cursor = previous;
+      document.body.classList.remove('veloterm-pointer-dragging');
     };
   }, [drag]);
 
@@ -443,10 +442,7 @@ function MenuGrid({
   return (
     <div
       ref={containerRef}
-      className={cn(
-        'grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4',
-        drag && 'cursor-grabbing',
-      )}
+      className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
     >
       {items.map(({ page, icon: Icon, label }) => {
         const visible = !hidden.includes(page);
@@ -459,8 +455,6 @@ function MenuGrid({
             onPointerDown={(event) => handlePointerDown(page, event)}
             role="checkbox"
             aria-checked={visible}
-            // 拖拽中所有卡片内联强制抓取手（内联样式优先级高于类级 cursor-pointer）
-            style={drag ? { cursor: 'grabbing' } : undefined}
             className={cn(
               'relative flex cursor-pointer select-none touch-none items-center gap-2 rounded-lg border px-3 py-2 transition-colors',
               visible

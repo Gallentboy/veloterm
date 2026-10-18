@@ -397,6 +397,13 @@ body {
   animation: about-card-out 220ms ease-in both;
 }
 
+/* 页内指针拖拽进行中（设置页菜单宫格排序等）：全局强制抓取手光标。
+   !important 压过一切元素级 cursor（类级 cursor-pointer 等） */
+body.veloterm-pointer-dragging,
+body.veloterm-pointer-dragging * {
+  cursor: grabbing !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .about-card-in,
   .about-card-out {
