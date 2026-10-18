@@ -59,6 +59,9 @@ export default {
     copied: 'Copied',
     emptyResult: 'Fill in the form on the left and press Call — output JSON appears here',
     validationRequired: 'Target, service full name and method are all required',
+    newTab: 'New call',
+    noTabs: 'No open gRPC calls',
+    seedTlsHint: 'Source was an https address — enable TLS below if the server requires it',
   },
   relays: {
     summary: '{{total}} relay configuration(s)',
@@ -100,6 +103,7 @@ export default {
     empty: 'No ZK hosts yet — create one to pick and auto-connect from the ZK page',
   },
   zk: {
+    grpcCall: 'gRPC call',
     connect: 'Connect',
     connecting: 'Connecting…',
     disconnect: 'Disconnect',

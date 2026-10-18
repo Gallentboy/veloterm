@@ -59,6 +59,9 @@ export default {
     copied: '已复制',
     emptyResult: '填写左侧表单后点「调用」——出参 JSON 显示在这里',
     validationRequired: '目标地址、服务全名与方法名均不能为空',
+    newTab: '新建调用',
+    noTabs: '没有打开的 gRPC 调用',
+    seedTlsHint: '原文为 https 地址——如服务端启用 TLS，请在下方勾选并选择配置',
   },
   relays: {
     summary: '共 {{total}} 个中继配置',
@@ -100,6 +103,7 @@ export default {
     empty: '还没有 ZK 主机——新建后，ZK 页可直接下拉选择并自动连接',
   },
   zk: {
+    grpcCall: 'gRPC 调用',
     connect: '连接',
     connecting: '连接中…',
     disconnect: '断开',
