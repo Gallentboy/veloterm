@@ -194,16 +194,153 @@ pub struct GrpcCallResponse {
 #[tauri::command]
 pub async fn grpc_call(request: GrpcCallRequest) -> Result<GrpcCallResponse, String> {
     // TLS 只按库存 id 引用（CA/证书/私钥不随请求回传），服务端解析成材料
-    let tls = match request.tls_profile_id {
+    let tls = resolve_tls_material(request.tls_profile_id)?;
+    call_grpc_unary(request, tls).await
+}
+
+/// 按 TLS 配置库 id 解析材料（grpc_call / grpc_list / grpc_describe 共用）。
+fn resolve_tls_material(tls_profile_id: Option<usize>) -> Result<Option<TlsMaterial>, String> {
+    match tls_profile_id {
         Some(id) => {
             let pool = crate::db::global_pool()
                 .ok_or_else(|| "failed to get global db pool".to_string())?;
             let record = crate::db::grpc_tls_profile_by_id(&pool, id)?;
-            Some(TlsMaterial::from(&record))
+            Ok(Some(TlsMaterial::from(&record)))
         }
-        None => None,
-    };
-    call_grpc_unary(request, tls).await
+        None => Ok(None),
+    }
+}
+
+// ── 巡检：list（服务/方法）与 describe（proto 定义文本）──
+
+/// 巡检请求（grpc_list / grpc_describe 共用；与 GrpcCallRequest 同款的连接语义）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcInspectRequest {
+    /// 目标地址 host:port
+    pub target: String,
+    /// TLS 配置库引用；None = 明文 h2c
+    #[serde(default)]
+    pub tls_profile_id: Option<usize>,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+/// 方法摘要（list methods 返回项）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcMethodSummary {
+    pub name: String,
+    /// 入参消息全名
+    pub input_type: String,
+    /// 出参消息全名
+    pub output_type: String,
+    pub client_streaming: bool,
+    pub server_streaming: bool,
+}
+
+/// list 二态结果：不给 service → 服务全名列表；给 service → 方法摘要列表。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum GrpcListResult {
+    Services { services: Vec<String> },
+    Methods { methods: Vec<GrpcMethodSummary> },
+}
+
+/// 列出服务器上的服务（或某服务的方法）。经服务器反射（ListServices / 描述符）。
+#[tauri::command]
+pub async fn grpc_list(
+    request: GrpcInspectRequest,
+    service: Option<String>,
+) -> Result<GrpcListResult, String> {
+    let tls = resolve_tls_material(request.tls_profile_id)?;
+    let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(15_000));
+    tokio::time::timeout(timeout, grpc_list_inner(request, service, tls))
+        .await
+        .map_err(|_| format!("gRPC list 超时（超过 {}ms）", timeout.as_millis()))?
+}
+
+async fn grpc_list_inner(
+    request: GrpcInspectRequest,
+    service: Option<String>,
+    tls: Option<TlsMaterial>,
+) -> Result<GrpcListResult, String> {
+    let target = request.target.trim().to_string();
+    if target.is_empty() {
+        return Err("target 不能为空（host:port）".into());
+    }
+    let mut grpc = open_grpc_client(&target, tls).await?;
+    let service = service
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    match service {
+        None => {
+            let services = list_services_reflection(&mut grpc).await?;
+            log::debug!("grpc_list 服务数 {} target={target}", services.len());
+            Ok(GrpcListResult::Services { services })
+        }
+        Some(service) => {
+            let fdps = reflect_fdps(&mut grpc, &service).await?;
+            let svc = crate::grpc_describe::find_service(&fdps, &service)
+                .ok_or_else(|| format!("反射结果中找不到服务 {service}"))?;
+            let methods = svc
+                .method
+                .iter()
+                .map(|m| GrpcMethodSummary {
+                    name: m.name.clone().unwrap_or_default(),
+                    input_type: m
+                        .input_type
+                        .clone()
+                        .unwrap_or_default()
+                        .trim_start_matches('.')
+                        .to_string(),
+                    output_type: m
+                        .output_type
+                        .clone()
+                        .unwrap_or_default()
+                        .trim_start_matches('.')
+                        .to_string(),
+                    client_streaming: m.client_streaming.unwrap_or(false),
+                    server_streaming: m.server_streaming.unwrap_or(false),
+                })
+                .collect();
+            Ok(GrpcListResult::Methods { methods })
+        }
+    }
+}
+
+/// describe：给出符号（服务全名 / 服务.方法 / 消息全名 / 枚举全名）的 proto
+/// 定义文本（grpcurl describe 风格），经服务器反射取 FileDescriptorProto 后渲染。
+#[tauri::command]
+pub async fn grpc_describe(
+    request: GrpcInspectRequest,
+    symbol: String,
+) -> Result<String, String> {
+    let tls = resolve_tls_material(request.tls_profile_id)?;
+    let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(15_000));
+    tokio::time::timeout(timeout, grpc_describe_inner(request, symbol, tls))
+        .await
+        .map_err(|_| format!("gRPC describe 超时（超过 {}ms）", timeout.as_millis()))?
+}
+
+async fn grpc_describe_inner(
+    request: GrpcInspectRequest,
+    symbol: String,
+    tls: Option<TlsMaterial>,
+) -> Result<String, String> {
+    let target = request.target.trim().to_string();
+    if target.is_empty() {
+        return Err("target 不能为空（host:port）".into());
+    }
+    let symbol = symbol.trim().trim_start_matches('.').to_string();
+    if symbol.is_empty() {
+        return Err("符号名不能为空".into());
+    }
+    let mut grpc = open_grpc_client(&target, tls).await?;
+    let fdps = reflect_fdps(&mut grpc, &symbol).await?;
+    crate::grpc_describe::render_symbol_definition(&fdps, &symbol)
 }
 
 // ── 动态消息 Codec（tonic 的 ProstCodec 走 U::default()+merge 路径，
@@ -290,20 +427,13 @@ async fn call_grpc_unary(
         .map_err(|_| format!("gRPC 调用超时（超过 {}ms）", timeout.as_millis()))?
 }
 
-async fn call_grpc_unary_inner(
-    req: GrpcCallRequest,
+// ── 连接构造（调用与巡检命令共用）──
+
+/// 建立到 target 的 gRPC 客户端（明文或 TLS 材料），含 Buffer 的 ready() 语义。
+async fn open_grpc_client(
+    target: &str,
     tls: Option<TlsMaterial>,
-) -> Result<GrpcCallResponse, String> {
-    let timeout = Duration::from_millis(req.timeout_ms.unwrap_or(15_000));
-    let target = req.target.trim().to_string();
-    if target.is_empty() {
-        return Err("target 不能为空（host:port）".into());
-    }
-    let (service, method) = (req.service.trim(), req.method.trim());
-    if service.is_empty() || method.is_empty() {
-        return Err("服务名与方法名均不能为空".into());
-    }
-    // 1. 连接（明文或 TLS）
+) -> Result<GrpcClient, String> {
     let scheme = if tls.is_some() { "https" } else { "http" };
     let uri: http::Uri = format!("{scheme}://{target}/")
         .parse()
@@ -346,6 +476,23 @@ async fn call_grpc_unary_inner(
     grpc.ready()
         .await
         .map_err(|e| format!("连接就绪失败（{target}）: {e}"))?;
+    Ok(grpc)
+}
+
+async fn call_grpc_unary_inner(
+    req: GrpcCallRequest,
+    tls: Option<TlsMaterial>,
+) -> Result<GrpcCallResponse, String> {
+    let timeout = Duration::from_millis(req.timeout_ms.unwrap_or(15_000));
+    let target = req.target.trim().to_string();
+    if target.is_empty() {
+        return Err("target 不能为空（host:port）".into());
+    }
+    let (service, method) = (req.service.trim(), req.method.trim());
+    if service.is_empty() || method.is_empty() {
+        return Err("服务名与方法名均不能为空".into());
+    }
+    let mut grpc = open_grpc_client(&target, tls).await?;
 
     // 2. 反射取 schema（以服务全名为 symbol），构建 DescriptorPool
     let pool = reflect_descriptor_pool(&mut grpc, service).await?;
@@ -465,10 +612,59 @@ async fn reflect_descriptor_pool(
             Err(ReflectError::Other(m)) => return Err(m),
         }
     }
-    Err(format!(
+    Err(reflection_unsupported_message(symbol, &unsupported))
+}
+
+/// reflect_descriptor_pool 的 fdps 层（describe 渲染用）。
+async fn reflect_fdps(
+    grpc: &mut GrpcClient,
+    symbol: &str,
+) -> Result<Vec<prost_types::FileDescriptorProto>, String> {
+    let mut unsupported: Vec<String> = Vec::new();
+    for svc_full in REFLECTION_SERVICES {
+        match reflect_fdps_via(grpc, svc_full, symbol).await {
+            Ok(fdps) => return Ok(fdps),
+            Err(ReflectError::Unsupported(m)) => unsupported.push(m),
+            Err(ReflectError::Other(m)) => return Err(m),
+        }
+    }
+    Err(reflection_unsupported_message(symbol, &unsupported))
+}
+
+/// ListServices("*")：反射流式请求收服务全名列表（dual-try v1alpha/v1）。
+async fn list_services_reflection(grpc: &mut GrpcClient) -> Result<Vec<String>, String> {
+    let mut unsupported: Vec<String> = Vec::new();
+    for svc_full in REFLECTION_SERVICES {
+        match send_reflection_request(
+            grpc,
+            svc_full,
+            MessageRequest::ListServices("*".to_string()),
+        )
+        .await
+        {
+            Ok(resp) => {
+                if let Some(MessageResponse::ListServiceResponse(listed)) =
+                    resp.message_response
+                {
+                    let mut names: Vec<String> =
+                        listed.service.into_iter().map(|s| s.name).collect();
+                    names.sort();
+                    return Ok(names);
+                }
+                return Err("反射返回了非预期的消息类型（期待 ListServiceResponse）".into());
+            }
+            Err(ReflectError::Unsupported(m)) => unsupported.push(m),
+            Err(ReflectError::Other(m)) => return Err(m),
+        }
+    }
+    Err(reflection_unsupported_message("(list services)", &unsupported))
+}
+
+fn reflection_unsupported_message(symbol: &str, unsupported: &[String]) -> String {
+    format!(
         "服务器不支持 gRPC 反射（{}），无法在无 proto 文件的情况下定位 {symbol} 的消息定义",
         unsupported.join("; ")
-    ))
+    )
 }
 
 /// 单版本反射：file_containing_symbol 拿主文件，再按 dependency 逐个
@@ -478,6 +674,20 @@ async fn reflect_via(
     svc_full: &str,
     symbol: &str,
 ) -> Result<prost_reflect::DescriptorPool, ReflectError> {
+    let fdps = reflect_fdps_via(grpc, svc_full, symbol).await?;
+    let set = prost_types::FileDescriptorSet { file: fdps };
+    let set_bytes = set.encode_to_vec();
+    prost_reflect::DescriptorPool::decode(set_bytes.as_slice())
+        .map_err(|e| ReflectError::Other(format!("反射文件集无法构建 DescriptorPool: {e}")))
+}
+
+/// reflect_via 的 fdps 暴露层：describe 渲染直接吃 FileDescriptorProto（grpcurl
+/// 的 protoprint 同样在 fdp 层工作），避免 DescriptorPool 反查原始定义的丢失。
+async fn reflect_fdps_via(
+    grpc: &mut GrpcClient,
+    svc_full: &str,
+    symbol: &str,
+) -> Result<Vec<prost_types::FileDescriptorProto>, ReflectError> {
     let mut fdps: Vec<prost_types::FileDescriptorProto> = Vec::new();
     let mut have: HashSet<String> = HashSet::new();
     let mut queue: VecDeque<MessageRequest> = VecDeque::new();
@@ -516,10 +726,7 @@ async fn reflect_via(
             }
         }
     }
-    let set = prost_types::FileDescriptorSet { file: fdps };
-    let set_bytes = set.encode_to_vec();
-    prost_reflect::DescriptorPool::decode(set_bytes.as_slice())
-        .map_err(|e| ReflectError::Other(format!("反射文件集无法构建 DescriptorPool: {e}")))
+    Ok(fdps)
 }
 
 /// 发一条反射请求（ServerReflectionInfo 是双向流，客户端只发一条、收第一条有效响应）。
@@ -818,7 +1025,10 @@ mod tests {
                     Err(e) => return Ok(grpc_trailers_response(13, &format!("bad payload: {e}"))),
                 };
                 let message_response = match request.message_request {
-                    Some(MessageRequest::FileContainingSymbol(sym)) if sym == TEST_SERVICE => {
+                    // 测试文件里的任何符号（服务/方法/消息）都能定位到 veloterm_test.proto
+                    Some(MessageRequest::FileContainingSymbol(sym))
+                        if sym == TEST_SERVICE || sym.starts_with("veloterm.test.") =>
+                    {
                         MessageResponse::FileDescriptorResponse(reflection::FileDescriptorResponse {
                             file_descriptor_proto: vec![test_fdp_bytes()],
                         })
@@ -826,6 +1036,13 @@ mod tests {
                     Some(MessageRequest::FileByFilename(name)) if name == "veloterm_test.proto" => {
                         MessageResponse::FileDescriptorResponse(reflection::FileDescriptorResponse {
                             file_descriptor_proto: vec![test_fdp_bytes()],
+                        })
+                    }
+                    Some(MessageRequest::ListServices(_)) => {
+                        MessageResponse::ListServiceResponse(reflection::ListServiceResponse {
+                            service: vec![reflection::ServiceResponse {
+                                name: TEST_SERVICE.to_string(),
+                            }],
                         })
                     }
                     Some(MessageRequest::FileContainingSymbol(sym)) => {
@@ -1184,5 +1401,100 @@ mod tests {
             err.contains("入参 JSON"),
             "错误应指出入参 JSON 问题: {err}"
         );
+    }
+
+    // ── list / describe 巡检 ──
+
+    fn inspect_request(target: &str) -> GrpcInspectRequest {
+        GrpcInspectRequest {
+            target: target.to_string(),
+            tls_profile_id: None,
+            timeout_ms: Some(5_000),
+        }
+    }
+
+    #[tokio::test]
+    async fn grpc_list_services_via_reflection() {
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
+        let result = grpc_list(inspect_request(&server.target), None)
+            .await
+            .expect("list services 应成功");
+        // 形态不符时落到空列表，断言失败自然报错（避免 panic 宏碰 clippy::panic deny）
+        let services = match result {
+            GrpcListResult::Services { services } => services,
+            GrpcListResult::Methods { .. } => Vec::new(),
+        };
+        assert!(services.contains(&TEST_SERVICE.to_string()), "services: {services:?}");
+    }
+
+    #[tokio::test]
+    async fn grpc_list_methods_summary() {
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
+        let result = grpc_list(inspect_request(&server.target), Some(TEST_SERVICE.to_string()))
+            .await
+            .expect("list methods 应成功");
+        let methods = match result {
+            GrpcListResult::Methods { methods } => methods,
+            GrpcListResult::Services { .. } => Vec::new(),
+        };
+        let get_user = methods
+            .iter()
+            .find(|m| m.name == "GetUser")
+            .expect("应包含 GetUser");
+        assert_eq!(get_user.input_type, "veloterm.test.GetUserRequest");
+        assert_eq!(get_user.output_type, "veloterm.test.GetUserResponse");
+        assert!(!get_user.client_streaming && !get_user.server_streaming);
+        assert!(methods.iter().any(|m| m.name == "Boom"), "methods: {methods:?}");
+    }
+
+    #[tokio::test]
+    async fn grpc_describe_service_renders_proto() {
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
+        let text = grpc_describe(inspect_request(&server.target), TEST_SERVICE.to_string())
+            .await
+            .expect("describe service 应成功");
+        assert!(text.contains("is a service"), "text: {text}");
+        assert!(text.contains("service UserService {"));
+        assert!(text.contains("rpc GetUser(veloterm.test.GetUserRequest) returns (veloterm.test.GetUserResponse);"));
+        // 连带渲染方法入出参消息定义
+        assert!(text.contains("message GetUserRequest {"));
+        assert!(text.contains("int64 id = 1;"));
+        assert!(text.contains("string name = 1;"));
+    }
+
+    #[tokio::test]
+    async fn grpc_describe_method_with_messages() {
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
+        let symbol = format!("{TEST_SERVICE}.GetUser");
+        let text = grpc_describe(inspect_request(&server.target), symbol)
+            .await
+            .expect("describe method 应成功");
+        assert!(text.contains("is a method"), "text: {text}");
+        assert!(text.contains("rpc GetUser(veloterm.test.GetUserRequest)"));
+        assert!(text.contains("message GetUserRequest {"));
+    }
+
+    #[tokio::test]
+    async fn grpc_describe_message_definition() {
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
+        let text = grpc_describe(
+            inspect_request(&server.target),
+            "veloterm.test.GetUserResponse".to_string(),
+        )
+        .await
+        .expect("describe message 应成功");
+        assert!(text.contains("is a message"), "text: {text}");
+        assert!(text.contains("string name = 1;"));
+        assert!(text.contains("int32 age = 2;"));
+    }
+
+    #[tokio::test]
+    async fn grpc_describe_unknown_symbol_reports_available() {
+        let server = spawn_test_server(ReflectionVersion::V1Alpha, TlsMode::None, None).await;
+        let err = grpc_describe(inspect_request(&server.target), "no.such.Symbol".to_string())
+            .await
+            .expect_err("未知符号应报错");
+        // 反射服务端以 NOT_FOUND 拒绝未知 symbol（真实服务器同款行为）
+        assert!(err.contains("not found"), "err: {err}");
     }
 }

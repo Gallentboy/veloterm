@@ -7,6 +7,7 @@ pub mod common;
 pub mod db;
 pub mod editor_storage;
 pub mod grpc_client;
+pub mod grpc_describe;
 pub mod grpc_tls;
 pub mod lifecycle;
 pub mod logging;
@@ -82,6 +83,8 @@ pub fn run() {
             zk_hosts::zk_host_save,
             zk_hosts::zk_host_delete,
             grpc_client::grpc_call,
+            grpc_client::grpc_list,
+            grpc_client::grpc_describe,
             grpc_tls::grpc_tls_list,
             grpc_tls::grpc_tls_save,
             grpc_tls::grpc_tls_delete,
