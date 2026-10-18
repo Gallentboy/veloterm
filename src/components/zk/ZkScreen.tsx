@@ -269,6 +269,7 @@ function ZkSessionView({
   const [nodes, setNodes] = useState<Map<string, TreeNode>>(new Map());
   const [searchQuery, setSearchQuery] = useState('');
   const [searching, setSearching] = useState(false);
+  const [searchCollapsed, setSearchCollapsed] = useState<Set<string>>(new Set());
   const searchVersionRef = useRef(0);
   const [selected, setSelected] = useState('/');
   const [detail, setDetail] = useState<ZkNode | null>(null);
@@ -579,6 +580,11 @@ function ZkSessionView({
     }
   }, []);
 
+  // 搜索退出时清掉手动折叠集合，下次搜索恢复默认自动展开
+  useEffect(() => {
+    if (!searchQuery.trim()) setSearchCollapsed(new Set());
+  }, [searchQuery]);
+
   // 搜索本身零网络：仅过滤已缓存的节点（刷新按钮/watch 事件负责把数据带进内存）
 
   const searchLower = searchQuery.trim().toLowerCase();
@@ -605,7 +611,8 @@ function ZkSessionView({
       walk('/');
       return list;
     }
-    // 搜索态：命中 = 名字或路径含关键词；可见 = 命中 ∪ 祖先（自动展开）
+    // 搜索态：命中 = 名字或路径含关键词；可见 = 命中 ∪ 祖先（自动展开），
+    // 但手动折叠的分支（searchCollapsed）之下的节点一律不显示
     const visible = new Set<string>();
     for (const node of nodes.values()) {
       if (
@@ -624,11 +631,30 @@ function ZkSessionView({
     return [...visible]
       .sort()
       .map((p) => nodes.get(p))
-      .filter((n): n is TreeNode => n != null);
-  }, [nodes, searchLower]);
+      .filter((n): n is TreeNode => n != null)
+      .filter((n) => {
+        let p = n.path;
+        while (p !== '/' && p.length > 0) {
+          p = p.slice(0, p.lastIndexOf('/')) || '/';
+          if (searchCollapsed.has(p)) return false;
+        }
+        return true;
+      });
+  }, [nodes, searchLower, searchCollapsed]);
+
+  /** 搜索态箭头：切换手动折叠分支（默认自动展开，可合上不想看的部分）。 */
+  const toggleSearchCollapse = useCallback((path: string) => {
+    setSearchCollapsed((cur) => {
+      const next = new Set(cur);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
 
   /** 搜索态点选：选中节点 + 展开其祖先链 + 清空搜索回到正常树视图（选中行可见）。 */
   const pickFromSearch = useCallback((path: string) => {
+    setSearchCollapsed(new Set());
     setNodes((current) => {
       const next = new Map(current);
       let p = path;
@@ -1077,15 +1103,20 @@ function ZkSessionView({
                           className="flex size-3.5 items-center justify-center hover:text-foreground"
                           onClick={(e) => {
                             e.stopPropagation();
-                            // 搜索态箭头仅作层级指示（过滤视图无视 expanded，点了也不变）
-                            if (searchQuery.trim()) return;
+                            // 搜索态：切换手动折叠（默认自动展开，可合上）；正常态：切换展开
+                            if (searchQuery.trim()) {
+                              toggleSearchCollapse(node.path);
+                              return;
+                            }
                             void toggleExpand(node);
                           }}
                         >
                           <ChevronRight
                             className={cn(
                               'size-3 transition-transform',
-                              (searchQuery.trim() || node.expanded) && 'rotate-90',
+                              (searchQuery.trim()
+                                ? !searchCollapsed.has(node.path)
+                                : node.expanded) && 'rotate-90',
                             )}
                           />
                         </button>
