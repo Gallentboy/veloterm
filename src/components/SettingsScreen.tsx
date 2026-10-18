@@ -21,12 +21,6 @@ import {
   type SidebarMenuConfig,
   SIDEBAR_VISIBILITY_EVENT,
 } from '@/services/sidebarVisibility';
-import { useDropTarget } from '@/hooks/useDropTarget';
-import {
-  beginInternalDrag,
-  endInternalDrag,
-  type MenuCardDragPayload,
-} from '@/services/dragDropService';
 import { Check } from 'lucide-react';
 import {
   clearKnownHosts,
@@ -190,19 +184,16 @@ export function SettingsScreen() {
                 {t('settings.menuVisibilityDesc')}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-              {orderedMenuItems.map(({ page, icon, navKey }) => (
-                <MenuCard
-                  key={page}
-                  page={page}
-                  icon={icon}
-                  label={t(navKey)}
-                  visible={!menuConfig.hidden.includes(page)}
-                  onToggle={(visible) => toggleMenuVisible(page, visible)}
-                  onReorder={reorderMenu}
-                />
-              ))}
-            </div>
+            <MenuGrid
+              items={orderedMenuItems.map(({ page, icon, navKey }) => ({
+                page,
+                icon,
+                label: navKey,
+              }))}
+              hidden={menuConfig.hidden}
+              onToggle={toggleMenuVisible}
+              onReorder={reorderMenu}
+            />
           </div>
         </SettingsSection>
 
@@ -374,63 +365,103 @@ export function SettingsScreen() {
   );
 }
 
-/** 菜单宫格卡片：点击切换显示/隐藏（右上角小勾标记展示中的项），拖拽到另一张
- *  卡片上换位排序。拖拽走统一拖放管线（beginInternalDrag + useDropTarget，
- *  wry 原生接管 DnD 后页内不携带 dataTransfer，见 dragDropService 头注释）。 */
-function MenuCard({
-  page,
-  icon: Icon,
-  label,
-  visible,
+/** 菜单宫格：卡片点击切换显示/隐藏（右上角小勾标记展示中的项），拖拽卡片到
+ *  另一张上换位排序。排序用指针事件手写（pointerdown/move/up + 坐标命中）：
+ *  wry 原生接管 DnD 后，页内 HTML5 拖拽的 drop 分发存在 dragend 与原生事件的
+ *  时序竞争（实测拖了不换位），且默认 drop 光标带「+」号——纯 UI 重排不走
+ *  该管线，指针事件行为完全确定。 */
+function MenuGrid({
+  items,
+  hidden,
   onToggle,
   onReorder,
 }: {
-  page: string;
-  icon: LucideIcon;
-  label: string;
-  visible: boolean;
-  onToggle: (visible: boolean) => void;
+  items: Array<{ page: string; icon: LucideIcon; label: string }>;
+  hidden: string[];
+  onToggle: (page: string, visible: boolean) => void;
   onReorder: (source: string, target: string) => void;
 }) {
-  const [hovered, setHovered] = useState(false);
-  const cardRef = useRef<HTMLDivElement>(null);
+  const { t } = useTranslation();
+  const containerRef = useRef<HTMLDivElement>(null);
+  // 拖拽会话：source = 拖动的卡片，target = 当前悬停的卡片（换位高亮）
+  const [drag, setDrag] = useState<{ source: string; target: string | null } | null>(null);
+  const dragRef = useRef(drag);
+  dragRef.current = drag;
 
-  useDropTarget({
-    ref: cardRef,
-    accepts: ['menu-card'],
-    onDrop: (event) => {
-      if (event.kind === 'menu-card') {
-        const payload = event.payload as MenuCardDragPayload;
-        if (payload.page && payload.page !== page) onReorder(payload.page, page);
+  const hitCard = (x: number, y: number): string | null => {
+    const container = containerRef.current;
+    if (!container) return null;
+    for (const el of Array.from(container.querySelectorAll<HTMLElement>('[data-menu-page]'))) {
+      const rect = el.getBoundingClientRect();
+      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+        return el.dataset.menuPage ?? null;
       }
-    },
-    onHoverChange: setHovered,
-  });
+    }
+    return null;
+  };
+
+  const handlePointerDown = (page: string, event: React.PointerEvent) => {
+    if (event.button !== 0) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let started = false;
+    const onMove = (move: PointerEvent) => {
+      if (!started) {
+        if (Math.hypot(move.clientX - startX, move.clientY - startY) <= 5) return;
+        started = true;
+      }
+      const target = hitCard(move.clientX, move.clientY);
+      setDrag((current) =>
+        current?.source === page && current.target === target ? current : { source: page, target },
+      );
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      const current = dragRef.current;
+      // 未发生拖动 = 点击：切换显示/隐藏；拖动且悬停有效 = 换位
+      if (!started) {
+        onToggle(page, hidden.includes(page));
+      } else if (current?.source === page && current.target && current.target !== page) {
+        onReorder(page, current.target);
+      }
+      setDrag(null);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
+  };
 
   return (
-    <div
-      ref={cardRef}
-      draggable
-      onDragStart={() => beginInternalDrag('menu-card', { page })}
-      onDragEnd={endInternalDrag}
-      onClick={() => onToggle(!visible)}
-      role="checkbox"
-      aria-checked={visible}
-      className={cn(
-        'relative flex cursor-grab select-none items-center gap-2 rounded-lg border px-3 py-2 transition-colors active:cursor-grabbing',
-        visible
-          ? 'border-border bg-surface/40 text-foreground hover:border-border-hover'
-          : 'border-border/40 text-foreground-subtlest opacity-60 hover:opacity-80',
-        hovered && 'border-primary',
-      )}
-    >
-      <Icon className="size-4 shrink-0" />
-      <span className="min-w-0 truncate text-ui-sm">{label}</span>
-      {visible ? (
-        <span className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
-          <Check className="size-2.5" />
-        </span>
-      ) : null}
+    <div ref={containerRef} className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+      {items.map(({ page, icon: Icon, label }) => {
+        const visible = !hidden.includes(page);
+        const isDragSource = drag?.source === page;
+        const isDropTarget = drag?.target === page && drag.target !== drag.source;
+        return (
+          <div
+            key={page}
+            data-menu-page={page}
+            onPointerDown={(event) => handlePointerDown(page, event)}
+            role="checkbox"
+            aria-checked={visible}
+            className={cn(
+              'relative flex cursor-pointer select-none touch-none items-center gap-2 rounded-lg border px-3 py-2 transition-colors',
+              visible
+                ? 'border-border bg-surface/40 text-foreground hover:border-border-hover'
+                : 'border-border/40 text-foreground-subtlest opacity-60 hover:opacity-80',
+              isDragSource && 'opacity-40',
+              isDropTarget && 'border-primary',
+            )}
+          >
+            <Icon className="size-4 shrink-0" />
+            <span className="min-w-0 truncate text-ui-sm">{t(label)}</span>
+            {visible ? (
+              <span className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                <Check className="size-2.5" />
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
