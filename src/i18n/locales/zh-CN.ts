@@ -647,6 +647,8 @@ export default {
     languageDesc: '切换界面显示语言，立即生效。',
     aiDesc: 'AI 问答供应商（OpenAI 兼容/Claude/Gemini），支持多 Key 轮询。',
     logLevel: '日志等级',
+    menuVisibility: '菜单展示',
+    menuVisibilityDesc: '取消勾选的菜单将从侧栏隐藏（默认全部展示，实时生效）',
     logLevelDesc: '实时调节前后端日志输出阈值，无需重启立即生效。',
     logFilePath: '日志文件：{{path}}',
     knownHosts: 'SSH 已知主机指纹',

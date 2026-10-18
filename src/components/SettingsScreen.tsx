@@ -13,6 +13,12 @@ import { deleteAiProvider, listAiProviders, type AiProvider } from '@/services/a
 import { SUPPORTED_LOCALES, type Locale } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useThemeContext, type Theme } from '@/theme/ThemeProvider';
+import { SIDEBAR_NAV_ITEMS } from '@/components/WorkspaceSidebar';
+import {
+  getHiddenSidebarPages,
+  setHiddenSidebarPages,
+  SIDEBAR_VISIBILITY_EVENT,
+} from '@/services/sidebarVisibility';
 import {
   clearKnownHosts,
   listKnownHosts,
@@ -63,6 +69,19 @@ export function SettingsScreen() {
   // 删除确认弹窗目标（工程约定：删除必须弹窗确认，严禁两次点击式或无确认直接删）
   const [pendingRemoveHost, setPendingRemoveHost] = useState<KnownHostEntry | null>(null);
   const [confirmClearAllOpen, setConfirmClearAllOpen] = useState(false);
+  // 菜单展示：隐藏集合实时同步（本页勾选与其他入口变更都经事件联动）
+  const [hiddenMenus, setHiddenMenus] = useState<Set<string>>(() => getHiddenSidebarPages());
+  useEffect(() => {
+    const onChanged = () => setHiddenMenus(getHiddenSidebarPages());
+    window.addEventListener(SIDEBAR_VISIBILITY_EVENT, onChanged);
+    return () => window.removeEventListener(SIDEBAR_VISIBILITY_EVENT, onChanged);
+  }, []);
+  const toggleMenuVisible = (page: string, visible: boolean) => {
+    const next = new Set(hiddenMenus);
+    if (visible) next.delete(page);
+    else next.add(page);
+    setHiddenSidebarPages(next);
+  };
 
   useEffect(() => {
     let active = true;
@@ -138,6 +157,24 @@ export function SettingsScreen() {
                 onChange={(value) => void handleLogLevelChange(value as LogLevel)}
                 options={LOG_LEVEL_OPTIONS}
               />
+            </div>
+          </SettingRow>
+          <SettingRow title={t('settings.menuVisibility')} desc={t('settings.menuVisibilityDesc')}>
+            <div className="flex max-w-[280px] flex-wrap justify-end gap-x-4 gap-y-1.5">
+              {SIDEBAR_NAV_ITEMS.map(({ page, navKey }) => (
+                <label
+                  key={page}
+                  className="flex cursor-pointer items-center gap-1.5 text-ui-sm text-foreground select-none"
+                >
+                  <input
+                    type="checkbox"
+                    checked={!hiddenMenus.has(page)}
+                    onChange={(e) => toggleMenuVisible(page, e.target.checked)}
+                    className="accent-foreground"
+                  />
+                  {t(navKey)}
+                </label>
+              ))}
             </div>
           </SettingRow>
         </SettingsSection>
