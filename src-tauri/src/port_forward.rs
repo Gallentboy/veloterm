@@ -279,8 +279,13 @@ fn resolve_host_chain(pool: &DbPool, host_id: i64) -> Result<Vec<TargetSSHOption
         host_key_verification: target.host_key_verification,
         relay: None,
     });
-    // 中继（仅链首生效）：与 TerminalManager 同型，端口转发连接同样可走中继
-    if let Some(relay) = target.relay.clone()
+    // 中继（仅链首生效）：与 TerminalManager 同型（嵌入式优先，relay_id 兜底），
+    // 端口转发连接同样可走中继
+    let relay = target
+        .relay
+        .clone()
+        .or_else(|| crate::relays::endpoint_by_id(target.relay_id));
+    if let Some(relay) = relay
         && let Some(first) = chain.first_mut()
     {
         first.relay = Some(relay);

@@ -76,9 +76,13 @@ pub struct HostRecord {
     #[serde(default)]
     pub ready_command_id: Option<usize>,
     /// SSH 中继（veloterm_relay）：有值时该主机经中继连接（首跳传输替换）。
-    /// secret 存 SQLCipher 加密库；relay_host 为空视为未启用
+    /// secret 存 SQLCipher 加密库；relay_host 为空视为未启用。
+    /// 连接时嵌入式配置优先；为空时按 relay_id 从中继库解析
     #[serde(default)]
     pub relay: Option<SshRelayEndpoint>,
+    /// 中继库引用（侧栏「中继」页配置的 id）；嵌入式 relay 为空且此值有效时生效
+    #[serde(default)]
+    pub relay_id: Option<usize>,
     #[serde(default)]
     pub group_ids: Vec<usize>,
     pub created_at: i64,
@@ -264,6 +268,19 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           enabled INTEGER NOT NULL DEFAULT 0,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS relays (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          host TEXT NOT NULL,
+          port INTEGER NOT NULL DEFAULT 7300,
+          transport TEXT NOT NULL DEFAULT 'tcp',
+          key_id INTEGER NOT NULL DEFAULT 1,
+          secret TEXT NOT NULL,
+          cert_fingerprint TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
       );",
     )
     .map_err(|e| format!("failed to initialize schema in SQLCipher database: {e}"))?;
@@ -278,7 +295,8 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
     }
 
     // SSH 中继六列（relay_host 非空 = 启用；其余列仅在 relay_host 非空时有意义）；
-    // cert_fingerprint 为后续追加（QUIC 证书 pin）
+    // cert_fingerprint 为后续追加（QUIC 证书 pin）；relay_id 为中继库引用
+    // （侧栏「中继」页保存的配置，嵌入式字段优先，引用解析在连接组链处）
     for col_def in [
         "relay_host TEXT",
         "relay_port INTEGER",
@@ -287,6 +305,7 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
         "relay_secret TEXT",
         "relay_target TEXT",
         "cert_fingerprint TEXT",
+        "relay_id INTEGER",
     ] {
         let sql = format!("ALTER TABLE hosts ADD COLUMN {col_def}");
         if let Err(e) = conn.execute_batch(&sql)
@@ -323,6 +342,132 @@ pub fn init_db(app_handle: &AppHandle, master_key: &str) -> Result<DbPool, Strin
     let pool = init_db_at_path(&db_path, master_key)?;
     let _ = GLOBAL_DB_POOL.set(pool.clone());
     Ok(pool)
+}
+
+// ===== `relays` 中继配置持久化操作 =====
+
+/// 中继配置记录（与 relays.rs 的 RelayRecord 同构；此处独立定义避免模块循环）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RelayRecord {
+    pub id: usize,
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub transport: RelayTransport,
+    pub key_id: u8,
+    pub secret: String,
+    #[serde(default)]
+    pub cert_fingerprint: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+pub fn list_relays(pool: &DbPool) -> Result<Vec<RelayRecord>, String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, host, port, transport, key_id, secret, cert_fingerprint, created_at, updated_at
+       FROM relays ORDER BY id ASC",
+        )
+        .map_err(|e| format!("failed to prepare relays query: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            let port_i64: i64 = row.get(2)?;
+            let transport_raw: String = row.get(4)?;
+            let key_id_i64: i64 = row.get(5)?;
+            let transport = match transport_raw.trim() {
+                "ws" => RelayTransport::Ws,
+                "quic" => RelayTransport::Quic,
+                _ => RelayTransport::Tcp,
+            };
+            Ok(RelayRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                host: row.get(2)?,
+                port: u16::try_from(port_i64.clamp(1, 65535)).unwrap_or(7300),
+                transport,
+                key_id: key_id_i64.clamp(0, 255) as u8,
+                secret: row.get(6)?,
+                cert_fingerprint: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        })
+        .map_err(|e| format!("failed to query relays: {e}"))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("failed to decode relay row: {e}"))?);
+    }
+    Ok(out)
+}
+
+pub fn save_relay(pool: &DbPool, record: RelayRecord) -> Result<RelayRecord, String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let transport = match record.transport {
+        RelayTransport::Tcp => "tcp",
+        RelayTransport::Ws => "ws",
+        RelayTransport::Quic => "quic",
+    };
+    let cert = record
+        .cert_fingerprint
+        .as_deref()
+        .map(|f| f.trim().to_string())
+        .filter(|f| !f.is_empty());
+    if record.id == 0 {
+        conn.execute(
+            "INSERT INTO relays (name, host, port, transport, key_id, secret, cert_fingerprint, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            rusqlite::params![
+                record.name,
+                record.host,
+                i64::from(record.port),
+                transport,
+                i64::from(record.key_id),
+                record.secret,
+                cert,
+                now,
+            ],
+        )
+        .map_err(|e| format!("failed to insert relay: {e}"))?;
+        let id: usize = conn.last_insert_rowid() as usize;
+        Ok(RelayRecord { id, created_at: now, updated_at: now, ..record })
+    } else {
+        conn.execute(
+            "UPDATE relays SET name=?2, host=?3, port=?4, transport=?5, key_id=?6, secret=?7, cert_fingerprint=?8, updated_at=?9
+             WHERE id=?1",
+            rusqlite::params![
+                record.id,
+                record.name,
+                record.host,
+                i64::from(record.port),
+                transport,
+                i64::from(record.key_id),
+                record.secret,
+                cert,
+                now,
+            ],
+        )
+        .map_err(|e| format!("failed to update relay: {e}"))?;
+        Ok(RelayRecord { updated_at: now, ..record })
+    }
+}
+
+pub fn delete_relay(pool: &DbPool, id: usize) -> Result<(), String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    conn.execute("DELETE FROM relays WHERE id=?1", rusqlite::params![id])
+        .map_err(|e| format!("failed to delete relay: {e}"))?;
+    Ok(())
 }
 
 // ===== `app_kv` 通用键值持久化操作 =====
@@ -601,7 +746,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
         .prepare(
             "SELECT id, name, host, port, username, auth_json, jump_host_id,
               host_key_verification, allow_insecure_algos, ready_command_id,
-              relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint,
+              relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint, relay_id,
               created_at, updated_at
        FROM hosts
        ORDER BY id ASC",
@@ -623,6 +768,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 row.get::<_, Option<String>>(14)?.as_deref(),
                 row.get::<_, Option<String>>(15)?.as_deref(),
             );
+            let relay_id: Option<usize> = row.get::<_, Option<i64>>(16)?.map(|v| v.max(0) as usize);
             Ok(HostRecord {
                 id,
                 name: row.get(1)?,
@@ -635,9 +781,10 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 allow_insecure_algos: allow_insecure_int != 0,
                 ready_command_id: row.get(9)?,
                 relay,
+                relay_id,
                 group_ids: groups_by_host.remove(&id).unwrap_or_default(),
-                created_at: row.get(16)?,
-                updated_at: row.get(17)?,
+                created_at: row.get(17)?,
+                updated_at: row.get(18)?,
             })
         })
         .map_err(|e| format!("failed to query hosts: {e}"))?;
@@ -738,6 +885,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 allow_insecure_algos: false,
                 ready_command_id: None,
                 relay: None,
+                relay_id: None,
                 group_ids,
                 created_at,
                 updated_at,
@@ -805,9 +953,9 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
             "INSERT INTO hosts (
           id, name, host, port, username, auth_json, jump_host_id,
           host_key_verification, allow_insecure_algos, ready_command_id,
-          relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint,
+          relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint, relay_id,
           created_at, updated_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 host.id,
                 &host.name,
@@ -825,6 +973,7 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                 host.relay.as_ref().map(|r| i64::from(r.key_id)),
                 host.relay.as_ref().map(|r| r.secret.clone()),
                 host.relay.as_ref().and_then(|r| r.cert_fingerprint.clone()),
+                host.relay_id,
                 host.created_at,
                 host.updated_at,
             ],
@@ -968,6 +1117,7 @@ mod tests {
                         "F3:6A:D3:91:5D:6E:69:F8:5C:55:63:F6:C5:A0:7F:8E".to_string(),
                     ),
                 }),
+                relay_id: Some(1),
                 group_ids: vec![1],
                 created_at: 200,
                 updated_at: 200,
@@ -984,6 +1134,7 @@ mod tests {
                 allow_insecure_algos: false,
                 ready_command_id: None,
                 relay: None,
+                relay_id: None,
                 group_ids: vec![],
                 created_at: 201,
                 updated_at: 201,
