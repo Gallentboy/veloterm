@@ -3,8 +3,11 @@ name: 'publish'
 on:
   workflow_dispatch:
   push:
-    branches:
-      - release
+    # 正式发布改为 tag 触发：v 前缀或数字开头的版本 tag（如 v1.0.0 / 1.0.0）；
+    # test_* 车道 tag 不匹配任一模式，不会误触发。release 分支常规推送不再出包。
+    tags:
+      - 'v*'
+      - '[0-9]*'
 
 jobs:
   publish-tauri:
