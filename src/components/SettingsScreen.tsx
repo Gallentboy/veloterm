@@ -441,7 +441,15 @@ function MenuGrid({
   };
 
   return (
-    <div ref={containerRef} className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+    <div
+      ref={containerRef}
+      className={cn(
+        'grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4',
+        // 拖拽中容器内全部强制抓取手（卡片自身的 cursor-pointer 优先级更高，
+        // body 级设置盖不住元素级）；移出容器后由 body 兜底
+        drag && 'cursor-grabbing [&_*]:!cursor-grabbing',
+      )}
+    >
       {items.map(({ page, icon: Icon, label }) => {
         const visible = !hidden.includes(page);
         const isDragSource = drag?.source === page;
