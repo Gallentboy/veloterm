@@ -1,9 +1,14 @@
-//! TCP 监听器：accept → VLR2 握手 → 连接目标 → 纯字节搬运。
+//! 监听器实现：tcp（本文件）+ ws/quic/udp（各自子模块，共享会话逻辑 `serve_stream`）。
+
+pub mod quic;
+pub mod udp;
+pub mod ws;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, watch};
 use tokio::task::JoinSet;
@@ -13,12 +18,57 @@ use veloterm_relay_proto::handshake::{send_status, server_handshake, ServerAuth,
 
 use crate::config::ResolvedListener;
 
-/// 监听器任务。shutdown 变更即退出并终止在途连接（中继重启本就断会话）。
+/// 传输无关的会话逻辑：VLR2 握手 → 连接目标 → 终局状态 → 双向搬运 → 日志。
+/// tcp/ws/quic 的每连接任务都以各自的（AsyncRead+AsyncWrite）流调用本函数；
+/// 并发上限由各传输层在调用前用信号量控制。
+pub async fn serve_stream<S>(
+    mut io: S,
+    peer: &str,
+    auth: &ServerAuth,
+    policy: &TargetPolicy,
+    hs_timeout: Duration,
+) where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let started = Instant::now();
+    let (target, principal) = match server_handshake(&mut io, auth, policy, hs_timeout).await {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(peer, error = %e, "握手拒绝");
+            return;
+        }
+    };
+
+    let mut outbound = match TcpStream::connect((target.host.as_str(), target.port)).await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(peer, %target, error = %e, "目标连接失败");
+            let _ = send_status(&mut io, Status::ConnectFailed).await;
+            return;
+        }
+    };
+    if send_status(&mut io, Status::Ok).await.is_err() {
+        return; // 客户端在终局状态前跑了
+    }
+
+    let _ = outbound.set_nodelay(true);
+    match tokio::io::copy_bidirectional(&mut io, &mut outbound).await {
+        Ok((up, down)) => info!(
+            peer, %target, principal,
+            up_bytes = up, down_bytes = down,
+            duration_ms = started.elapsed().as_millis() as u64,
+            "relay session closed"
+        ),
+        Err(e) => warn!(peer, %target, error = %e, "搬运中断"),
+    }
+}
+
+/// TCP 监听器。shutdown 变更即退出并终止在途连接（中继重启本就断会话）。
 pub async fn run_tcp(
     listener: ResolvedListener,
     auth: Arc<ServerAuth>,
     conn_limit: Arc<Semaphore>,
-    handshake_timeout: std::time::Duration,
+    handshake_timeout: Duration,
     shutdown: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
     let tcp = TcpListener::bind(listener.bind)
@@ -33,7 +83,7 @@ pub async fn run_tcp_on(
     listener: ResolvedListener,
     auth: Arc<ServerAuth>,
     conn_limit: Arc<Semaphore>,
-    handshake_timeout: std::time::Duration,
+    handshake_timeout: Duration,
     mut shutdown: watch::Receiver<()>,
 ) -> anyhow::Result<()> {
     info!(bind = %tcp.local_addr()?, 默认目标 = ?listener.default_target, "tcp listener ready");
@@ -57,7 +107,7 @@ pub async fn run_tcp_on(
                             continue;
                         }
                     };
-                    tasks.spawn(handle_conn(
+                    tasks.spawn(handle_tcp_conn(
                         stream,
                         peer,
                         auth.clone(),
@@ -68,7 +118,7 @@ pub async fn run_tcp_on(
                 }
                 Err(e) => {
                     warn!(error = %e, "accept 失败");
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             },
         }
@@ -78,52 +128,14 @@ pub async fn run_tcp_on(
     Ok(())
 }
 
-async fn handle_conn(
-    mut inbound: TcpStream,
+async fn handle_tcp_conn(
+    stream: TcpStream,
     peer: SocketAddr,
     auth: Arc<ServerAuth>,
     policy: TargetPolicy,
-    handshake_timeout: std::time::Duration,
+    handshake_timeout: Duration,
     _permit: tokio::sync::OwnedSemaphorePermit,
 ) {
-    let started = Instant::now();
-    let (target, principal) = match server_handshake(&mut inbound, &auth, &policy, handshake_timeout).await {
-        Ok(v) => v,
-        Err(e) => {
-            warn!(%peer, error = %e, "握手拒绝");
-            return;
-        }
-    };
-
-    let mut outbound = match TcpStream::connect((target.host.as_str(), target.port)).await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!(%peer, %target, error = %e, "目标连接失败");
-            let _ = send_status(&mut inbound, Status::ConnectFailed).await;
-            return;
-        }
-    };
-    if send_status(&mut inbound, Status::Ok).await.is_err() {
-        return; // 客户端在终局状态前跑了
-    }
-
-    match relay_bytes(&mut inbound, &mut outbound).await {
-        Ok((up, down)) => info!(
-            %peer, %target, principal,
-            up_bytes = up, down_bytes = down,
-            duration_ms = started.elapsed().as_millis() as u64,
-            "relay session closed"
-        ),
-        Err(e) => warn!(%peer, %target, error = %e, "搬运中断"),
-    }
-}
-
-async fn relay_bytes(
-    inbound: &mut TcpStream,
-    outbound: &mut TcpStream,
-) -> std::io::Result<(u64, u64)> {
-    // half-close 透传：客户端 FIN 之后仍把目标侧剩余响应搬完（SSH 会正常收尾）
-    let _ = inbound.set_nodelay(true);
-    let _ = outbound.set_nodelay(true);
-    tokio::io::copy_bidirectional(inbound, outbound).await
+    let _ = stream.set_nodelay(true);
+    serve_stream(stream, &peer.to_string(), &auth, &policy, handshake_timeout).await;
 }

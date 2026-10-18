@@ -19,6 +19,14 @@ clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
+# ws 监听器（服务端 accept_async + 测试端 connect_async）与流式拆合
+tokio-tungstenite = { version = "0.29", features = ["connect", "handshake"] }
+futures-util = "0.3"
+# quic 监听器（aws-lc-rs 与 russh 同栈）；rcgen 用于未配置证书时启动自签
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "aws-lc-rs", "log"] }
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
+rustls-pemfile = "2"
+rcgen = "0.13"
 
 [dev-dependencies]
 # 端到端测试：russh 服务端作回环 SSH 目标、russh 客户端经中继连入

@@ -40,23 +40,35 @@ pub struct DataDatagram<'a> {
     pub payload: &'a [u8],
 }
 
-/// 解码 + 验证。任一步失败返回 `None`（UDP 无法回执，调用方只能丢弃）。
-pub fn decode_and_verify_data(buf: &[u8], secret_for: impl Fn(u8) -> Option<Secret>, now_ms: u64) -> Option<DataDatagram<'_>> {
+/// 仅结构解析（不验证明不验窗），供服务端按「解析→查密→验证明→验窗」组合使用，
+/// 以便对「鉴权失败」与「时间偏差」回不同错误码。
+pub fn decode_data(buf: &[u8]) -> Result<DataDatagram<'_>, ProtoError> {
     let header_len = 4 + 1 + 8 + PROOF_LEN;
     if buf.len() < header_len + 1 || buf[..4] != DATA_MAGIC {
-        return None;
+        return Err(ProtoError::BadLength);
     }
     let key_id = buf[4];
     let time_ms = u64::from_be_bytes(buf[5..13].try_into().unwrap());
     let proof: [u8; PROOF_LEN] = buf[13..45].try_into().unwrap();
-    let secret = secret_for(key_id)?;
-    if !auth::const_eq(&auth::udp_data_proof(&secret, key_id, time_ms), &proof) {
+    Ok(DataDatagram { key_id, time_ms, proof, payload: &buf[header_len..] })
+}
+
+/// 独立验证明（与 decode_data 组合用）。
+pub fn verify_data_proof(secret: &Secret, key_id: u8, time_ms: u64, proof: &[u8; PROOF_LEN]) -> bool {
+    auth::const_eq(&auth::udp_data_proof(secret, key_id, time_ms), proof)
+}
+
+/// 解码 + 验证。任一步失败返回 `None`（UDP 无法回执，调用方只能丢弃）。
+pub fn decode_and_verify_data(buf: &[u8], secret_for: impl Fn(u8) -> Option<Secret>, now_ms: u64) -> Option<DataDatagram<'_>> {
+    let dg = decode_data(buf).ok()?;
+    let secret = secret_for(dg.key_id)?;
+    if !verify_data_proof(&secret, dg.key_id, dg.time_ms, &dg.proof) {
         return None;
     }
-    if !time_within_window(time_ms, now_ms) {
+    if !time_within_window(dg.time_ms, now_ms) {
         return None;
     }
-    Some(DataDatagram { key_id, time_ms, proof, payload: &buf[header_len..] })
+    Some(DataDatagram { key_id: dg.key_id, time_ms: dg.time_ms, proof: dg.proof, payload: dg.payload })
 }
 
 /// 验窗：`|time_ms - now_ms| <= window`。

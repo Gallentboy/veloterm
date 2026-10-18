@@ -87,6 +87,9 @@ fn run(path: std::path::PathBuf, check_only: bool) -> anyhow::Result<()> {
                 "  [{}] bind={} default={:?} allow={}",
                 match l.proto {
                     ListenerProto::Tcp => "tcp",
+                    ListenerProto::Ws => "ws",
+                    ListenerProto::Udp => "udp",
+                    ListenerProto::Quic => "quic",
                 },
                 l.bind,
                 l.default_target,
@@ -109,17 +112,41 @@ async fn serve(resolved: config::ResolvedConfig) -> anyhow::Result<()> {
 
     let mut tasks = tokio::task::JoinSet::new();
     for listener in resolved.listeners {
-        anyhow::ensure!(
-            matches!(listener.proto, ListenerProto::Tcp),
-            "未实现的监听协议（应在配置校验期拦截）"
-        );
-        tasks.spawn(server::run_tcp(
-            listener,
-            auth.clone(),
-            conn_limit.clone(),
-            resolved.handshake_timeout,
-            shutdown_rx.clone(),
-        ));
+        // 证书/密钥文件存在性提前校验，避免 quic 监听器启动后才失败
+        if let (Some(cert), Some(key)) = (&listener.tls_cert, &listener.tls_key) {
+            anyhow::ensure!(cert.is_file(), "证书文件不存在: {}", cert.display());
+            anyhow::ensure!(key.is_file(), "私钥文件不存在: {}", key.display());
+        }
+        match listener.proto {
+            ListenerProto::Tcp => tasks.spawn(server::run_tcp(
+                listener,
+                auth.clone(),
+                conn_limit.clone(),
+                resolved.handshake_timeout,
+                shutdown_rx.clone(),
+            )),
+            ListenerProto::Ws => tasks.spawn(server::ws::run_ws(
+                listener,
+                auth.clone(),
+                conn_limit.clone(),
+                resolved.handshake_timeout,
+                shutdown_rx.clone(),
+            )),
+            ListenerProto::Udp => tasks.spawn(server::udp::run_udp(
+                listener,
+                auth.clone(),
+                conn_limit.clone(),
+                resolved.handshake_timeout,
+                shutdown_rx.clone(),
+            )),
+            ListenerProto::Quic => tasks.spawn(server::quic::run_quic(
+                listener,
+                auth.clone(),
+                conn_limit.clone(),
+                resolved.handshake_timeout,
+                shutdown_rx.clone(),
+            )),
+        };
     }
 
     // 任一监听器致命退出（如端口被占）都应终止进程
