@@ -10,6 +10,11 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 
+# 与主工程（src-tauri）profile.release 同参：fat LTO + 单 codegen 单元 +
+# 符号剥离 + abort on panic（服务端二进制同受益：体积更小、全程序优化）
 [profile.release]
-lto = "thin"
-strip = "symbols"
+panic = "abort"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
