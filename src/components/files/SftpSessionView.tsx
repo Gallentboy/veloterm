@@ -754,6 +754,36 @@ export function SftpSessionView({
               <RefreshCw className={cn('size-3.5', isLoading && 'animate-spin')} />
             </Button>
           </ControlHintTooltip>
+
+          {/* 多选操作（内联在刷新右侧）：选中非空时显示（批量下载 / 清除；
+              多选互拷无需按钮，直接拖选区即可） */}
+          {selectedPaths.size > 0 ? (
+            <div className="flex h-7 items-center gap-1.5 rounded-lg bg-selected/40 px-2 text-ui-xs">
+              <span className="text-foreground-subtle select-none">
+                {t('files.selection.selected', { count: selectedPaths.size })}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleBatchDownload}
+                className="h-6 gap-1 rounded-md px-2 text-ui-xs font-medium border-border/70 bg-surface/40 hover:bg-hover active:bg-hover/80 text-foreground shadow-2xs transition-colors"
+              >
+                <Download className="size-3 text-foreground-subtle" />
+                <span>{t('files.selection.download')}</span>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setSelectedPaths(new Set());
+                  selectionAnchorRef.current = null;
+                }}
+                className="h-6 gap-1 rounded-md px-2 text-ui-xs font-medium text-foreground-subtle hover:text-foreground hover:bg-hover"
+              >
+                <span>{t('files.selection.clear')}</span>
+              </Button>
+            </div>
+          ) : null}
         </div>
 
         {/* 路径输入框与上传按钮 */}
@@ -816,35 +846,6 @@ export function SftpSessionView({
           </button>
         </div>
       )}
-
-      {/* 多选操作条：选中非空时显示（批量下载 / 清除选择；多选互拷无需按钮，直接拖选区即可） */}
-      {selectedPaths.size > 0 ? (
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-border/50 bg-selected/25 px-3 py-1 text-ui-xs">
-          <span className="text-foreground-subtle select-none">
-            {t('files.selection.selected', { count: selectedPaths.size })}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleBatchDownload}
-            className="h-6 gap-1 rounded-md px-2 text-ui-xs font-medium border-border/70 bg-surface/40 hover:bg-hover active:bg-hover/80 text-foreground shadow-2xs transition-colors"
-          >
-            <Download className="size-3 text-foreground-subtle" />
-            <span>{t('files.selection.download')}</span>
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => {
-              setSelectedPaths(new Set());
-              selectionAnchorRef.current = null;
-            }}
-            className="h-6 gap-1 rounded-md px-2 text-ui-xs font-medium text-foreground-subtle hover:text-foreground hover:bg-hover"
-          >
-            <span>{t('files.selection.clear')}</span>
-          </Button>
-        </div>
-      ) : null}
 
       {/* 远程文件列表 */}
       <div className="min-h-0 flex-1 overflow-y-auto">
