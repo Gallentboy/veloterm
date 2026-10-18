@@ -15,6 +15,7 @@ import { GroupsScreen } from '@/components/hosts/GroupsScreen';
 import { HostsScreen } from '@/components/hosts/HostsScreen';
 import { RelaysScreen } from '@/components/relays/RelaysScreen';
 import { ZkScreen } from '@/components/zk/ZkScreen';
+import { ZkHostsScreen } from '@/components/zkhosts/ZkHostsScreen';
 import { SettingsScreen } from '@/components/SettingsScreen';
 import { TerminalScreen } from '@/components/terminal';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
@@ -536,6 +537,17 @@ export function AppShell() {
                   <CommandsScreen />
                 ) : page === 'relays' ? (
                   <RelaysScreen />
+                ) : page === 'zkhosts' ? (
+                  <ZkHostsScreen
+                    onConnectHost={(host) => {
+                      // ZK 页常驻挂载（同 SFTP），经 window 自定义事件把待连主机递给它；
+                      // 事件名与 ZkScreen 的监听约定一致（新增 tab + 按主机自动连接）
+                      window.dispatchEvent(
+                        new CustomEvent('veloterm:zk-connect-host', { detail: host }),
+                      );
+                      setPage('zk');
+                    }}
+                  />
                 ) : (
                   <SettingsScreen />
                 )}

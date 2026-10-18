@@ -281,6 +281,26 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           cert_fingerprint TEXT,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS zk_hosts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          endpoints TEXT NOT NULL,
+          relay_id INTEGER,
+          default_credential_id INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS zk_credentials (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          host_id INTEGER NOT NULL,
+          username TEXT NOT NULL,
+          password TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          UNIQUE(host_id, username)
       );",
     )
     .map_err(|e| format!("failed to initialize schema in SQLCipher database: {e}"))?;
@@ -467,6 +487,375 @@ pub fn delete_relay(pool: &DbPool, id: usize) -> Result<(), String> {
         .map_err(|e| format!("failed to get db connection: {e}"))?;
     conn.execute("DELETE FROM relays WHERE id=?1", rusqlite::params![id])
         .map_err(|e| format!("failed to delete relay: {e}"))?;
+    Ok(())
+}
+
+// ===== `zk_hosts` / `zk_credentials` ZK 主机持久化操作 =====
+
+/// ZK 主机凭证（对应 `zk_credentials` 表；密码明文存 SQLCipher 加密库，与 SSH 密码同级别）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ZkCredentialRecord {
+    pub id: usize,
+    pub username: String,
+    pub password: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// ZK 主机完整持久化模型（对应 `zk_hosts` 表 + 按主机挂载的凭证列表，按 id ASC）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ZkHostRecord {
+    pub id: usize,
+    pub name: String,
+    pub endpoints: String,
+    pub relay_id: Option<usize>,
+    pub default_credential_id: Option<usize>,
+    pub credentials: Vec<ZkCredentialRecord>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// 列出全部 ZK 主机（id ASC），每主机挂 credentials（id ASC，密码明文返回）。
+pub fn list_zk_hosts(pool: &DbPool) -> Result<Vec<ZkHostRecord>, String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+
+    // 凭证按 host_id 分组（id ASC）
+    let mut credentials_by_host: HashMap<usize, Vec<ZkCredentialRecord>> = HashMap::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, host_id, username, password, created_at, updated_at
+           FROM zk_credentials
+           ORDER BY id ASC",
+            )
+            .map_err(|e| format!("failed to prepare zk_credentials query: {e}"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, usize>(1)?,
+                    ZkCredentialRecord {
+                        id: row.get(0)?,
+                        username: row.get(2)?,
+                        password: row.get(3)?,
+                        created_at: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    },
+                ))
+            })
+            .map_err(|e| format!("failed to query zk_credentials: {e}"))?;
+        for r in rows {
+            let (host_id, cred) =
+                r.map_err(|e| format!("failed to decode zk credential row: {e}"))?;
+            credentials_by_host.entry(host_id).or_default().push(cred);
+        }
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, endpoints, relay_id, default_credential_id, created_at, updated_at
+       FROM zk_hosts
+       ORDER BY id ASC",
+        )
+        .map_err(|e| format!("failed to prepare zk_hosts query: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            let id: usize = row.get(0)?;
+            Ok(ZkHostRecord {
+                id,
+                name: row.get(1)?,
+                endpoints: row.get(2)?,
+                relay_id: row.get::<_, Option<i64>>(3)?.map(|v| v.max(0) as usize),
+                default_credential_id: row.get::<_, Option<i64>>(4)?.map(|v| v.max(0) as usize),
+                credentials: credentials_by_host.remove(&id).unwrap_or_default(),
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })
+        .map_err(|e| format!("failed to query zk_hosts: {e}"))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("failed to decode zk host row: {e}"))?);
+    }
+    Ok(out)
+}
+
+/// 是否为 zk_credentials 的 UNIQUE(host_id, username) 冲突（SQLite 报错文案
+/// 形如 `UNIQUE constraint failed: zk_credentials.host_id, zk_credentials.username`）。
+fn is_username_unique_violation(err: &rusqlite::Error) -> bool {
+    matches!(
+        err,
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ffi::ErrorCode::ConstraintViolation,
+                ..
+            },
+            Some(message),
+        ) if message.contains("zk_credentials.username")
+    )
+}
+
+fn zk_credential_write_error(cred: &ZkCredentialRecord, err: rusqlite::Error) -> String {
+    if is_username_unique_violation(&err) {
+        format!("凭证用户名重复：{}", cred.username)
+    } else {
+        format!("failed to write zk credential: {err}")
+    }
+}
+
+/// 解析 default_credential_id：
+/// 1) 指向同步后仍属于本主机的凭证（UPDATE 命中）→ 原样保留；
+/// 2) 指向请求内凭证（按请求侧 id 匹配——新建主机 / 新增凭证时前端只能给 id=0
+///    占位，按请求顺序映射到自增真实 id）→ 映射后的真实 id；
+/// 3) 其余（不存在 / 不属于本主机 / 已随同步删除）→ None。
+fn resolve_default_credential(
+    requested: Option<usize>,
+    kept_ids: &[usize],
+    request_credentials: &[ZkCredentialRecord],
+    inserted: &[(usize, usize)],
+) -> Option<usize> {
+    let want = requested?;
+    if kept_ids.contains(&want) {
+        return Some(want);
+    }
+    let pos = request_credentials.iter().position(|c| c.id == want)?;
+    inserted
+        .iter()
+        .find(|(p, _)| *p == pos)
+        .map(|(_, real)| *real)
+}
+
+/// 单条插入凭证（忽略请求侧 id，走自增），返回真实 id。
+fn insert_zk_credential(
+    tx: &rusqlite::Transaction<'_>,
+    host_id: usize,
+    cred: &ZkCredentialRecord,
+    now: i64,
+) -> Result<usize, String> {
+    tx.execute(
+        "INSERT INTO zk_credentials (host_id, username, password, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![host_id, cred.username, cred.password, now],
+    )
+    .map_err(|e| zk_credential_write_error(cred, e))?;
+    Ok(tx.last_insert_rowid() as usize)
+}
+
+/// 本主机现存凭证 id 列表（id ASC）。
+fn zk_credential_ids(conn: &rusqlite::Connection, host_id: usize) -> Result<Vec<usize>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id FROM zk_credentials WHERE host_id = ?1 ORDER BY id ASC")
+        .map_err(|e| format!("failed to prepare zk_credentials query: {e}"))?;
+    let rows = stmt
+        .query_map(params![host_id], |row| row.get::<_, usize>(0))
+        .map_err(|e| format!("failed to query zk_credentials: {e}"))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("failed to decode zk credential id: {e}"))?);
+    }
+    Ok(out)
+}
+
+/// 读取单个 ZK 主机（含凭证，id ASC）；不存在返回 None。
+fn read_zk_host(conn: &rusqlite::Connection, id: usize) -> Result<Option<ZkHostRecord>, String> {
+    let mut host = conn
+        .query_row(
+            "SELECT id, name, endpoints, relay_id, default_credential_id, created_at, updated_at
+       FROM zk_hosts WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(ZkHostRecord {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    endpoints: row.get(2)?,
+                    relay_id: row.get::<_, Option<i64>>(3)?.map(|v| v.max(0) as usize),
+                    default_credential_id: row.get::<_, Option<i64>>(4)?.map(|v| v.max(0) as usize),
+                    credentials: Vec::new(),
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|e| format!("failed to query zk host {id}: {e}"))?;
+    if let Some(host) = host.as_mut() {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, username, password, created_at, updated_at
+           FROM zk_credentials WHERE host_id = ?1 ORDER BY id ASC",
+            )
+            .map_err(|e| format!("failed to prepare zk_credentials query: {e}"))?;
+        let rows = stmt
+            .query_map(params![id], |row| {
+                Ok(ZkCredentialRecord {
+                    id: row.get(0)?,
+                    username: row.get(1)?,
+                    password: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| format!("failed to query zk_credentials: {e}"))?;
+        for r in rows {
+            host.credentials
+                .push(r.map_err(|e| format!("failed to decode zk credential row: {e}"))?);
+        }
+    }
+    Ok(host)
+}
+
+/// 新建（id=0）或更新（id>0）ZK 主机，单事务内原子完成：
+/// - id=0：插入 zk_hosts + 逐条插入凭证（id 忽略走自增），default_credential_id
+///   按请求侧 id 解析到自增真实 id 后回填；
+/// - id>0：更新 meta（name/endpoints/relay_id/default_credential_id/updated_at），
+///   凭证做集合同步——请求 id>0 的按 id UPDATE（未命中视为新增）、id=0 的 INSERT、
+///   库里存在但请求缺失的 DELETE（先删后写，允许「删旧用户 + 新增同名用户」）；
+///   同步后 default_credential_id 不指向本主机现存凭证 → 置 None（落库与返回值都置）。
+/// - username 在同一主机内冲突（撞 UNIQUE(host_id, username)）→ `凭证用户名重复：{username}`。
+///
+/// 返回落库后的完整记录（从库里回读，含真实 id）。
+pub fn save_zk_host(pool: &DbPool, record: ZkHostRecord) -> Result<ZkHostRecord, String> {
+    let name = record.name.trim().to_string();
+    let endpoints = record.endpoints.trim().to_string();
+    if name.is_empty() {
+        return Err("ZK 主机名称不能为空".to_string());
+    }
+    if endpoints.is_empty() {
+        return Err("ZK 地址不能为空".to_string());
+    }
+
+    let mut conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("failed to begin transaction: {e}"))?;
+    let now = now_timestamp_ms();
+    let relay_id: Option<i64> = record.relay_id.map(|v| v as i64);
+
+    if record.id == 0 {
+        // 新建：default 先置空，凭证自增 id 分配后再解析回填
+        tx.execute(
+            "INSERT INTO zk_hosts (name, endpoints, relay_id, default_credential_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, NULL, ?4, ?4)",
+            params![name, endpoints, relay_id, now],
+        )
+        .map_err(|e| format!("failed to insert zk host: {e}"))?;
+        let host_id = tx.last_insert_rowid() as usize;
+
+        let mut inserted: Vec<(usize, usize)> = Vec::new();
+        for (pos, cred) in record.credentials.iter().enumerate() {
+            let real_id = insert_zk_credential(&tx, host_id, cred, now)?;
+            inserted.push((pos, real_id));
+        }
+        let resolved =
+            resolve_default_credential(record.default_credential_id, &[], &record.credentials, &inserted);
+        tx.execute(
+            "UPDATE zk_hosts SET default_credential_id = ?2 WHERE id = ?1",
+            params![host_id, resolved],
+        )
+        .map_err(|e| format!("failed to update zk host default credential: {e}"))?;
+        tx.commit()
+            .map_err(|e| format!("failed to commit zk host insert: {e}"))?;
+        read_zk_host(&conn, host_id)?.ok_or_else(|| format!("failed to read back zk host {host_id}"))
+    } else {
+        // 更新 meta（default 先写请求值，凭证同步后统一校正）
+        let changed = tx
+            .execute(
+                "UPDATE zk_hosts SET name=?2, endpoints=?3, relay_id=?4, default_credential_id=?5, updated_at=?6
+                 WHERE id=?1",
+                params![
+                    record.id,
+                    name,
+                    endpoints,
+                    relay_id,
+                    record.default_credential_id.map(|v| v as i64),
+                    now
+                ],
+            )
+            .map_err(|e| format!("failed to update zk host: {e}"))?;
+        if changed == 0 {
+            return Err(format!("ZK 主机不存在：id={}", record.id));
+        }
+
+        // 集合同步（先删缺失，再写请求集合）
+        let existing_ids = zk_credential_ids(&tx, record.id)?;
+        let requested_ids: Vec<usize> = record
+            .credentials
+            .iter()
+            .map(|c| c.id)
+            .filter(|id| *id > 0)
+            .collect();
+        for existing in existing_ids {
+            if !requested_ids.contains(&existing) {
+                tx.execute(
+                    "DELETE FROM zk_credentials WHERE host_id = ?1 AND id = ?2",
+                    params![record.id, existing],
+                )
+                .map_err(|e| format!("failed to delete zk credential {existing}: {e}"))?;
+            }
+        }
+
+        let mut kept_ids: Vec<usize> = Vec::new();
+        let mut inserted: Vec<(usize, usize)> = Vec::new();
+        for (pos, cred) in record.credentials.iter().enumerate() {
+            if cred.id > 0 {
+                let hit = tx
+                    .execute(
+                        "UPDATE zk_credentials SET username=?2, password=?3, updated_at=?4
+                         WHERE id=?1 AND host_id=?5",
+                        params![cred.id, cred.username, cred.password, now, record.id],
+                    )
+                    .map_err(|e| zk_credential_write_error(cred, e))?;
+                if hit > 0 {
+                    kept_ids.push(cred.id);
+                } else {
+                    // id 不属于本主机（或已不存在）：按新增处理，id 忽略走自增
+                    let real_id = insert_zk_credential(&tx, record.id, cred, now)?;
+                    inserted.push((pos, real_id));
+                }
+            } else {
+                let real_id = insert_zk_credential(&tx, record.id, cred, now)?;
+                inserted.push((pos, real_id));
+            }
+        }
+
+        // default 校正：不指向本主机同步后现存凭证 → 置 None
+        let resolved = resolve_default_credential(
+            record.default_credential_id,
+            &kept_ids,
+            &record.credentials,
+            &inserted,
+        );
+        tx.execute(
+            "UPDATE zk_hosts SET default_credential_id = ?2 WHERE id = ?1",
+            params![record.id, resolved],
+        )
+        .map_err(|e| format!("failed to update zk host default credential: {e}"))?;
+        tx.commit()
+            .map_err(|e| format!("failed to commit zk host update: {e}"))?;
+        read_zk_host(&conn, record.id)?
+            .ok_or_else(|| format!("failed to read back zk host {}", record.id))
+    }
+}
+
+/// 删除 ZK 主机（zk_credentials 无外键约束，先删凭证再删主机）；不存在时静默成功（幂等）。
+pub fn delete_zk_host(pool: &DbPool, id: usize) -> Result<(), String> {
+    let mut conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("failed to begin transaction: {e}"))?;
+    tx.execute("DELETE FROM zk_credentials WHERE host_id = ?1", params![id])
+        .map_err(|e| format!("failed to delete zk credentials: {e}"))?;
+    tx.execute("DELETE FROM zk_hosts WHERE id = ?1", params![id])
+        .map_err(|e| format!("failed to delete zk host: {e}"))?;
+    tx.commit()
+        .map_err(|e| format!("failed to commit zk host delete: {e}"))?;
     Ok(())
 }
 
@@ -1192,6 +1581,209 @@ mod tests {
         delete_relay(&pool, updated.id).expect("delete_relay should succeed");
         assert!(
             list_relays(&pool)
+                .expect("list after delete should succeed")
+                .is_empty()
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn zk_host_store_roundtrip() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("veloterm-zkhost-test-{}", Uuid::new_v4()));
+        let db_path = temp_dir.join("veloterm.db");
+        let pool =
+            init_db_at_path(&db_path, "zk-host-key").expect("init_db_at_path should succeed");
+
+        // 1. 新增：id=0、2 条凭证（请求侧 id=0 占位）、default 指向第一条
+        let created = save_zk_host(
+            &pool,
+            ZkHostRecord {
+                id: 0,
+                name: "prod-zk".to_string(),
+                endpoints: "10.0.0.1:2181,10.0.0.2:2181".to_string(),
+                relay_id: Some(3),
+                default_credential_id: Some(0),
+                credentials: vec![
+                    ZkCredentialRecord {
+                        id: 0,
+                        username: "alice".to_string(),
+                        password: "alice-pass".to_string(),
+                        created_at: 0,
+                        updated_at: 0,
+                    },
+                    ZkCredentialRecord {
+                        id: 0,
+                        username: "bob".to_string(),
+                        password: "bob-pass".to_string(),
+                        created_at: 0,
+                        updated_at: 0,
+                    },
+                ],
+                created_at: 0,
+                updated_at: 0,
+            },
+        )
+        .expect("save_zk_host insert should succeed");
+        assert!(created.id > 0);
+        assert!(created.created_at > 0);
+        assert_eq!(created.credentials.len(), 2);
+        let alice_id = created
+            .credentials
+            .first()
+            .expect("first credential should exist")
+            .id;
+        let bob_id = created
+            .credentials
+            .get(1)
+            .expect("second credential should exist")
+            .id;
+        assert!(alice_id > 0);
+        assert_eq!(bob_id, alice_id + 1);
+        // default 已解析到第一条凭证的自增真实 id
+        assert_eq!(created.default_credential_id, Some(alice_id));
+        let listed = list_zk_hosts(&pool).expect("list_zk_hosts should succeed");
+        assert_eq!(listed, vec![created.clone()]);
+
+        // 2. 更新：改名/endpoints、凭证删一条（bob 缺失）、加一条（id=0）、
+        //    改一条 username/password（alice）、default 换人（指向新增凭证）
+        let updated = save_zk_host(
+            &pool,
+            ZkHostRecord {
+                id: created.id,
+                name: "prod-zk-2".to_string(),
+                endpoints: "10.1.0.1:2181".to_string(),
+                relay_id: None,
+                default_credential_id: Some(0),
+                credentials: vec![
+                    ZkCredentialRecord {
+                        id: alice_id,
+                        username: "alice2".to_string(),
+                        password: "new-pass".to_string(),
+                        created_at: 0,
+                        updated_at: 0,
+                    },
+                    ZkCredentialRecord {
+                        id: 0,
+                        username: "carol".to_string(),
+                        password: "carol-pass".to_string(),
+                        created_at: 0,
+                        updated_at: 0,
+                    },
+                ],
+                created_at: created.created_at,
+                updated_at: created.updated_at,
+            },
+        )
+        .expect("save_zk_host update should succeed");
+        assert_eq!(updated.name, "prod-zk-2");
+        assert_eq!(updated.endpoints, "10.1.0.1:2181");
+        assert_eq!(updated.relay_id, None);
+        assert_eq!(updated.created_at, created.created_at);
+        let usernames: Vec<&str> = updated
+            .credentials
+            .iter()
+            .map(|c| c.username.as_str())
+            .collect();
+        assert_eq!(usernames, vec!["alice2", "carol"]);
+        // alice 更新保留原 id；carol 分配自增 id；default 换到 carol
+        let carol_id = updated
+            .credentials
+            .get(1)
+            .expect("second credential should exist")
+            .id;
+        assert_eq!(
+            updated
+                .credentials
+                .first()
+                .expect("first credential should exist")
+                .id,
+            alice_id
+        );
+        assert!(carol_id > bob_id);
+        assert_eq!(updated.default_credential_id, Some(carol_id));
+        let listed = list_zk_hosts(&pool).expect("list_zk_hosts should succeed");
+        assert_eq!(listed, vec![updated.clone()]);
+        // 被删凭证（bob）不在
+        let stored = listed.first().expect("host should remain listed");
+        assert!(stored
+            .credentials
+            .iter()
+            .all(|c| c.id != bob_id && c.username != "bob"));
+
+        // 3. default 指向不属于本主机的凭证 → 返回值与库里都置 None
+        let dangling = save_zk_host(
+            &pool,
+            ZkHostRecord {
+                default_credential_id: Some(999_999),
+                ..updated.clone()
+            },
+        )
+        .expect("save_zk_host with dangling default should succeed");
+        assert_eq!(dangling.default_credential_id, None);
+        assert_eq!(
+            list_zk_hosts(&pool)
+                .expect("list after dangling default should succeed")
+                .first()
+                .map(|h| h.default_credential_id),
+            Some(None)
+        );
+
+        // 4. 同主机 username 重复 → save 返回 Err 且文案含「凭证用户名重复」
+        let dup_err = save_zk_host(
+            &pool,
+            ZkHostRecord {
+                credentials: vec![
+                    ZkCredentialRecord {
+                        id: 0,
+                        username: "dup-user".to_string(),
+                        password: "p1".to_string(),
+                        created_at: 0,
+                        updated_at: 0,
+                    },
+                    ZkCredentialRecord {
+                        id: 0,
+                        username: "dup-user".to_string(),
+                        password: "p2".to_string(),
+                        created_at: 0,
+                        updated_at: 0,
+                    },
+                ],
+                ..dangling.clone()
+            },
+        )
+        .expect_err("duplicate credential username should fail");
+        assert!(
+            dup_err.contains("凭证用户名重复"),
+            "unexpected error: {dup_err}"
+        );
+
+        // name/endpoints trim 后为空 → 错误
+        let empty_name_err = save_zk_host(
+            &pool,
+            ZkHostRecord {
+                name: "   ".to_string(),
+                ..dangling.clone()
+            },
+        )
+        .expect_err("empty zk host name should fail");
+        assert!(empty_name_err.contains("ZK 主机名称不能为空"));
+        let empty_endpoints_err = save_zk_host(
+            &pool,
+            ZkHostRecord {
+                endpoints: "  ".to_string(),
+                ..dangling.clone()
+            },
+        )
+        .expect_err("empty zk endpoints should fail");
+        assert!(empty_endpoints_err.contains("ZK 地址不能为空"));
+
+        // 5. 删除 → list 为空；重复删除幂等不报错
+        delete_zk_host(&pool, dangling.id).expect("delete_zk_host should succeed");
+        delete_zk_host(&pool, dangling.id).expect("delete_zk_host should be idempotent");
+        assert!(
+            list_zk_hosts(&pool)
                 .expect("list after delete should succeed")
                 .is_empty()
         );

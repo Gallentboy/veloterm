@@ -33,6 +33,7 @@ import {
   type ZkNode,
 } from '@/services/zkService';
 import { relayList, type RelayConfig } from '@/services/relayConfigService';
+import { zkHostList, type ZkHostRecord } from '@/services/zkHostsService';
 import { cn } from '@/lib/utils';
 
 interface TreeNode {
@@ -53,24 +54,51 @@ function timeOf(ms: number): string {
   return new Date(ms).toLocaleString();
 }
 
+/** 会话 tab：pendingHost 是建 tab 时携带的待连主机（ZK 主机页「连接」入口），
+ *  ZkSessionView 挂载时消费一次 */
+interface ZkTab {
+  key: number;
+  customTitle: string | null;
+  baseTitle: string | null;
+  pendingHost: ZkHostRecord | null;
+}
+
 /** ZooKeeper 管理页：多 tab 外壳（会话视图常驻，切页/切 tab 状态均保留）。
  * tab 双击重命名；关 tab = 断开会话；加号新建连接。 */
 export function ZkScreen({ isVisible = true }: { isVisible?: boolean }) {
   const { t } = useTranslation();
-  const [tabs, setTabs] = useState<Array<{ key: number; customTitle: string | null; baseTitle: string | null }>>([
-    { key: 1, customTitle: null, baseTitle: null },
+  const [tabs, setTabs] = useState<ZkTab[]>([
+    { key: 1, customTitle: null, baseTitle: null, pendingHost: null },
   ]);
   const [activeKey, setActiveKey] = useState(1);
   const nextKeyRef = useRef(2);
   const [renamingKey, setRenamingKey] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
-  const addTab = () => {
+  const addTab = (host: ZkHostRecord | null = null) => {
     const key = nextKeyRef.current;
     nextKeyRef.current += 1;
-    setTabs((current) => [...current, { key, customTitle: null, baseTitle: null }]);
+    setTabs((current) => [
+      ...current,
+      { key, customTitle: null, baseTitle: host?.name ?? null, pendingHost: host },
+    ]);
     setActiveKey(key);
   };
+
+  // ZK 主机页「连接」入口：AppShell 只切页，待连主机经 window 自定义事件递过来；
+  // 本组件常驻挂载（同 SFTP），监听器始终在——新增 tab 后由 ZkSessionView 挂载时自动连接
+  useEffect(() => {
+    const onConnectHost = (event: Event) => {
+      const host = (event as CustomEvent<ZkHostRecord>).detail;
+      if (host && typeof host.id === 'number') {
+        addTab(host);
+      }
+    };
+    window.addEventListener('veloterm:zk-connect-host', onConnectHost);
+    return () => window.removeEventListener('veloterm:zk-connect-host', onConnectHost);
+    // addTab 只依赖 ref 与 setState，闭包恒稳定，挂载期注册一次即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const closeTab = (key: number) => {
     setTabs((current) => {
@@ -157,7 +185,7 @@ export function ZkScreen({ isVisible = true }: { isVisible?: boolean }) {
           <button
             type="button"
             className="flex size-7 shrink-0 items-center justify-center rounded-lg text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground"
-            onClick={addTab}
+            onClick={() => addTab()}
             title={t('zk.newTab')}
           >
             <Plus className="size-4" />
@@ -169,14 +197,17 @@ export function ZkScreen({ isVisible = true }: { isVisible?: boolean }) {
       {tabs.length === 0 ? (
         <div className="flex flex-1 items-center justify-center gap-2 select-none">
           <span className="text-ui-sm text-foreground-subtlest">{t('zk.noTabs')}</span>
-          <Button variant="outline" size="lg" className="h-7 px-2.5 text-ui-xs" onClick={addTab}>
+          <Button variant="outline" size="lg" className="h-7 px-2.5 text-ui-xs" onClick={() => addTab()}>
             {t('zk.newTab')}
           </Button>
         </div>
       ) : (
         tabs.map((tab) => (
           <div key={tab.key} className={cn('flex min-h-0 flex-1 flex-col', tab.key !== activeKey && 'hidden')}>
-            <ZkSessionView onBaseTitle={(title) => setBaseTitle(tab.key, title)} />
+            <ZkSessionView
+              autoConnectHost={tab.pendingHost}
+              onBaseTitle={(title) => setBaseTitle(tab.key, title)}
+            />
           </div>
         ))
       )}
@@ -184,8 +215,15 @@ export function ZkScreen({ isVisible = true }: { isVisible?: boolean }) {
   );
 }
 
-/** 单个 ZK 连接视图：连接（直连/经中继）+ 树 + 数据/ACL 编辑，全部状态内部留存。 */
-function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) => void }) {
+/** 单个 ZK 连接视图：连接（已保存主机 / 手动直连 / 经中继）+ 树 + 数据/ACL 编辑，全部状态内部留存。 */
+function ZkSessionView({
+  autoConnectHost,
+  onBaseTitle,
+}: {
+  /** 建 tab 时携带的已保存主机：挂载时自动连接（回填 endpoints/中继 + 自动认证），仅消费一次 */
+  autoConnectHost?: ZkHostRecord | null;
+  onBaseTitle: (title: string | null) => void;
+}) {
   const { t } = useTranslation();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -194,11 +232,23 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
   const [relayConfigs, setRelayConfigs] = useState<RelayConfig[]>([]);
   const [relayPickedId, setRelayPickedId] = useState<number | null>(null);
   const [relayName, setRelayName] = useState<string | null>(null);
+  // 本次连接的来源主机（下拉选中或建 tab 携带）：供认证对话框下拉与自动认证；手动连接为 null
+  const [hostRecord, setHostRecord] = useState<ZkHostRecord | null>(null);
+  const [savedHosts, setSavedHosts] = useState<ZkHostRecord[]>([]);
+  const [hostPickedId, setHostPickedId] = useState<number | null>(null);
 
-  // 中继库（侧栏「中继」页）加载一次，供下拉选择；只存 id，字段不回显前端
+  // 中继库（侧栏「中继」页）加载一次，供下拉选择与中继名回显；只存 id，字段不回显前端。
+  // promise 会被自动连接路径 await（等列表就绪以保证中继名可回显）
+  const relayListPromise = useMemo(() => relayList().catch(() => [] as RelayConfig[]), []);
   useEffect(() => {
-    void relayList().then(setRelayConfigs).catch(() => {
-      // 库不可用时保持空列表，只能直连
+    void relayListPromise.then(setRelayConfigs);
+  }, [relayListPromise]);
+
+  // 已保存 ZK 主机（侧栏「ZK 主机」页）加载一次，供连接栏「已保存主机」下拉；
+  // 库不可用时保持空列表，仅手动输入连接
+  useEffect(() => {
+    void zkHostList().then(setSavedHosts).catch(() => {
+      // 同上：静默降级
     });
   }, []);
 
@@ -224,6 +274,7 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
   const [authing, setAuthing] = useState(false);
   const [authUser, setAuthUser] = useState('');
   const [authPass, setAuthPass] = useState('');
+  const [authCredentialId, setAuthCredentialId] = useState<number | null>(null);
   const [aclAddScheme, setAclAddScheme] = useState<string>('world');
   const [aclAddId, setAclAddId] = useState('anyone');
   const [aclAddDigestUser, setAclAddDigestUser] = useState('');
@@ -233,6 +284,88 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
     if (!relayEnabled) return null;
     return relayPickedId;
   };
+
+  // 统一连接路径：host 非空 = 来自已保存主机（自动认证/凭证下拉可用），
+  // null = 手动输入 endpoints 连接（保留手输认证）
+  const runConnect = async (ep: string, relayId: number | null, host: ZkHostRecord | null) => {
+    setConnecting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await zkConnect(ep, relayId);
+      const nextRelayName =
+        relayId != null
+          ? ((await relayListPromise).find((r) => r.id === relayId)?.name ?? null)
+          : null;
+      setSessionId(res.sessionId);
+      setHostRecord(host);
+      setRelayName(nextRelayName);
+      setNodes(new Map());
+      setSelected('/');
+      await loadChildren(res.sessionId, '/');
+      await selectNode(res.sessionId, '/');
+      onBaseTitle(host?.name ?? ep);
+      // 连接成功后按主机的默认凭证自动 digest 认证；失败只提示，不影响会话
+      const autoCred =
+        host?.defaultCredentialId != null
+          ? (host.credentials.find((c) => c.id === host.defaultCredentialId) ?? null)
+          : null;
+      if (autoCred) {
+        try {
+          await zkAuth(res.sessionId, autoCred.username, autoCred.password);
+        } catch (err) {
+          setError(`${t('zk.autoAuthFailed', { user: autoCred.username })} ${String(err)}`);
+        }
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const handleConnect = async () => {
+    const relayId = buildRelayId();
+    if (relayEnabled && relayId == null) {
+      setError(t('zk.relayPickRequired'));
+      return;
+    }
+    await runConnect(endpoints, relayId, null);
+  };
+
+  // 已保存主机回填：endpoints + 中继（勾选状态跟随主机配置），hostPickedId 驱动下拉回显
+  const applySavedHost = (host: ZkHostRecord) => {
+    setHostRecord(host);
+    setHostPickedId(host.id);
+    setEndpoints(host.endpoints);
+    if (host.relayId != null) {
+      setRelayEnabled(true);
+      setRelayPickedId(host.relayId);
+    } else {
+      setRelayEnabled(false);
+      setRelayPickedId(null);
+    }
+  };
+
+  // 连接栏「已保存主机」下拉：选中即回填并自动连接
+  const handlePickSavedHost = (host: ZkHostRecord) => {
+    applySavedHost(host);
+    void runConnect(host.endpoints, host.relayId, host);
+  };
+
+  // 建 tab 时携带的主机（ZK 主机页「连接」）：挂载即回填并自动连接；
+  // 等中继列表就绪以保证中继名可回显（尽力而为，失败不影响连接）
+  useEffect(() => {
+    const host = autoConnectHost;
+    if (!host) return;
+    applySavedHost(host);
+    void (async () => {
+      await relayListPromise;
+      await runConnect(host.endpoints, host.relayId, host);
+    })();
+    // 仅挂载时消费一次（prop 不再变化）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadChildren = useCallback(
     async (sid: string, path: string) => {
@@ -293,33 +426,6 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
     },
     [],
   );
-
-  const handleConnect = async () => {
-    const relayId = buildRelayId();
-    if (relayEnabled && relayId == null) {
-      setError(t('zk.relayPickRequired'));
-      return;
-    }
-    setConnecting(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const res = await zkConnect(endpoints, relayId);
-      setSessionId(res.sessionId);
-      setRelayName(
-        relayId != null ? (relayConfigs.find((r) => r.id === relayId)?.name ?? null) : null,
-      );
-      setNodes(new Map());
-      setSelected('/');
-      await loadChildren(res.sessionId, '/');
-      await selectNode(res.sessionId, '/');
-      onBaseTitle(endpoints);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setConnecting(false);
-    }
-  };
 
   const handleDisconnect = async () => {
     if (sessionId) {
@@ -510,7 +616,14 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
     if (!sessionId) return;
     setError(null);
     try {
-      await zkAuth(sessionId, authUser, authPass);
+      // 来源主机带凭证：从下拉选中的凭证取用户名密码；否则手输
+      if (hostRecord && hostRecord.credentials.length > 0) {
+        const cred = hostRecord.credentials.find((c) => c.id === authCredentialId);
+        if (!cred) return; // 未选择凭证（确认按钮已禁用，双保险）
+        await zkAuth(sessionId, cred.username, cred.password);
+      } else {
+        await zkAuth(sessionId, authUser, authPass);
+      }
       setAuthing(false);
       setNotice(t('zk.authOk'));
     } catch (e) {
@@ -577,7 +690,15 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
             </span>
             <div className="flex-1" />
             <ControlHintTooltip title={t('zk.authTitle')} side="bottom">
-              <Button variant="outline" size="lg" className="h-7 px-2.5 text-ui-xs" onClick={() => setAuthing(true)}>
+              <Button
+                variant="outline"
+                size="lg"
+                className="h-7 px-2.5 text-ui-xs"
+                onClick={() => {
+                  setAuthCredentialId(hostRecord?.defaultCredentialId ?? null);
+                  setAuthing(true);
+                }}
+              >
                 {t('zk.auth')}
               </Button>
             </ControlHintTooltip>
@@ -594,6 +715,31 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
           </>
         ) : (
           <>
+            {/* 已保存主机（侧栏「ZK 主机」页）：选中即回填并自动连接；库为空时隐藏 */}
+            {savedHosts.length > 0 ? (
+              <div className="w-52">
+                <SelectMenu
+                  aria-label={t('zk.savedHostPicker')}
+                  value={hostPickedId != null ? String(hostPickedId) : ''}
+                  onChange={(next) => {
+                    const host = savedHosts.find((h) => String(h.id) === next);
+                    if (host) handlePickSavedHost(host);
+                  }}
+                  options={[
+                    { value: '', label: t('zk.savedHostPlaceholder') },
+                    ...savedHosts.map((h) => ({
+                      value: String(h.id),
+                      label: h.name,
+                      description: `${h.endpoints} · ${
+                        h.relayId != null
+                          ? (relayConfigs.find((r) => r.id === h.relayId)?.name ?? `#${h.relayId}`)
+                          : t('zkHosts.direct')
+                      }`,
+                    })),
+                  ]}
+                />
+              </div>
+            ) : null}
             <TextInput
               value={endpoints}
               onChange={(e) => setEndpoints(e.target.value)}
@@ -1023,7 +1169,7 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
         </Modal>
       ) : null}
 
-      {/* digest 认证 */}
+      {/* digest 认证：来源主机带凭证时改为凭证下拉，否则保留手输 */}
       {authing ? (
         <Modal
           title={t('zk.authTitle')}
@@ -1034,25 +1180,48 @@ function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) =>
               <Button variant="ghost" size="lg" className="h-8 px-3 text-ui-base" onClick={() => setAuthing(false)}>
                 {t('common.cancel')}
               </Button>
-              <Button size="lg" className="h-8 px-3 text-ui-base" onClick={() => void handleAuth()}>
+              <Button
+                size="lg"
+                className="h-8 px-3 text-ui-base"
+                disabled={hostRecord != null && hostRecord.credentials.length > 0 && authCredentialId == null}
+                onClick={() => void handleAuth()}
+              >
                 {t('zk.auth')}
               </Button>
             </>
           }
         >
-          <div className="flex flex-col gap-3.5">
-            <p className="text-ui-xs text-foreground-subtlest">{t('zk.authHint')}</p>
-            <FormField label={t('zk.aclUser')}>
-              <TextInput value={authUser} onChange={(e) => setAuthUser(e.target.value)} spellCheck={false} />
-            </FormField>
-            <FormField label={t('zk.authPassword')}>
-              <PasswordInput
-                value={authPass}
-                onChange={(e) => setAuthPass(e.target.value)}
-                autoComplete="new-password"
-              />
-            </FormField>
-          </div>
+          {hostRecord && hostRecord.credentials.length > 0 ? (
+            <div className="flex flex-col gap-3.5">
+              <p className="text-ui-xs text-foreground-subtlest">{t('zk.authHint')}</p>
+              <FormField label={t('zk.authPickCredential')}>
+                <SelectMenu
+                  aria-label={t('zk.authPickCredential')}
+                  value={authCredentialId != null ? String(authCredentialId) : ''}
+                  onChange={(next) => setAuthCredentialId(next === '' ? null : Number(next))}
+                  options={[
+                    { value: '', label: t('zk.authPickPlaceholder') },
+                    ...hostRecord.credentials.map((c) => ({ value: String(c.id), label: c.username })),
+                  ]}
+                />
+              </FormField>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3.5">
+              <p className="text-ui-xs text-foreground-subtlest">{t('zk.authManualHint')}</p>
+              <p className="text-ui-xs text-foreground-subtlest">{t('zk.authHint')}</p>
+              <FormField label={t('zk.aclUser')}>
+                <TextInput value={authUser} onChange={(e) => setAuthUser(e.target.value)} spellCheck={false} />
+              </FormField>
+              <FormField label={t('zk.authPassword')}>
+                <PasswordInput
+                  value={authPass}
+                  onChange={(e) => setAuthPass(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </FormField>
+            </div>
+          )}
         </Modal>
       ) : null}
     </div>
