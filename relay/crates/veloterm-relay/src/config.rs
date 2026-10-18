@@ -1,0 +1,262 @@
+//! TOML 配置装载与校验。
+//!
+//! ```toml
+//! [relay]
+//! max_conns = 4096
+//! handshake_timeout_secs = 10
+//!
+//! [[token]]
+//! key_id = 1
+//! name  = "macbook"
+//! secret = "<veloterm_relay token generate 生成>"
+//!
+//! [[listener]]
+//! proto = "tcp"                # P1: tcp；udp/ws/quic 在后续阶段放开
+//! bind = "0.0.0.0:7300"
+//! target = "linux1.internal:22"     # 默认目标（客户端不带 target 时用）
+//! allow_targets = ["10.0.0.5:22"]   # 客户端可显式指定的精确白名单（可选）
+//! ```
+
+use std::net::SocketAddr;
+use std::time::Duration;
+
+use anyhow::{Context, bail};
+use serde::Deserialize;
+use veloterm_relay_proto::frame::TargetAddr;
+use veloterm_relay_proto::handshake::{AuthEntry, ServerAuth};
+use veloterm_relay_proto::auth::Secret;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileConfig {
+    #[serde(default)]
+    pub relay: RelaySection,
+    #[serde(default)]
+    pub token: Vec<TokenEntry>,
+    #[serde(default)]
+    pub listener: Vec<ListenerEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct RelaySection {
+    pub max_conns: usize,
+    pub handshake_timeout_secs: u64,
+}
+
+impl Default for RelaySection {
+    fn default() -> Self {
+        Self { max_conns: 4096, handshake_timeout_secs: 10 }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenEntry {
+    pub key_id: u8,
+    pub name: String,
+    pub secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListenerEntry {
+    pub proto: String,
+    pub bind: String,
+    pub target: Option<String>,
+    #[serde(default)]
+    pub allow_targets: Vec<String>,
+}
+
+/// 校验后的运行时配置。
+#[derive(Debug)]
+pub struct ResolvedConfig {
+    pub max_conns: usize,
+    pub handshake_timeout: Duration,
+    pub auth: ServerAuth,
+    pub listeners: Vec<ResolvedListener>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListenerProto {
+    Tcp,
+}
+
+#[derive(Debug)]
+pub struct ResolvedListener {
+    pub proto: ListenerProto,
+    pub bind: SocketAddr,
+    pub default_target: Option<TargetAddr>,
+    pub allowed: Vec<TargetAddr>,
+}
+
+pub fn parse_toml(text: &str) -> anyhow::Result<FileConfig> {
+    toml::from_str(text).context("配置文件解析失败")
+}
+
+impl FileConfig {
+    pub fn resolve(self) -> anyhow::Result<ResolvedConfig> {
+        if self.token.is_empty() {
+            bail!("至少需要一条 [[token]]（用 `veloterm_relay token generate` 生成）");
+        }
+        if self.listener.is_empty() {
+            bail!("至少需要一个 [[listener]]");
+        }
+
+        let mut auth = ServerAuth::new();
+        for t in &self.token {
+            if auth.get(t.key_id).is_some() {
+                bail!("token key_id={} 重复", t.key_id);
+            }
+            let secret = Secret::from_hex(t.secret.trim())
+                .map_err(|e| anyhow::anyhow!("token key_id={} 的 secret 非法（{}，需 64 位十六进制/32 字节）", t.key_id, e))?;
+            auth.add(AuthEntry { key_id: t.key_id, name: t.name.clone(), secret });
+        }
+
+        let mut listeners = Vec::with_capacity(self.listener.len());
+        for (i, l) in self.listener.into_iter().enumerate() {
+            let proto = match l.proto.as_str() {
+                "tcp" => ListenerProto::Tcp,
+                "udp" | "ws" | "quic" => bail!(
+                    "listener[{}] proto=\"{}\" 尚未实现（后续阶段放开，当前仅 tcp）",
+                    i,
+                    l.proto
+                ),
+                other => bail!("listener[{}] proto=\"{}\" 未知（tcp/udp/ws/quic）", i, other),
+            };
+            let bind: SocketAddr = l
+                .bind
+                .parse()
+                .with_context(|| format!("listener[{}] bind=\"{}\" 不是合法的 host:port", i, l.bind))?;
+            let default_target = match &l.target {
+                Some(t) => Some(parse_target(i, t)?),
+                None => None,
+            };
+            if default_target.is_none() && l.allow_targets.is_empty() {
+                bail!(
+                    "listener[{}] 既无 target（默认目标）也无 allow_targets，客户端将无处可去",
+                    i
+                );
+            }
+            let allowed = l
+                .allow_targets
+                .iter()
+                .map(|t| parse_target(i, t))
+                .collect::<Result<Vec<_>, _>>()?;
+            listeners.push(ResolvedListener { proto, bind, default_target, allowed });
+        }
+
+        Ok(ResolvedConfig {
+            max_conns: self.relay.max_conns,
+            handshake_timeout: Duration::from_secs(self.relay.handshake_timeout_secs),
+            auth,
+            listeners,
+        })
+    }
+}
+
+fn parse_target(idx: usize, s: &str) -> anyhow::Result<TargetAddr> {
+    TargetAddr::parse(s).with_context(|| format!("listener[{idx}] 目标 \"{s}\" 非法（应为 host:port）"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_rejects_bad_configs() {
+        let secret64 = "ab".repeat(32);
+
+        // 无 token
+        let no_token = parse_toml(
+            r#"
+            [relay]
+            [[listener]]
+            proto = "tcp"
+            bind = "0.0.0.0:7300"
+            target = "a:22"
+            "#,
+        )
+        .unwrap();
+        assert!(no_token.resolve().is_err());
+
+        // 未实现的 proto
+        let future = parse_toml(&format!(
+            r#"
+            [relay]
+            [[token]]
+            key_id = 1
+            name = "x"
+            secret = "{secret64}"
+            [[listener]]
+            proto = "quic"
+            bind = "0.0.0.0:7300"
+            target = "a:22"
+            "#
+        ))
+        .unwrap();
+        let err = future.resolve().unwrap_err().to_string();
+        assert!(err.contains("尚未实现"), "{err}");
+
+        // 既无 target 也无 allow_targets
+        let nowhere = parse_toml(&format!(
+            r#"
+            [relay]
+            [[token]]
+            key_id = 1
+            name = "x"
+            secret = "{secret64}"
+            [[listener]]
+            proto = "tcp"
+            bind = "0.0.0.0:7300"
+            "#
+        ))
+        .unwrap();
+        assert!(nowhere.resolve().is_err());
+
+        // secret 长度非法
+        let bad_secret = parse_toml(
+            r#"
+            [[token]]
+            key_id = 1
+            name = "x"
+            secret = "abcd"
+            [[listener]]
+            proto = "tcp"
+            bind = "127.0.0.1:0"
+            target = "a:22"
+            "#,
+        )
+        .unwrap();
+        assert!(bad_secret.resolve().is_err());
+    }
+
+    #[test]
+    fn resolve_happy_path() {
+        let secret64 = "ab".repeat(32);
+        let cfg = parse_toml(&format!(
+            r#"
+            [[token]]
+            key_id = 7
+            name = "mbp"
+            secret = "{secret64}"
+            [[listener]]
+            proto = "tcp"
+            bind = "127.0.0.1:17300"
+            target = "linux1.internal:22"
+            allow_targets = ["10.0.0.5:22", "[::1]:2222"]
+            "#
+        ))
+        .unwrap()
+        .resolve()
+        .unwrap();
+        assert_eq!(cfg.max_conns, 4096); // 默认值
+        assert_eq!(cfg.auth.len(), 1);
+        assert_eq!(cfg.listeners.len(), 1);
+        let l = &cfg.listeners[0];
+        assert_eq!(l.bind.port(), 17300);
+        assert_eq!(l.default_target.as_ref().unwrap().host, "linux1.internal");
+        assert_eq!(l.allowed.len(), 2);
+        assert_eq!(l.allowed[1].host, "::1"); // [::1] 去括号
+    }
+}

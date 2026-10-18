@@ -47,6 +47,8 @@ dist/
 binaries/
 # vendor 仓库本地构建产物（源码进库，target 不进）
 src-tauri/vendor/*/target/
+# relay 子工程（独立 workspace）的构建产物
+relay/target/
 # vcpkg manifest 模式安装产物（CI 用，二进制缓存走 GitHub Packages feed）
 src-tauri/vcpkg_installed/
 # qalc（libqalculate）的 MSYS2 autotools VPATH 构建目录（build-tools.mjs 产出）
