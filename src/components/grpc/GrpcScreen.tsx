@@ -146,13 +146,10 @@ export function GrpcScreen() {
         </div>
       </div>
 
-      {/* 会话视图（常驻隐藏，状态保留） */}
+      {/* 会话视图（常驻隐藏，状态保留）；新建入口只有 tab 栏的加号 */}
       {tabs.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center gap-2 select-none">
+        <div className="flex flex-1 items-center justify-center select-none">
           <span className="text-ui-sm text-foreground-subtlest">{t('grpc.noTabs')}</span>
-          <Button variant="outline" size="lg" className="h-7 px-2.5 text-ui-xs" onClick={() => addTab()}>
-            {t('grpc.newTab')}
-          </Button>
         </div>
       ) : (
         tabs.map((tab) => (
