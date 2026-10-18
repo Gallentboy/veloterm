@@ -1,7 +1,9 @@
-# 目标（单一）：relay 子工程（veloterm_relay + veloterm-relay-proto）的 Linux 侧
-# 验证与部署产物——cargo test 全量 + clippy 零警告 + release 构建（musl 静态链接，
-# glibc 无关，部署到任意 x86_64 Linux 直接跑）。中继是纯 Rust 跨平台 crate，
-# macOS 本机开发门禁之外，本车道提供 Linux 原生环境的验证与出包。
+# 目标（单一）：relay 子工程（veloterm_relay + veloterm-relay-proto）的多平台
+# 验证与部署产物——cargo test 全量 + clippy 零警告 + 四目标静态构建：
+#   · linux  x86_64 / aarch64（musl 静态，glibc 无关随处可跑；aarch64 交叉
+#     编译 + qemu-user 冒烟）
+#   · win    x64 / arm64（windows-latest 出包，+crt-static 静态 CRT——
+#     终端机器无需 VC 运行库；arm64 交叉构建不执行）
 # 触发：推 tag（验证完删除）——
 #   git tag test_relay && git push origin test_relay
 #   git push origin :refs/tags/test_relay
@@ -15,56 +17,146 @@ on:
       - 'test_relay*'
 
 jobs:
-  test-relay:
+  relay-linux:
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            cross_cc: ''
+            run_tests: true
+          - target: aarch64-unknown-linux-musl
+            # aws-lc-sys 的 C 件用 gnu 交叉编译器编（对象静态链入，无 glibc 依赖）；
+            # 最终链接走 rust 自带 rust-lld + musl crt（self-contained）
+            cross_cc: aarch64-linux-gnu
+            run_tests: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install musl toolchain
+      - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y musl-tools qemu-user-static
+          if [ -n "${{ matrix.cross_cc }}" ]; then
+            sudo apt-get install -y ${{ matrix.cross_cc }}-gcc ${{ matrix.cross_cc }}-binutils
+          fi
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-musl
+          targets: ${{ matrix.target }}
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: relay
+          key: ${{ matrix.target }}
 
-      - name: Test (gnu host)
-        working-directory: relay
-        run: cargo test --workspace
-
-      - name: Clippy (zero warnings)
+      - name: Test + Clippy (gnu host, once)
+        if: matrix.run_tests
         working-directory: relay
         env:
           RUSTFLAGS: '-D warnings'
-        run: cargo clippy --workspace --all-targets
+        run: |
+          cargo test --workspace
+          cargo clippy --workspace --all-targets
 
       - name: Build release (musl static)
         working-directory: relay
-        run: cargo build --release -p veloterm-relay --target x86_64-unknown-linux-musl
+        env:
+          CC_aarch64_unknown_linux_musl: ${{ matrix.cross_cc && format('{0}-gcc', matrix.cross_cc) || '' }}
+          AR_aarch64_unknown_linux_musl: ${{ matrix.cross_cc && format('{0}-ar', matrix.cross_cc) || '' }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+        run: cargo build --release -p veloterm-relay --target ${{ matrix.target }}
 
       - name: Smoke test binary
         run: |
-          ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay --version
-          ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay token generate --key-id 9 --name ci | grep -E 'secret = "[0-9a-f]{64}"'
-          file ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay
+          BIN=./relay/target/${{ matrix.target }}/release/veloterm_relay
+          # aarch64 经 qemu-user 运行（静态 musl 二进制可直跑）
+          RUN="$RUNNER"
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            RUN="qemu-aarch64-static"
+          fi
+          $RUN $BIN --version
+          $RUN $BIN token generate --key-id 9 --name ci | grep -E 'secret = "[0-9a-f]{64}"'
+          file $BIN
           # 权威静态判定：ldd 对静态二进制的措辞随形态不同——
           # gnu 环境输出 "not a dynamic executable"，static-pie 输出 "statically linked"
-          ldd ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay 2>&1 | tee /tmp/ldd.out
+          ldd $BIN 2>&1 | tee /tmp/ldd.out
           grep -Eq 'not a dynamic executable|statically linked' /tmp/ldd.out
+        env:
+          RUNNER: ''
 
       - name: Upload relay artifact
         uses: actions/upload-artifact@v7
         with:
-          name: veloterm_relay-x86_64-linux-musl
-          path: relay/target/x86_64-unknown-linux-musl/release/veloterm_relay
+          name: veloterm_relay-${{ matrix.target }}
+          path: relay/target/${{ matrix.target }}/release/veloterm_relay
+          if-no-files-found: error
+          retention-days: 7
+
+  relay-windows:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            msvc_arch: x64
+            run_smoke: true
+          - target: aarch64-pc-windows-msvc
+            # ARM64 交叉（x64 主机经 vcvars amd64_arm64），无法执行仅构建
+            msvc_arch: amd64_arm64
+            run_smoke: false
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: relay
+          key: ${{ matrix.target }}
+
+      - name: Setup MSVC env (vcvars ${{ matrix.msvc_arch }})
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Build release (crt-static)
+        working-directory: relay
+        env:
+          RUSTFLAGS: '-C target-feature=+crt-static'
+        run: cargo build --release -p veloterm-relay --target ${{ matrix.target }}
+        shell: cmd
+
+      - name: Smoke test binary (x64)
+        if: matrix.run_smoke
+        shell: cmd
+        run: |
+          set BIN=relay\target\${{ matrix.target }}\release\veloterm_relay.exe
+          %BIN% --version
+          %BIN% token generate --key-id 9 --name ci | findstr /C:"secret = "
+          rem crt-static 验证：依赖表不得出现 VC 运行库（VCRUNTIME / api-ms-win-crt）
+          dumpbin /DEPENDENTS %BIN% > dependents.txt
+          type dependents.txt
+          findstr /I "VCRUNTIME api-ms-win-crt" dependents.txt
+          if %ERRORLEVEL% EQU 0 exit /b 1
+          exit /b 0
+
+      - name: Upload relay artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: veloterm_relay-${{ matrix.target }}
+          path: relay/target/${{ matrix.target }}/release/veloterm_relay.exe
           if-no-files-found: error
           retention-days: 7
