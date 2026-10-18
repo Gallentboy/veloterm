@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Network, Pencil, Play, Plus, SearchCheck, Settings2, Table2, Trash2, X } from 'lucide-react';
+import { Loader2, Network, Pencil, Play, Plus, SearchCheck, Settings2, Table2, Trash2, TriangleAlert, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
@@ -20,6 +20,39 @@ import {
   type GrpcTlsProfile,
 } from '@/services/grpcService';
 import { cn } from '@/lib/utils';
+
+/** 常见 gRPC 状态码的中文语义（键为去空格小写后的 code 名）。 */
+const GRPC_CODE_LABELS: Record<string, string> = {
+  internalerror: '服务端内部错误',
+  internal: '服务端内部错误',
+  permissiondenied: '权限不足',
+  unauthenticated: '未认证或凭据无效',
+  unimplemented: '服务端未实现该方法',
+  unavailable: '服务不可用（连接中断）',
+  deadlineexceeded: '调用超时',
+  notfound: '未找到目标资源',
+  invalidargument: '入参无效',
+  resourceexhausted: '资源耗尽或被限流',
+  failedprecondition: '前置条件不满足',
+  outofrange: '参数越界',
+  alreadyexists: '资源已存在',
+  aborted: '操作被中止',
+  dataloss: '数据损坏',
+  cancelled: '调用被取消',
+  unknownerror: '未知错误',
+  unknown: '未知错误',
+};
+
+/** 拆解后端错误串：状态码 + 中文语义 + 详情正文；非 gRPC 状态错误整段作详情。 */
+function parseGrpcError(error: string): { code: string | null; label: string | null; detail: string } {
+  const match = error.match(/^gRPC 调用失败 \[(.+?)\]:\s*([\s\S]*)$/);
+  if (!match) {
+    return { code: null, label: null, detail: error };
+  }
+  const code = match[1] ?? null;
+  const label = code ? (GRPC_CODE_LABELS[code.replace(/\s+/g, '').toLowerCase()] ?? null) : null;
+  return { code, label, detail: match[2] ?? '' };
+}
 
 /** 会话 tab：seed 是建 tab 时携带的自动填充种子（ZK 节点的一键调用入口），
  *  GrpcSessionView 挂载时消费一次 */
@@ -600,11 +633,7 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
 
         {/* 结果区 */}
         <div className="flex min-w-0 flex-1 flex-col p-4">
-          {error ? (
-            <div className="flex shrink-0 items-start gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-ui-xs text-destructive">
-              <span className="whitespace-pre-wrap break-all">{error}</span>
-            </div>
-          ) : null}
+          {error ? <GrpcErrorPanel error={error} title={t('grpc.callFailed')} /> : null}
           {result != null ? (
             <>
               <div className="mb-2 flex shrink-0 items-center gap-2">
@@ -669,6 +698,30 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
             }
           }}
         />
+      ) : null}
+    </div>
+  );
+}
+
+/** 调用失败面板：大字标题 + 状态码徽标 + 中文语义 + 详情正文；不展示原始 Debug。 */
+function GrpcErrorPanel({ error, title }: { error: string; title: string }) {
+  const { code, label, detail } = parseGrpcError(error);
+  return (
+    <div className="flex shrink-0 flex-col gap-2 rounded-md border border-destructive/25 bg-destructive/10 px-4 py-3">
+      <div className="flex items-center gap-2">
+        <TriangleAlert className="size-4 shrink-0 text-destructive" />
+        <span className="text-ui-base font-medium text-destructive select-none">{title}</span>
+        {code ? (
+          <span className="rounded border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 font-mono text-ui-xs text-destructive select-none">
+            {code}
+          </span>
+        ) : null}
+      </div>
+      {label ? <span className="text-ui-sm text-destructive select-none">{label}</span> : null}
+      {detail ? (
+        <span className="whitespace-pre-wrap break-words text-ui-sm leading-relaxed text-destructive/90">
+          {detail}
+        </span>
       ) : null}
     </div>
   );
