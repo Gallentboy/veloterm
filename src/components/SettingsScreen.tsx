@@ -1,6 +1,6 @@
 import { Monitor, Moon, Sun, Trash2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/hosts/formFields';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
@@ -15,10 +15,19 @@ import { cn } from '@/lib/utils';
 import { useThemeContext, type Theme } from '@/theme/ThemeProvider';
 import { SIDEBAR_NAV_ITEMS } from '@/components/WorkspaceSidebar';
 import {
-  getHiddenSidebarPages,
-  setHiddenSidebarPages,
+  getSidebarMenuConfig,
+  normalizeSidebarOrder,
+  setSidebarMenuConfig,
+  type SidebarMenuConfig,
   SIDEBAR_VISIBILITY_EVENT,
 } from '@/services/sidebarVisibility';
+import { useDropTarget } from '@/hooks/useDropTarget';
+import {
+  beginInternalDrag,
+  endInternalDrag,
+  type MenuCardDragPayload,
+} from '@/services/dragDropService';
+import { Check } from 'lucide-react';
 import {
   clearKnownHosts,
   listKnownHosts,
@@ -69,18 +78,33 @@ export function SettingsScreen() {
   // 删除确认弹窗目标（工程约定：删除必须弹窗确认，严禁两次点击式或无确认直接删）
   const [pendingRemoveHost, setPendingRemoveHost] = useState<KnownHostEntry | null>(null);
   const [confirmClearAllOpen, setConfirmClearAllOpen] = useState(false);
-  // 菜单展示：隐藏集合实时同步（本页勾选与其他入口变更都经事件联动）
-  const [hiddenMenus, setHiddenMenus] = useState<Set<string>>(() => getHiddenSidebarPages());
+  // 菜单展示：顺序 + 隐藏实时同步（本页拖拽/勾选与其他入口变更都经事件联动）
+  const [menuConfig, setMenuConfig] = useState<SidebarMenuConfig>(() => getSidebarMenuConfig());
   useEffect(() => {
-    const onChanged = () => setHiddenMenus(getHiddenSidebarPages());
+    const onChanged = () => setMenuConfig(getSidebarMenuConfig());
     window.addEventListener(SIDEBAR_VISIBILITY_EVENT, onChanged);
     return () => window.removeEventListener(SIDEBAR_VISIBILITY_EVENT, onChanged);
   }, []);
+  const orderedMenuItems = normalizeSidebarOrder(
+    menuConfig,
+    SIDEBAR_NAV_ITEMS.map(({ page }) => page),
+  )
+    .map((page) => SIDEBAR_NAV_ITEMS.find((item) => item.page === page))
+    .filter((item): item is (typeof SIDEBAR_NAV_ITEMS)[number] => item != null);
   const toggleMenuVisible = (page: string, visible: boolean) => {
-    const next = new Set(hiddenMenus);
-    if (visible) next.delete(page);
-    else next.add(page);
-    setHiddenSidebarPages(next);
+    const hidden = new Set(menuConfig.hidden);
+    if (visible) hidden.delete(page);
+    else hidden.add(page);
+    setSidebarMenuConfig({ order: orderedMenuItems.map(({ page: p }) => p), hidden: [...hidden] });
+  };
+  /** 拖拽排序：把 source 移到 target 当前位置（实时写入并广播，侧栏即时重排） */
+  const reorderMenu = (source: string, target: string) => {
+    const current: string[] = orderedMenuItems.map(({ page }) => page);
+    const from = current.indexOf(source);
+    const to = current.indexOf(target);
+    if (from < 0 || to < 0 || from === to) return;
+    current.splice(to, 0, ...current.splice(from, 1));
+    setSidebarMenuConfig({ order: current, hidden: menuConfig.hidden });
   };
 
   useEffect(() => {
@@ -159,24 +183,27 @@ export function SettingsScreen() {
               />
             </div>
           </SettingRow>
-          <SettingRow title={t('settings.menuVisibility')} desc={t('settings.menuVisibilityDesc')}>
-            <div className="flex max-w-[280px] flex-wrap justify-end gap-x-4 gap-y-1.5">
-              {SIDEBAR_NAV_ITEMS.map(({ page, navKey }) => (
-                <label
+          <div className="flex flex-col gap-3 px-4 py-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-ui-base text-foreground select-none">{t('settings.menuVisibility')}</span>
+              <span className="text-ui-sm text-foreground-subtle select-none">
+                {t('settings.menuVisibilityDesc')}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {orderedMenuItems.map(({ page, icon, navKey }) => (
+                <MenuCard
                   key={page}
-                  className="flex cursor-pointer items-center gap-1.5 text-ui-sm text-foreground select-none"
-                >
-                  <input
-                    type="checkbox"
-                    checked={!hiddenMenus.has(page)}
-                    onChange={(e) => toggleMenuVisible(page, e.target.checked)}
-                    className="accent-foreground"
-                  />
-                  {t(navKey)}
-                </label>
+                  page={page}
+                  icon={icon}
+                  label={t(navKey)}
+                  visible={!menuConfig.hidden.includes(page)}
+                  onToggle={(visible) => toggleMenuVisible(page, visible)}
+                  onReorder={reorderMenu}
+                />
               ))}
             </div>
-          </SettingRow>
+          </div>
         </SettingsSection>
 
         <SettingsSection>
@@ -343,6 +370,67 @@ export function SettingsScreen() {
         }}
         onCancel={() => setConfirmClearAllOpen(false)}
       />
+    </div>
+  );
+}
+
+/** 菜单宫格卡片：点击切换显示/隐藏（右上角小勾标记展示中的项），拖拽到另一张
+ *  卡片上换位排序。拖拽走统一拖放管线（beginInternalDrag + useDropTarget，
+ *  wry 原生接管 DnD 后页内不携带 dataTransfer，见 dragDropService 头注释）。 */
+function MenuCard({
+  page,
+  icon: Icon,
+  label,
+  visible,
+  onToggle,
+  onReorder,
+}: {
+  page: string;
+  icon: LucideIcon;
+  label: string;
+  visible: boolean;
+  onToggle: (visible: boolean) => void;
+  onReorder: (source: string, target: string) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useDropTarget({
+    ref: cardRef,
+    accepts: ['menu-card'],
+    onDrop: (event) => {
+      if (event.kind === 'menu-card') {
+        const payload = event.payload as MenuCardDragPayload;
+        if (payload.page && payload.page !== page) onReorder(payload.page, page);
+      }
+    },
+    onHoverChange: setHovered,
+  });
+
+  return (
+    <div
+      ref={cardRef}
+      draggable
+      onDragStart={() => beginInternalDrag('menu-card', { page })}
+      onDragEnd={endInternalDrag}
+      onClick={() => onToggle(!visible)}
+      role="checkbox"
+      aria-checked={visible}
+      className={cn(
+        'relative flex cursor-grab select-none items-center gap-2 rounded-lg border px-3 py-2 transition-colors active:cursor-grabbing',
+        visible
+          ? 'border-border bg-surface/40 text-foreground hover:border-border-hover'
+          : 'border-border/40 text-foreground-subtlest opacity-60 hover:opacity-80',
+        hovered && 'border-primary',
+      )}
+    >
+      <Icon className="size-4 shrink-0" />
+      <span className="min-w-0 truncate text-ui-sm">{label}</span>
+      {visible ? (
+        <span className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground">
+          <Check className="size-2.5" />
+        </span>
+      ) : null}
     </div>
   );
 }

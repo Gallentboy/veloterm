@@ -649,7 +649,7 @@ export default {
     aiDesc: 'AI providers (OpenAI compatible/Claude/Gemini) with multi-key rotation.',
     logLevel: 'Log Level',
     menuVisibility: 'Menu visibility',
-    menuVisibilityDesc: 'Unchecked menus are hidden from the sidebar (all shown by default; applies instantly)',
+    menuVisibilityDesc: 'Checked menus (small check at top-right) appear in the sidebar; drag cards to reorder — applies instantly',
     logLevelDesc: 'Dynamically adjust frontend and backend log filtering without restarting.',
     logFilePath: 'Log file: {{path}}',
     knownHosts: 'SSH Known Hosts',
