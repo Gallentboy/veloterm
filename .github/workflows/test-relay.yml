@@ -1,7 +1,7 @@
 # 目标（单一）：relay 子工程（veloterm_relay + veloterm-relay-proto）的多平台
 # 验证与部署产物——cargo test 全量 + clippy 零警告 + 四目标静态构建：
-#   · linux  x86_64 / aarch64（musl 静态，glibc 无关随处可跑；aarch64 交叉
-#     编译 + qemu-user 冒烟）
+#   · linux  x86_64（ubuntu-latest）/ aarch64（ubuntu-24.04-arm 原生 ARM runner）
+#     均为 musl 静态，glibc 无关随处可跑；两架构原生跑全量测试与冒烟
 #   · win    x64 / arm64（windows-latest 出包，+crt-static 静态 CRT——
 #     终端机器无需 VC 运行库；arm64 交叉构建不执行）
 # 触发：推 tag（验证完删除）——
@@ -24,25 +24,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # GitHub 原生 ARM64 Linux runner：无需交叉工具链/qemu，全量测试与冒烟原生跑
           - target: x86_64-unknown-linux-musl
-            cross_cc: ''
-            run_tests: true
+            runner: ubuntu-latest
           - target: aarch64-unknown-linux-musl
-            # aws-lc-sys 的 C 件用 gnu 交叉编译器编（对象静态链入，无 glibc 依赖）；
-            # 最终链接走 rust 自带 rust-lld + musl crt（self-contained）
-            cross_cc: aarch64-linux-gnu
-            run_tests: false
-    runs-on: ubuntu-latest
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install toolchain
+      - name: Install musl toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools qemu-user-static
-          if [ -n "${{ matrix.cross_cc }}" ]; then
-            sudo apt-get install -y ${{ matrix.cross_cc }}-gcc ${{ matrix.cross_cc }}-binutils
-          fi
+          sudo apt-get install -y musl-tools
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -55,8 +49,7 @@ jobs:
           workspaces: relay
           key: ${{ matrix.target }}
 
-      - name: Test + Clippy (gnu host, once)
-        if: matrix.run_tests
+      - name: Test + Clippy (native host)
         working-directory: relay
         env:
           RUSTFLAGS: '-D warnings'
@@ -66,29 +59,18 @@ jobs:
 
       - name: Build release (musl static)
         working-directory: relay
-        env:
-          CC_aarch64_unknown_linux_musl: ${{ matrix.cross_cc && format('{0}-gcc', matrix.cross_cc) || '' }}
-          AR_aarch64_unknown_linux_musl: ${{ matrix.cross_cc && format('{0}-ar', matrix.cross_cc) || '' }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
         run: cargo build --release -p veloterm-relay --target ${{ matrix.target }}
 
       - name: Smoke test binary
         run: |
           BIN=./relay/target/${{ matrix.target }}/release/veloterm_relay
-          # aarch64 经 qemu-user 运行（静态 musl 二进制可直跑）
-          RUN="$RUNNER"
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            RUN="qemu-aarch64-static"
-          fi
-          $RUN $BIN --version
-          $RUN $BIN token generate --key-id 9 --name ci | grep -E 'secret = "[0-9a-f]{64}"'
+          $BIN --version
+          $BIN token generate --key-id 9 --name ci | grep -E 'secret = "[0-9a-f]{64}"'
           file $BIN
           # 权威静态判定：ldd 对静态二进制的措辞随形态不同——
           # gnu 环境输出 "not a dynamic executable"，static-pie 输出 "statically linked"
           ldd $BIN 2>&1 | tee /tmp/ldd.out
           grep -Eq 'not a dynamic executable|statically linked' /tmp/ldd.out
-        env:
-          RUNNER: ''
 
       - name: Upload relay artifact
         uses: actions/upload-artifact@v7
