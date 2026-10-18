@@ -277,7 +277,8 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
         return Err(format!("failed to apply column migration `ready_command_id`: {e}"));
     }
 
-    // SSH 中继六列（relay_host 非空 = 启用；其余列仅在 relay_host 非空时有意义）
+    // SSH 中继六列（relay_host 非空 = 启用；其余列仅在 relay_host 非空时有意义）；
+    // cert_fingerprint 为后续追加（QUIC 证书 pin）
     for col_def in [
         "relay_host TEXT",
         "relay_port INTEGER",
@@ -285,6 +286,7 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
         "relay_key_id INTEGER",
         "relay_secret TEXT",
         "relay_target TEXT",
+        "cert_fingerprint TEXT",
     ] {
         let sql = format!("ALTER TABLE hosts ADD COLUMN {col_def}");
         if let Err(e) = conn.execute_batch(&sql)
@@ -523,6 +525,7 @@ fn row_to_relay(
     relay_transport: Option<&str>,
     relay_key_id: Option<i64>,
     relay_secret: Option<&str>,
+    cert_fingerprint: Option<&str>,
 ) -> Option<SshRelayEndpoint> {
     let host = relay_host?.trim().to_string();
     if host.is_empty() {
@@ -542,6 +545,9 @@ fn row_to_relay(
             .unwrap_or(RelayTransport::Tcp),
         key_id: relay_key_id.map(|k| k.clamp(0, 255) as u8).unwrap_or(1),
         secret,
+        cert_fingerprint: cert_fingerprint
+            .map(|f| f.trim().to_string())
+            .filter(|f| !f.is_empty()),
     })
 }
 
@@ -595,7 +601,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
         .prepare(
             "SELECT id, name, host, port, username, auth_json, jump_host_id,
               host_key_verification, allow_insecure_algos, ready_command_id,
-              relay_host, relay_port, relay_transport, relay_key_id, relay_secret,
+              relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint,
               created_at, updated_at
        FROM hosts
        ORDER BY id ASC",
@@ -615,6 +621,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 row.get::<_, Option<String>>(12)?.as_deref(),
                 row.get::<_, Option<i64>>(13)?,
                 row.get::<_, Option<String>>(14)?.as_deref(),
+                row.get::<_, Option<String>>(15)?.as_deref(),
             );
             Ok(HostRecord {
                 id,
@@ -629,8 +636,8 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 ready_command_id: row.get(9)?,
                 relay,
                 group_ids: groups_by_host.remove(&id).unwrap_or_default(),
-                created_at: row.get(15)?,
-                updated_at: row.get(16)?,
+                created_at: row.get(16)?,
+                updated_at: row.get(17)?,
             })
         })
         .map_err(|e| format!("failed to query hosts: {e}"))?;
@@ -798,9 +805,9 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
             "INSERT INTO hosts (
           id, name, host, port, username, auth_json, jump_host_id,
           host_key_verification, allow_insecure_algos, ready_command_id,
-          relay_host, relay_port, relay_transport, relay_key_id, relay_secret,
+          relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint,
           created_at, updated_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 host.id,
                 &host.name,
@@ -817,6 +824,7 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                 host.relay.as_ref().map(|r| relay_transport_to_str(r.transport)),
                 host.relay.as_ref().map(|r| i64::from(r.key_id)),
                 host.relay.as_ref().map(|r| r.secret.clone()),
+                host.relay.as_ref().and_then(|r| r.cert_fingerprint.clone()),
                 host.created_at,
                 host.updated_at,
             ],
@@ -956,6 +964,9 @@ mod tests {
                     transport: RelayTransport::Quic,
                     key_id: 3,
                     secret: "ab".repeat(32),
+                    cert_fingerprint: Some(
+                        "F3:6A:D3:91:5D:6E:69:F8:5C:55:63:F6:C5:A0:7F:8E".to_string(),
+                    ),
                 }),
                 group_ids: vec![1],
                 created_at: 200,
