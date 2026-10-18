@@ -19,7 +19,7 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 use zookeeper_client::{Acl, AuthId, Client, CreateMode, CreateOptions, Permission};
 
-use crate::terminal::ssh::common::SshRelayEndpoint;
+
 use crate::terminal::ssh::relay_transport::dial_relay;
 
 /// watch 事件名（前端 listen 用）。
@@ -270,12 +270,19 @@ fn ensure_watch(
 pub async fn zk_connect(
     state: State<'_, ZkState>,
     endpoints: String,
-    relay: Option<SshRelayEndpoint>,
+    relay_id: Option<usize>,
 ) -> Result<serde_json::Value, String> {
     let endpoints = endpoints.trim().to_string();
     if endpoints.is_empty() {
         return Err("ZK 地址不能为空（host:2181，逗号分隔多个）".into());
     }
+
+    // 中继只按库存 id 引用（前端不回显 secret 等字段），服务端解析成端点
+    let relay = match relay_id {
+        Some(rid) => Some(crate::relays::endpoint_by_id(Some(rid))
+            .ok_or_else(|| format!("中继配置不存在（id={rid}），可能已被删除"))?),
+        None => None,
+    };
 
     // 中继模式：起本地桥接（回环监听 → VLR3 管道 → ZK 目标）。
     // 目标取地址串里的第一个 host:port（中继模式下多地址无意义）。
