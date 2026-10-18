@@ -301,6 +301,16 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL,
           UNIQUE(host_id, username)
+      );
+
+      CREATE TABLE IF NOT EXISTS grpc_tls_profiles (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          server_name TEXT NOT NULL UNIQUE,
+          ca_pem TEXT,
+          client_cert_pem TEXT,
+          client_key_pem TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
       );",
     )
     .map_err(|e| format!("failed to initialize schema in SQLCipher database: {e}"))?;
@@ -857,6 +867,168 @@ pub fn delete_zk_host(pool: &DbPool, id: usize) -> Result<(), String> {
     tx.commit()
         .map_err(|e| format!("failed to commit zk host delete: {e}"))?;
     Ok(())
+}
+
+// ===== `grpc_tls_profiles`：gRPC TLS 配置库（校验域名为唯一 key）=====
+
+/// gRPC TLS 配置记录：CA/客户端证书/私钥明文存 SQLCipher 加密库（与 SSH 密码同级）；
+/// server_name 是用户可读的唯一标识（下拉展示、冲突即报错）。PEM 全部可空——
+/// 空 CA = 系统根证书，空客户端证书对 = 不做 mTLS。
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcTlsProfileRecord {
+    pub id: usize,
+    pub server_name: String,
+    #[serde(default)]
+    pub ca_pem: Option<String>,
+    #[serde(default)]
+    pub client_cert_pem: Option<String>,
+    #[serde(default)]
+    pub client_key_pem: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+pub fn list_grpc_tls_profiles(pool: &DbPool) -> Result<Vec<GrpcTlsProfileRecord>, String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, server_name, ca_pem, client_cert_pem, client_key_pem, created_at, updated_at
+       FROM grpc_tls_profiles ORDER BY server_name ASC",
+        )
+        .map_err(|e| format!("failed to prepare grpc tls profiles query: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(GrpcTlsProfileRecord {
+                id: row.get(0)?,
+                server_name: row.get(1)?,
+                ca_pem: row.get(2)?,
+                client_cert_pem: row.get(3)?,
+                client_key_pem: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })
+        .map_err(|e| format!("failed to query grpc tls profiles: {e}"))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("failed to decode grpc tls profile row: {e}"))?);
+    }
+    Ok(out)
+}
+
+pub fn save_grpc_tls_profile(
+    pool: &DbPool,
+    record: GrpcTlsProfileRecord,
+) -> Result<GrpcTlsProfileRecord, String> {
+    if record.client_cert_pem.is_some() != record.client_key_pem.is_some() {
+        return Err("客户端证书与私钥必须成对提供".into());
+    }
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    // PEM 原文存储（trim 会破坏尾换行等格式）；trim 仅用于「是否为空」判断，空串归一为 None
+    let clean_opt = |v: &Option<String>| v.as_ref().filter(|s| !s.trim().is_empty()).cloned();
+    if record.id == 0 {
+        conn.execute(
+            "INSERT INTO grpc_tls_profiles (server_name, ca_pem, client_cert_pem, client_key_pem, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+            params![
+                record.server_name,
+                clean_opt(&record.ca_pem),
+                clean_opt(&record.client_cert_pem),
+                clean_opt(&record.client_key_pem),
+                now,
+            ],
+        )
+        .map_err(|e| grpc_tls_unique_error(&record.server_name, &e))?;
+        let id: usize = conn.last_insert_rowid() as usize;
+        Ok(GrpcTlsProfileRecord {
+            id,
+            created_at: now,
+            updated_at: now,
+            ..record
+        })
+    } else {
+        conn.execute(
+            "UPDATE grpc_tls_profiles SET server_name=?2, ca_pem=?3, client_cert_pem=?4, client_key_pem=?5, updated_at=?6
+             WHERE id=?1",
+            params![
+                record.id,
+                record.server_name,
+                clean_opt(&record.ca_pem),
+                clean_opt(&record.client_cert_pem),
+                clean_opt(&record.client_key_pem),
+                now,
+            ],
+        )
+        .map_err(|e| grpc_tls_unique_error(&record.server_name, &e))?;
+        Ok(GrpcTlsProfileRecord {
+            updated_at: now,
+            ..record
+        })
+    }
+}
+
+/// UNIQUE(server_name) 冲突转成业务文案，其余原样上抛。
+fn grpc_tls_unique_error(server_name: &str, err: &rusqlite::Error) -> String {
+    if matches!(
+        err,
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ffi::ErrorCode::ConstraintViolation,
+                ..
+            },
+            ..
+        )
+    ) {
+        format!("校验域名已存在：{server_name}")
+    } else {
+        format!("failed to write grpc tls profile: {err}")
+    }
+}
+
+/// 删除 gRPC TLS 配置；不存在时静默成功（幂等）。
+pub fn delete_grpc_tls_profile(pool: &DbPool, id: usize) -> Result<(), String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    conn.execute(
+        "DELETE FROM grpc_tls_profiles WHERE id=?1",
+        params![id],
+    )
+    .map_err(|e| format!("failed to delete grpc tls profile: {e}"))?;
+    Ok(())
+}
+
+/// 按 id 取单条配置（grpc_call 命令层解析用）。
+pub fn grpc_tls_profile_by_id(pool: &DbPool, id: usize) -> Result<GrpcTlsProfileRecord, String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    conn.query_row(
+        "SELECT id, server_name, ca_pem, client_cert_pem, client_key_pem, created_at, updated_at
+         FROM grpc_tls_profiles WHERE id=?1",
+        params![id],
+        |row| {
+            Ok(GrpcTlsProfileRecord {
+                id: row.get(0)?,
+                server_name: row.get(1)?,
+                ca_pem: row.get(2)?,
+                client_cert_pem: row.get(3)?,
+                client_key_pem: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        },
+    )
+    .map_err(|_| format!("TLS 配置不存在（id={id}），可能已被删除"))
 }
 
 // ===== `app_kv` 通用键值持久化操作 =====
@@ -1787,6 +1959,88 @@ mod tests {
                 .expect("list after delete should succeed")
                 .is_empty()
         );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn grpc_tls_profile_roundtrip() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("veloterm-grpctls-test-{}", Uuid::new_v4()));
+        let db_path = temp_dir.join("veloterm.db");
+        let pool =
+            init_db_at_path(&db_path, "grpc-tls-key").expect("init_db_at_path should succeed");
+
+        // 1. 新增 + list 比对 + 按 id 取
+        let created = save_grpc_tls_profile(
+            &pool,
+            GrpcTlsProfileRecord {
+                id: 0,
+                server_name: "livebos-server".to_string(),
+                ca_pem: Some("-----BEGIN CERTIFICATE-----\nca\n".to_string()),
+                client_cert_pem: Some("-----BEGIN CERTIFICATE-----\ncert\n".to_string()),
+                client_key_pem: Some("-----BEGIN PRIVATE KEY-----\nkey\n".to_string()),
+                created_at: 0,
+                updated_at: 0,
+            },
+        )
+        .expect("save_grpc_tls_profile insert should succeed");
+        assert!(created.id > 0);
+        let listed = list_grpc_tls_profiles(&pool).expect("list should succeed");
+        assert_eq!(listed, vec![created.clone()]);
+        let fetched =
+            grpc_tls_profile_by_id(&pool, created.id).expect("fetch by id should succeed");
+        assert_eq!(fetched, created);
+
+        // 2. 域名唯一冲突（新增同名 / 更新撞名）与错误文案
+        let dup_err = save_grpc_tls_profile(
+            &pool,
+            GrpcTlsProfileRecord {
+                id: 0,
+                server_name: "livebos-server".to_string(),
+                ca_pem: None,
+                client_cert_pem: None,
+                client_key_pem: None,
+                created_at: 0,
+                updated_at: 0,
+            },
+        )
+        .expect_err("duplicate server_name should fail");
+        assert!(dup_err.contains("校验域名已存在"), "got: {dup_err}");
+
+        // 3. 更新：改 CA、去客户端证书对；list 比对
+        let updated = save_grpc_tls_profile(
+            &pool,
+            GrpcTlsProfileRecord {
+                ca_pem: None,
+                client_cert_pem: None,
+                client_key_pem: None,
+                ..created.clone()
+            },
+        )
+        .expect("save_grpc_tls_profile update should succeed");
+        let listed = list_grpc_tls_profiles(&pool).expect("list after update should succeed");
+        assert_eq!(listed, vec![updated.clone()]);
+
+        // 4. 证书/私钥只给其一 → 拒绝
+        let unpaired_err = save_grpc_tls_profile(
+            &pool,
+            GrpcTlsProfileRecord {
+                id: 0,
+                server_name: "another.example.com".to_string(),
+                client_cert_pem: Some("cert-only".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect_err("unpaired client cert/key should fail");
+        assert!(unpaired_err.contains("成对"), "got: {unpaired_err}");
+
+        // 5. 删除幂等；按 id 取已删配置报不存在
+        delete_grpc_tls_profile(&pool, updated.id).expect("delete should succeed");
+        delete_grpc_tls_profile(&pool, updated.id).expect("delete should be idempotent");
+        let gone_err =
+            grpc_tls_profile_by_id(&pool, updated.id).expect_err("deleted profile should 404");
+        assert!(gone_err.contains("TLS 配置不存在"), "got: {gone_err}");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
