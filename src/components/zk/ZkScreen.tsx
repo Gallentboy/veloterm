@@ -387,10 +387,15 @@ function ZkSessionView({
   };
 
   // 建 tab 时携带的主机（ZK 主机页「连接」）：挂载即回填并自动连接；
-  // 等中继列表就绪以保证中继名可回显（尽力而为，失败不影响连接）
+  // 等中继列表就绪以保证中继名可回显（尽力而为，失败不影响连接）。
+  // ref 去重：StrictMode 开发模式挂载 effect 会跑两遍，若不去重会并发建两个
+  // 后端会话，第二个完成时覆盖 state 触发 cleanup 断开第一个——而第一个的
+  // 自动认证随后才到，命中「会话不存在」（曾出现的自动认证失败即此因）
+  const autoConnectDoneRef = useRef(false);
   useEffect(() => {
     const host = autoConnectHost;
-    if (!host) return;
+    if (!host || autoConnectDoneRef.current) return;
+    autoConnectDoneRef.current = true;
     applySavedHost(host);
     void (async () => {
       await relayListPromise;
