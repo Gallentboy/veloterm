@@ -375,7 +375,7 @@ pub fn list_relays(pool: &DbPool) -> Result<Vec<RelayRecord>, String> {
         .map_err(|e| format!("failed to prepare relays query: {e}"))?;
     let rows = stmt
         .query_map([], |row| {
-            let port_i64: i64 = row.get(2)?;
+            let port_i64: i64 = row.get(3)?;
             let transport_raw: String = row.get(4)?;
             let key_id_i64: i64 = row.get(5)?;
             let transport = match transport_raw.trim() {
@@ -1144,6 +1144,57 @@ mod tests {
         save_host_store(&pool, &payload).expect("save_host_store should succeed");
         let loaded = load_host_store(&pool).expect("load_host_store should succeed");
         assert_eq!(loaded, payload);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn relay_store_roundtrip() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("veloterm-relay-test-{}", Uuid::new_v4()));
+        let db_path = temp_dir.join("veloterm.db");
+        let pool = init_db_at_path(&db_path, "relay-key").expect("init_db_at_path should succeed");
+
+        let created = save_relay(
+            &pool,
+            RelayRecord {
+                id: 0,
+                name: "edge-relay".to_string(),
+                host: "relay.example.com".to_string(),
+                port: 7301,
+                transport: RelayTransport::Ws,
+                key_id: 2,
+                secret: "cd".repeat(32),
+                cert_fingerprint: Some("AB:CD:EF".to_string()),
+                created_at: 0,
+                updated_at: 0,
+            },
+        )
+        .expect("save_relay insert should succeed");
+        assert!(created.id > 0);
+        assert!(created.created_at > 0);
+
+        let updated = save_relay(
+            &pool,
+            RelayRecord {
+                port: 9443,
+                transport: RelayTransport::Quic,
+                cert_fingerprint: None,
+                ..created.clone()
+            },
+        )
+        .expect("save_relay update should succeed");
+        assert_eq!(updated.id, created.id);
+
+        let listed = list_relays(&pool).expect("list_relays should succeed");
+        assert_eq!(listed, vec![updated.clone()]);
+
+        delete_relay(&pool, updated.id).expect("delete_relay should succeed");
+        assert!(
+            list_relays(&pool)
+                .expect("list after delete should succeed")
+                .is_empty()
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
