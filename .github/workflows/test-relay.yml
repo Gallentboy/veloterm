@@ -110,10 +110,21 @@ jobs:
           workspaces: relay
           key: ${{ matrix.target }}
 
+      # 内联 vcvars（替代停更的 ilammy/msvc-dev-cmd，其 node20 运行时已被 GH 弃用）：
+      # vswhere 定位最新 VS → vcvarsall 按目标架构初始化 → 全量环境变量导出给后续步骤
       - name: Setup MSVC env (vcvars ${{ matrix.msvc_arch }})
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.msvc_arch }}
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath  = & $vswhere -latest -products * -property installationPath
+          if (-not $vsPath) { throw "vswhere 未找到 Visual Studio" }
+          $vcvars  = Join-Path $vsPath 'VC\Auxiliary\Build\vcvarsall.bat'
+          Write-Host "vcvars: $vcvars (${{ matrix.msvc_arch }})"
+          cmd /s /c "`"$vcvars`" ${{ matrix.msvc_arch }} && set" | ForEach-Object {
+            if ($_ -match '^(?<k>[^=]+)=(?<v>.*)$') {
+              Add-Content $env:GITHUB_ENV "$($Matches.k)=$($Matches.v)"
+            }
+          }
 
       - name: Build release (crt-static)
         working-directory: relay
