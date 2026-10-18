@@ -11,6 +11,16 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tokio::sync::{Semaphore, watch};
 use tracing_subscriber::EnvFilter;
+
+/// 日志时间戳：本地时区（服务器 TZ，国内部署即北京时间），
+/// 格式 yyyy-MM-dd HH:mm:ss.SSS（tracing 默认计时器只出 UTC RFC3339）。
+struct LocalTimer;
+
+impl tracing_subscriber::fmt::time::FormatTime for LocalTimer {
+    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        write!(w, "{}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"))
+    }
+}
 use veloterm_relay::config::{self, ListenerProto};
 use veloterm_relay::server;
 use veloterm_relay_proto::auth::Secret;
@@ -145,6 +155,7 @@ bind = "0.0.0.0:7300"
 fn run(path: std::path::PathBuf, check_only: bool) -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_timer(LocalTimer)
         .init();
 
     let text = std::fs::read_to_string(&path)
