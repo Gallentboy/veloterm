@@ -339,6 +339,100 @@ pub fn command_delete(id: usize, state: State<'_, DbPool>) -> Result<(), String>
     Ok(())
 }
 
+// ─────────────────────── 内置预置命令（种子） ───────────────────────
+
+/// 预置命令集：由 `scripts/build-command-seed.mjs` 从 `src-tauri/seed-parts/`
+/// 分片合并产出（内容按官方文档求证：GNU 手册 / Microsoft Learn / 各上游仓库，
+/// 字段契约与校验规则见脚本头注释）。
+const BUILTIN_SEED_JSON: &str = include_str!("../assets/builtin-commands-seed.json");
+
+/// app_kv 版本标记键：种子只在该版本首次启动执行一次。
+const SEED_KV_KEY: &str = "builtin-commands-seed:version";
+/// 当前种子数据版本（数据变更时递增：升级后首个启动补插新增条目，已有条目
+/// 与用户删除操作不受影响）。
+const SEED_VERSION: &str = "1";
+
+/// 种子条目：CommandRecord 的子集（不含本机数据 id/usage_count/last_used_at/
+/// updated_at，均由播种路径统一初始化）。种子 JSON 里的 `platforms` 字段
+///（适配系统多选，恒 ["win"]）为前瞻数据，当前 schema 未落库——serde 默认
+/// 忽略未知字段，待适配系统列合入后在此接线。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SeedEntry {
+    uuid: String,
+    title: String,
+    command: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    purpose: String,
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    params: Vec<CommandParam>,
+    #[serde(default)]
+    danger_level: DangerLevel,
+    #[serde(default)]
+    example_output: String,
+    #[serde(default)]
+    is_pinned: bool,
+    #[serde(default)]
+    created_at: i64,
+}
+
+/// 播种内置预置命令（内置工具链全量命令 + Windows cmd 常用命令的详细用法）。
+/// 幂等三层：kv 版本标记短路（同版本只跑一次，用户删除的预置条目不会复活）
+/// → uuid 唯一索引 + INSERT OR IGNORE（版本升级补插时与已有条目去重）
+/// → ensure_table 建表幂等。返回 (本次插入数, 跳过数)。
+pub fn seed_builtin_commands(pool: &DbPool) -> Result<(usize, usize), String> {
+    ensure_table(pool)?;
+    if crate::db::get_kv(pool, SEED_KV_KEY)? == Some(SEED_VERSION.to_string()) {
+        return Ok((0, 0));
+    }
+    let entries: Vec<SeedEntry> = serde_json::from_str(BUILTIN_SEED_JSON)
+        .map_err(|e| format!("解析内置预置命令 JSON 失败: {e}"))?;
+    let now = crate::db::now_timestamp_ms();
+    let mut inserted = 0usize;
+    {
+        let conn = pool.get().map_err(|e| e.to_string())?;
+        for e in &entries {
+            let changed = conn
+                .execute(
+                    "INSERT OR IGNORE INTO commands
+                       (uuid, title, command, description, purpose, category, tags,
+                        params, danger_level, example_output,
+                        usage_count, is_pinned, created_at, updated_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0,?11,?12,?13)",
+                    rusqlite::params![
+                        e.uuid,
+                        e.title,
+                        e.command,
+                        e.description,
+                        e.purpose,
+                        e.category,
+                        serde_json::to_string(&e.tags).unwrap_or_else(|_| "[]".to_string()),
+                        serde_json::to_string(&e.params).unwrap_or_else(|_| "[]".to_string()),
+                        match e.danger_level {
+                            DangerLevel::Safe => "safe",
+                            DangerLevel::Confirm => "confirm",
+                            DangerLevel::Destructive => "destructive",
+                        },
+                        e.example_output,
+                        e.is_pinned as i64,
+                        e.created_at,
+                        now,
+                    ],
+                )
+                .map_err(|err| format!("播种预置命令失败（uuid={}）: {err}", e.uuid))?;
+            inserted += changed;
+        }
+    }
+    crate::db::set_kv(pool, SEED_KV_KEY, SEED_VERSION)?;
+    Ok((inserted, entries.len() - inserted))
+}
+
 /// 记录一次使用：递增 usage_count + 更新 last_used_at
 #[tauri::command]
 pub fn command_used(id: usize, state: State<'_, DbPool>) -> Result<(), String> {
@@ -1161,6 +1255,76 @@ mod tests {
             created_at: 0,
             updated_at: 0,
         }
+    }
+
+    // ── 内置预置命令播种 ──
+
+    #[test]
+    fn builtin_seed_payload_is_valid() {
+        let entries: Vec<SeedEntry> =
+            serde_json::from_str(BUILTIN_SEED_JSON).expect("seed json should parse");
+        assert!(
+            !entries.is_empty(),
+            "内置预置命令集不应为空（seed-parts 未合并？先跑 scripts/build-command-seed.mjs）"
+        );
+        let mut seen = std::collections::HashSet::new();
+        for e in &entries {
+            assert!(!e.uuid.trim().is_empty(), "uuid 为空: {}", e.title);
+            assert!(seen.insert(e.uuid.as_str()), "uuid 重复: {}", e.uuid);
+            assert!(!e.title.trim().is_empty() && !e.command.trim().is_empty());
+            // 占位符契约：每个 param 必须出现在 command 模板里
+            let placeholders: std::collections::HashSet<String> = e
+                .command
+                .match_indices("{{")
+                .filter_map(|(i, _)| e.command[i + 2..].split("}}").next())
+                .map(|s| s.trim().to_string())
+                .collect();
+            for p in &e.params {
+                assert!(
+                    placeholders.contains(&p.name),
+                    "param `{}` 未出现在 command 中（{}）",
+                    p.name, e.title
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn seed_is_version_gated_and_idempotent() {
+        let pool = test_pool();
+        let total = serde_json::from_str::<Vec<SeedEntry>>(BUILTIN_SEED_JSON)
+            .expect("seed json should parse")
+            .len();
+
+        // 空库首次播种：全量插入
+        let (first, skipped) =
+            seed_builtin_commands(&pool).expect("first seed should succeed");
+        assert!(first > 0, "空库首次播种应插入条目");
+        assert_eq!(first + skipped, total);
+
+        // 第二次：kv 版本标记短路，零插入
+        let (second, _) = seed_builtin_commands(&pool).expect("second seed should succeed");
+        assert_eq!(second, 0, "同版本重复播种应被 kv 标记短路");
+
+        // 用户删除一条后再次播种：不复活（版本门控语义）
+        {
+            let conn = pool.get().expect("conn should succeed");
+            conn.execute(
+                "DELETE FROM commands WHERE id = (SELECT MIN(id) FROM commands)",
+                [],
+            )
+            .expect("delete should succeed");
+        }
+        let (third, _) = seed_builtin_commands(&pool).expect("third seed should succeed");
+        assert_eq!(third, 0, "被删除的预置条目不应在同版本内复活");
+
+        // 库中剩余数 = 首次插入数 - 1
+        let count: i64 = {
+            let conn = pool.get().expect("conn should succeed");
+            conn.query_row("SELECT COUNT(*) FROM commands", [], |r| r.get(0))
+                .expect("count should succeed")
+        };
+        assert_eq!(count as usize, first - 1);
     }
 
     fn insert_seed_row(pool: &DbPool, id: i64, uuid: &str, title: &str, command: &str, usage: i64) {
