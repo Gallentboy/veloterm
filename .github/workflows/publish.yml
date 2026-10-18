@@ -360,10 +360,25 @@ jobs:
             echo "未找到 ${TAG} 对应的 release（tauri-action 未产出或版本异常）"; exit 1
           fi
           echo "release id=$RID tag=$TAG"
+          # 清掉同 release 上已有的 veloterm_relay-* 资产（重跑/改名幂等，避免新旧并存）
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RID}/assets" --paginate \
+            -q ".[] | select(.name | startswith(\"veloterm_relay-\")) | (.id|tostring)" \
+            | while read -r aid; do
+                gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${aid}"
+              done
+          # 发布资产用简短友好命名（用户指定）：
+          #   linux-x86 / linux-aarch64（无后缀）、x64.exe / arm64.exe（Windows 静态 CRT）
           find relay-bin -type f \( -name 'veloterm_relay' -o -name 'veloterm_relay.exe' \) | while read -r f; do
-            NAME="$(basename "$(dirname "$f")")$(case "$f" in *.exe) echo .exe;; esac)"
-            echo "upload: $NAME"
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/${RID}/assets?name=${NAME}" \
+            TARGET="$(basename "$(dirname "$f")")"; TARGET="${TARGET#veloterm_relay-}"
+            case "$TARGET" in
+              x86_64-unknown-linux-musl)  ASSET="veloterm_relay-linux-x86";;
+              aarch64-unknown-linux-musl) ASSET="veloterm_relay-linux-aarch64";;
+              x86_64-pc-windows-msvc)     ASSET="veloterm_relay-x64.exe";;
+              aarch64-pc-windows-msvc)    ASSET="veloterm_relay-arm64.exe";;
+              *) echo "未知目标: $TARGET"; exit 1;;
+            esac
+            echo "upload: $ASSET"
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/${RID}/assets?name=${ASSET}" \
               -H "Content-Type: application/octet-stream" --input "$f"
           done
           gh api "repos/${GITHUB_REPOSITORY}/releases/${RID}" -q '.html_url'
