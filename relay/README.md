@@ -55,9 +55,9 @@ R→C: VLR2 | status   (0=OK 进入纯字节管道)
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | P1 | 协议 crate + TCP 监听（握手/鉴权/选路/搬运）+ russh 回环端到端 | ✅ |
-| P2 | WebSocket / QUIC / UDP 监听 | 待做 |
-| P3 | veloterm 客户端接入（proto path 依赖 + connect_stream） | 待做 |
-| P4 | CI 车道 + Linux 产物 | 待做 |
+| P2 | WebSocket / QUIC / UDP 监听 | ✅（ws 适配器字节流 / quic 自签+多流复用 / udp 会话表+时间同步） |
+| P3 | veloterm 客户端接入（proto path 依赖 + connect_stream + 主机表中继配置 + 拓扑可视化） | ✅ |
+| P4 | CI 车道 + Linux 产物 | ✅（test-relay.yml：test + clippy -D warnings + musl 静态产物，tag `test_relay` 触发） |
 
 ## 测试
 
