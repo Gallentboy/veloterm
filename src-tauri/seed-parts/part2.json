@@ -1,0 +1,611 @@
+[
+  {
+    "tool": "basename",
+    "title": "basename：提取文件名（去目录与后缀）",
+    "command": "basename {{path}} {{suffix}}",
+    "description": "去掉路径中的目录部分，只打印最末一个文件名；还可再剥掉指定的结尾后缀。它是纯字符串处理，不要求文件真实存在，是脚本里从完整路径取文件名的标准做法。\n\n**语法**\n```\nbasename name [suffix]\nbasename option... name...\n```\n\n**常用选项**\n- `-a` / `--multiple` — 支持多个参数，每个都当作文件名处理\n- `-s 后缀` / `--suffix=后缀` — 剥掉指定的结尾后缀（隐含 `-a`，多文件时用它传后缀）\n- `-z` / `--zero` — 行尾输出 NUL 而非换行，便于其他程序解析\n\n选项必须写在操作数之前；先剥尾斜杠再做后缀匹配，因此含 `/` 的后缀不生效。\n\n**示例**\n```\nbasename D:/logs/app.log            # -> app.log\nbasename -s .log D:/logs/app.log    # -> app\nbasename -a -s .jpg a.jpg b.jpg     # -> a  b\n```\n\n**注意**\n- Windows 路径 `D:\\logs\\app.log` 与 `D:/logs/app.log` 结果一致，输出 `app.log`。\n- 与 PowerShell 的 `Split-Path -Leaf` 等价；与 cmd 的 `~n` 扩展用途相同。\n- 想取目录部分用 `dirname`，两者配套设计。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/basename-invocation.html",
+    "purpose": "脚本里从完整路径取文件名，或剥掉扩展名",
+    "category": "file",
+    "tags": ["basename", "文件名", "路径"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "任意路径，取其最末文件名部分", "required": true, "default": "", "example": "D:\\logs\\app.log" },
+      { "name": "suffix", "label": "后缀", "description": "要一并剥掉的结尾后缀，如 .log；留空则只去目录", "required": false, "default": "", "example": ".log" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ basename /usr/bin/sort\nsort\n$ basename include/stdio.h .h\nstdio",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/basename-invocation.html"
+  },
+  {
+    "tool": "cmp",
+    "title": "cmp：逐字节比较两个文件",
+    "command": "cmp {{file1}} {{file2}}",
+    "description": "把两个文件逐字节比较，报告第一处差异的字节位置与行号；完全相同时无输出、退出码为 0。因为按字节而非按行比较，它比 diff 更适合比较二进制文件。\n\n**语法**\n```\ncmp [option]... from-file [to-file]\n```\n\n**常用选项**\n- `-b` / `--print-bytes` — 同时显示差异的字节值（控制字符显示为 `^X`，高位字节加 `M-`）\n- `-l` / `--verbose` — 列出全部差异：每行一个字节号 + 两个文件该字节的八进制值\n- `-n N` / `--bytes=N` — 最多比较前 N 个字节（支持 K/M/G 后缀）\n- `-i SKIP[:SKIP2]` / `--ignore-initial` — 跳过两文件开头若干字节再比\n- `-s` / `--quiet` / `--silent` — 不输出任何内容，仅以退出码表示是否不同\n\n退出码：0 相同，1 有差异，2 出错。\n\n**示例**\n```\ncmp old.bin new.bin                  # 报第一处差异\ncmp -l a.bin b.bin | head            # 列出前几处差异\ncmp -s cfg.old cfg.new && echo same  # 只判断是否一致\n```\n\n**注意**\n- 退出码 1 表示「有差异」而非命令失败，脚本判断时要区分 1 和 2。\n- Windows 文本常见 CRLF，与 LF 文件比较时第一处差异通常落在行尾；文本比较建议改用 `diff --strip-trailing-cr`。\n- 省略第二个文件时从标准输入读取。\n\n> 文档依据：https://www.gnu.org/software/diffutils/manual/html_node/Invoking-cmp.html",
+    "purpose": "判断两个（二进制）文件是否完全一致，定位首个差异字节",
+    "category": "file",
+    "tags": ["cmp", "比较", "二进制"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file1", "label": "文件 1", "description": "第一个文件", "required": true, "default": "", "example": "old.bin" },
+      { "name": "file2", "label": "文件 2", "description": "第二个文件", "required": true, "default": "", "example": "new.bin" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ cmp old.bin new.bin\nold.bin new.bin differ: byte 7, line 2",
+    "source": "https://www.gnu.org/software/diffutils/manual/html_node/Invoking-cmp.html"
+  },
+  {
+    "tool": "cp",
+    "title": "cp：复制文件或目录",
+    "command": "cp -rv {{src}} {{dest}}",
+    "description": "复制文件；加 `-r` 后递归复制整个目录树。备份配置、同步代码目录的日常主力，与 cmd 的 copy/xcopy、PowerShell 的 Copy-Item 同类。\n\n**语法**\n```\ncp [option]... [-T] source dest\ncp [option]... source... directory\ncp [option]... -t directory source...\n```\n\n**常用选项**\n- `-r`, `-R`, `--recursive` — 递归复制目录（复制目录必带）\n- `-a`, `--archive` — 等价 `-dR --preserve=all`，归档备份首选\n- `-p` — 保留 mode/ownership/timestamps 等属性\n- `-i`, `--interactive` — 覆盖已存在目标前逐个询问\n- `-n`, `--no-clobber` — 静默跳过已存在文件，不覆盖\n- `-u`, `--update` — 仅当源较新时才覆盖\n- `-v`, `--verbose` — 显示每个文件的复制过程\n- `-t 目录` — 把所有源复制进指定目录\n\n**示例**\n```\ncp -rv src/ dst/                     # 递归复制并显示过程\ncp -a /etc/nginx /backup/nginx-bak   # 归档式备份（保属性）\ncp -u app.log D:/archive/            # 只复制较新版本\ncp a.txt b.txt c.txt -t out/         # 多文件复制进目录\n```\n\n**注意**\n- `cp -r src dst` 与 `cp -r src/ dst` 在目标不存在时行为不同：前者创建 `dst/src`，后者只复制内容到 dst，生产环境建议明确写法。\n- Windows 下覆盖同名文件不进回收站，重要目录建议加 `-i` 或 `--backup=numbered` 留编号备份。\n- `-f` 与 `-n` 同用时 `-n` 生效；多个解引用选项（`-a/-d/-L/-P/-H`）最后一个生效。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/cp-invocation.html",
+    "purpose": "复制文件或整个目录树做备份/分发",
+    "category": "file",
+    "tags": ["cp", "复制", "备份"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "src", "label": "源路径", "description": "要复制的文件或目录（目录需配 -r/-a）", "required": true, "default": "", "example": "D:\\logs" },
+      { "name": "dest", "label": "目标路径", "description": "目标文件或目录路径", "required": true, "default": "", "example": "E:\\backup\\logs" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ cp -rv src/ dst/\n'src/a.txt' -> 'dst/a.txt'\n'src/sub' -> 'dst/sub'",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/cp-invocation.html"
+  },
+  {
+    "tool": "dd",
+    "title": "dd：按块复制/转换文件",
+    "command": "dd if={{input}} of={{output}} bs={{blocksize}}",
+    "description": "以固定块为单位复制并可选转换数据，用 `if=`/`of=` 这类操作数而非普通选项。常用于截取文件的指定长度、做块级镜像；指向磁盘设备时可整盘覆写，属高危命令。\n\n**语法**\n```\ndd [operand]...\ndd option\n```\n\n**常用操作数**\n- `if=文件` — 输入文件（默认标准输入）\n- `of=文件` — 输出文件（默认标准输出；注意会先截断目标，除非 `conv=notrunc`）\n- `bs=大小` — 同时设读写块大小，支持 K/M/G 后缀（如 1M）\n- `count=N` — 只复制 N 个块（`count=0` 什么都不复制）\n- `skip=N` / `seek=N` — 跳过输入/输出的前 N 个块\n- `conv=notrunc` — 不截断输出文件；`conv=noerror` 读错误也继续；`conv=sync` 用 NUL 补齐块\n- `status=progress` — 每秒刷新一次进度统计\n\n**示例**\n```\ndd if=data.bin of=copy.bin bs=1M count=2 status=progress   # 截取前 2MiB\ndd if=input.iso of=output.iso bs=4M status=progress         # 整文件块复制\ndd if=big.bin of=big.bin bs=1 count=0                      # 仅触发统计输出\n```\n\n**注意**\n- **`of=` 指向的目标文件会先被清空再写入**，写错目标等于毁数据，执行前务必核对两遍。\n- Windows 没有 /dev/sda、/dev/zero 这类设备节点，本机 dd 主要做文件级复制与截取；整盘覆写场景需明确设备路径，绝不可随意指向物理卷。\n- 从管道读取时 `count=` 按短读计数会偏少，应加 `iflag=fullblock`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/dd-invocation.html",
+    "purpose": "按块截取/复制文件内容，或做块级镜像",
+    "category": "disk",
+    "tags": ["dd", "块复制", "覆写"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "input", "label": "输入文件", "description": "数据来源（if=）", "required": true, "default": "", "example": "data.bin" },
+      { "name": "output", "label": "输出文件", "description": "写入目标（of=），会被截断覆盖", "required": true, "default": "", "example": "copy.bin" },
+      { "name": "blocksize", "label": "块大小", "description": "读写块大小（bs=），支持 K/M/G 后缀", "required": false, "default": "1M", "example": "1M" }
+    ],
+    "dangerLevel": "destructive",
+    "exampleOutput": "$ dd if=data.bin of=copy.bin bs=1M count=2\n2+0 records in\n2+0 records out\n2097152 bytes (2.1 MB, 2.0 MiB) copied, 0.001 s, 1.7 GB/s",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/dd-invocation.html"
+  },
+  {
+    "tool": "df",
+    "title": "df：查看文件系统空间使用",
+    "command": "df -h {{path}}",
+    "description": "报告各文件系统的总容量、已用、可用空间与挂载点；给路径参数时只报该路径所在的卷。磁盘告警、部署前容量检查的第一命令。\n\n**语法**\n```\ndf [option]... [file]...\n```\n\n**常用选项**\n- `-h`, `--human-readable` — 用 K/M/G 等人类可读单位（1024 进制）\n- `-T`, `--print-type` — 额外显示文件系统类型一列\n- `-i`, `--inodes` — 改报 inode 使用量而非块用量（小文件海量的场景）\n- `-a`, `--all` — 包含伪文件系统与重复挂载（默认隐藏）\n- `--total` — 末尾加一行合计\n- `-t 类型` / `-x 类型` — 只显示 / 排除指定类型\n- `-P`, `--portability` — POSIX 单行格式，便于脚本解析\n\n**示例**\n```\ndf -h                    # 全部卷，人类可读\ndf -h /                  # 只看根（Windows 下即系统盘）\ndf -hT D:                # 显示 D: 卷及其文件系统类型\ndf --total -h | tail -1  # 只要合计行\n```\n\n**注意**\n- Windows 下各盘符（C:、D:）即各「文件系统」，`-T` 会显示 ntfs 等类型。\n- 默认单位是 1024 字节块且向上取整，人看请加 `-h`。\n- 退出码非零也可用于「探测路径是否在指定类型卷上」的判断。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/df-invocation.html",
+    "purpose": "检查磁盘剩余空间，容量告警排查",
+    "category": "disk",
+    "tags": ["df", "磁盘", "空间"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "只报告该路径所在的文件系统；留空报全部", "required": false, "default": "", "example": "/" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ df -h\nFilesystem      Size  Used Avail Use% Mounted on\nC:\\             476G  182G  295G  39% /\nD:\\             932G  640G  293G  69% /d",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/df-invocation.html"
+  },
+  {
+    "tool": "diff",
+    "title": "diff：比较文件差异",
+    "command": "diff -u {{file1}} {{file2}}",
+    "description": "逐行比较两个文件（或递归比较两个目录），输出增删改内容。`-u` 统一格式是代码评审与打补丁的事实标准；判断配置漂移、核对版本差异都靠它。\n\n**语法**\n```\ndiff [option]... files...\n```\n\n**常用选项**\n- `-u` — 统一格式（默认 3 行上下文）；`-c` 为上下文格式\n- `-q`, `--brief` — 只报告是否不同，不显示细节\n- `-y`, `--side-by-side` — 左右两栏并排显示\n- `-i` — 忽略大小写；`-b` 忽略空白量变化；`-w` 忽略全部空白；`-B` 忽略空行增删\n- `-r` — 递归比较目录；`-N` 把仅一侧存在的文件当空文件参与比较\n- `--strip-trailing-cr` — 比较前剥掉行尾 CR（Windows CRLF 必备）\n- `--label 标签` — 替换输出头部的文件名\n- `--color[=when]` — 彩色输出（none/auto/always）\n\n退出码：0 相同，1 有差异，2 出错。\n\n**示例**\n```\ndiff -u app.conf.old app.conf\ndiff -rq dir1 dir2                  # 只列出目录间不同的文件\ndiff --strip-trailing-cr a.txt b.txt\n```\n\n**注意**\n- **Windows 文本常为 CRLF**，与 LF 文件比较会满屏伪差异，加 `--strip-trailing-cr` 一键消除。\n- 退出码 1 是「有差异」的正常结果，脚本里不要当失败处理。\n- 目录比较默认不递归，要 `-r`；比字节级一致性用 `cmp` 更合适。\n\n> 文档依据：https://www.gnu.org/software/diffutils/manual/html_node/Invoking-diff.html",
+    "purpose": "比较两个文件/目录的差异，配置漂移与版本核对",
+    "category": "file",
+    "tags": ["diff", "比较", "差异"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file1", "label": "文件 1", "description": "旧文件（或目录）", "required": true, "default": "", "example": "app.conf.old" },
+      { "name": "file2", "label": "文件 2", "description": "新文件（或目录）", "required": true, "default": "", "example": "app.conf" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ diff -u a.txt b.txt\n--- a.txt\n+++ b.txt\n@@ -1,2 +1,2 @@\n line1\n-old\n+new",
+    "source": "https://www.gnu.org/software/diffutils/manual/html_node/Invoking-diff.html"
+  },
+  {
+    "tool": "dir",
+    "title": "dir：分栏列出目录内容",
+    "command": "dir -la {{path}}",
+    "description": "coreutils 的 dir 等价于 `ls -C -b`：默认按分栏列出目录、特殊字符用反斜杠转义。它与 ls 是同一个程序、同一套选项，仅默认输出形态不同。\n\n**语法**\n```\ndir [option]... [file]...\n```\n\n**常用选项**（与 ls 完全通用）\n- `-l` — 长格式（权限/大小/时间等七列信息）\n- `-a` — 显示 `.` 开头的隐藏项；`-A` 不含 `.` 与 `..`\n- `-h` — 长格式下大小用人类可读单位\n- `-t` — 按修改时间排序（新的在前），`-r` 反向\n- `-R` — 递归列出子目录\n- `-d` — 只列目录本身不展开内容\n\n**示例**\n```\ndir                    # 分栏列当前目录\ndir -la D:/logs        # 长格式 + 隐藏文件\ndir -lt | head         # 最近变更的条目\n```\n\n**注意**\n- **此 dir 与 Windows cmd 内建的 dir 完全无关**：cmd 里 dir 是列目录命令，这里是 coreutils 的 dir（GNU 世界为兼容 POSIX 而设的 ls 变体）。\n- 默认分栏、`ls` 默认也是分栏；想要「默认长格式」的变体用 `vdir`。\n- 排序受 locale 影响，脚本比对输出建议 `LC_ALL=C dir`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/dir-invocation.html",
+    "purpose": "Unix 风格列目录；给习惯不同默认形态的用户一个 ls 变体",
+    "category": "file",
+    "tags": ["dir", "列表", "目录"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "要列出的目录，留空为当前目录", "required": false, "default": ".", "example": "D:\\logs" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ dir\na.txt   b.txt   docs",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/dir-invocation.html"
+  },
+  {
+    "tool": "dircolors",
+    "title": "dircolors：生成 ls 配色环境变量",
+    "command": "dircolors -b {{config}}",
+    "description": "输出一段用于设置 `LS_COLORS` 环境变量的 shell 语句，让 ls/树状列表按文件类型与扩展名着色。输出的是 shell 命令而非颜色本身，须配合 `eval` 使用。\n\n**语法**\n```\ndircolors [option]... [file]\n```\n\n**常用选项**\n- `-b`, `--sh`, `--bourne-shell` — 输出 Bourne shell 语法（bash/zsh 用这个）\n- `-c`, `--csh`, `--c-shell` — 输出 C shell 语法\n- `-p`, `--print-database` — 打印内置默认配色数据库（本身是合法配置文件，可导出改）\n- `--print-ls-colors` — 逐行列出 LS_COLORS 条目并按其颜色展示\n\n不给 file 参数时使用内置预编译数据库。\n\n**示例**\n```\neval \"$(dircolors)\"                 # 用默认配色初始化 LS_COLORS\ndircolors -p > ~/.dircolors         # 导出默认库自定义\neval \"$(dircolors ~/.dircolors)\"    # 应用自定义配色\n```\n\n**注意**\n- 默认 shell 语法由 `SHELL` 环境变量推断，bash/zsh 下显式 `-b` 最稳。\n- Windows 终端（ConPTY）支持 ANSI 颜色序列，配合本项目 ls/eza 着色生效。\n- 只影响「按类型着色」，图标等其他展示特性不归它管。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/dircolors-invocation.html",
+    "purpose": "初始化/自定义 ls 的 LS_COLORS 配色",
+    "category": "file",
+    "tags": ["dircolors", "颜色", "LS_COLORS"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "config", "label": "配色配置文件", "description": "dircolors 格式的配色文件；留空用内置数据库", "required": false, "default": "", "example": "~/.dircolors" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ dircolors -b\nLS_COLORS='rs=0:di=01;34:ln=01;36:...';\nexport LS_COLORS",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/dircolors-invocation.html"
+  },
+  {
+    "tool": "dirname",
+    "title": "dirname：提取路径的目录部分",
+    "command": "dirname {{path}}",
+    "description": "打印路径去掉最末一个斜杠分隔成分后的目录部分；名字里没有斜杠时输出 `.`。与 basename 配套设计：`cd \"$(dirname $f)\"` 后 `ls \"$(basename $f)\"` 与直接 `ls $f` 等效。\n\n**语法**\n```\ndirname [option] name...\n```\n\n**常用选项**\n- `-z`, `--zero` — 行尾输出 NUL 而非换行，供程序安全解析\n- 终端输出默认用 shell-escape 引号风格，可用 `QUOTING_STYLE` 环境变量调整\n\n**示例**\n```\ndirname /usr/bin/sort        # -> /usr/bin\ndirname dir1/str dir2/str    # -> dir1  dir2（支持多参数）\ndirname stdio.h              # -> .\ndirname D:/logs/app.log      # -> D:/logs\n```\n\n**注意**\n- 纯字符串处理，路径不必真实存在；多余与重复的斜杠会被规整（`/usr/bin//.//` 也是 `/usr/bin`）。\n- Windows 路径 `D:\\logs\\app.log` 同样取到 `D:\\logs`；与 PowerShell 的 `Split-Path -Parent` 等价。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/dirname-invocation.html",
+    "purpose": "脚本里从文件完整路径取其所在目录",
+    "category": "file",
+    "tags": ["dirname", "目录", "路径"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "任意路径，取其目录部分", "required": true, "default": "", "example": "D:\\logs\\app.log" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ dirname /usr/bin/sort\n/usr/bin",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/dirname-invocation.html"
+  },
+  {
+    "tool": "du",
+    "title": "du：统计目录磁盘占用",
+    "command": "du -sh {{path}}",
+    "description": "估算文件与目录占用的磁盘空间，默认以 1024 字节块向上取整；同一硬链接只计一次。定位「哪个目录把盘吃满了」的第一工具。\n\n**语法**\n```\ndu [option]... [file]...\n```\n\n**常用选项**\n- `-s`, `--summarize` — 每个参数只报一行总计（配 `-h` 最常用）\n- `-h`, `--human-readable` — 人类可读单位（1024 进制）\n- `-d N`, `--max-depth=N` — 只统计到第 N 层目录（`-d 1` 即当前层各目录）\n- `-a`, `--all` — 连普通文件也逐个报告\n- `-c`, `--total` — 末尾加合计行\n- `--exclude=模式` — 排除匹配的文件/子目录\n- `-t ±大小` — 只报达到/低于阈值的条目（如 `-t 200M`）\n- `--apparent-size` — 报表观字节数而非磁盘分配量\n\n**示例**\n```\ndu -sh *                 # 当前目录下各项占用\ndu -h -d 1 D:/logs       # 每个子目录一行\ndu --threshold=200M      # 只看 200MB 以上的目录\ndu -sh --exclude='*.tmp' .\n```\n\n**注意**\n- Windows/NTFS 上默认报告的是簇分配量（对应资源管理器「占用空间」），要「大小」字节数加 `--apparent-size`。\n- 结果是估算值，压缩/快照/网络卷都可能导致偏差。\n- 排查磁盘满配 `df` 看哪个卷、`du` 定位目录，两者搭配。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/du-invocation.html",
+    "purpose": "定位空间占用大户目录，容量规划",
+    "category": "disk",
+    "tags": ["du", "空间", "分析"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "要统计的文件或目录", "required": true, "default": ".", "example": "D:\\logs" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ du -sh /var/log\n2.3G    /var/log",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/du-invocation.html"
+  },
+  {
+    "tool": "eza",
+    "title": "eza：现代化 ls（彩色/图标/Git）",
+    "command": "eza -la {{path}}",
+    "description": "ls 的现代替代（exa 的延续维护版，Rust 编写）：默认彩色按类型着色，支持文件类型图标、Git 状态列、树状视图。本项目 `tree` 命令即其 `--tree` 封装。\n\n**语法**\n```\neza [option]... [file]...\n```\n\n**常用选项**\n- `-l`, `--long` — 长格式详细信息\n- `-a`, `--all` — 显示隐藏文件（`-aa` 连 `.` `..` 也显示）\n- `-T`, `--tree` — 树状递归视图；`-L N`, `--level=N` 限制深度\n- `-s 字段`, `--sort=字段` — 排序（name/size/modified/extension/type 等）\n- `-r`, `--reverse` — 反向排序\n- `--git` — 长格式下显示每文件 Git 状态列\n- `--group-directories-first` — 目录排在文件前\n- `-F`, `--classify=when` — 名字后附类型标记（/ 、* 等）\n\n**示例**\n```\neza -la                   # 长格式 + 隐藏文件\neza -T -L 2               # 两层深度树\neza -l --git              # 仓库内文件 Git 状态\neza -la --sort=size -r    # 从大到小排\n```\n\n**注意**\n- 注意选项与 GNU ls 不完全同名：eza 的 `-h` 是表头（--header）而非人类可读，长格式大小默认已可读。\n- 颜色在 Windows ConPTY 下正常渲染；`--icons` 需安装 Nerd Font 字体。\n- 只列不写，纯只读命令。\n\n> 文档依据：https://github.com/eza-community/eza",
+    "purpose": "日常浏览目录，彩色分类 + Git 状态一目了然",
+    "category": "file",
+    "tags": ["eza", "列表", "现代化"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "要列出的目录，留空为当前目录", "required": false, "default": ".", "example": "." }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ eza -la\n.rw-r--r--  user  1.2K  Jan  8 10:00  config.toml\ndrwxr-xr-x  user  -     Jan  8 09:58  docs",
+    "source": "https://github.com/eza-community/eza"
+  },
+  {
+    "tool": "find",
+    "title": "find：按名称/类型/大小/时间查找文件",
+    "command": "find {{path}} -name \"{{pattern}}\" -type {{type}}",
+    "description": "从起始目录递归遍历，用表达式（测试 + 动作）筛选文件。名字、类型、大小、时间、权限几乎任何维度都能查，是无索引文件查找的终极工具。\n\n**语法**\n```\nfind [-H] [-L] [-P] [-D debugoptions] [-Olevel] [file...] [expression]\n```\n\n**常用测试/选项**\n- `-name 模式` — 按文件名（basename）shell 通配匹配；`-iname` 忽略大小写\n- `-type 类型` — `f` 普通文件 / `d` 目录 / `l` 符号链接等\n- `-size +100M` — 大于 100MiB（单位 c=字节、k/M/G；**向上取整**；`+n` 大于、`-n` 小于、`n` 恰好）\n- `-mtime +30` / `-mmin +30` — 修改时间超过 30 天 / 30 分钟（`+n` 超过、`-n` 以内、`n` 恰好）\n- `-maxdepth N` — 最多下探 N 层\n- `-empty` — 空文件或空目录\n- `-newer 参考文件` — 比参考文件更新\n\n不给表达式时默认 `-print`。\n\n**示例**\n```\nfind . -name \"*.log\" -type f\nfind D:/data -size +100M -type f\nfind . -maxdepth 2 -type d\nfind . -type f -mmin -10        # 最近 10 分钟内改过的文件\n```\n\n**注意**\n- `-name` 只匹配文件名不含目录部分，匹配整条路径用 `-path`；通配符必须加引号防 shell 展开。\n- 数值参数 `+n/-n/n` 语义是「大于/小于/恰好」；`-mtime 0` 表示 24 小时内。\n- `-size` 默认单位是 512 字节块且向上取整，`-size 1` 不是 1 字节。\n\n> 文档依据：https://www.gnu.org/software/findutils/manual/html_node/Invoking-find.html",
+    "purpose": "递归查找满足条件的文件，定位日志/大文件/过期文件",
+    "category": "file",
+    "tags": ["find", "查找", "文件"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "起始目录", "description": "从哪个目录开始递归", "required": true, "default": ".", "example": "." },
+      { "name": "pattern", "label": "名称模式", "description": "文件名通配模式，如 *.log；留空匹配所有", "required": true, "default": "*", "example": "*.log" },
+      { "name": "type", "label": "类型", "description": "f 文件 / d 目录 / l 符号链接", "required": false, "default": "f", "example": "f" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ find . -name \"*.log\" -type f\n./app/logs/a.log\n./app/logs/b.log",
+    "source": "https://www.gnu.org/software/findutils/manual/html_node/Invoking-find.html"
+  },
+  {
+    "tool": "find",
+    "title": "find 进阶：用 -exec 批量处理匹配文件",
+    "command": "find {{path}} -type f -mtime +{{days}} -exec {{cmd}} {} +",
+    "description": "find 的 `-exec` 动作把匹配到的文件直接作为参数交给任意命令执行：`;` 形式逐文件执行一次，`{} +` 形式尽量攒一批一次执行（类似 xargs，更快）。配合时间/大小条件即可做批量清理、批量统计。\n\n**语法**\n```\nfind [file...] [expression]\n-exec command ;      # 每个文件执行一次\n-exec command {} +   # 尽量批量（{} 必须紧贴 + 之前）\n-execdir command ... # 在文件所在目录执行（更安全）\n```\n\n**常用动作**\n- `-exec 命令 {} \\;` — 每文件一次；`{}` 与 `;` 要转义或加引号\n- `-exec 命令 {} +` — 批量执行，命令行超长时自动分批\n- `-execdir` / `-ok` / `-okdir` — 在文件目录执行 / 执行前逐个确认\n- `-delete` — 直接删除匹配项（隐含 `-depth` 自底向上；空目录才删得掉）\n- `-print0` — NUL 分隔输出，配 `xargs -0` 处理含空格文件名\n- `-prune` — 剪枝不进入某目录（如跳过 .git、node_modules）\n\n**示例**\n```\nfind . -type f -mtime +30 -print                # 先空跑确认目标\nfind D:/tmp -type f -mtime +30 -exec rm -f {} + # 批量删 30 天前的文件\nfind . -name '.git' -prune -o -type f -print    # 跳过 .git 遍历\nfind . -type f -exec grep -l ERROR {} +         # 批量搜内容\n```\n\n**注意**\n- **动手前先 `-print` 空跑**：把 `-delete`/`-exec rm` 换成 `-print` 确认清单，尤其路径含变量时。\n- `-delete` 会真的删除且不进回收站，放在表达式最前会连起始点全删，务必放在条件之后。\n- 批量形式 `{}` 只能出现一次且必须在 `+` 前紧邻；需要插在命令中间时借 `sh -c 'cmd \"$@\"' sh {} +`。\n\n> 文档依据：https://www.gnu.org/software/findutils/manual/html_node/Invoking-find.html",
+    "purpose": "按时间等条件批量清理/批量执行命令",
+    "category": "file",
+    "tags": ["find", "批量", "清理"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "起始目录", "description": "要清理/处理的目录树根", "required": true, "default": ".", "example": "D:\\tmp" },
+      { "name": "days", "label": "天数", "description": "修改时间超过该天数的文件才匹配（-mtime +N）", "required": true, "default": "30", "example": "30" },
+      { "name": "cmd", "label": "执行命令", "description": "对匹配文件执行的命令，先用 echo 空跑确认再换实际命令", "required": true, "default": "echo", "example": "rm -f" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ find . -type f -mtime +30 -print\n./old/backup.bak\n./old/cache.tmp",
+    "source": "https://www.gnu.org/software/findutils/manual/html_node/Invoking-find.html"
+  },
+  {
+    "tool": "link",
+    "title": "link：创建一个硬链接",
+    "command": "link {{file}} {{linkname}}",
+    "description": "创建硬链接的最小命令：直接包装系统 link 调用，一次恰好一个，没有任何选项（`ln` 的极简版）。适合脚本里精确建单个链接的场合。\n\n**语法**\n```\nlink filename linkname\n```\n\n**行为要点**\n- `filename` 必须已存在；`linkname` 必须不存在，且其所在目录必须存在\n- 在 GNU 系统上等价 `ln --directory --no-target-directory filename linkname`\n- 若 `filename` 本身是符号链接，结果未指定（可能链到链接本身或其目标）；要确定行为用 `ln -P` / `ln -L`\n\n**示例**\n```\nlink a.txt b.txt      # b.txt 与 a.txt 同一份数据的两个名字\nls -l a.txt b.txt     # 硬链接数都变为 2\n```\n\n**注意**\n- 只建**硬链接**，建符号链接请用 `ln -s`。\n- Windows 的 NTFS 支持硬链接，但仅限同一卷内、且不能指向目录。\n- 删除任一名字都不影响另一名字下的数据，链接数归零才真正释放。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/link-invocation.html",
+    "purpose": "为现有文件精确创建单个硬链接",
+    "category": "file",
+    "tags": ["link", "硬链接"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "源文件", "description": "必须已存在的文件", "required": true, "default": "", "example": "a.txt" },
+      { "name": "linkname", "label": "链接名", "description": "新硬链接的路径（须不存在，目录须存在）", "required": true, "default": "", "example": "b.txt" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ link a.txt b.txt\n$ ls -l a.txt b.txt\n-rw-r--r-- 2 user 0 Jan  8 10:00 a.txt\n-rw-r--r-- 2 user 0 Jan  8 10:00 b.txt",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/link-invocation.html"
+  },
+  {
+    "tool": "ln",
+    "title": "ln：创建链接（符号/硬）",
+    "command": "ln -s {{target}} {{linkname}}",
+    "description": "创建链接：默认硬链接（同 inode 的另一个名字），`-s` 建符号链接（内容为路径文本，可跨卷、可指目录）。版本目录切换、共享配置引用的标准手段。\n\n**语法**\n```\nln [option]... [-T] target linkname\nln [option]... target\nln [option]... target... directory\n```\n\n**常用选项**\n- `-s`, `--symbolic` — 建符号链接而非硬链接\n- `-f`, `--force` — 无条件替换已存在的目标名\n- `-n`, `--no-dereference` — 把指向目录的符号链接当普通文件替换（防「链接进目录里」）\n- `-i`, `--interactive` — 替换前询问\n- `-r`, `--relative` — 配 `-s`，生成按链接位置解析的相对路径链接\n- `-v`, `--verbose` — 打印每个建立的链接\n- `-T` / `-t 目录` — 把链接名严格当文件 / 在指定目录下建\n\n**示例**\n```\nln -s D:/apps/app/1.2/app.exe D:/bin/app.exe\nln -sfn D:/apps/app/1.2 D:/apps/app/current   # 原子切换 current 指向\nln -srv /a/file /tmp                          # 相对路径符号链接\n```\n\n**注意**\n- 经典坑：`ln -sf 目标 已是指向目录的链接` 会在该目录**里面**创建，务必写 `-sfn`。\n- Windows 上硬链接要求同卷且不能是目录；符号链接的创建受系统权限策略限制（管理员或开发者模式），实际能力以当前终端权限为准。\n- 相对符号链接按其父目录解析，移动链接可能失效，跨目录用 `-r` 自动算。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/ln-invocation.html",
+    "purpose": "建符号/硬链接：版本目录切换、配置共享",
+    "category": "file",
+    "tags": ["ln", "符号链接", "链接"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "target", "label": "目标", "description": "链接指向的文件或目录", "required": true, "default": "", "example": "D:\\apps\\app\\1.2" },
+      { "name": "linkname", "label": "链接名", "description": "新建链接的路径", "required": true, "default": "", "example": "D:\\apps\\app\\current" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ ln -s /opt/app/1.2 /opt/app/current\n$ ls -l /opt/app/current\nlrwxrwxrwx 1 user 12 Jan  8 10:00 /opt/app/current -> /opt/app/1.2",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/ln-invocation.html"
+  },
+  {
+    "tool": "ls",
+    "title": "ls：列出目录内容",
+    "command": "ls -lh {{path}}",
+    "description": "列出文件与目录信息：默认短格式按名称排序；`-l` 给出权限、属主、大小、时间等七列详情。使用频率最高的查看命令。\n\n**语法**\n```\nls [option]... [file]...\n```\n\n**常用选项**\n- `-l` — 长格式（类型/权限、硬链接数、属主、属组、大小、时间、名字）\n- `-h`, `--human-readable` — 长格式下大小用 K/M/G 单位\n- `-a` — 显示 `.` 开头隐藏项；`-A` 不含 `.` 与 `..`\n- `-t` — 按修改时间排序（新在前）；`-S` 按大小（大在前）；`-r` 反向\n- `-R` — 递归列出子目录\n- `-d` — 只列目录本身不展开（常配 `ls -d */` 只看目录）\n- `-F` — 名字后附类型标记（`/` 目录、`*` 可执行、`@` 符号链接）\n- `-i` — 显示 inode 号\n\n**示例**\n```\nls -lh D:/logs        # 人类可读长格式\nls -lt | head         # 最近修改的文件\nls -lS                # 按大小降序\nls -aF                # 含隐藏 + 类型标记\n```\n\n**注意**\n- 长格式默认显示的是**符号链接本身**，要看目标信息加 `-L`。\n- 退出码：0 正常；1 小问题（如某子目录不可读）；2 严重错误。\n- 与 cmd 内建 dir 的区别：这里 `-l` 是详情而非「裸文件名列表」，参数语义完全独立。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/ls-invocation.html",
+    "purpose": "查看目录内容与文件属性，日常浏览第一命令",
+    "category": "file",
+    "tags": ["ls", "列表", "目录"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "要列出的文件或目录，留空为当前目录", "required": false, "default": ".", "example": "D:\\logs" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ ls -lh\ntotal 8.0K\n-rw-r--r-- 1 user 1.2K Jan  8 10:00 config.toml\ndrwxr-xr-x 2 user 4.0K Jan  8 09:58 docs",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/ls-invocation.html"
+  },
+  {
+    "tool": "mkdir",
+    "title": "mkdir：创建目录",
+    "command": "mkdir -p {{path}}",
+    "description": "创建空目录；`-p` 连缺失的父目录一起建且已存在不报错，是脚本里建目录的幂等写法。\n\n**语法**\n```\nmkdir [option]... name...\n```\n\n**常用选项**\n- `-p`, `--parents` — 按需创建全部父目录；目录已存在也不报错（幂等）\n- `-m 权限`, `--mode=权限` — 用 chmod 语法指定权限（如 755），仅作用于命令行列出的目录，不影响 `-p` 建出的父目录\n- `-v`, `--verbose` — 每建一个目录打印一条消息（配 `-p` 最直观）\n\n默认权限按 `a=rwx` 经 umask 修正得出。\n\n**示例**\n```\nmkdir -pv build/classes/main\nmkdir -m 700 secrets          # 私有目录\nmkdir a b c                   # 一次建多个\n```\n\n**注意**\n- `-p` 时若中间路径被**已存在的文件**挡住仍会报错；已存在的是目录才静默通过。\n- Windows/NTFS 的权限模型与 POSIX 不同，`-m` 主要影响显示出的 mode 位，实际 ACL 以系统策略为准。\n- 对应 cmd 的 `md`，但 `-p` 的幂等建链能力是 md 所缺的。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/mkdir-invocation.html",
+    "purpose": "创建目录（含多级父目录），脚本幂等建目录",
+    "category": "file",
+    "tags": ["mkdir", "创建", "目录"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "目录路径", "description": "要创建的目录，可含多级父路径", "required": true, "default": "", "example": "D:\\work\\project\\src" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ mkdir -pv a/b/c\nmkdir: created directory 'a'\nmkdir: created directory 'a/b'\nmkdir: created directory 'a/b/c'",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/mkdir-invocation.html"
+  },
+  {
+    "tool": "mktemp",
+    "title": "mktemp：安全创建临时文件/目录",
+    "command": "mktemp {{template}}",
+    "description": "按模板安全地创建一个不重名的临时文件并打印其路径：模板末段至少 3 个连续 `X`，被替换为随机字母数字串。取代 `$$.tmp` 这类可预测命名，避免符号链接竞态攻击。\n\n**语法**\n```\nmktemp [option]... [template]\n```\n\n**常用选项**\n- `-d`, `--directory` — 创建目录而非文件\n- `-p 目录`, `--tmpdir[=目录]` — 模板相对该目录解释；不给值时用 TMPDIR，回退 /tmp\n- `--suffix=后缀` — 给输出名追加后缀（模板须以 X 结尾，如 `mktemp --suffix=.txt f-XXXX`）\n- `-q`, `--quiet` — 静默失败（退出码仍体现成败）\n- `-u`, `--dry-run` — 只取名字不创建（有竞态，不建议用）\n\n不给模板时默认 `tmp.XXXXXXXXXX` 且隐含 `--tmpdir`。创建的文件属主可读写（0600）。\n\n**示例**\n```\nT=$(mktemp) && echo data > \"$T\" && rm \"$T\"\nD=$(mktemp -d) && cd \"$D\"\nmktemp --suffix=.txt report-XXXX    # -> report-H08W.txt\n```\n\n**注意**\n- 脚本里务必引用 `\"$T\"`：路径可能含空格（Windows 临时目录常在用户目录下）。\n- 用完记得删，避免临时目录堆积。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/mktemp-invocation.html",
+    "purpose": "脚本中安全创建一次性临时文件/目录",
+    "category": "file",
+    "tags": ["mktemp", "临时文件"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "template", "label": "模板", "description": "含至少 3 个连续 X 的文件名模板", "required": true, "default": "tmp-XXXXXX", "example": "cake-XXXXXX" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ mktemp cake-XXXXXX\ncake-Qs3xjl",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/mktemp-invocation.html"
+  },
+  {
+    "tool": "mv",
+    "title": "mv：移动或重命名",
+    "command": "mv -v {{src}} {{dest}}",
+    "description": "移动文件/目录或重命名。同一卷内是原子 rename 操作；跨卷时退化为「复制 + 删除」。与 cmd 的 move/ren、PowerShell 的 Move-Item 同类。\n\n**语法**\n```\nmv [option]... [-T] source dest\nmv [option]... source... directory\nmv [option]... -t directory source...\n```\n\n**常用选项**\n- `-i`, `--interactive` — 覆盖已存在目标前询问\n- `-n`, `--no-clobber` — 不覆盖，静默跳过\n- `-u`, `--update` — 仅当源较新时才覆盖\n- `-b`, `--backup[=方式]` — 覆盖前给旧目标做备份（numbered/simple 等）\n- `-v`, `--verbose` — 显示每个文件的移动过程\n- `-t 目录` — 把所有源移入指定目录\n- `-f`, `--force` — 覆盖前不询问（`-i/-f/-n` 同时给出时最后一个生效）\n\n**示例**\n```\nmv -v app.log D:/archive/        # 移动到目录\nmv -v draft.md final.md          # 重命名\nmv -bv -S .bak a.conf b.conf     # 覆盖前留 .bak 备份\n```\n\n**注意**\n- 默认**静默覆盖**同名目标且不进回收站，重要数据加 `-i`、`-n` 或 `-b`。\n- 跨卷移动大文件实质是复制，中断后目标残留部分副本会被 mv 清掉、源保持不动。\n- 目标为已存在的**非空目录**时会跳过并报错，不会递归合并。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/mv-invocation.html",
+    "purpose": "移动文件到别处或原地重命名",
+    "category": "file",
+    "tags": ["mv", "移动", "重命名"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "src", "label": "源", "description": "要移动/重命名的文件或目录", "required": true, "default": "", "example": "app.log" },
+      { "name": "dest", "label": "目标", "description": "目标路径（目录则移入其中）", "required": true, "default": "", "example": "D:\\archive\\app.log" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ mv -v draft.md final.md\nrenamed 'draft.md' -> 'final.md'",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/mv-invocation.html"
+  },
+  {
+    "tool": "pathchk",
+    "title": "pathchk：检查文件名合法性与可移植性",
+    "command": "pathchk --portability {{path}}",
+    "description": "检查给定路径名是否合法/可移植：是否为空、是否超长、是否含目标系统不接受或不可移植的字符。只检查不创建任何东西，是跨平台脚本发布前的一道自检。\n\n**语法**\n```\npathchk [option]... name...\n```\n\n**常用选项**\n- `-p` — 按 POSIX 可移植性检查：拒绝空名、非 POSIX 可移植字符集（字母数字加 `. _ -` 之外）的字符、超过 POSIX 最小可移植长度限制\n- `-P` — 拒绝空名或某组件以 `-` 开头（易被当选项）\n- `--portability` — 等价 `-p -P`，面向所有 POSIX 主机的最严检查\n- 不带选项 — 按当前文件系统的实际限制检查（名长、组件长、目录可搜索）\n\n退出码：0 全部通过，1 有名字未通过。\n\n**示例**\n```\npathchk --portability my-file.txt && echo ok\npathchk -P ./-weird-file\npathchk path/with/space           # 默认模式：本文件系统是否接受\n```\n\n**注意**\n- Windows 起的文件名常含空格、中文、`#&()!` 等——发布到 Linux/macOS 的脚本数据用 `--portability` 提前筛一遍能省很多坑。\n- 它不判断文件是否存在，只判断「这个名字能否被安全创建/携带」。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/pathchk-invocation.html",
+    "purpose": "发布/迁移前校验文件名跨平台可移植性",
+    "category": "file",
+    "tags": ["pathchk", "校验", "可移植"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "要检查的名字，可多个（此处填一个）", "required": true, "default": "", "example": "my-file.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ pathchk --portability my-file.txt && echo ok\nok",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/pathchk-invocation.html"
+  },
+  {
+    "tool": "pwd",
+    "title": "pwd：显示当前工作目录",
+    "command": "pwd",
+    "description": "打印当前工作目录的绝对路径。写脚本取「当前在哪」、终端里确认上下文的第一命令。\n\n**语法**\n```\npwd [option]...\n```\n\n**常用选项**\n- `-L`, `--logical` — 逻辑路径：直接取环境变量 PWD 的值，可含符号链接\n- `-P`, `--physical` — 物理路径：解析掉全部符号链接后的真实目录\n\n两个同给时最后一个生效；coreutils 版默认 `-P`（除非设了 POSIXLY_CORRECT）。\n\n**示例**\n```\npwd            # 打印当前目录\npwd -P         # 物理路径（剥掉符号链接）\ncd - && pwd    # 回到上一目录并显示\n```\n\n**注意**\n- shell 内建 pwd 与本命令行为可能不同（受 `set -P` 等影响），要确定性输出用本命令或显式 `pwd -P`。\n- 本终端固定运行在 Windows shell 环境，输出形如 `D:\\work\\src` 的 Windows 路径或其 POSIX 视角，取决于会话上下文。\n- 若当前目录被重命名/删除，`-L` 可能给出失效路径，`-P` 更可靠。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/pwd-invocation.html",
+    "purpose": "确认当前所在目录，脚本取工作路径",
+    "category": "file",
+    "tags": ["pwd", "当前目录"],
+    "platforms": ["win"],
+    "params": [],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ pwd\nD:\\work\\src",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/pwd-invocation.html"
+  },
+  {
+    "tool": "readlink",
+    "title": "readlink：查看符号链接指向",
+    "command": "readlink -f {{path}}",
+    "description": "默认打印符号链接存储的目标路径；`-f/-e/-m` 进入规范化模式，额外消除 `.`、`..` 与重复斜杠输出绝对路径（官方注明规范化首选 realpath 命令）。\n\n**语法**\n```\nreadlink [option]... file...\n```\n\n**常用选项**\n- `-f`, `--canonicalize` — 输出规范化绝对路径，允许末段不存在\n- `-e`, `--canonicalize-existing` — 同上，但要求全部组件存在\n- `-m`, `--canonicalize-missing` — 缺失组件一律当目录处理\n- `-n`, `--no-newline` — 单文件时不输出末尾换行\n- `-z`, `--zero` — 行尾输出 NUL 而非换行\n- `-q`, `-s` — 静默，抑制大多数错误消息\n\n**示例**\n```\nreadlink link.txt              # 打印链接目标\nreadlink -f ./a/../b/file.txt  # 规范化绝对路径\nreadlink -e /usr/bin/vi        # 全程存在才输出\n```\n\n**注意**\n- 默认模式下参数**不是符号链接**时无输出且退出非零，脚本判断要区分。\n- Windows 符号链接目标可能是绝对或相对路径，`-f` 输出统一为绝对路径。\n- 只想要「干净的绝对路径」而不关心链接语义，直接用 `realpath`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/readlink-invocation.html",
+    "purpose": "查看符号链接指向，或解析出绝对路径",
+    "category": "file",
+    "tags": ["readlink", "符号链接"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "符号链接路径（或待规范化的任意路径）", "required": true, "default": "", "example": "link.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ readlink /usr/bin/vi\n/bin/vim",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/readlink-invocation.html"
+  },
+  {
+    "tool": "realpath",
+    "title": "realpath：解析规范化绝对路径",
+    "command": "realpath {{path}}",
+    "description": "打印去掉冗余斜杠、`.`、`..` 并解析符号链接后的规范化绝对路径。脚本里把相对路径、含 `..` 的脏路径转成确定绝对路径的标准命令（官方推荐优先于 `readlink -f`）。\n\n**语法**\n```\nrealpath [option]... file...\n```\n\n**常用选项**\n- `-e`, `--canonicalize-existing` — 要求文件真实存在，否则报错\n- `-m`, `--canonicalize-missing` — 缺失的组件一律当目录处理（规划将建路径用）\n- `-s`, `--strip`, `--no-symlinks` — 只清理 `.`/`..`/斜杠，不解析符号链接\n- `--relative-to=目录` — 输出相对该目录的路径（如 `realpath --relative-to=/var /var/log` -> `log`）\n- `--relative-base=目录` — 在目录之下输出相对路径、之外输出绝对路径\n- `-q`, `--quiet` — 静默；`-z` — 行尾 NUL\n\n默认允许最末一个组件不存在（其父目录须存在）。\n\n**示例**\n```\nrealpath ./notes/../doc/file.txt\nrealpath -m D:/new/project/sub   # 规划中的路径也能解析\nrealpath --relative-to=D:/work D:/work/src/main.rs\n```\n\n**注意**\n- 默认 `-P` 语义：先解析符号链接再处理 `..`，结果最贴近物理真实。\n- 退出码 0 全部成功，1 有失败；配 `-z` 输出可安全接 `xargs -0`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/realpath-invocation.html",
+    "purpose": "把任意脏路径解析成确定的绝对路径",
+    "category": "file",
+    "tags": ["realpath", "绝对路径", "规范化"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "任意相对/含 .. 的路径", "required": true, "default": "", "example": "./notes/../doc/file.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ realpath ./notes/../doc/file.txt\n/usr/share/doc/file.txt",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/realpath-invocation.html"
+  },
+  {
+    "tool": "rm",
+    "title": "rm：删除文件或目录",
+    "command": "rm -rI {{path}}",
+    "description": "删除文件；`-r` 递归删除目录树。`-I` 在递归或文件多于 3 个时整体确认一次，是日常比裸 `-rf` 安全得多的默认姿势。\n\n**语法**\n```\nrm [option]... [file]...\n```\n\n**常用选项**\n- `-r`, `-R`, `--recursive` — 递归删除目录及其内容（删目录必带）\n- `-I` — 超过 3 个文件或递归删除前**确认一次**；`-i` 每个文件都问\n- `-f`, `--force` — 忽略不存在的文件、永不提示（会覆盖之前的 `-i`）\n- `-d`, `--dir` — 删除空目录（不带 -r 时可用）\n- `-v`, `--verbose` — 删除前打印每个文件名\n- `--preserve-root` — 拒绝递归删除 `/`（默认开启的保护）\n\n**示例**\n```\nrm -rI old-build/        # 递归删，先整体确认\nrm -v *.tmp              # 删前逐个列出\nrm -f app.log            # 存在与否都静默成功\n```\n\n**注意**\n- **没有回收站，删除即永久**：路径含变量时先 `ls` 同路径确认一遍再删。\n- 以 `-` 开头的文件名用 `rm -- -f` 或 `rm ./-f`，否则会被当选项。\n- 需要「不可恢复」的删除用 `shred`；删除失败优先看文件是否被进程占用（Windows 常见）。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/rm-invocation.html",
+    "purpose": "删除文件/目录树，清理临时与过期产物",
+    "category": "file",
+    "tags": ["rm", "删除", "清理"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "目标路径", "description": "要删除的文件或目录（目录需 -r）", "required": true, "default": "", "example": "old-build" }
+    ],
+    "dangerLevel": "destructive",
+    "exampleOutput": "$ rm -rIv old-build/\nrm: remove 1 argument recursively? y\nremoved 'old-build/a.o'",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/rm-invocation.html"
+  },
+  {
+    "tool": "rmdir",
+    "title": "rmdir：删除空目录",
+    "command": "rmdir {{path}}",
+    "description": "只删除**空**目录，目录非空即报错——这个「删不动非空目录」正是它的安全价值，比 `rm -r` 温和得多。清理目录树末梢、验证目录确已清空时用它。\n\n**语法**\n```\nrmdir [option]... directory...\n```\n\n**常用选项**\n- `-p`, `--parents` — 删完子目录后连尝试删除各级父目录（`rmdir -p a/b/c` 相当于 `rmdir a/b/c a/b a`，某级非空即停）\n- `--ignore-fail-on-non-empty` — 忽略「非空删不动」的失败（不报错、不影响退出码）\n- `-v`, `--verbose` — 每删一个目录打印一条消息\n\n**示例**\n```\nrmdir -v emptydir\nrmdir -p a/b/c                  # 自底向上清空链\nfind . -depth -type d -empty -delete   # 批量清空目录（GNU 扩展做法）\n```\n\n**注意**\n- 删除同样**不进回收站**；非空目录先 `ls` 看清内容，确要连根删换 `rm -r`。\n- 对应 cmd 的 `rd`（不带 /s 时同样只删空目录）。\n- 目录被当前 shell 或其他进程占用时（Windows 常见）会删失败，先退出占用方。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/rmdir-invocation.html",
+    "purpose": "安全删除空目录、自底向上清理目录链",
+    "category": "file",
+    "tags": ["rmdir", "删除", "空目录"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "目录", "description": "要删除的空目录", "required": true, "default": "", "example": "emptydir" }
+    ],
+    "dangerLevel": "destructive",
+    "exampleOutput": "$ rmdir -v olddir\nrmdir: removing directory, 'olddir'",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/rmdir-invocation.html"
+  },
+  {
+    "tool": "sdiff",
+    "title": "sdiff：并排比较/交互合并两文件",
+    "command": "sdiff {{file1}} {{file2}}",
+    "description": "把两个文件左右并排显示：公共行居中、差异行用 `|`（两侧行不同）、`<`（仅左侧）、`>`（仅右侧）标记。配 `-o 输出文件` 则进入逐块交互式合并——冲突取舍逐段进行，比手工编辑少错。\n\n**语法**\n```\nsdiff -o outfile [option]... from-file to-file\nsdiff [option]... from-file to-file     # 仅并排显示（官方建议看差异用 diff -y）\n```\n\n**常用选项**\n- `-o 文件`, `--output=文件` — 进入交互合并，结果写入该文件（合并必带）\n- `-w 列数`, `--width=列数` — 每行最多列数（默认 130）。注意：sdiff 里 `-w` 是宽度、`-W` 才是忽略空白，与 diff 相反\n- `-s`, `--suppress-common-lines` — 不显示公共行，只看差异\n- `-l`, `--left-column` — 公共行只显示左栏\n- `-b` / `-W` — 忽略空白量变化 / 忽略全部空白；`-i` 忽略大小写\n- `-t` — 展开制表符保持对齐\n\n**交互合并命令**（`%` 提示符下）：`l` 取左版 / `r` 取右版 / `s` 静默复制公共行 / `e` 空白编辑、`eb` 拼两版编辑、`el`/`er` 编辑某一版 / `q` 退出。\n\n**示例**\n```\nsdiff -s a.conf b.conf\nsdiff -o merged.conf local.conf upstream.conf   # 交互合并\nsdiff -w 160 -s old.log new.log\n```\n\n**注意**\n- 两参数不能都是目录；只想并排看差异时 `diff -y` 是官方推荐的等价做法。\n- Windows 下比较 CRLF/LF 混排文件可先统一行尾再比。\n\n> 文档依据：https://www.gnu.org/software/diffutils/manual/html_node/Invoking-sdiff.html",
+    "purpose": "并排比对两份配置，或交互式逐块合并冲突",
+    "category": "file",
+    "tags": ["sdiff", "合并", "并排"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file1", "label": "文件 1", "description": "左侧文件", "required": true, "default": "", "example": "a.conf" },
+      { "name": "file2", "label": "文件 2", "description": "右侧文件", "required": true, "default": "", "example": "b.conf" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ sdiff -s a.txt b.txt\nold                 | new",
+    "source": "https://www.gnu.org/software/diffutils/manual/html_node/Invoking-sdiff.html"
+  },
+  {
+    "tool": "shred",
+    "title": "shred：覆写删除敏感文件",
+    "command": "shred -uvz {{file}}",
+    "description": "用多遍随机数据覆写文件内容后再删除，让常规手段无法恢复。处理含密钥、口令、隐私数据的文件时用它替代 rm。\n\n**语法**\n```\nshred [option]... file...\n```\n\n**常用选项**\n- `-u`, `--remove[=方式]` — 覆写完成后删除文件（不带的话数据仍在、名字还在）\n- `-z`, `--zero` — 最后追加一遍全零覆写，掩盖「被 shred 过」的痕迹\n- `-n N`, `--iterations=N` — 覆写遍数（默认 3；现代介质 1 遍通常已够）\n- `-f`, `--force` — 必要时先改权限保证可写\n- `-s N`, `--size=N` — 只覆写前 N 字节\n- `-v`, `--verbose` — 显示每遍进度\n- `-x`, `--exact` — 不向上取整到文件系统块（默认会覆写块尾 slack 空间）\n\n**示例**\n```\nshred -uvz secret.key           # 覆写 + 归零掩盖 + 删除\nshred -v -n 1 big.tmp           # 快速一遍覆写\nshred -u -n 5 /dev/sdb1         # 整分区覆写（Linux 场景）\n```\n\n**注意**\n- **现代存储上单文件覆写并不可靠**：NTFS 日志、SSD 磨损均衡、RAID/快照、云盘冗余都会留副本；整盘/整分区覆写才更可信，最高保证是物理销毁。\n- 覆写完成前不要中断；`-u` 的默认删除方式 wipesync 还会混淆文件名字节。\n- 不要用 `shred - >file` 的写法（shell 先截断了文件），直接 `shred file`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/shred-invocation.html",
+    "purpose": "处置含密钥/口令的敏感文件，覆写后删除",
+    "category": "file",
+    "tags": ["shred", "安全删除", "覆写"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要覆写删除的文件", "required": true, "default": "", "example": "secret.key" }
+    ],
+    "dangerLevel": "destructive",
+    "exampleOutput": "$ shred -uvz secret.key\nshred: secret.key: pass 1/4 (random)...\nshred: secret.key: removing\nshred: secret.key: removed",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/shred-invocation.html"
+  },
+  {
+    "tool": "split",
+    "title": "split：把大文件切分成小块",
+    "command": "split -l {{lines}} {{file}}",
+    "description": "把输入按行数或字节数切成多个输出文件，默认每个 1000 行、名字为 `xaa`、`xab`…（前缀默认 x，后缀按字母递增，字典序拼接即还原）。超大日志、传输受限的分卷场景必备。\n\n**语法**\n```\nsplit [option]... [input [prefix]]\n```\n\n**常用选项**\n- `-l N`, `--lines=N` — 每块 N 行（默认 1000）\n- `-b 大小`, `--bytes=大小` — 每块固定字节（`K`=1024、`KB`=1000、`M`/`G` 同理）\n- `-C 大小`, `--line-bytes=大小` — 每块不超过该字节且尽量不切断行\n- `-n N` — 均分 N 份（`l/n` 不切行、`r/n` 轮转分配）\n- `-d`, `--numeric-suffixes[=起值]` — 后缀用数字（00、01…）代替字母\n- `-a N` — 后缀长度；`--additional-suffix=后缀` — 追加固定后缀（如 .log）\n- `--filter=命令` — 每个分块经管道交给命令而不落盘（`$FILE` 为块名）\n\n**示例**\n```\nsplit -l 100000 big.log part-\nsplit -b 100M -d data.bin chunk-\ncat part-* > big.log.restored      # 字典序拼接即还原\n```\n\n**注意**\n- 后缀耗尽会报错停止（已生成的块保留）；`-a 0` 恢复自动增长后缀。\n- 合并时确保 glob 展开顺序为字典序（默认即原序）；轮转模式 `r/n` 除外。\n- 与 PowerShell 拆分相比，`cat part-*` 一条命令即可无损还原是最大便利。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/split-invocation.html",
+    "purpose": "按行/字节切分超大文件便于传输或分段处理",
+    "category": "archive",
+    "tags": ["split", "切分", "大文件"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "lines", "label": "每块行数", "description": "每个输出文件的行数（-l）", "required": true, "default": "1000", "example": "100000" },
+      { "name": "file", "label": "输入文件", "description": "要切分的文件（- 读标准输入）", "required": true, "default": "", "example": "big.log" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ split -l 2 list.txt && ls\nlist.txt  xaa  xab  xac",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/split-invocation.html"
+  },
+  {
+    "tool": "sync",
+    "title": "sync：把缓冲数据刷写到磁盘",
+    "command": "sync {{file}}",
+    "description": "强制把内核/系统缓冲中的脏数据写到持久存储，防止崩溃丢数据或文件系统损坏。不带参数做全局同步；带文件参数只同步该文件。\n\n**语法**\n```\nsync [option] [file]...\n```\n\n**常用选项**\n- `-d`, `--data` — 对文件参数用 fdatasync：只刷数据及一致性所需元数据\n- `-f`, `--file-system` — 用 syncfs：同步该文件所在整个文件系统的待写 I/O\n\n不带文件参数时全局同步；命令只是触发系统调用，实际刷写由内核完成。\n\n**示例**\n```\nsync                     # 全局刷盘（拔移动盘前）\nsync data.txt            # 确保单文件落盘\nsync && echo flushed     # 脚本里的持久化屏障\n```\n\n**注意**\n- Windows 的缓存写回策略与 Linux 不同，效果由系统决定，但作为「拔盘前保险」依然有意义。\n- 对设备节点用 `-f` 会同步设备**所在**文件系统而非设备本身，注意别误用。\n- 纯触发刷写、不改数据内容，属安全命令。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/sync-invocation.html",
+    "purpose": "写完关键数据后强制落盘，拔出移动盘前的保险",
+    "category": "disk",
+    "tags": ["sync", "刷盘", "缓冲"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "只同步该文件；留空做全局同步", "required": false, "default": "", "example": "data.txt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ sync && echo done\ndone",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/sync-invocation.html"
+  },
+  {
+    "tool": "tar",
+    "title": "tar：打包压缩为 .tar.gz",
+    "command": "tar -czvf {{archive}} {{path}}",
+    "description": "把文件/目录打成一个 tar 归档，`-z` 再经 gzip 压缩成 `.tar.gz`。Linux 服务器侧的分发/备份通用格式，比 zip 在保留可执行位等 Unix 属性上更地道。\n\n**语法**\n```\ntar option... [name]...\n```\n\n**常用选项**\n- `-c`, `--create` — 创建归档（一次调用只能有一个操作）\n- `-x`, `--extract` — 解包；`-t`, `--list` — 列出内容不解包\n- `-f 归档`, `--file=归档` — 归档文件名（必指定）\n- `-z`, `--gzip` — 经 gzip 压缩/解压（对应 .tar.gz）\n- `-v`, `--verbose` — 显示处理中的成员名\n- `-C 目录`, `--directory=目录` — 先切到该目录再操作\n\n**示例**\n```\ntar -czvf backup.tar.gz D:/logs\ntar -tzvf backup.tar.gz          # 先过目内容\ntar -czf src-$(date +%F).tar.gz -C D:/work src\n```\n\n**注意**\n- 本实现为 **GNU 兼容核心子集**（基于 tar-rs）：支持 `-c/-x/-t`、`-f`、`-z`、`-v`、`-C` 及对应长参数；GNU 手册中的 `-j/-J/--exclude/--strip-components` 等**未实现**，传了会报 unknown option。\n- 短选项可捆绑（`-czvf`），`-f` 的值取捆绑串剩余部分或下一参数。\n- 与 PowerShell `Compress-Archive` 的区别：产物是 tar.gz 且能被 Linux 侧 tar 直接消费。\n\n> 文档依据：https://www.gnu.org/software/tar/manual/tar.html",
+    "purpose": "把目录打包成 .tar.gz 做备份或分发",
+    "category": "archive",
+    "tags": ["tar", "打包", "压缩"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "archive", "label": "归档文件", "description": "输出的 .tar.gz 文件名", "required": true, "default": "", "example": "backup.tar.gz" },
+      { "name": "path", "label": "源路径", "description": "要打包的文件或目录", "required": true, "default": "", "example": "D:\\logs" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ tar -czvf logs.tar.gz logs/\nlogs/\nlogs/app.log\nlogs/err.log",
+    "source": "https://www.gnu.org/software/tar/manual/tar.html"
+  },
+  {
+    "tool": "tar",
+    "title": "tar：解包 .tar.gz 到指定目录",
+    "command": "tar -xzvf {{archive}} -C {{dest}}",
+    "description": "把 `.tar.gz` 归档解压缩还原到指定目录：`-x` 解包、`-z` 过 gzip、`-C` 指定落点。恢复备份、落地分发包的标准动作。\n\n**语法**\n```\ntar option... [name]...\n```\n\n**常用选项**\n- `-x`, `--extract` / `--get` — 解包到当前目录（或 `-C` 指定目录）\n- `-f 归档`, `--file=归档` — 要解的归档文件\n- `-z`, `--gzip` — gzip 压缩的归档；`-v` 显示每个成员名\n- `-C 目录`, `--directory=目录` — 解到该目录（目录须已存在）\n- `-t`, `--list` — 只列不解，解包前先过目内容最稳妥\n\n**示例**\n```\ntar -xzvf backup.tar.gz -C D:/restore\ntar -tzvf backup.tar.gz                 # 先看清单再解\ntar -xzf pkg.tar.gz -C D:/opt           # 静默解包\n```\n\n**注意**\n- 解包会**覆盖目标目录下的同名文件**（不进回收站），落点选独立目录最安全。\n- 不可信归档先 `tar -tzvf` 过目：本实现内置路径穿越防护——条目中的 `..` 组件整条跳过、前导 `/` 与盘符前缀被剥除，不会逃出解包根。\n- `-C` 的目录必须已存在，不会自动创建；本实现为 GNU 兼容子集（见打包条目说明）。\n\n> 文档依据：https://www.gnu.org/software/tar/manual/tar.html",
+    "purpose": "恢复 .tar.gz 备份、落地分发包",
+    "category": "archive",
+    "tags": ["tar", "解包", "还原"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "archive", "label": "归档文件", "description": "要解包的 .tar.gz 文件", "required": true, "default": "", "example": "backup.tar.gz" },
+      { "name": "dest", "label": "目标目录", "description": "解包落点目录（须已存在）", "required": true, "default": "", "example": "D:\\restore" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ tar -xzvf logs.tar.gz -C out/\nlogs/\nlogs/app.log\nlogs/err.log",
+    "source": "https://www.gnu.org/software/tar/manual/tar.html"
+  },
+  {
+    "tool": "touch",
+    "title": "touch：创建空文件 / 更新时间戳",
+    "command": "touch {{file}}",
+    "description": "把文件的访问与修改时间更新为当前时间；文件不存在则创建空文件（除非 `-c`）。造占位文件、触发 make 重编译、伪造时间做测试都靠它。\n\n**语法**\n```\ntouch [option]... file...\n```\n\n**常用选项**\n- `-a` — 只改访问时间；`-m` — 只改修改时间（默认两者都改）\n- `-c`, `--no-create` — 文件不存在也不创建（纯更新已有文件）\n- `-d 日期串`, `--date=日期串` — 用可读日期（如 `\"2004-02-29 16:21:42\"`）代替当前时间\n- `-t [[CC]YY]MMDDhhmm[.ss]` — 用数字时间戳（如 `-t 202401010000.00`）\n- `-r 参考文件`, `--reference=参考文件` — 复制该文件的时间戳\n- `-h`, `--no-dereference` — 作用于符号链接本身而非其目标\n\n**示例**\n```\ntouch newfile.txt                    # 创建空文件\ntouch -c app.log                     # 只刷新时间，不存在不建\ntouch -d \"2024-01-01 00:00:00\" a.txt # 伪造时间\ntouch -r b.txt a.txt                 # 对齐两个文件的时间戳\n```\n\n**注意**\n- 不会清空已有文件内容——「保留内容只改时间」正是它比 cmd `type nul>` 好用的地方。\n- 多个文件从左到右处理，时间戳可能有毫秒级先后差。\n- 参数 `-` 特殊处理为「标准输出关联文件」，日常少见。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/touch-invocation.html",
+    "purpose": "创建占位空文件、刷新/伪造时间戳",
+    "category": "file",
+    "tags": ["touch", "空文件", "时间戳"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要创建或更新时间戳的文件，可多个（此处填一个）", "required": true, "default": "", "example": "newfile.txt" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ touch a.txt && ls -l a.txt\n-rw-r--r-- 1 user 0 Jan  8 10:05 a.txt",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/touch-invocation.html"
+  },
+  {
+    "tool": "tree",
+    "title": "tree：树状显示目录结构",
+    "command": "tree -L {{level}} {{path}}",
+    "description": "以缩进树形式递归展示目录层级，一眼看清工程结构。**本实现为 `eza --tree` 封装**：tree 命令自动注入 `--tree`，其余参数与 eza 完全一致。\n\n**语法**\n```\ntree [eza 选项]... [路径]...\n# 实际执行形态：eza --tree <你的参数>\n```\n\n**常用选项**（eza 语义）\n- `-L N`, `--level=N` — 限制递归深度（防大目录刷屏，最常用）\n- `-a`, `--all` — 包含隐藏文件（默认不显示 `.` 开头项）\n- `-D`, `--only-dirs` — 只列目录\n- `-I 模式`, `--ignore-glob=模式` — 忽略匹配项（如 `node_modules|target`，`|` 分隔多模式）\n- `--git-ignore` — 遵循 .gitignore 规则\n- `-l`, `--long` — 树形 + 长格式详情\n- `-s 字段`, `--sort=字段` — 排序；`-r` 反向\n- `-F`, `--classify=when` — 名字后附类型标记\n\n**示例**\n```\ntree -L 2                      # 两层结构\ntree -a -L 3 D:/work           # 含隐藏文件\ntree -I 'node_modules|target'  # 跳过重目录\ntree -l --level 2              # 树 + 详情\n```\n\n**注意**\n- 选项集与传统 tree 命令（如 `-d` 只列目录）**不同**：本项目 tree 走 eza 选项（`-D` 而非 `-d`、`--level` 而非传统 depth 参数形式）。\n- 没有传统 tree 的末尾「N directories, M files」统计行。\n- Windows 下目录分隔展示为树形字符，ConPTY 渲染正常。\n\n> 文档依据：https://github.com/eza-community/eza",
+    "purpose": "直观查看目录层级结构（限深、忽略噪音目录）",
+    "category": "file",
+    "tags": ["tree", "树状", "结构"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "level", "label": "深度", "description": "最多显示的目录层数（eza --level）", "required": false, "default": "2", "example": "2" },
+      { "name": "path", "label": "路径", "description": "要展示的目录，留空为当前目录", "required": false, "default": ".", "example": "." }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ tree -L 2 src\nsrc\n├── main.rs\n├── lib\n│   ├── mod.rs\n│   └── util.rs\n└── tests",
+    "source": "https://github.com/eza-community/eza"
+  },
+  {
+    "tool": "truncate",
+    "title": "truncate：把文件收缩/扩展到指定大小",
+    "command": "truncate -s {{size}} {{file}}",
+    "description": "把文件大小调整为指定值：超过部分**永久丢失**，不足则扩展为读作全零的稀疏洞。`-s 0` 是清空日志内容又保留文件句柄的常用手法。\n\n**语法**\n```\ntruncate option... file...\n```\n\n**常用选项**\n- `-s 大小`, `--size=大小` — 目标大小（`K`=1024、`KB`=1000，M/G 同理）\n- 大小前缀：`+` 扩大 / `-` 缩小 / `<` 至多 / `>` 至少 / `/` 向下取整到倍数 / `%` 向上取整到倍数\n- `-c`, `--no-create` — 文件不存在时不创建（只动已有文件）\n- `-r 参考文件`, `--reference=参考文件` — 大小对齐到参考文件\n- `-o`, `--io-blocks` — 大小按 I/O 块数而非字节计\n\n文件不存在会创建（除非 `-c`）。\n\n**示例**\n```\ntruncate -s 0 app.log            # 清空日志（保句柄）\ntruncate -s 1G disk.img          # 造 1GiB 稀疏文件\ntruncate -s -100M big.log       # 削掉末尾 100MiB\ntruncate -r ref.bin target.bin  # 对齐参考大小\n```\n\n**注意**\n- **缩小即销毁数据**且不可恢复，动手前确认文件的末尾确实可弃。\n- 与 PowerShell `Clear-Content` 相比，`-s 0` 不重新建文件、保留 inode 与已打开句柄。\n- 扩展产生的是稀疏洞（st_size 变大、不占实际块），du 显示的分配量可能远小于表观大小。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/truncate-invocation.html",
+    "purpose": "清空日志、制造稀疏文件、调整文件大小",
+    "category": "file",
+    "tags": ["truncate", "截断", "清空"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "size", "label": "大小", "description": "目标大小（K/M/G 后缀，+增加/-减小，0 为清空）", "required": true, "default": "0", "example": "1G" },
+      { "name": "file", "label": "文件", "description": "要调整大小的文件（不存在则创建）", "required": true, "default": "", "example": "app.log" }
+    ],
+    "dangerLevel": "destructive",
+    "exampleOutput": "$ truncate -s 0 app.log && ls -l app.log\n-rw-r--r-- 1 user 0 Jan  8 10:00 app.log",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/truncate-invocation.html"
+  },
+  {
+    "tool": "unlink",
+    "title": "unlink：删除单个文件",
+    "command": "unlink {{file}}",
+    "description": "删除一个文件名：直接包装系统 unlink 调用的最小命令，一次只接受一个文件、没有任何选项（`-f`、`-r` 都不存在）。需要的就是「删这一个名字」的确定行为时用它。\n\n**语法**\n```\nunlink filename\n```\n\n**行为要点**\n- 只删文件，在 GNU 系统上**永远不删目录**（目录用 rmdir / rm -r）\n- 不支持 `-f` 等选项；文件名以 `-` 开头时写 `./-foo` 而不是指望 `--` 分隔\n- 是「rm 删单文件」的裸形态，行为完全等价\n\n**示例**\n```\nunlink temp.txt\nunlink ./-weird-name\n```\n\n**注意**\n- 删除不进回收站。若该名字是符号链接，删的是链接本身，目标不受影响。\n- 文件被进程占用（Windows 常见）会删失败，先关闭占用方。\n- 想一次删多个或递归删除请用 `rm`。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/unlink-invocation.html",
+    "purpose": "精确删除单个文件名",
+    "category": "file",
+    "tags": ["unlink", "删除", "单文件"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要删除的单个文件路径", "required": true, "default": "", "example": "temp.txt" }
+    ],
+    "dangerLevel": "destructive",
+    "exampleOutput": "$ unlink temp.txt && echo removed\nremoved",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/unlink-invocation.html"
+  },
+  {
+    "tool": "vdir",
+    "title": "vdir：长格式列出目录内容",
+    "command": "vdir {{path}}",
+    "description": "coreutils 的 vdir 等价于 `ls -l -b`：默认就是长格式 + 特殊字符反斜杠转义。与 ls 同一程序同一套选项，区别只在默认输出形态（ls 默认短格式分栏）。\n\n**语法**\n```\nvdir [option]... [file]...\n```\n\n**常用选项**（与 ls 完全通用）\n- `-h`, `--human-readable` — 大小用 K/M/G 单位\n- `-a` / `-A` — 显示隐藏项（后者不含 `.` `..`）\n- `-t` / `-S` / `-r` — 按时间 / 大小排序 / 反向\n- `-R` — 递归列出子目录\n- `-i` — 显示 inode 号\n- `--full-time` — 完整时间戳（等价 `-l --time-style=full-iso`）\n\n**示例**\n```\nvdir                    # 默认长格式\nvdir -h D:/logs         # 人类可读大小\nvdir -lt | head         # 最近变更在前\n```\n\n**注意**\n- 三兄弟关系记法：`ls` 默认短格式、`dir` 默认分栏（`-C -b`）、`vdir` 默认长格式（`-l -b`）。\n- 想每次都直接看详情而少敲一个 `-l`，就用它。\n- 与 cmd 内建 dir 无关（同 dir 条目的说明）。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/vdir-invocation.html",
+    "purpose": "默认长格式列目录，直接看文件详情",
+    "category": "file",
+    "tags": ["vdir", "列表", "长格式"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "path", "label": "路径", "description": "要列出的目录，留空为当前目录", "required": false, "default": ".", "example": "D:\\logs" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "$ vdir\ntotal 8\n-rw-r--r-- 1 user 1.2K Jan  8 10:00 config.toml\ndrwxr-xr-x 2 user 4.0K Jan  8 09:58 docs",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/vdir-invocation.html"
+  },
+  {
+    "tool": "xargs",
+    "title": "xargs：把输入变成命令参数批量执行",
+    "command": "xargs -0 -r {{command}}",
+    "description": "从标准输入读取条目，拼到命令后面批量执行（默认命令 echo）：把「一串路径/单词」变成「N 次带参调用」。与 find -print0 组合是处理含空格文件名的黄金搭档。\n\n**语法**\n```\nxargs [option...] [command [initial-arguments]]\n```\n\n**常用选项**\n- `-0`, `--null` — 条目以 NUL 分隔（配 `find -print0`，空格/引号/换行文件名全安全）\n- `-n N`, `--max-args=N` — 每次调用最多带 N 个参数\n- `-I {}` — 用 `{}` 占位，把输入替换到命令中任意位置（隐含每次一条）\n- `-P N`, `--max-procs=N` — 最多 N 个进程并行（0 = 尽可能多）\n- `-r`, `--no-run-if-empty` — 输入为空时不执行命令（默认会白跑一次）\n- `-t`, `--verbose` — 执行前把命令行打到 stderr\n- `-d 分隔符` — 指定分隔符（如 `-d '\\n'` 按行切）\n\n退出码：0 成功；123 有命令退出非 0/255；124 命令退出 255；125 被信号杀；126/127 无法运行/找不到。\n\n**示例**\n```\nfind . -name \"*.log\" -print0 | xargs -0 -r grep ERROR\ncat urls.txt | xargs -n 1 -P 4 curl -sO\nfind . -type f | xargs -t -n 2 echo\n```\n\n**注意**\n- **Windows 文件名常含空格**：默认按空白切分会拼错路径，务必 `-print0` + `-0` 组合。\n- xargs 直接 exec 不经 shell：管道、重定向、通配要靠 `xargs -0 sh -c '... \"$@\"' sh` 形式。\n- 批量删除这类动作先 `-t` 回显或先换 echo 空跑确认。\n\n> 文档依据：https://www.gnu.org/software/findutils/manual/html_node/Invoking-xargs.html",
+    "purpose": "把路径列表批量喂给命令执行（配合 find/grep）",
+    "category": "file",
+    "tags": ["xargs", "批量", "管道"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "command", "label": "命令", "description": "要批量执行的命令（含其参数），输入条目追加在其后", "required": true, "default": "", "example": "grep ERROR" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "$ find . -name \"*.log\" -print0 | xargs -0 -r grep -l ERROR\n./app/logs/b.log",
+    "source": "https://www.gnu.org/software/findutils/manual/html_node/Invoking-xargs.html"
+  }
+]
