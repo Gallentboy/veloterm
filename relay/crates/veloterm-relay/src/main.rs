@@ -142,37 +142,6 @@ bind = "0.0.0.0:7300"
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn template_for_test() -> String {
-        init_config_template(&"ab".repeat(32))
-    }
-
-    #[test]
-    fn init_template_parses_resolves_and_defaults_to_tcp_only() {
-        let content = template_for_test();
-        let resolved = config::parse_toml(&content).unwrap().resolve().unwrap();
-        // 只有 tcp 一个生效监听器（ws/quic 处于注释态）
-        assert_eq!(resolved.listeners.len(), 1);
-        assert_eq!(resolved.listeners[0].proto, ListenerProto::Tcp);
-        assert_eq!(resolved.listeners[0].bind.port(), 7300);
-        assert_eq!(resolved.auth.len(), 1);
-    }
-
-    #[test]
-    fn init_template_mentions_commented_ws_and_quic() {
-        let content = template_for_test();
-        assert!(content.contains("# proto = \"ws\""));
-        assert!(content.contains("# proto = \"quic\""));
-        // 三个端口互不冲突
-        for port in ["7300", "7301", "7302"] {
-            assert!(content.contains(port));
-        }
-    }
-}
-
 fn run(path: std::path::PathBuf, check_only: bool) -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
@@ -270,4 +239,35 @@ async fn serve(resolved: config::ResolvedConfig) -> anyhow::Result<()> {
     while tasks.join_next().await.is_some() {}
     tracing::info!("已退出");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn template_for_test() -> String {
+        init_config_template(&"ab".repeat(32))
+    }
+
+    #[test]
+    fn init_template_parses_resolves_and_defaults_to_tcp_only() {
+        let content = template_for_test();
+        let resolved = config::parse_toml(&content).unwrap().resolve().unwrap();
+        // 只有 tcp 一个生效监听器（ws/quic 处于注释态）
+        assert_eq!(resolved.listeners.len(), 1);
+        assert_eq!(resolved.listeners[0].proto, ListenerProto::Tcp);
+        assert_eq!(resolved.listeners[0].bind.port(), 7300);
+        assert_eq!(resolved.auth.len(), 1);
+    }
+
+    #[test]
+    fn init_template_mentions_commented_ws_and_quic() {
+        let content = template_for_test();
+        assert!(content.contains("# proto = \"ws\""));
+        assert!(content.contains("# proto = \"quic\""));
+        // 三个端口互不冲突
+        for port in ["7300", "7301", "7302"] {
+            assert!(content.contains(port));
+        }
+    }
 }
