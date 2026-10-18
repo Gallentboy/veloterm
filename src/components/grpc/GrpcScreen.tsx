@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Network, Pencil, Play, Plus, SearchCheck, Settings2, Trash2, X } from 'lucide-react';
+import { Loader2, Network, Pencil, Play, Plus, SearchCheck, Settings2, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
@@ -10,6 +10,7 @@ import { writeClipboardText } from '@/lib/clipboard';
 import {
   grpcCall,
   grpcList,
+  grpcMethodSchema,
   grpcTlsDelete,
   grpcTlsList,
   grpcTlsSave,
@@ -183,6 +184,8 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
   const [calling, setCalling] = useState(false);
   const [listing, setListing] = useState(false);
   const [listingMethods, setListingMethods] = useState(false);
+  const [fetchingSchema, setFetchingSchema] = useState(false);
+  const [responseSchema, setResponseSchema] = useState<string | null>(null);
   const [servicesModal, setServicesModal] = useState<string[] | null>(null);
   const [methodsModal, setMethodsModal] = useState<GrpcMethodSummary[] | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -300,6 +303,36 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
     }
   }, [listingMethods, target, service, tlsEnabled, tlsPickedId, timeoutMs, t]);
 
+  const handleFetchSchema = useCallback(async () => {
+    if (fetchingSchema) return;
+    const trimmedTarget = target.trim();
+    const trimmedService = service.trim();
+    const trimmedMethod = method.trim();
+    if (!trimmedTarget || !trimmedService || !trimmedMethod) {
+      setError(t('grpc.validationRequired'));
+      return;
+    }
+    setFetchingSchema(true);
+    setError(null);
+    try {
+      const schema = await grpcMethodSchema(
+        {
+          target: trimmedTarget,
+          tlsProfileId: tlsEnabled ? tlsPickedId : null,
+          timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.round(timeoutMs) : null,
+        },
+        trimmedService,
+        trimmedMethod,
+      );
+      setJsonInput(JSON.stringify(schema.requestSchema, null, 2));
+      setResponseSchema(JSON.stringify(schema.responseSchema, null, 2));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setFetchingSchema(false);
+    }
+  }, [fetchingSchema, target, service, method, tlsEnabled, tlsPickedId, timeoutMs, t]);
+
   const prettyResult = useCallback(() => {
     if (result == null) return '';
     try {
@@ -320,6 +353,7 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
     setError(null);
     setElapsedMs(null);
     setCopied(false);
+    setResponseSchema(null);
   }, []);
 
   return (
@@ -405,13 +439,26 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
               </div>
             </FormField>
             <FormField label={t('grpc.method')}>
-              <TextInput
-                value={method}
-                onChange={(e) => setMethod(e.target.value)}
-                placeholder="GetUser"
-                className="font-mono"
-                spellCheck={false}
-              />
+              <div className="flex gap-2">
+                <TextInput
+                  value={method}
+                  onChange={(e) => setMethod(e.target.value)}
+                  placeholder="GetUser"
+                  className="font-mono"
+                  spellCheck={false}
+                />
+                <ControlHintTooltip title={t('grpc.fetchSchema')} side="bottom">
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="h-8 shrink-0 px-2.5"
+                    disabled={fetchingSchema || !method.trim() || !service.trim() || !target.trim()}
+                    onClick={() => void handleFetchSchema()}
+                  >
+                    {fetchingSchema ? <Loader2 className="size-3.5 animate-spin" /> : <Table2 className="size-3.5" />}
+                  </Button>
+                </ControlHintTooltip>
+              </div>
             </FormField>
           </div>
           <FormField label={t('grpc.jsonInput')}>
@@ -422,6 +469,16 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
               spellCheck={false}
             />
           </FormField>
+          {responseSchema != null ? (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-ui-sm text-foreground-subtle select-none">
+                {t('grpc.responseSchemaTitle')}
+              </span>
+              <pre className="max-h-40 overflow-auto rounded-md border border-border/60 bg-input/30 p-2 font-mono text-ui-xs leading-relaxed text-foreground-subtle">
+                {responseSchema}
+              </pre>
+            </div>
+          ) : null}
 
           {/* TLS 区块：只能从配置库下拉选择，要用先保存 */}
           <div className="flex flex-col gap-2.5 rounded-lg border border-border/60 p-3">

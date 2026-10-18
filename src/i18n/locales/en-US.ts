@@ -72,6 +72,8 @@ export default {
     methodsSearch: 'Search methods/messages…',
     methodsEmptyResult: 'Service has no methods (or none returned)',
     methodStreaming: 'streaming',
+    fetchSchema: 'Fetch request/response JSON structure (via reflection)',
+    responseSchemaTitle: 'Response structure (read-only)',
   },
   relays: {
     summary: '{{total}} relay configuration(s)',
