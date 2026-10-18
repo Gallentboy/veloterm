@@ -663,8 +663,8 @@ async fn call_grpc_unary_inner(
 }
 
 /// gRPC Status 的可读详情：优先 grpc-message；为空时解析
-/// grpc-status-details-bin（google.rpc.Status，Java/Go 服务端内部异常的真实文案），
-/// 再不行退化到完整 Debug 形态（含 source/metadata，供日志比对）。
+/// grpc-status-details-bin（google.rpc.Status，Java/Go 服务端内部异常的真实文案）。
+/// 全部缺失时给简洁文案——原始 Status Debug 只写日志（warn），不上 UI。
 fn format_grpc_status(s: &tonic::Status) -> String {
     if !s.message().is_empty() {
         return s.message().to_string();
@@ -684,7 +684,7 @@ fn format_grpc_status(s: &tonic::Status) -> String {
         }
         return parts.join(" ");
     }
-    format!("(无详情) Status debug: {s:?}")
+    "服务端内部错误，未返回详细原因（完整状态已记录到应用日志）".to_string()
 }
 
 /// 反射错误：Unsupported = 该版本反射服务不存在（可试另一版本）。
@@ -1323,6 +1323,15 @@ mod tests {
     }
 
     // ── 用例 ──
+
+    #[test]
+    fn grpc_status_format_fallback_is_clean() {
+        // 空 message + 无 details：兜底文案必须简洁，不得把 Status Debug 拼给 UI
+        let s = tonic::Status::internal("");
+        let text = format_grpc_status(&s);
+        assert!(text.contains("未返回详细原因"), "text: {text}");
+        assert!(!text.contains("Status debug"), "text: {text}");
+    }
 
     #[tokio::test]
     async fn grpc_call_plaintext_roundtrip_with_bearer() {
