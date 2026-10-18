@@ -42,10 +42,16 @@ export interface SftpTabDragPayload {
   sessionId: number;
 }
 
+/** 设置页菜单卡片拖拽载荷（宫格排序） */
+export interface MenuCardDragPayload {
+  page: string;
+}
+
 /** 页内拖拽种类与其载荷的对应关系 */
 export interface InternalDragPayloadMap {
   'sftp-item': SftpItemDragPayload;
   'sftp-tab': SftpTabDragPayload;
+  'menu-card': MenuCardDragPayload;
 }
 
 export type InternalDragKind = keyof InternalDragPayloadMap;
