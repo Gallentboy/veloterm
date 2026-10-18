@@ -1,0 +1,66 @@
+# 目标（单一）：relay 子工程（veloterm_relay + veloterm-relay-proto）的 Linux 侧
+# 验证与部署产物——cargo test 全量 + clippy 零警告 + release 构建（musl 静态链接，
+# glibc 无关，部署到任意 x86_64 Linux 直接跑）。中继是纯 Rust 跨平台 crate，
+# macOS 本机开发门禁之外，本车道提供 Linux 原生环境的验证与出包。
+# 触发：推 tag（验证完删除）——
+#   git tag test_relay && git push origin test_relay
+#   git push origin :refs/tags/test_relay
+# 也支持 workflow_dispatch 手动触发。
+name: 'test-relay'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_relay*'
+
+jobs:
+  test-relay:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: relay
+
+      - name: Test (gnu host)
+        working-directory: relay
+        run: cargo test --workspace
+
+      - name: Clippy (zero warnings)
+        working-directory: relay
+        env:
+          RUSTFLAGS: '-D warnings'
+        run: cargo clippy --workspace --all-targets
+
+      - name: Build release (musl static)
+        working-directory: relay
+        run: cargo build --release -p veloterm-relay --target x86_64-unknown-linux-musl
+
+      - name: Smoke test binary
+        run: |
+          ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay --version
+          ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay token generate --key-id 9 --name ci | grep -E 'secret = "[0-9a-f]{64}"'
+          file ./relay/target/x86_64-unknown-linux-musl/release/veloterm_relay | grep -i 'statically linked'
+
+      - name: Upload relay artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: veloterm_relay-x86_64-linux-musl
+          path: relay/target/x86_64-unknown-linux-musl/release/veloterm_relay
+          if-no-files-found: error
+          retention-days: 7

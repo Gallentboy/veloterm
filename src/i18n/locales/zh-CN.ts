@@ -292,6 +292,10 @@ export default {
     forwardDynamic: 'D',
     forwardToggleHint: '点击启停该转发规则',
     relayFooter: '经中继 {{transport}} → {{host}}:{{port}} 建立 VLR2 加密隧道，SSH 端到端传输',
+    globalEntry: '全局拓扑',
+    globalTitle: '全局连接拓扑',
+    globalEmpty: '还没有主机，先新建一台',
+    inspect: '详情',
   },
   portForward: {
     title: '端口转发 · {{name}}',

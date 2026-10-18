@@ -292,6 +292,10 @@ export default {
     forwardDynamic: 'D',
     forwardToggleHint: 'Click to toggle this forward rule',
     relayFooter: 'VLR2 encrypted tunnel via relay {{transport}} → {{host}}:{{port}}; SSH is end-to-end',
+    globalEntry: 'Global Topology',
+    globalTitle: 'Global Connection Topology',
+    globalEmpty: 'No hosts yet — create one first',
+    inspect: 'Details',
   },
   portForward: {
     title: 'Port Forwards · {{name}}',

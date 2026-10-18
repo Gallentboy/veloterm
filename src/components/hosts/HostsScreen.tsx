@@ -4,6 +4,7 @@ import { GroupFormDialog } from '@/components/hosts/GroupFormDialog';
 import { HostFormDialog, type HostFormResult } from '@/components/hosts/HostFormDialog';
 import { PortForwardDialog } from '@/components/hosts/PortForwardDialog';
 import { HostTopologyDialog } from '@/components/hosts/HostTopologyDialog';
+import { GlobalTopologyDialog } from '@/components/hosts/GlobalTopologyDialog';
 import { GroupTreeRow, HostTreeRow } from '@/components/hosts/HostTree';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -59,6 +60,7 @@ export function HostsScreen({
   // 端口转发管理弹层目标主机
   const [forwardsHost, setForwardsHost] = useState<HostNode | null>(null);
   const [topologyHost, setTopologyHost] = useState<HostNode | null>(null);
+  const [globalTopology, setGlobalTopology] = useState(false);
 
   const handleDeleteHost = (id: number) => {
     const host = hosts.find((item) => item.id === id);
@@ -169,6 +171,16 @@ export function HostsScreen({
             size="lg"
             onClick={() => {
               setDeleteTarget(null);
+              setGlobalTopology(true);
+            }}
+          >
+            {t('topology.globalEntry')}
+          </Button>
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={() => {
+              setDeleteTarget(null);
               setGroupDialog({ mode: 'create', parentId: null });
             }}
           >
@@ -236,6 +248,17 @@ export function HostsScreen({
           host={topologyHost}
           hosts={hosts}
           onClose={() => setTopologyHost(null)}
+        />
+      ) : null}
+
+      {globalTopology ? (
+        <GlobalTopologyDialog
+          hosts={hosts}
+          onClose={() => setGlobalTopology(false)}
+          onInspect={(host) => {
+            setGlobalTopology(false);
+            setTopologyHost(host);
+          }}
         />
       ) : null}
 
