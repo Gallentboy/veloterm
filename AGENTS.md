@@ -89,6 +89,8 @@
 
 全部数据在 SQLCipher 加密库 `veloterm.db`：表结构变更走「建表批次后的幂等 ALTER（吞 duplicate column）」，新列在 HostRecord / HostNode / mapper / roundtrip 测试四处同步。主机「就绪钩子」只存命令库主键 id，命令删除后钩子静默失效。中继配置（relays 表）与 ZK 主机（zk_hosts 表 + zk_credentials 凭证子表，`(host_id, username)` 唯一、删主机级联删凭证）都是独立实体：中继只存 relay_id 引用，ZK 凭证（digest 用户名/密码，明文存库）由前端「ZK 主机」页管理，使用处（ZK 连接/认证）一律下拉选择不回显手输。
 
+命令库（commands 表）带**内置预置种子**：192 条详细用法（tools-catalog 全量 130 命令 + Windows cmd 常用命令，内容按官方文档求证——GNU 手册 / Microsoft Learn / 各上游仓库，每条 source 字段留档）。产线在 `src-tauri/seed-parts/part1..5.json`，`scripts/build-command-seed.mjs` 合并强校验（schema/占位符契约/与 tools-catalog 全集核对/uuidv5 确定性生成）产出 `src-tauri/assets/builtin-commands-seed.json`；Rust 侧 `seed_builtin_commands`（init_db 挂点）以 kv 版本标记门控 + uuid INSERT OR IGNORE 差量插入——同版本只播种一次，用户删除的预置条目不复活；数据变更时递增 SEED_VERSION 补插新增。改种子内容：改分片 → 跑脚本 → `cargo test -p app --lib command_library`（载荷合法性单测会拦 schema 偏差）→ SEED_VERSION 递增。
+
 ## 命令速查
 
 | 用途 | 命令 |

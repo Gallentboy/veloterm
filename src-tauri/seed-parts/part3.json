@@ -1,0 +1,558 @@
+[
+  {
+    "tool": "jq",
+    "title": "jq：命令行 JSON 处理器（过滤/提取/格式化）",
+    "command": "jq {{filter}} {{file}}",
+    "description": "jq 是命令行 JSON 处理器：用一条过滤表达式完成字段提取、结构变换与格式化输出，是接口调试与日志分析的常备工具。本项目内嵌 jq 1.8.2。\n\n**语法**\n```text\njq [选项] <过滤表达式> [文件...]\n```\n\n**常用选项**\n- `-r`：字符串结果去掉引号原样输出，供非 JSON 下游消费\n- `-c`：紧凑输出，每个 JSON 值压成一行（处理 JSONL 日志常用）\n- `-n`：不读输入，以 null 为输入执行一次（从零构造 JSON）\n- `-e`：按最后输出设置退出码（false/null 为 1、无输出为 4），便于脚本判断\n- `-s`：把整个输入流收成一个大数组再过滤\n- `-S`：对象按键排序输出\n- `--arg name value`：把字符串注入为变量 `$name`\n- `--argjson name json`：把已解析的 JSON 值注入为变量 `$name`\n\n**示例**\n```bash\njq . data.json                          # 美化整个文档\njq .data.list[].name response.json      # 逐行提取数组内字段\njq -c '.[] | select(.active)' users.json # 过滤数组元素\n```\n\n**注意**\n- 本项目内嵌 jq 1.8.2（捆绑 oniguruma 正则库，`test`/`match`/`capture` 可用），静态编译进 coreutils，短名 `jq` 与子命令模式均可调用。\n- VeloTerm 本地终端为 cmd.exe：过滤表达式含空格或 `|` 等特殊字符时用双引号包裹；cmd 不把单引号当引号，写成单引号会连引号一起传给 jq。\n\n> 文档依据：https://jqlang.github.io/jq/manual/",
+    "purpose": "从 JSON 响应或配置中提取字段、过滤数组、格式化输出。",
+    "category": "text",
+    "tags": ["jq", "json", "数据提取"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "filter", "label": "jq 过滤表达式", "description": "如 .data.list[].name", "required": true, "default": ".", "example": ".data.list[].name" },
+      { "name": "file", "label": "JSON 文件", "description": "要处理的 JSON 文件路径", "required": true, "default": "", "example": "response.json" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://jqlang.github.io/jq/manual/"
+  },
+  {
+    "tool": "jq",
+    "title": "jq 进阶：多文档合并、变量注入与排序输出",
+    "command": "jq -s \"{{transform}}\" {{file}}",
+    "description": "jq 的流处理组合拳：`-s` 把逐行 JSON 合并成数组做跨行统计，`--arg`/`--argjson` 把外部值注入表达式，`-S` 输出键排序的稳定 JSON。\n\n**语法**\n```text\njq -s [其他选项] <过滤表达式> [文件...]\n```\n\n**常用选项**\n- `-s`：整个输入流收成一个数组，过滤表达式只执行一次\n- `-R`：不解析 JSON，每行作为字符串传入（配合 `-s` 得到整段文本）\n- `--slurpfile name file`：把文件内全部 JSON 收成数组绑定到 `$name`\n- `--arg name value`：注入字符串变量（`--arg n 123` 得到字符串 \"123\"）\n- `--argjson name json`：注入解析后的 JSON 值（数字/对象等）\n- `-S`：输出对象按键排序\n- `--tab` / `--indent n`：缩进用 Tab 或 n 个空格（n 最大 7）\n- `-j`：像 -r 去引号，且输出之间不加换行\n\n**示例**\n```bash\njq -s 'sort_by(.ts) | .[-10:] | map(.msg)' events.jsonl  # 合并取最新 10 条\njq --arg env prod '.deploy[$env]' config.json            # 注入字符串变量\njq -S . messy.json > sorted.json                          # 键排序重排\n```\n\n**注意**\n- `--arg` 绑定的是字符串、`--argjson` 才是 JSON 值，二者混用是高频错误。\n- cmd.exe 下整条表达式用双引号包裹；表达式内部再需要双引号时写成 `\\\"`（MSVC 参数解析会还原成 `\"`）。\n- 与基础条目同源：内嵌 jq 1.8.2，短名与子命令模式均可用。\n\n> 文档依据：https://jqlang.github.io/jq/manual/",
+    "purpose": "跨多行 JSON 做聚合排序、把脚本变量安全注入 jq 表达式。",
+    "category": "text",
+    "tags": ["jq", "json", "流处理"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "transform", "label": "变换表达式", "description": "作用于合并后数组的 jq 表达式", "required": true, "default": "sort_by(.ts)", "example": "sort_by(.ts) | .[-10:] | map(.msg)" },
+      { "name": "file", "label": "JSON/JSONL 文件", "description": "要处理的文件路径", "required": true, "default": "", "example": "events.jsonl" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://jqlang.github.io/jq/manual/"
+  },
+  {
+    "tool": "yq",
+    "title": "yq：YAML/JSON/XML 多格式处理器（读取与转换）",
+    "command": "yq \"{{expr}}\" {{file}}",
+    "description": "mikefarah yq v4 是用 jq 风格语法处理 YAML/JSON/XML/INI/CSV 的便携处理器：读值、改值、格式互转一站完成。本项目内嵌 v4.54.1。\n\n**语法**\n```text\nyq [选项] <表达式> [文件...]\n```\n\n**常用选项**\n- `-P`：惯用格式美化 YAML 输出（保留风格）\n- `-o FORMAT`：输出格式（json / y 等，如 `-o json`）\n- `-I n`：缩进空格数（默认 2，YAML 与 JSON 通用）\n- `-n`：null 输入模式，不读文件、以 null 起步构造文档\n- `-M`：关闭彩色输出（重定向到文件时干净）\n- `ea`：一次性评估全部输入文件（多文件合并的入口写法）\n\n**示例**\n```bash\nyq .spec.replicas deploy.yaml      # 读单个值\nyq -Poy sample.json                # JSON 转 YAML（-P 美化）\nyq -o json config.yaml > out.json  # YAML 转 JSON\n```\n\n**注意**\n- 表达式语法「像 jq」但不是完整 jq，常用操作（select/map/sort_by/keys）支持，个别函数行为不同。\n- 本项目内 yq 与 fzf 合并为单一 `veloterm_goffi.dll`（放安装根 `lib/` 子目录），由 coreutils 运行时动态加载；表达式含空格时用双引号包裹（cmd.exe 语境）。\n\n> 文档依据：https://mikefarah.gitbook.io/yq/",
+    "purpose": "读 Kubernetes/配置文件里的值，或在 YAML 与 JSON 之间互转。",
+    "category": "text",
+    "tags": ["yq", "yaml", "配置处理"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "expr", "label": "yq 表达式", "description": "如 .spec.replicas", "required": true, "default": ".", "example": ".spec.replicas" },
+      { "name": "file", "label": "输入文件", "description": "YAML/JSON 等文件路径", "required": true, "default": "", "example": "deploy.yaml" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://mikefarah.gitbook.io/yq/"
+  },
+  {
+    "tool": "yq",
+    "title": "yq 进阶：原地更新、环境变量注入与多文件合并",
+    "command": "yq -i \"{{update}}\" {{file}}",
+    "description": "yq 的写路径：`-i` 把表达式结果直接写回文件，`strenv()` 从环境变量取值，`ea` + `*` 合并操作符把多份配置叠加成一份。改 Kubernetes values、覆盖层合并的常用姿势。\n\n**语法**\n```text\nyq -i <更新表达式> <文件>\n```\n\n**常用选项与表达式**\n- `-i`：原地写回（in-place，直接修改目标文件）\n- `ea`：eval-all，把多个文件作为一次输入评估（合并场景入口）\n- `-n`：null 输入，配合 `load()` 从零构造结果\n- `strenv(NAME)`：读取环境变量 NAME 的字符串值\n- `. * .`（multiply）：深度合并操作符，右侧覆盖左侧\n- `load(\"file\")`：在表达式里读入另一个文件\n\n**示例**\n```bash\nyq -i '.spec.replicas = 3' deploy.yaml\nset NAME=api && yq -i '.app.name = strenv(NAME)' config.yaml\nyq ea '. as $item ireduce ({}; . * $item)' values.yaml override.yaml\n```\n\n**注意**\n- `-i` 直接改写文件且不自动备份，改错只能靠版本控制找回；建议先去掉 `-i` 预览输出确认无误。\n- yq 尽力保留注释与空行，但官方明确「不覆盖全部场景」，复杂文档先 diff 再提交。\n- 环境变量注入示例按 cmd.exe 语法（`set NAME=api`）给出；PowerShell 为 `$env:NAME=\"api\"`。\n\n> 文档依据：https://mikefarah.gitbook.io/yq/",
+    "purpose": "批量改写 YAML 配置值、按覆盖层合并多份 values 文件。",
+    "category": "text",
+    "tags": ["yq", "yaml", "批量更新"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "update", "label": "更新表达式", "description": "赋值/合并表达式，如 .spec.replicas = 3", "required": true, "default": ".a.b = \"value\"", "example": ".spec.replicas = 3" },
+      { "name": "file", "label": "目标文件", "description": "要原地更新的 YAML 文件", "required": true, "default": "", "example": "deploy.yaml" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://mikefarah.gitbook.io/yq/"
+  },
+  {
+    "tool": "vim",
+    "title": "vim：终端文本编辑器（打开/编辑/保存）",
+    "command": "vim {{file}}",
+    "description": "Vim 是模式化终端编辑器：普通模式移动与操作、插入模式输入。本项目内嵌 Vim 9.2 官方 VIMDLL 形态（控制台版），语法高亮、插件机制与 :help 帮助完整可用。\n\n**语法**\n```text\nvim [选项] [文件...]\n```\n\n**常用选项**\n- `-R`：只读模式打开（`:w!` 仍可强制写）\n- `-b`：二进制模式（关闭展开符/模型行，textwidth 置 0）\n- `-m`：禁止写入（仍可编辑缓冲区）\n- `+n`：打开后光标直接落在第 n 行（排查报错行号利器）\n- `+/pat`：光标落在首个匹配 pat 的行\n- `-o` / `-O`：水平/垂直分窗打开多个文件\n- `-p`：每个文件一个标签页\n- `-u NONE`：跳过所有 vimrc 与插件（排查配置问题）\n\n**示例**\n```bash\nvim app.log\nvim +1024 server.py\nvim -R report.md\n```\n\n**注意**\n- 本项目的 vim 属「自解析命令行」家族：仅 `vim` 短名模式可用（`coreutils vim` 子命令模式会给出提示）。\n- 运行文件树 `vim-runtime/`（语法/文档等）随包分发，启动时自动指向，`:help` 可直接使用；交互手法依赖真实终端环境。\n- 基本节奏：`i` 进入插入、Esc 回普通、`:wq` 保存退出、`:q!` 放弃退出。\n\n> 文档依据：https://vimhelp.org/starting.txt.html",
+    "purpose": "在终端里直接查看或编辑服务器上的文本文件与配置。",
+    "category": "file",
+    "tags": ["vim", "编辑器", "文本编辑"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件路径", "description": "要打开的文件", "required": true, "default": "", "example": "server.py" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://vimhelp.org/starting.txt.html"
+  },
+  {
+    "tool": "vim",
+    "title": "vim 进阶：文件对比（diff 模式）与按键录制回放",
+    "command": "vim -d {{file1}} {{file2}}",
+    "description": "Vim 内建的对比与自动化能力：`-d` 以 vimdiff 语义左右分窗比较多文件（差异高亮、`dp`/`do` 双向合并），`-w`/`-s` 把按键录制成脚本再回放，`--startuptime` 定位启动慢的插件。\n\n**语法**\n```text\nvim -d <文件1> <文件2> [更多文件...]\n```\n\n**常用选项**\n- `-d`：diff 模式（等价 vimdiff），自动垂直分窗并高亮差异\n- `-R`：配合 diff 只读查看，杜绝手滑改动\n- `-u NONE`：跳过配置，排除插件对 diff 高亮的干扰\n- `-s {scriptin}`：把 scriptin 当键盘输入回放\n- `-w {scriptout}`：把敲下的按键记录到文件（追加式，`-W` 为覆盖）\n- `--startuptime {file}`：记录各阶段启动耗时\n\n**示例**\n```bash\nvim -d config_old.yaml config_new.yaml\nvim -R -d release.v1.md release.v2.md\nvim -w keys.log demo.txt\n```\n\n**注意**\n- diff 窗内 `]c`/`[c` 跳下/上一个差异，`dp` 把本侧差异推过去、`do` 拉取对侧。\n- 与基础条目同属短名模式（自解析命令行家族）；`-w` 录制常用于给批量编辑做可复放脚本，回放即 `vim -s keys.log 同名文件`。\n\n> 文档依据：https://vimhelp.org/starting.txt.html",
+    "purpose": "不装额外工具直接对比两个配置文件，或录制按键批量重放编辑。",
+    "category": "file",
+    "tags": ["vim", "diff", "文件对比"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file1", "label": "文件一", "description": "对比左侧文件", "required": true, "default": "", "example": "config_old.yaml" },
+      { "name": "file2", "label": "文件二", "description": "对比右侧文件", "required": true, "default": "", "example": "config_new.yaml" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://vimhelp.org/starting.txt.html"
+  },
+  {
+    "tool": "nmap",
+    "title": "nmap：主机发现与端口扫描（网络探测基准工具）",
+    "command": "nmap {{target}}",
+    "description": "nmap 是网络探测与安全审计的标准工具：主机存活发现、开放端口清点、服务识别。本项目内嵌 nmap 7.992。\n\n**语法**\n```text\nnmap [扫描类型] [选项] <目标...>\n```\n目标可写 IP、CIDR 网段（192.168.1.0/24）、范围（10.0.0.1-10）或主机名。\n\n**常用选项**\n- `-sn`：只做主机发现（ping 扫描），不扫端口\n- `-p <端口>`：指定端口/范围，如 `-p 22,80`、`-p 1-1000`\n- `-sT`：TCP connect 扫描（全连接，无需原始套接字）\n- `-Pn`：跳过主机发现，直接扫端口（防火墙丢弃 ping 时用）\n- `-v`：提高详细度（`-vv` 更多）\n- `-oN <file>`：常规可读报告写文件；`-oX <file>` 写 XML\n- `-n`：不做 DNS 反解（提速）\n\n**示例**\n```bash\nnmap -sn 192.168.1.0/24\nnmap -p 22,80,443 10.0.0.5\nnmap -Pn -v -oN report.txt 203.0.113.10\n```\n\n**注意**\n- 本项目内嵌 nmap 7.992（nmapffi.dll 形态）；未安装 Npcap 的机器自动降级为 connect 扫描（`-sS` 等依赖原始套接字的扫描型不可用）；NSE 脚本数据树 nmap-data/ 随包分发。\n- 扫描对目标产生真实流量，请仅在获得授权的网络内使用。\n\n> 文档依据：https://nmap.org/book/man.html",
+    "purpose": "清点网段存活主机与目标机器开放端口，摸清服务面。",
+    "category": "network",
+    "tags": ["nmap", "端口扫描", "网络探测"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "target", "label": "扫描目标", "description": "IP / CIDR 网段 / 主机名", "required": true, "default": "", "example": "192.168.1.0/24" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "",
+    "source": "https://nmap.org/book/man.html"
+  },
+  {
+    "tool": "nmap",
+    "title": "nmap 进阶：服务/版本识别、OS 探测与 NSE 脚本",
+    "command": "nmap -sV -p {{ports}} {{target}}",
+    "description": "nmap 的深探测组合：`-sV` 探测端口背后服务与版本，`-O` 猜操作系统，`-A` 一把梭（版本+OS+脚本+traceroute），`--script` 调用 NSE 脚本做定向检查。\n\n**语法**\n```text\nnmap -sV [-A|-O] [--script <脚本>] -p <端口> <目标>\n```\n\n**常用选项**\n- `-sV`：探测开放端口上运行的服务与版本\n- `-O`：操作系统指纹识别（需原始套接字，依赖 Npcap）\n- `-A`：激进模式（同时启用版本/OS/脚本/traceroute）\n- `-T4`：加速时序模板（0 最慢最隐蔽，5 最快最吵）\n- `--script <name>`：运行 NSE 脚本，如 `--script http-title`\n- `--open`：只显示开放的端口（过滤结果噪音）\n- `-oX <file>`：XML 报告（供其他工具二次分析）\n\n**示例**\n```bash\nnmap -sV -p 80,443 203.0.113.10\nnmap -A -T4 --open 203.0.113.10\nnmap --script http-title -p 80 203.0.113.10\n```\n\n**注意**\n- `-O` 与 `-sS` 一样依赖原始套接字：未装 Npcap 时不可用，本集成会降级 connect 扫描；`--script` 所需数据树（含 script.db）随包分发。\n- 深探测流量显著多于普通扫描，生产环境控制并发与时序（`-T3` 起步），并确保有授权。\n\n> 文档依据：https://nmap.org/book/man.html",
+    "purpose": "识别端口背后的服务版本与操作系统，做针对性安全检查。",
+    "category": "network",
+    "tags": ["nmap", "服务识别", "安全审计"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "ports", "label": "端口列表", "description": "如 80,443,8080", "required": true, "default": "80,443", "example": "80,443,8080" },
+      { "name": "target", "label": "扫描目标", "description": "IP 或主机名", "required": true, "default": "", "example": "203.0.113.10" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "",
+    "source": "https://nmap.org/book/man.html"
+  },
+  {
+    "tool": "ncat",
+    "title": "ncat：多用途网络连接与监听工具（netcat 替代）",
+    "command": "ncat -v {{host}} {{port}}",
+    "description": "ncat 是 nmap 项目的 netcat 增强 replacement：既当客户端连端口手敲协议报文，也能 `-l` 起监听收发数据、走 SSL 与代理，是连通性测试与临时传文件的多面手。\n\n**语法**\n```text\nncat [选项] <主机> <端口>     # 客户端连接\nncat -l [选项] [端口]         # 服务端监听\n```\n\n**常用选项**\n- `-v`：显示连接过程与目标信息\n- `-l`：监听模式（默认一次连接后退出，`-k` 保持接受后续连接）\n- `-u`：UDP 代替 TCP\n- `-z`：零 I/O 模式，只报告连通性（批量端口探测）\n- `--ssl`：用 TLS 加密连接（`--ssl-verify` 校验证书）\n- `--proxy <host:port>`：经 SOCKS4/5 或 HTTP 代理连接\n- `-w <秒>`：连接/闲置超时\n- `--send-only` / `--recv-only`：只发不收 / 只收不发\n\n**示例**\n```bash\nncat -v example.com 80          # 连上后手敲 GET / HTTP/1.1 测 Web\nncat -l 8080 < file.txt         # 监听一次性送出文件\nncat -z -v 10.0.0.5 20-25      # 批量测端口连通\n```\n\n**注意**\n- 本项目内嵌 ncat 7.992（ncatffi.dll，与 nmap/nping 同工程三件套）；TLS 根证书 ca-bundle.crt 随包分发，`--ssl-verify` 可用。\n- `-e`/`--sh-exec` 会把程序或 shell 挂到网络连接上，仅在受控/临时场景使用，用完即关。\n\n> 文档依据：https://nmap.org/ncat/man.html",
+    "purpose": "测试端口连通性与手敲协议报文，或在两台机器间临时收发数据。",
+    "category": "network",
+    "tags": ["ncat", "netcat", "连通性测试"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "host", "label": "目标主机", "description": "主机名或 IP", "required": true, "default": "", "example": "example.com" },
+      { "name": "port", "label": "端口", "description": "目标端口", "required": true, "default": "80", "example": "80" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://nmap.org/ncat/man.html"
+  },
+  {
+    "tool": "nping",
+    "title": "nping：报文生成与探测工具（连通性/丢包/延迟测量）",
+    "command": "nping --tcp-connect -p {{ports}} {{target}}",
+    "description": "nping 是 nmap 项目的报文生成器：可发 TCP/UDP/ICMP/ARP 多种探测报文，统计往返时间与丢包率，支持限速与 traceroute，用来测连通性质量与防火墙放行情况。\n\n**语法**\n```text\nnping <模式> [选项] <目标>\n```\n\n**常用选项**\n- `--tcp-connect`：全连接式 TCP 探测（无需特权/Npcap）\n- `--tcp`：发 TCP SYN 包（原始报文模式，需 Npcap）\n- `--udp` / `--icmp` / `--arp`：对应协议的原始报文探测\n- `-p <端口>`：目标端口（可逗号分隔多个）\n- `-c <次数>`：每个探测点发送的轮数\n- `--rate <pps>`：每秒发包数上限（克制发送）\n- `--delay <时间>`：探测间隔（如 1s）\n- `--traceroute`：附带逐跳路由追踪\n\n**示例**\n```bash\nnping --tcp-connect -p 443 example.com\nnping --icmp -c 5 10.0.0.1\nnping --udp -p 53 --rate 10 10.0.0.1\n```\n\n**注意**\n- 原始报文模式（--tcp/--udp/--icmp/--arp）需要 Npcap；未安装时用 `--tcp-connect`（普通 connect()，零依赖）。\n- 主动向目标发探测报文，高频探测可能触发生产设备告警——务必限速且先获授权。\n\n> 文档依据：https://nmap.org/book/nping-man.html",
+    "purpose": "测目标端口的连通质量（延迟/丢包）并控制发送速率。",
+    "category": "network",
+    "tags": ["nping", "报文探测", "延迟测量"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "ports", "label": "端口列表", "description": "如 80,443", "required": true, "default": "443", "example": "80,443" },
+      { "name": "target", "label": "目标主机", "description": "主机名或 IP", "required": true, "default": "", "example": "example.com" }
+    ],
+    "dangerLevel": "confirm",
+    "exampleOutput": "",
+    "source": "https://nmap.org/book/nping-man.html"
+  },
+  {
+    "tool": "openssl",
+    "title": "openssl：TLS/证书/加密工具箱（自签证书与握手调试）",
+    "command": "openssl req -x509 -newkey rsa:2048 -noenc -keyout {{keyfile}} -out {{certfile}} -days {{days}}",
+    "description": "OpenSSL CLI 是证书与 TLS 的瑞士军刀：req 生成密钥/CSR/自签证书，x509 查看校验证书，s_client 调试握手，另有 dgst/enc/rand 等几十个子命令。本项目内嵌 OpenSSL 3.6.4 全量 CLI。\n\n**语法**\n```text\nopenssl <子命令> [选项]\n```\n\n**req 常用选项**\n- `-x509`：直接出自签证书（而非 CSR）\n- `-newkey rsa:2048`：同时生成新的 RSA 2048 位私钥\n- `-keyout <file>`：私钥输出文件；`-out <file>`：证书输出文件\n- `-days n`：证书有效期（自签默认 30 天）\n- `-noenc`：私钥不加口令（3.x 起 `-nodes` 已弃用的等价写法）\n- `-subj \"/CN=localhost\"`：免交互指定主题\n\n**其他高频子命令**\n- `x509 -in c.pem -text -noout`：人读方式查看证书\n- `s_client -connect host:443 -servername host -brief`：测 TLS 握手与证书链\n- `rand`/`dgst`/`enc`：随机数、摘要、对称加解密\n\n**示例**\n```bash\nopenssl req -x509 -newkey rsa:2048 -noenc -keyout k.pem -out c.pem -days 365 -subj \"/CN=localhost\"\nopenssl x509 -in c.pem -text -noout\nopenssl s_client -connect example.com:443 -servername example.com -brief\n```\n\n**注意**\n- OpenSSL 3.x 移除了旧版「交互输入」模式，每个子命令独立调用；`openssl list` 可枚举可用算法。\n- s_client 默认容忍证书校验失败（定位问题用），要严格校验加 `-verify_return_error`。\n\n> 文档依据：https://docs.openssl.org/",
+    "purpose": "生成自签证书供本地 HTTPS 调试，或排查线上 TLS 握手问题。",
+    "category": "network",
+    "tags": ["openssl", "证书", "tls"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "keyfile", "label": "私钥输出文件", "description": "生成的 PEM 私钥路径", "required": true, "default": "server-key.pem", "example": "server-key.pem" },
+      { "name": "certfile", "label": "证书输出文件", "description": "生成的 PEM 证书路径", "required": true, "default": "server-cert.pem", "example": "server-cert.pem" },
+      { "name": "days", "label": "有效天数", "description": "自签证书有效期", "required": true, "default": "365", "example": "365" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://docs.openssl.org/"
+  },
+  {
+    "tool": "qalc",
+    "title": "qalc：强大命令行计算器（单位换算/符号运算/任意精度）",
+    "command": "qalc \"{{expression}}\"",
+    "description": "qalc 是 Qalculate! 的命令行界面：日常换算（汇率、单位、百分比）与硬核数学（符号运算、积分、任意精度、区间运算）一把抓。本项目内嵌 Qalculate! 5.13.1。\n\n**语法**\n```text\nqalc [选项] [表达式]      # 无表达式则进入交互模式\n```\n\n**常用选项**\n- `-t`：只输出结果（terse，便于脚本取值）\n- `-b <base>`：设定结果进制（如 16 进制）\n- `-s \"option value\"`：预设设置项，如 `-s \"base 16\"`\n- `-e`：联网更新汇率后再计算\n- `-i`：强制进入交互模式\n- `--latex`：输出 LaTeX 格式\n- `-p [base]`：编程模式（进制换算与位运算语法）\n\n**示例**\n```bash\nqalc \"20 miles / 2h to km/h\"   # 单位换算\nqalc -t \"sqrt(25; 16; 9)\"      # 向量开方，只出结果\nqalc \"52 to bin\"               # 进制转换\n```\n\n**注意**\n- 本项目内嵌 qalc（qalcffi.dll）：变量/函数/单位定义全部编进二进制，运行时零外部数据文件；输出为 UTF-8。\n- 换汇结果依赖内置汇率数据，`-e` 联网更新；`to` 操作符通吃单位、进制与格式转换。\n- 表达式含空格时整体用双引号包裹（cmd.exe 语境）。\n\n> 文档依据：https://qalculate.github.io/manual/qalc.html",
+    "purpose": "快速做单位换算、进制转换与精确数学计算。",
+    "category": "text",
+    "tags": ["qalc", "计算器", "单位换算"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "expression", "label": "表达式", "description": "数学/单位表达式", "required": true, "default": "", "example": "20 miles / 2h to km/h" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "20 miles / 2h to km/h = 16.09344 km/h",
+    "source": "https://qalculate.github.io/manual/qalc.html"
+  },
+  {
+    "tool": "bc",
+    "title": "bc：任意精度计算器语言（数学库/进制/表达式直算）",
+    "command": "bc -l -e \"{{expression}}\"",
+    "description": "bc 是任意精度计算器语言：交互式 REPL 或 `-e` 直接传表达式，`-l` 加载数学库后支持三角/对数/指数，ibase/obase 随手换进制。本项目内嵌 gavinhoward bc 7.1.0（GNU/POSIX 兼容 + 扩展）。\n\n**语法**\n```text\nbc [选项] [文件...]        # -e 直接给表达式，无文件则进交互模式\n```\n\n**常用选项**\n- `-l`：加载数学库（s/c/a/l/e/j），scale 默认提高到 20\n- `-e <expr>`：执行表达式后退出（多次给出则依次执行）\n- `-f <file>`：执行文件内的 bc 代码\n- `-q`：安静模式，不显示欢迎信息\n- `-s`：严格 POSIX 模式（禁用扩展）\n- `-w`：对使用了 GNU 扩展的地方给警告\n- `-P`：不显示交互提示符\n\n**示例**\n```bash\nbc -l -e \"4*a(1)\"        # 圆周率（a 为反正切，-l 下 scale=20）\nbc -e \"obase=16; 255\"    # 十进制转十六进制，输出 FF\nbc -l -e \"scale=50; e(1)\" # e 的 50 位小数近似\n```\n\n**注意**\n- 本项目内嵌 gavinhoward bc 7.1.0（BSD-2-Clause）：与 GNU bc 兼容并带扩展（`-e`/`-f`、数组传给 length 等）；同一二进制的 dc 模式本项目未暴露。\n- 数学库函数需 `-l`；scale 控制小数位数（默认 0，`1/3` 默认得 0，先 `scale=10` 再除）。\n- 含空格/分号的表达式整体用双引号包裹（cmd.exe 语境）。\n\n> 文档依据：https://www.gnu.org/software/bc/manual/bc.html（扩展差异另见 https://github.com/gavinhoward/bc 手册）",
+    "purpose": "做需要精确小数位的计算、进制转换或批量表达式求值。",
+    "category": "text",
+    "tags": ["bc", "计算器", "任意精度"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "expression", "label": "bc 表达式", "description": "如 scale=10; 4*a(1)", "required": true, "default": "", "example": "scale=10; 4*a(1)" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "3.1415926532",
+    "source": "https://www.gnu.org/software/bc/manual/bc.html"
+  },
+  {
+    "tool": "dog",
+    "title": "dog：现代 DNS 查询客户端（dig 替代，支持 DoT/DoH/JSON）",
+    "command": "dog -t {{type}} {{domain}}",
+    "description": "dog 是命令行 DNS 客户端（dig 的现代化替代）：常规参数语法、彩色输出、可发 JSON，支持 DNS-over-TLS 与 DNS-over-HTTPS。\n\n**语法**\n```text\ndog [选项] [域名] [记录类型] [@名字服务器]\n```\n\n**常用选项**\n- `-q <host>`：显式指定查询域名\n- `-t <TYPE>`：记录类型（A、MX、NS、TXT 等）\n- `-n <addr>`：指定名字服务器（也可用 @1.1.1.1 写法）\n- `--class <CLASS>`：网络类（IN/CH/HS）\n- `-T`：TCP 传输（代替默认 UDP）\n- `-S` / `-H`：DNS-over-TLS / DNS-over-HTTPS\n- `-J`：JSON 输出；`-1`：只出首个结果（脚本友好）\n- `--time`：显示响应耗时\n\n**示例**\n```bash\ndog example.net\ndog example.net MX @1.1.1.1\ndog -J example.net A > dns.json\n```\n\n**注意**\n- 本项目内嵌 dog（ogham/dog，Rust 实现）；Windows 上默认名字服务器从系统配置自动发现，DoT/DoH 走系统 TLS（schannel）。\n- 退出码：0 成功 / 1 网络错误 / 2 `-1` 短模式无结果 / 3 参数错误 / 4 系统配置错误，便于脚本判断。\n\n> 文档依据：https://github.com/ogham/dog",
+    "purpose": "查域名解析记录、验证指定 DNS 服务器的应答。",
+    "category": "network",
+    "tags": ["dog", "dns", "域名解析"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "type", "label": "记录类型", "description": "A / MX / NS / TXT 等", "required": true, "default": "A", "example": "MX" },
+      { "name": "domain", "label": "域名", "description": "要查询的域名", "required": true, "default": "", "example": "example.net" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://github.com/ogham/dog"
+  },
+  {
+    "tool": "fzf",
+    "title": "fzf：交互式模糊查找器（列表挑选神器）",
+    "command": "fzf --height {{height}}% --reverse",
+    "description": "fzf 是通用命令行模糊查找器：从管道读候选清单，弹出交互窗口边敲边筛，把选中项写回标准输出——挑文件、挑进程、挑历史命令全靠它。本项目内嵌 fzf 0.74.5。\n\n**语法**\n```text\n<候选来源> | fzf [选项]     # 无管道时遍历当前目录文件树\n```\n\n**搜索语法**（多词与 `|` 或组合）\n- `sbtrkt`：模糊匹配；`'wild`：精确包含；`^music`：前缀；`.mp3$`：后缀\n- `!fire`：排除包含 fire 的行（可与 ^/$ 叠加）\n\n**常用选项**\n- `--height 40%`：只占屏幕下方 40% 高度，不打断当前输出\n- `--layout reverse`：列表倒排（输入框在上，最顺手）\n- `-m`：TAB 多选，选中项逐行输出\n- `-e`：精确匹配（关模糊）\n- `-q <query>`：带初始查询词启动\n- `--preview <cmd>`：右侧预览窗，`{}` 代入当前行\n- `--bind`：按键/事件绑定（reload、execute 等）\n\n**示例**\n```bash\ndir /s /b *.log | fzf --height 40% --reverse\ntype services.txt | fzf -m\nfzf\n```\n\n**注意**\n- 本项目内 fzf 与 yq 合并为单一 `veloterm_goffi.dll`（安装根 `lib/` 目录）；交互式 TUI 在 coreutils 进程内直跑，适配 ConPTY 终端。\n- Ctrl-T/Ctrl-R/ALT-C 等按键集成依赖对应 shell 的初始化脚本（bash/zsh/PowerShell），cmd.exe 不适用。\n\n> 文档依据：https://github.com/junegunn/fzf",
+    "purpose": "从长清单里交互式挑一条（或多条）出来喂给下一条命令。",
+    "category": "shell",
+    "tags": ["fzf", "模糊查找", "交互筛选"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "height", "label": "窗口高度百分比", "description": "fzf 弹窗占终端高度的比例", "required": true, "default": "40", "example": "40" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://github.com/junegunn/fzf"
+  },
+  {
+    "tool": "zoxide",
+    "title": "zoxide：更聪明的 cd（目录跳转历史库）",
+    "command": "zoxide query {{query}}",
+    "description": "zoxide 是「更聪明的 cd」：记录你访问过的目录并按频率/新近度排名，几个字母就能跳回常用深处目录。本项目内嵌 zoxide 0.10.0。\n\n**语法**\n```text\nzoxide add <路径>       # 记录目录进数据库\nzoxide query <关键词>   # 查询最匹配的历史目录\n```\n\n**常用用法**\n- `zoxide add D:\\work\\api`：手动收录目录（装了 shell 钩子后自动记录）\n- `zoxide query api`：查与关键词最匹配的历史目录\n- `zoxide init powershell`：输出 PowerShell 初始化脚本，注入后即得 `z`/`zi` 命令\n- `zi foo`：交互模式选择（依赖 fzf）\n- `_ZO_EXCLUDE_DIRS`：排除目录列表（Windows 下分号分隔，默认排除 $HOME）\n- `_ZO_MAXAGE`：老化上限，控制数据库规模（默认 10000 条）\n- `zoxide import <plugin>`：从 z/autojump/fasd 等迁移历史\n\n**示例**\n```bash\nzoxide query proj\nzoxide add D:\\work\\api\npowershell -c \"zoxide init powershell\"\n```\n\n**注意**\n- 本项目内嵌 zoxide 0.10.0（纯 Rust 静态链入 coreutils，非 DLL）。\n- 上游不提供 cmd.exe 钩子（官方模板无 cmd），cmd 下 `z` 直跳需自行做 doskey 适配；PowerShell 内 `zoxide init powershell` 可用。\n\n> 文档依据：https://github.com/ajeetdsouza/zoxide",
+    "purpose": "凭模糊关键词秒回常用目录，替代一长串 cd 路径。",
+    "category": "shell",
+    "tags": ["zoxide", "目录跳转", "效率工具"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "query", "label": "目录关键词", "description": "历史目录的匹配关键词", "required": true, "default": "", "example": "proj" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://github.com/ajeetdsouza/zoxide"
+  },
+  {
+    "tool": "base32hex",
+    "title": "base32hex：Base32 扩展十六进制字母表编解码（RFC 4648 §7）",
+    "command": "base32hex {{file}}",
+    "description": "把二进制数据编成可打印 ASCII 的 Base32 变体。本项目变体：base32hex 采用 RFC 4648 第 7 节 extended-hex 字母表（0-9 后接 A-V），GNU 风格 CLI 壳（-d/-i/-w）。\n\n**语法**\n```text\nbase32hex [选项] [文件]     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-d, --decode`：解码模式（输入为 base32 文本，输出原始字节）\n- `-i, --ignore-garbage`：解码时跳过非字母表字符（换行本就无条件容忍）\n- `-w, --wrap=COLS`：编码输出按 COLS 列折行（默认 76，0 为不折行）\n- `--help` / `--version`：帮助与版本\n\n**示例**\n```bash\nbase32hex -w0 data.bin > data.b32h\nbase32hex -d data.b32h > data.bin\nbase32hex config.json\n```\n\n**注意**\n- 与标准 base32（字母表 A-Z 2-7，见 base32 命令）不互换，二者编出的文本互解会报错/出错数据。\n- 扩展十六进制字母表的编码结果与原数据按位比较保持排序（bit-wise 保序），DNSSEC NSEC3 即用它排序哈希。\n- 体积膨胀约 160%（5 字节编 8 字符）。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/base32-invocation.html（字母表见 https://datatracker.ietf.org/doc/html/rfc4648）",
+    "purpose": "用保序的 base32hex 字母表编码二进制数据（或反向解码）。",
+    "category": "text",
+    "tags": ["base32hex", "编码解码", "rfc4648"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "输入文件", "description": "待编码文件（或解码时的编码文本文件）", "required": true, "default": "", "example": "data.bin" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "foobar 的 base32hex 编码：CPNMUOJ1E8AAAA==",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/base32-invocation.html"
+  },
+  {
+    "tool": "base64url",
+    "title": "base64url：URL 安全 Base64 编解码（RFC 4648 §5）",
+    "command": "base64url {{file}}",
+    "description": "URL 安全变体的 Base64：以 `-` 与 `_` 取代标准字母表里的 `+` 与 `/`，输出可安全放进 URL、查询串、文件名与 JWT。本项目 GNU 风格 CLI 壳（-d/-i/-w）。\n\n**语法**\n```text\nbase64url [选项] [文件]     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-d, --decode`：解码模式\n- `-i, --ignore-garbage`：解码时跳过非字母表字符（换行无条件容忍）\n- `-w, --wrap=COLS`：编码折行列宽（默认 76，0 不折行；JWT 等单行场景用 `-w0`）\n- `--help` / `--version`：帮助与版本\n\n**示例**\n```bash\nbase64url -w0 payload.json > payload.b64u\nbase64url -d payload.b64u > payload.json\nbase64url avatar.png\n```\n\n**注意**\n- RFC 4648 明确 base64url「不应视作与 base64 相同的编码」：二者不可互解，标准 Base64 请用 base64 命令。\n- 体积膨胀约 133%（3 字节编 4 字符）；无填充争议场景注意尾部 `=` 是否被下游接受。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/base64-invocation.html（字母表见 https://datatracker.ietf.org/doc/html/rfc4648）",
+    "purpose": "生成可放 URL/JWT 的 Base64 编码，或解码收到的 base64url 数据。",
+    "category": "text",
+    "tags": ["base64url", "编码解码", "jwt"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "输入文件", "description": "待编码文件（或解码时的编码文本文件）", "required": true, "default": "", "example": "payload.json" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "foobar 的 base64url 编码：Zm9vYmFy（该例不含 +/ 字符，与标准 base64 结果一致）",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/base64-invocation.html"
+  },
+  {
+    "tool": "hex",
+    "title": "hex：小写十六进制编解码（RFC 4648 Base16）",
+    "command": "hex {{file}}",
+    "description": "最直观的二进制可打印编码：每字节编成两个十六进制字符，小写输出，无填充、无折算歧义。GNU 风格 CLI 壳（-d/-i/-w）。\n\n**语法**\n```text\nhex [选项] [文件]     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-d, --decode`：解码模式（hex 文本还原为原始字节）\n- `-i, --ignore-garbage`：解码时跳过非字母表字符（换行无条件容忍）\n- `-w, --wrap=COLS`：编码折行列宽（默认 76，0 不折行）\n- `--help` / `--version`：帮助与版本\n\n**示例**\n```bash\nhex -w0 data.bin > data.hex\nhex -d data.hex > data.bin\nhex uuid.bin\n```\n\n**注意**\n- 需要大写形态（如部分嵌入式/烧录工具约定）用姊妹命令 `hexupper`。\n- 体积翻倍（1 字节 2 字符），编大文件注意体积；校验场景与 xxd/hexdump 输出可直接对比。\n\n> 文档依据：https://datatracker.ietf.org/doc/html/rfc4648（Base16；CLI 形态对齐 https://www.gnu.org/software/coreutils/manual/html_node/base64-invocation.html）",
+    "purpose": "把二进制文件转成十六进制文本（或反向还原），便于粘贴与比对。",
+    "category": "text",
+    "tags": ["hex", "十六进制", "编码解码"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "输入文件", "description": "待编码文件（或解码时的 hex 文本文件）", "required": true, "default": "", "example": "data.bin" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "foobar 的 hex 编码：666f6f626172",
+    "source": "https://datatracker.ietf.org/doc/html/rfc4648"
+  },
+  {
+    "tool": "hexupper",
+    "title": "hexupper：大写十六进制编解码（RFC 4648 Base16 大写形态）",
+    "command": "hexupper {{file}}",
+    "description": "hex 的大写形态：每字节两个大写十六进制字符（0-9A-F），适配要求大写十六进制的工具链（部分烧录/固件/证书指纹展示约定）。GNU 风格 CLI 壳（-d/-i/-w）。\n\n**语法**\n```text\nhexupper [选项] [文件]     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-d, --decode`：解码模式（还原为原始字节）\n- `-i, --ignore-garbage`：解码时跳过非字母表字符（换行无条件容忍）\n- `-w, --wrap=COLS`：编码折行列宽（默认 76，0 不折行）\n- `--help` / `--version`：帮助与版本\n\n**示例**\n```bash\nhexupper -w0 firmware.bin > fw.hex\nhexupper -d fw.hex > firmware.bin\nhexupper key.bin\n```\n\n**注意**\n- 小写形态用 `hex`；两条命令各自回解自身输出最稳妥。\n- 体积翻倍（1 字节 2 字符）；证书指纹、固件 CRC 清单等常约定大写十六进制，粘贴合适度以此为准。\n\n> 文档依据：https://datatracker.ietf.org/doc/html/rfc4648（Base16 大小写；CLI 形态对齐 GNU base64 手册）",
+    "purpose": "生成大写十六进制文本以匹配固件/指纹类工具的输入约定。",
+    "category": "text",
+    "tags": ["hexupper", "十六进制", "编码解码"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "输入文件", "description": "待编码文件（或解码时的 hex 文本文件）", "required": true, "default": "", "example": "firmware.bin" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "foobar 的 hexupper 编码：666F6F626172",
+    "source": "https://datatracker.ietf.org/doc/html/rfc4648"
+  },
+  {
+    "tool": "urlencode",
+    "title": "urlencode：URL 百分号编码（RFC 3986，空格成 %20）",
+    "command": "urlencode {{string}}",
+    "description": "把字符串编码成 URI 安全形态：非保留字符（字母数字与 `-_.~`）原样保留，其余按 `%XX` 十六进制转义（大写十六进制位，RFC 3986 推荐形态），空格编码为 `%20`。\n\n**语法**\n```text\nurlencode [字符串]...     # 无参数时逐行读标准输入；'-' 亦读标准输入\n```\n\n**常用选项**\n- `--`：结束选项解析，此后参数一律当字符串（编码 `-` 开头的串）\n- `-`（作为操作数）：读标准输入\n- `--help` / `--version`：帮助与版本\n- 无操作数时：stdin 逐行编码（批量处理）\n\n**示例**\n```bash\nurlencode \"hello world\"\nurlencode \"a=b&c=1\"\ntype urls.txt | urlencode\n```\n\n**注意**\n- 本项目实现遵循 WHATWG URL 标准：空格成 `%20`、绝不用 `+`；`?`、`&`、`=` 等分隔符照常转义，因此整段「已含查询参数」的串也会被整体编码。\n- 行尾换行（\\n 与 \\r\\n）在处理前剔除；cmd.exe 下含空格的串用双引号包裹。\n\n> 文档依据：https://datatracker.ietf.org/doc/html/rfc3986#section-2.1",
+    "purpose": "把含空格/中文/特殊符号的值编码进 URL 查询串。",
+    "category": "text",
+    "tags": ["urlencode", "百分号编码", "rfc3986"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "string", "label": "待编码字符串", "description": "要编码的文本", "required": true, "default": "", "example": "hello world" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "hello world → hello%20world",
+    "source": "https://datatracker.ietf.org/doc/html/rfc3986#section-2.1"
+  },
+  {
+    "tool": "urldecode",
+    "title": "urldecode：URL 百分号解码（+ 不当空格的宽容解码）",
+    "command": "urldecode {{string}}",
+    "description": "把 `%XX` 百分号转义还原成原字符：畸形转义（如 `%GG`）原样保留，不可解码字节以 U+FFFD 替换，`+` 保持原样不当空格——还原 URL 片段时所见即所得。\n\n**语法**\n```text\nurldecode [字符串]...     # 无参数时逐行读标准输入；'-' 亦读标准输入\n```\n\n**常用选项**\n- `--`：结束选项解析，此后参数一律当字符串\n- `-`（作为操作数）：读标准输入\n- `--help` / `--version`：帮助与版本\n- 无操作数时：stdin 逐行解码（批量处理）\n\n**示例**\n```bash\nurldecode \"hello%20world\"\nurldecode \"a%2Bb\"\ntype decoded.txt | urldecode\n```\n\n**注意**\n- `+` 不当空格：表单编码（application/x-www-form-urlencoded）里 `+` 才是空格，本命令按 RFC 3986 语义保留 `+`，需要时先自行替换。\n- 解码前剔除行尾换行；`%2B` 会正确还原成 `+`（示例二输出 a+b）。\n\n> 文档依据：https://datatracker.ietf.org/doc/html/rfc3986#section-2.1",
+    "purpose": "还原 URL 里被百分号编码的中文、空格与特殊字符。",
+    "category": "text",
+    "tags": ["urldecode", "百分号解码", "rfc3986"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "string", "label": "待解码字符串", "description": "含 %XX 转义的文本", "required": true, "default": "", "example": "hello%20world" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "hello%20world → hello world",
+    "source": "https://datatracker.ietf.org/doc/html/rfc3986#section-2.1"
+  },
+  {
+    "tool": "telnet",
+    "title": "telnet：Telnet 客户端（PuTTY 内核的明文远程终端）",
+    "command": "telnet {{host}} {{port}}",
+    "description": "经典 Telnet 客户端（RFC 854：TCP 之上的 NVT 虚拟终端，端口缺省 23）：连网络设备 Console、手敲 SMTP/HTTP 协议验证、查/banner 抓取的直连工具。本项目实现为 PuTTY 内核封装的 GNU/inetutils 风格参数面。\n\n**语法**\n```text\ntelnet [选项] [主机 [端口]]\n```\n端口可写十进制数字或服务名（如 smtp），缺省 23；也支持 `user@host` 形式。\n\n**常用选项**\n- `-4` / `-6`：强制 IPv4 / IPv6 地址族\n- `-l <user>`：携带用户名（作为 USER 选项供给对方）\n- `-a`：自动登录（尝试带本地用户名）；`-K`：禁自动登录\n- `-8` / `-E` / `-d`：BSD telnet 兼容旗标（接受；PuTTY 恒 8 位、无转义机制、无调试开关）\n- `-b <alias>`：telnetrc 别名（本实现无 telnetrc，接受并忽略）\n- `--`：结束选项解析\n\n**示例**\n```bash\ntelnet 10.0.0.5\ntelnet mail.example.com smtp\ntelnet -4 -l admin 10.0.0.5\n```\n\n**注意**\n- 本项目 telnet 由 PuTTY 0.85 开发版内核（telnet 后端 + plink 控制台会话循环）封装：`-e` 转义字符机制不存在（传入会告警忽略），结束会话发 EOF（Ctrl-D）或直接关终端。\n- Telnet 全程明文（含口令），跨不可信网络一律改用 SSH；交换机带外 Console 与内网协议手测仍是它的主场。\n\n> 文档依据：https://tools.ietf.org/html/rfc854",
+    "purpose": "直连设备 Console 口或手敲明文协议（SMTP/HTTP）做连通验证。",
+    "category": "network",
+    "tags": ["telnet", "远程终端", "协议调试"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "host", "label": "目标主机", "description": "主机名或 IP", "required": true, "default": "", "example": "10.0.0.5" },
+      { "name": "port", "label": "端口", "description": "十进制端口号或服务名，缺省 23", "required": false, "default": "23", "example": "23" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://tools.ietf.org/html/rfc854"
+  },
+  {
+    "tool": "b2sum",
+    "title": "b2sum：BLAKE2b 校验和（默认 512 位，快且安全）",
+    "command": "b2sum {{file}}",
+    "description": "b2sum 计算文件的 BLAKE2b 摘要（默认 512 位）：比 MD5/SHA 家族更快且抗碰撞强度高，是新版校验清单的推荐算法。也支持 `-c` 按清单校验。\n\n**语法**\n```text\nb2sum [选项] [文件]...     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-c, --check`：从清单文件读「摘要 文件名」逐个校验\n- `-l, --length=BITS`：摘要位数（8 的倍数，默认 512；--check 时按清单自动识别、忽略该值）\n- `--tag`：BSD 风格带算法名的输出格式\n- `--strict`：校验时遇格式非法的行，警告后以非零退出\n- `--status`：静默校验，只以退出码表达结果\n- `-w, --warn`：对格式不当的校验行告警\n- `-z, --zero`：行尾以 NUL 结尾（文件名含换行时用）\n- `--ignore-missing` / `--quiet`：清单缺文件不报错 / 不逐行打印 OK\n\n**示例**\n```bash\nb2sum iso.img > iso.b2\nb2sum -c iso.b2\nb2sum -l 256 data.bin\n```\n\n**注意**\n- 非带标签（untagged）输出格式与 md5sum 家族同构：摘要 + 两个空格 + 文件名，可直接互相拼清单工具链。\n- BLAKE2b 单向哈希，仅用于完整性校验，不加密数据。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/b2sum-invocation.html",
+    "purpose": "为大文件生成高强度校验和，或校验下载/传输后的完整性。",
+    "category": "text",
+    "tags": ["b2sum", "校验和", "blake2b"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要计算摘要的文件", "required": true, "default": "", "example": "iso.img" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/b2sum-invocation.html"
+  },
+  {
+    "tool": "base32",
+    "title": "base32：Base32 编解码（RFC 4648 标准字母表）",
+    "command": "base32 {{file}}",
+    "description": "把二进制数据编成 Base32 可打印 ASCII（RFC 4648 标准字母表 A-Z 与 2-7，5 字节编 8 字符）：适合禁用大小写混淆敏感、字符集受限的通道。跨平台命令，本项目由 uutils 提供（GNU 兼容）。\n\n**语法**\n```text\nbase32 [选项] [文件]     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-d, --decode`：解码模式（输入 Base32 文本，输出原始字节）\n- `-i, --ignore-garbage`：解码时跳过非字母表字符（换行永远接受）\n- `-w, --wrap=COLS`：编码输出按 COLS 列折行（默认 76，0 不折行）\n- `--help`：帮助\n\n**示例**\n```bash\nbase32 file.bin > file.b32\nbase32 -d file.b32 > file.bin\nbase32 -w0 secret.key\n```\n\n**注意**\n- 字母表刻意排除 0/1（防与 O/I 混淆）；扩展十六进制变体（0-9A-V，位运算保序）见本项目 `base32hex` 命令，二者输出不互换。\n- 体积膨胀约 160%，大于 Base64 的 133%。\n- 解码遇非法字符默认报错退出，`-i` 跳过无法识别的字节。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/base32-invocation.html",
+    "purpose": "在字符集受限（仅大写字母数字）的通道传递二进制数据。",
+    "category": "text",
+    "tags": ["base32", "编码解码", "rfc4648"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "输入文件", "description": "待编码文件（或解码时的 Base32 文本）", "required": true, "default": "", "example": "file.bin" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "foobar 的 base32 编码：MZXW6YTBOI======",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/base32-invocation.html"
+  },
+  {
+    "tool": "base64",
+    "title": "base64：Base64 编解码（RFC 4648 标准）",
+    "command": "base64 {{file}}",
+    "description": "最常用的二进制可打印编码：3 字节编 4 字符（体积约 133%），字母表为 A-Z、a-z、0-9、+、/ 与填充 =。跨平台命令，本项目由 uutils 提供（GNU 兼容）。\n\n**语法**\n```text\nbase64 [选项] [文件]     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-d, --decode`：解码模式（输入 Base64 文本，输出原始字节）\n- `-i, --ignore-garbage`：解码时跳过非字母表字符（换行永远接受）\n- `-w, --wrap=COLS`：编码折行列宽（默认 76，0 不折行——单行场景必用）\n- `--help`：帮助\n\n**示例**\n```bash\nbase64 -w0 image.png > image.b64\nbase64 -d image.b64 > image.png\nbase64 config.json\n```\n\n**注意**\n- URL/文件名安全变体（+ 与 / 换成 - 与 _）见本项目 `base64url` 命令；两者不可互解。\n- 解码默认对非法字符报错，`-i` 才跳过；邮件 MIME 里的折行文本可直接解码（换行无条件接受）。\n- 编码不提供任何保密性（RFC 4648 安全注意事项）。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/base64-invocation.html",
+    "purpose": "把二进制文件转成文本通道可传的 Base64，或还原之。",
+    "category": "text",
+    "tags": ["base64", "编码解码", "rfc4648"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "输入文件", "description": "待编码文件（或解码时的 Base64 文本）", "required": true, "default": "", "example": "image.png" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "foobar 的 base64 编码：Zm9vYmFy",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/base64-invocation.html"
+  },
+  {
+    "tool": "cksum",
+    "title": "cksum：CRC 校验与算法可选的统一校验入口",
+    "command": "cksum {{file}}",
+    "description": "cksum 默认计算 POSIX 规定的 32 位 CRC 校验和（附文件字节数）；`-a` 可切换 md5/sha256/blake2b 等摘要算法，GNU 手册推荐它作为各类校验工具的统一现代入口（md5sum 等属 legacy 接口）。\n\n**语法**\n```text\ncksum [选项] [文件]...     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-a, --algorithm=ALGO`：sysv / bsd / crc / md5 / sha1 / sha224 / sha256 / sha384 / sha512 / sm3 / blake2b / blake2s\n- `-c, --check`：按清单校验（自动识别清单里的算法与格式）\n- `--tag`：带算法名的 BSD 风格输出；`--untagged`：md5sum 风格裸摘要\n- `--strict`：清单里有非法行则以非零退出\n- `--status`：静默校验只看退出码；`--quiet`：不逐行打印 OK\n- `--ignore-missing`：清单缺文件不报错\n- `-z, --zero`：行尾 NUL 分隔\n\n**示例**\n```bash\ncksum data.bin\ncksum -a sha256 file.iso\ncksum -a sha256 --check SHA256SUMS\n```\n\n**注意**\n- CRC 只能发现意外损坏，不抗人为篡改；安全场景用 `-a sha256` 或 `-a blake2b`。\n- GNU 的默认输出是带算法名的 tagged 格式；`cksum -a md5 --untagged` 即可模拟 md5sum 输出。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/cksum-invocation.html",
+    "purpose": "快速出文件校验值，或用统一入口跑任意摘要算法校验。",
+    "category": "text",
+    "tags": ["cksum", "crc", "校验和"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要校验的文件", "required": true, "default": "", "example": "data.bin" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/cksum-invocation.html"
+  },
+  {
+    "tool": "md5sum",
+    "title": "md5sum：MD5 摘要计算与校验（128 位）",
+    "command": "md5sum {{file}}",
+    "description": "md5sum 计算文件（或标准输入）的 128 位 MD5 摘要：32 个十六进制字符，输出格式为「摘要 + 两个空格 + 文件名」，`-c` 可按清单批量校验。\n\n**语法**\n```text\nmd5sum [选项] [文件]...     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-c, --check`：读清单文件逐个校验（支持本命令及 BSD 两种格式）\n- `--tag`：BSD 风格输出（MD5 (file) = digest）\n- `--strict`：校验遇格式非法行则非零退出\n- `--status`：静默校验，仅以退出码表达\n- `-w, --warn`：对格式不当行告警\n- `--ignore-missing` / `--quiet`：缺文件不报错 / 不打印逐行 OK\n- `-z, --zero`：NUL 分隔输出\n\n**示例**\n```bash\nmd5sum release.zip > release.md5\nmd5sum -c release.md5\nmd5sum -c --quiet release.md5\n```\n\n**注意**\n- MD5 已能被人为构造碰撞（GNU 手册明确提醒），仅用于意外损坏检查与去重；防篡改校验请用 sha256sum/b2sum。\n- GNU 手册将 md5sum 视作 cksum 的 legacy 接口；清单文件末尾多余的空行是常见校验失败原因。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/md5sum-invocation.html",
+    "purpose": "给文件算 MD5 或按 .md5 清单验证下载完整性。",
+    "category": "text",
+    "tags": ["md5sum", "校验和", "md5"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要计算摘要的文件", "required": true, "default": "", "example": "release.zip" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/md5sum-invocation.html"
+  },
+  {
+    "tool": "sha1sum",
+    "title": "sha1sum：SHA-1 摘要计算与校验（160 位）",
+    "command": "sha1sum {{file}}",
+    "description": "sha1sum 计算文件的 160 位 SHA-1 摘要（40 个十六进制字符），`-c` 按清单校验。大量旧系统（Git 对象、老版本校验清单）仍以 SHA-1 为基准。\n\n**语法**\n```text\nsha1sum [选项] [文件]...     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-c, --check`：按清单校验\n- `--tag`：BSD 风格输出\n- `--strict`：格式非法行导致非零退出\n- `--status`：静默校验只看退出码\n- `-w, --warn`：格式告警\n- `--ignore-missing` / `--quiet`：缺文件不报错 / 静默 OK\n- `-z, --zero`：NUL 分隔\n\n**示例**\n```bash\nsha1sum backup.tar > backup.sha1\nsha1sum -c backup.sha1\nsha1sum file.dat\n```\n\n**注意**\n- SHA-1 已出现实际碰撞攻击（不再具抗碰撞安全性），新校验清单请用 SHA-256/BLAKE2b；SHA-1 只为兼容既有体系保留。\n- 与 md5sum 家族同构的清单格式与退出码语义，脚本可无缝替换。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/sha1sum-invocation.html",
+    "purpose": "对接仍用 SHA-1 清单的旧系统做文件完整性核对。",
+    "category": "text",
+    "tags": ["sha1sum", "校验和", "sha1"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要计算摘要的文件", "required": true, "default": "", "example": "backup.tar" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/sha1sum-invocation.html"
+  },
+  {
+    "tool": "sha224sum",
+    "title": "sha224sum：SHA-224 摘要计算与校验（SHA-2 家族 224 位）",
+    "command": "sha224sum {{file}}",
+    "description": "sha224sum 计算文件的 SHA-224 摘要（56 个十六进制字符）：SHA-2 家族的截断变体，见于部分证书与协议规范约定的摘要长度。\n\n**语法**\n```text\nsha224sum [选项] [文件]...     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-c, --check`：按清单校验\n- `--tag`：BSD 风格输出\n- `--strict`：格式非法行导致非零退出\n- `--status`：静默校验只看退出码\n- `-w, --warn`：格式告警\n- `--ignore-missing` / `--quiet`：缺文件不报错 / 静默 OK\n- `-z, --zero`：NUL 分隔\n\n**示例**\n```bash\nsha224sum cert.der > cert.sha224\nsha224sum -c cert.sha224\nsha224sum config.yaml\n```\n\n**注意**\n- SHA-224 是 SHA-256 的截断形态，安全性与 SHA-256 同代；日常校验更常用 sha256sum，本命令主要对接明确约定 224 位的规范。\n- 输出/清单格式与 sha256sum 等同构（摘要 + 两空格 + 文件名）。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/sha224sum-invocation.html",
+    "purpose": "按规范要求生成或校验 224 位 SHA-2 摘要。",
+    "category": "text",
+    "tags": ["sha224sum", "校验和", "sha2"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要计算摘要的文件", "required": true, "default": "", "example": "cert.der" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/sha224sum-invocation.html"
+  },
+  {
+    "tool": "sha256sum",
+    "title": "sha256sum：SHA-256 摘要计算与校验（256 位，完整性校验主力）",
+    "command": "sha256sum {{file}}",
+    "description": "sha256sum 计算文件的 SHA-256 摘要（64 个十六进制字符）：当前发布物完整性校验的事实标准，官方镜像普遍发布 SHA256SUMS 清单供下载后核对。\n\n**语法**\n```text\nsha256sum [选项] [文件]...     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-c, --check`：按清单校验（如 `sha256sum -c SHA256SUMS`）\n- `--tag`：BSD 风格输出\n- `--strict`：格式非法行导致非零退出\n- `--status`：静默校验只看退出码（CI 判断常用）\n- `-w, --warn`：对格式不当行告警\n- `--ignore-missing` / `--quiet`：缺文件不报错 / 静默 OK\n- `-z, --zero`：NUL 分隔\n\n**示例**\n```bash\nsha256sum ubuntu.iso > SHA256SUMS\nsha256sum -c SHA256SUMS\nsha256sum -c --status SHA256SUMS && echo OK\n```\n\n**注意**\n- 多文件清单把「摘要 + 两空格 + 相对路径」逐行排列；校验要在清单所在目录执行，路径对不上是最常见失败原因。\n- 退出码 0 全部匹配；有读不到/不匹配/无有效行则非零，可直接作脚本判据。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/sha256sum-invocation.html",
+    "purpose": "核对官方 SHA256SUMS 清单或给自己的发布物生成校验清单。",
+    "category": "text",
+    "tags": ["sha256sum", "校验和", "完整性校验"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要计算摘要的文件", "required": true, "default": "", "example": "ubuntu.iso" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/sha256sum-invocation.html"
+  },
+  {
+    "tool": "sha384sum",
+    "title": "sha384sum：SHA-384 摘要计算与校验（SHA-2 家族 384 位）",
+    "command": "sha384sum {{file}}",
+    "description": "sha384sum 计算文件的 SHA-384 摘要（96 个十六进制字符）：SHA-2 家族的中间档截断变体，常见于证书签名算法与 TLS 套件约定的摘要长度。\n\n**语法**\n```text\nsha384sum [选项] [文件]...     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-c, --check`：按清单校验\n- `--tag`：BSD 风格输出\n- `--strict`：格式非法行导致非零退出\n- `--status`：静默校验只看退出码\n- `-w, --warn`：格式告警\n- `--ignore-missing` / `--quiet`：缺文件不报错 / 静默 OK\n- `-z, --zero`：NUL 分隔\n\n**示例**\n```bash\nsha384sum tls.crt > tls.sha384\nsha384sum -c tls.sha384\nsha384sum payload.bin\n```\n\n**注意**\n- SHA-384 是 SHA-512 的截断形态（安全裕度同代）；日常文件校验主力是 sha256sum，本命令用于对接约定 384 位摘要的协议/证书场景。\n- 输出与校验清单格式与 sha 家族其余命令同构。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/sha384sum-invocation.html",
+    "purpose": "生成或校验协议/证书场景要求的 384 位 SHA-2 摘要。",
+    "category": "text",
+    "tags": ["sha384sum", "校验和", "sha2"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要计算摘要的文件", "required": true, "default": "", "example": "tls.crt" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/sha384sum-invocation.html"
+  },
+  {
+    "tool": "sha512sum",
+    "title": "sha512sum：SHA-512 摘要计算与校验（512 位，最高安全裕度）",
+    "command": "sha512sum {{file}}",
+    "description": "sha512sum 计算文件的 SHA-512 摘要（128 个十六进制字符）：SHA-2 家族全长变体，64 位平台上的吞吐表现好，要高安全裕度的归档校验常用它。\n\n**语法**\n```text\nsha512sum [选项] [文件]...     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-c, --check`：按清单校验\n- `--tag`：BSD 风格输出\n- `--strict`：格式非法行导致非零退出\n- `--status`：静默校验只看退出码\n- `-w, --warn`：格式告警\n- `--ignore-missing` / `--quiet`：缺文件不报错 / 静默 OK\n- `-z, --zero`：NUL 分隔\n\n**示例**\n```bash\nsha512sum archive.tar.zst > archive.sha512\nsha512sum -c archive.sha512\nsha512sum vm-disk.qcow2\n```\n\n**注意**\n- 与 SHA-256 同属 SHA-2、强度都足够；选 512 通常是清单规范或高裕度约定，日常二选一即可。\n- 大文件哈希耗时与磁盘读速相关，`--status` 配合退出码适合自动化脚本。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/sha512sum-invocation.html",
+    "purpose": "给归档/虚拟机镜像等大文件生成高裕度校验和并校验。",
+    "category": "text",
+    "tags": ["sha512sum", "校验和", "sha2"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要计算摘要的文件", "required": true, "default": "", "example": "archive.tar.zst" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/sha512sum-invocation.html"
+  },
+  {
+    "tool": "sum",
+    "title": "sum：传统 16 位校验和（BSD/System V 兼容）",
+    "command": "sum {{file}}",
+    "description": "sum 计算传统 16 位校验和并附块数统计：默认 BSD 算法（1024 字节块），`-s` 切 System V 算法（512 字节块）。为兼容上古系统保留，GNU 手册建议新用途一律改 cksum。\n\n**语法**\n```text\nsum [选项] [文件]...     # 无文件或 - 时读标准输入\n```\n\n**常用选项**\n- `-s, --sysv`：System V 算法 + 512 字节块计数\n- `-r`：恢复默认 BSD 算法（仅为与 System V 的 sum 兼容而存在；跟在 -s 后可切回）\n- `--help` / `--version`：帮助与版本\n\n**示例**\n```bash\nsum legacy.dat\nsum -s legacy.dat\ntype files.txt | sum\n```\n\n**注意**\n- 输出为「校验和 + 块数 + 文件名」三段；16 位校验和非常弱，仅当对端系统只认这个格式时才用。\n- 现代校验一律用 cksum / sha256sum / b2sum；sum 与它们的结果没有任何对应关系。\n\n> 文档依据：https://www.gnu.org/software/coreutils/manual/html_node/sum-invocation.html",
+    "purpose": "对接只认 BSD/System V 16 位校验和的老系统核对文件。",
+    "category": "text",
+    "tags": ["sum", "校验和", "legacy"],
+    "platforms": ["win"],
+    "params": [
+      { "name": "file", "label": "文件", "description": "要校验的文件", "required": true, "default": "", "example": "legacy.dat" }
+    ],
+    "dangerLevel": "safe",
+    "exampleOutput": "",
+    "source": "https://www.gnu.org/software/coreutils/manual/html_node/sum-invocation.html"
+  }
+]
