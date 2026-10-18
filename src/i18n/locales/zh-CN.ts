@@ -87,6 +87,10 @@ export default {
     empty: '还没有中继配置——新建后，主机表单与 ZK 页可直接下拉选择',
     deleteTitle: '删除中继配置',
     deleteConfirm: '确定删除「{{name}}」？引用它的主机/ZK 连接将退回手动配置。',
+    test: '测试连接',
+    testing: '测试中…',
+    testOk: '可达（{{ms}} ms）',
+    testFailed: '不可达',
   },
   zkHosts: {
     summary: '共 {{total}} 个 ZK 主机',

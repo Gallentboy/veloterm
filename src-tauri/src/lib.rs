@@ -79,6 +79,7 @@ pub fn run() {
             relays::relay_list,
             relays::relay_save,
             relays::relay_delete,
+            relays::relay_test,
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,
             zk_hosts::zk_host_delete,

@@ -31,3 +31,8 @@ export function relaySave(record: RelayConfig): Promise<RelayConfig> {
 export function relayDelete(id: number): Promise<void> {
   return invoke('relay_delete', { id });
 }
+
+/** 测试连接：真实 VLR3 握手探测（可达 + 鉴权 + 传输全验证），返回耗时毫秒。 */
+export function relayTest(record: RelayConfig): Promise<number> {
+  return invoke('relay_test', { record });
+}
