@@ -16,7 +16,7 @@
 // 未指定 target 时取 rustc 默认 host triple。
 
 import { execSync, execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, existsSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, existsSync, rmSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -523,18 +523,16 @@ const sdkDir = join(nmapBuild, 'npcap-sdk');
 const sdkInclude = join(sdkDir, 'Include', 'pcap.h');
 if (!existsSync(sdkInclude)) {
   const NPCAP_SDK_VER = '1.16';
-  const zip = join(nmapBuild, 'npcap-sdk.zip');
-  console.log(`[build-tools] 下载 Npcap SDK ${NPCAP_SDK_VER}`);
-  // npcap.com 的服务器证书屡次过期（官方续证延迟，CI 实测 SEC_E_CERT_EXPIRED
-  // 挂过整条 publish），正常校验失败时带 -k 回退重试：SDK 只是 wpcap/packet 的
-  // 导入库桩与头文件（见上注），篡改面极小；官网续证后回退分支不再命中。
-  const sdkUrl = `https://npcap.com/dist/npcap-sdk-${NPCAP_SDK_VER}.zip`;
-  try {
-    execSync(`curl.exe -fsSL -o "${zip}" "${sdkUrl}"`, { stdio: 'inherit' });
-  } catch {
-    console.warn('[build-tools] npcap.com 证书校验失败，跳过校验重试（官网证书过期）');
-    execSync(`curl.exe -kfsSL -o "${zip}" "${sdkUrl}"`, { stdio: 'inherit' });
+  // SDK zip 随仓库 vendor（337KB）：npcap.com 的服务器证书屡次过期（官方续证
+  // 延迟，CI 实测 SEC_E_CERT_EXPIRED 挂过整条 publish），构建不再依赖该站点。
+  const vendoredZip = join(root, 'src-tauri', 'vendor', 'nmap', `npcap-sdk-${NPCAP_SDK_VER}.zip`);
+  if (!existsSync(vendoredZip)) {
+    console.error(`[build-tools] 缺少 vendor 内的 Npcap SDK：${vendoredZip}`);
+    process.exit(1);
   }
+  const zip = join(nmapBuild, 'npcap-sdk.zip');
+  console.log(`[build-tools] 解包仓库内 Npcap SDK ${NPCAP_SDK_VER}`);
+  copyFileSync(vendoredZip, zip);
   mkdirSync(sdkDir, { recursive: true });
   execSync(
     `powershell -NoProfile -Command "Expand-Archive -LiteralPath '${zip}' -DestinationPath '${sdkDir}' -Force"`,
