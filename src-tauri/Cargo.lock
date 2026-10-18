@@ -234,7 +234,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1884,7 +1884,7 @@ dependencies = [
 
 [[package]]
 name = "coreutils"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bat-app",
  "bc-app",
@@ -12001,7 +12001,7 @@ dependencies = [
 
 [[package]]
 name = "tools-catalog"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "tower"
@@ -13880,7 +13880,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "veloterm-relay"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -13901,7 +13901,7 @@ dependencies = [
 
 [[package]]
 name = "veloterm-relay-proto"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.3.4",

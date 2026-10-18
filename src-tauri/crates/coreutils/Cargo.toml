@@ -1,6 +1,6 @@
 [package]
 name = "coreutils"
-version = "0.1.0"
+version = "1.0.0"
 description = "VeloTerm built-in Unix toolset (BusyBox multicall binary)"
 edition = "2024"
 rust-version = "1.90"

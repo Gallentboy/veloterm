@@ -1,6 +1,6 @@
 [package]
 name = "tools-catalog"
-version = "0.1.0"
+version = "1.0.0"
 description = "VeloTerm built-in toolset catalog: single source of truth for command names"
 edition = "2024"
 rust-version = "1.90"
