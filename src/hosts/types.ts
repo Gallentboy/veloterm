@@ -23,7 +23,8 @@ export type SshHostKeyVerificationMode = 'auto_accept' | 'auto_reject' | 'ignore
 /** 中继入站传输类型（对齐后端 `RelayTransport`，veloterm_relay 的监听协议） */
 export type RelayTransport = 'tcp' | 'ws' | 'quic';
 
-/** SSH 中继配置（veloterm_relay）：有值时该主机经中继连接（首跳传输替换） */
+/** SSH 中继配置（veloterm_relay）：有值时该主机经中继连接（首跳传输替换）。
+ *  目标无需配置：客户端自动携带所连主机地址作为中继目标 */
 export interface SshRelayEndpoint {
   /** 中继服务器地址 */
   host: string;
@@ -33,8 +34,6 @@ export interface SshRelayEndpoint {
   keyId: number;
   /** 32 字节十六进制 secret（veloterm_relay token generate 生成） */
   secret: string;
-  /** 显式目标 host:port（需在中继 allow_targets 白名单内）；缺省走中继默认目标 */
-  target?: string | null;
 }
 
 export interface GroupNode {

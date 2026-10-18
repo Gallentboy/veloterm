@@ -27,8 +27,9 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const QUIC_ALPN: &[u8] = b"veloterm-relay";
 
 /// 经中继建立到 `ssh_endpoint` 的已握手流。
-/// 目标选择：`relay.target` 显式指定（需在中继 allow_targets 白名单内）；
-/// 不指定则客户端不带 target，由中继按其默认目标路由（服务端 target 配置）。
+/// 目标恒为 `ssh_endpoint`（所连主机的地址，由调用方从主机配置推导）——
+/// 用户只需配置中继服务器本身，无需在任何地方重复填目标。
+/// 中继侧 allow_targets 白名单（可选）生效于此；未配白名单即开放中继。
 pub async fn dial_relay(
     relay: &SshRelayEndpoint,
     ssh_endpoint: &TargetAddr,
@@ -36,12 +37,7 @@ pub async fn dial_relay(
     let secret = Secret::from_hex(relay.secret.trim()).map_err(|e| {
         format!("中继 secret 非法（{e}）：需 veloterm_relay token generate 生成的 64 位十六进制")
     })?;
-    let target: Option<TargetAddr> = match &relay.target {
-        Some(t) => Some(TargetAddr::parse(t).map_err(|e| format!("中继 target \"{t}\" 非法: {e}"))?),
-        None => None,
-    };
-    // ssh_endpoint 仅用于日志与校验链首存在性；显式 target 缺省时不发送
-    let _ = ssh_endpoint;
+    let target = Some(ssh_endpoint.clone());
 
     match relay.transport {
         RelayTransport::Tcp => {
