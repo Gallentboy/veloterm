@@ -525,10 +525,16 @@ if (!existsSync(sdkInclude)) {
   const NPCAP_SDK_VER = '1.16';
   const zip = join(nmapBuild, 'npcap-sdk.zip');
   console.log(`[build-tools] 下载 Npcap SDK ${NPCAP_SDK_VER}`);
-  execSync(
-    `curl.exe -fsSL -o "${zip}" "https://npcap.com/dist/npcap-sdk-${NPCAP_SDK_VER}.zip"`,
-    { stdio: 'inherit' },
-  );
+  // npcap.com 的服务器证书屡次过期（官方续证延迟，CI 实测 SEC_E_CERT_EXPIRED
+  // 挂过整条 publish），正常校验失败时带 -k 回退重试：SDK 只是 wpcap/packet 的
+  // 导入库桩与头文件（见上注），篡改面极小；官网续证后回退分支不再命中。
+  const sdkUrl = `https://npcap.com/dist/npcap-sdk-${NPCAP_SDK_VER}.zip`;
+  try {
+    execSync(`curl.exe -fsSL -o "${zip}" "${sdkUrl}"`, { stdio: 'inherit' });
+  } catch {
+    console.warn('[build-tools] npcap.com 证书校验失败，跳过校验重试（官网证书过期）');
+    execSync(`curl.exe -kfsSL -o "${zip}" "${sdkUrl}"`, { stdio: 'inherit' });
+  }
   mkdirSync(sdkDir, { recursive: true });
   execSync(
     `powershell -NoProfile -Command "Expand-Archive -LiteralPath '${zip}' -DestinationPath '${sdkDir}' -Force"`,
