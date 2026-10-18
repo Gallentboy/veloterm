@@ -108,6 +108,45 @@ pub fn parse_toml(text: &str) -> anyhow::Result<FileConfig> {
     toml::from_str(text).context("配置文件解析失败")
 }
 
+/// init 生成的配置模板（tcp 默认启用，ws/quic 注释待启）。
+/// 收敛到 config 模块：main 的 `init` 子命令与 install 的「现场生成配置」共用同一份。
+pub fn init_template(secret_hex: &str) -> String {
+    format!(
+        r####"# veloterm_relay 配置（init 生成）｜校验：veloterm_relay --check｜文档：relay/README.md
+# 目标无需配置：客户端自动携带所连主机地址；allow_targets 为可选白名单
+
+[relay]
+# max_conns = 4096              # 全局并发上限
+# handshake_timeout_secs = 10   # VLR2 握手超时（秒）
+
+# 凭证：每台设备一条，泄露单独删段即吊销（veloterm_relay token generate 可再加）
+[[token]]
+key_id = 1
+name  = "device-1"
+secret = "{secret_hex}"
+
+# ── 监听器：默认启用 tcp；ws/quic 去掉每行行首 "# " 即启用 ──────────────
+
+[[listener]]
+proto = "tcp"
+bind = "0.0.0.0:7300"
+# allow_targets = ["10.0.0.5:22", "linux1.internal:22"]   # 可选：限制凭证可达目标
+
+# ── WebSocket：出口只放行 HTTP(S)、经 Nginx 等反代转 wss 时启用 ────────
+# [[listener]]
+# proto = "ws"
+# bind = "0.0.0.0:7301"
+
+# ── QUIC：公网推荐（内建 TLS 1.3，未配证书自动自签并把指纹打进日志）────
+# [[listener]]
+# proto = "quic"
+# bind = "0.0.0.0:7302"
+# cert = "/path/to/cert.pem"   # 可选；不配则启动自签
+# key  = "/path/to/key.pem"
+"####
+    )
+}
+
 impl FileConfig {
     pub fn resolve(self) -> anyhow::Result<ResolvedConfig> {
         if self.token.is_empty() {
