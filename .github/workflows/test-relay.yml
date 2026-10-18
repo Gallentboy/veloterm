@@ -2,8 +2,9 @@
 # 验证与部署产物——cargo test 全量 + clippy 零警告 + 四目标静态构建：
 #   · linux  x86_64（ubuntu-latest）/ aarch64（ubuntu-24.04-arm 原生 ARM runner）
 #     均为 musl 静态，glibc 无关随处可跑；两架构原生跑全量测试与冒烟
-#   · win    x64 / arm64（windows-latest 出包，+crt-static 静态 CRT——
-#     终端机器无需 VC 运行库；arm64 交叉构建不执行）
+#   · win    x64（windows-latest）/ arm64（windows-11-arm 原生 ARM64 runner）
+#     均 +crt-static 静态 CRT（终端机器无需 VC 运行库），两目标原生跑冒烟
+#     （dumpbin 依赖表断言无 VCRUNTIME / api-ms-win-crt）
 # 触发：推 tag（验证完删除）——
 #   git tag test_relay && git push origin test_relay
 #   git push origin :refs/tags/test_relay
@@ -88,13 +89,13 @@ jobs:
       matrix:
         include:
           - target: x86_64-pc-windows-msvc
+            runner: windows-latest
             msvc_arch: x64
-            run_smoke: true
           - target: aarch64-pc-windows-msvc
-            # ARM64 交叉（x64 主机经 vcvars amd64_arm64），无法执行仅构建
-            msvc_arch: amd64_arm64
-            run_smoke: false
-    runs-on: windows-latest
+            # 原生 ARM64 Windows runner：构建与冒烟均原生执行
+            runner: windows-11-arm
+            msvc_arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
 
@@ -121,8 +122,7 @@ jobs:
         run: cargo build --release -p veloterm-relay --target ${{ matrix.target }}
         shell: cmd
 
-      - name: Smoke test binary (x64)
-        if: matrix.run_smoke
+      - name: Smoke test binary (crt-static)
         shell: cmd
         run: |
           set BIN=relay\target\${{ matrix.target }}\release\veloterm_relay.exe
