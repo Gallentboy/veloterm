@@ -6,7 +6,6 @@ import {
   FilePlus,
   Loader2,
   Network,
-  Plus,
   RefreshCw,
   Trash2,
   Unplug,
@@ -38,6 +37,7 @@ import {
 import { relayList, type RelayConfig } from '@/services/relayConfigService';
 import { zkHostList, type ZkHostRecord } from '@/services/zkHostsService';
 import { parseGrpcServiceUrl, type GrpcCallSeed } from '@/services/grpcService';
+import { NewSessionMenu } from '@/components/NewSessionMenu';
 import { cn } from '@/lib/utils';
 
 interface TreeNode {
@@ -68,7 +68,8 @@ interface ZkTab {
 }
 
 /** ZooKeeper 管理页：多 tab 外壳（会话视图常驻，切页/切 tab 状态均保留）。
- * tab 双击重命名；关 tab = 断开会话；加号新建连接。 */
+ * tab 双击重命名；关 tab = 断开会话；加号下拉选已保存主机连接（同终端页，
+ * 也可选手动连接开空 tab）；起始无 tab（空态文案，不预建连接）。 */
 export function ZkScreen({
   isVisible = true,
   onOpenGrpcCall,
@@ -78,13 +79,25 @@ export function ZkScreen({
   onOpenGrpcCall?: (seed: GrpcCallSeed) => void;
 }) {
   const { t } = useTranslation();
-  const [tabs, setTabs] = useState<ZkTab[]>([
-    { key: 1, customTitle: null, baseTitle: null, pendingHost: null },
-  ]);
-  const [activeKey, setActiveKey] = useState(1);
-  const nextKeyRef = useRef(2);
+  const [tabs, setTabs] = useState<ZkTab[]>([]);
+  const [activeKey, setActiveKey] = useState(0);
+  const nextKeyRef = useRef(1);
   const [renamingKey, setRenamingKey] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  // 主机库（+ 下拉选项）：挂载时加载一次，新建 tab 时刷新（刚保存的主机可选）
+  const [savedHosts, setSavedHosts] = useState<ZkHostRecord[]>([]);
+
+  const reloadHosts = useCallback(() => {
+    void zkHostList()
+      .then(setSavedHosts)
+      .catch(() => {
+        // 库不可用时 + 退化为直接开空 tab（手动连接）
+      });
+  }, []);
+
+  useEffect(() => {
+    reloadHosts();
+  }, [reloadHosts]);
 
   const addTab = (host: ZkHostRecord | null = null) => {
     const key = nextKeyRef.current;
@@ -193,18 +206,29 @@ export function ZkScreen({
               </button>
             </div>
           ))}
-          <button
-            type="button"
-            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground"
-            onClick={() => addTab()}
+          {/* 加号 = 下拉选已保存主机连接（同终端页）；也可选手动连接开空 tab。
+              tab 栏容器 overflow-x-auto 会裁剪内联弹层，NewSessionMenu 内部
+              portal + fixed 定位（见其头注释） */}
+          <NewSessionMenu
             title={t('zk.newTab')}
-          >
-            <Plus className="size-4" />
-          </button>
+            localLabel={t('zk.manualConnect')}
+            onNewLocal={() => addTab()}
+            onDirectAction={() => addTab()}
+            hostSectionLabel={t('zk.savedHostsSection')}
+            hosts={savedHosts.map((h) => ({ id: h.id, name: h.name, username: '', host: h.endpoints }))}
+            renderHostLabel={(h) => `${h.name} · ${h.host}`}
+            onSelectHost={(hostId) => {
+              const host = savedHosts.find((h) => h.id === hostId);
+              if (host) {
+                addTab(host);
+                reloadHosts();
+              }
+            }}
+          />
         </div>
       </div>
 
-      {/* 会话视图（常驻隐藏，状态保留；卸载即断开会话）；新建入口只有 tab 栏的加号 */}
+      {/* 会话视图（常驻隐藏，状态保留；卸载即断开会话）；起始无 tab（空态不预建连接） */}
       {tabs.length === 0 ? (
         <div className="flex flex-1 items-center justify-center select-none">
           <span className="text-ui-sm text-foreground-subtlest">{t('zk.noTabs')}</span>

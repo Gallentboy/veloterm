@@ -165,6 +165,8 @@ export default {
     deleted: '已删除：{{path}}',
     refresh: '刷新',
     newTab: '新建连接',
+    manualConnect: '手动连接（手输地址）',
+    savedHostsSection: '已保存 ZK 主机',
     noTabs: '没有打开的 ZooKeeper 连接',
     relayPicker: '选择中继',
     relayPickPlaceholder: '未选择',

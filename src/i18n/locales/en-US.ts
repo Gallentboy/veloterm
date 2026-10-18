@@ -165,6 +165,8 @@ export default {
     deleted: 'Deleted: {{path}}',
     refresh: 'Refresh',
     newTab: 'New connection',
+    manualConnect: 'Manual connect (type address)',
+    savedHostsSection: 'Saved ZK hosts',
     noTabs: 'No open ZooKeeper connections',
     relayPicker: 'Pick relay',
     relayPickPlaceholder: 'Not selected',

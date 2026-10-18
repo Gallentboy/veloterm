@@ -69,9 +69,9 @@ interface GrpcTab {
  * （ZK 节点数据一键调用）都新开 tab。 */
 export function GrpcScreen() {
   const { t } = useTranslation();
-  const [tabs, setTabs] = useState<GrpcTab[]>([{ key: 1, customTitle: null, baseTitle: null, seed: null }]);
-  const [activeKey, setActiveKey] = useState(1);
-  const nextKeyRef = useRef(2);
+  const [tabs, setTabs] = useState<GrpcTab[]>([]);
+  const [activeKey, setActiveKey] = useState(0);
+  const nextKeyRef = useRef(1);
   const [renamingKey, setRenamingKey] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
