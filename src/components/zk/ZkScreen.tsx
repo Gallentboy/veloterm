@@ -265,6 +265,22 @@ function ZkSessionView({
 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 成功类提示 3 秒自动隐藏（新提示重置计时；卸载清 timer）
+  const noticeTimerRef = useRef<number | null>(null);
+  const showNotice = useCallback((text: string) => {
+    setNotice(text);
+    if (noticeTimerRef.current != null) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => {
+      setNotice(null);
+      noticeTimerRef.current = null;
+    }, 3000);
+  }, []);
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current != null) window.clearTimeout(noticeTimerRef.current);
+    },
+    [],
+  );
 
   const [nodes, setNodes] = useState<Map<string, TreeNode>>(new Map());
   const [searchQuery, setSearchQuery] = useState('');
@@ -458,7 +474,7 @@ function ZkSessionView({
     setTreeFullyLoaded(false);
     setDetail(null);
     onBaseTitle(null);
-    setNotice(t('zk.disconnected'));
+      showNotice(t('zk.disconnected'));
   };
 
   useEffect(() => {
@@ -491,7 +507,7 @@ function ZkSessionView({
         });
       } else if (msg.path === selected) {
         if (dirty || aclDirty) {
-          setNotice(t('zk.externallyChanged', { path: msg.path }));
+          showNotice(t('zk.externallyChanged', { path: msg.path }));
         } else {
           void selectNode(msg.sessionId, msg.path);
         }
@@ -722,7 +738,7 @@ function ZkSessionView({
     try {
       await zkSetData(sessionId, selected, draftData, draftEncoding, detail.stat.version);
       await selectNode(sessionId, selected);
-      setNotice(t('zk.dataSaved', { path: selected }));
+      showNotice(t('zk.dataSaved', { path: selected }));
     } catch (e) {
       setError(String(e));
     }
@@ -734,7 +750,7 @@ function ZkSessionView({
     try {
       await zkSetAcl(sessionId, selected, draftAcls, detail.stat.aversion);
       await selectNode(sessionId, selected);
-      setNotice(t('zk.aclSaved', { path: selected }));
+      showNotice(t('zk.aclSaved', { path: selected }));
     } catch (e) {
       setError(String(e));
     }
@@ -757,7 +773,7 @@ function ZkSessionView({
       setNewData('');
       setNewEphemeral(false);
       setNewSequential(false);
-      setNotice(t('zk.created', { path: res.createdPath }));
+      showNotice(t('zk.created', { path: res.createdPath }));
       // 刷新父节点并选中新节点
       await loadChildren(sessionId, selected);
       const parent = nodes.get(selected);
@@ -783,7 +799,7 @@ function ZkSessionView({
       const target = deleting;
       setDeleting(null);
       await zkDelete(sessionId, target);
-      setNotice(t('zk.deleted', { path: target }));
+      showNotice(t('zk.deleted', { path: target }));
       const parentPath = target.split('/').slice(0, -1).join('/') || '/';
       await loadChildren(sessionId, parentPath);
       await selectNode(sessionId, parentPath);
@@ -805,7 +821,7 @@ function ZkSessionView({
         await zkAuth(sessionId, authUser, authPass);
       }
       setAuthing(false);
-      setNotice(t('zk.authOk'));
+      showNotice(t('zk.authOk'));
     } catch (e) {
       setError(String(e));
     }
