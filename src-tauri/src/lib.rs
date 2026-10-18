@@ -9,6 +9,7 @@ pub mod editor_storage;
 pub mod lifecycle;
 pub mod logging;
 pub mod port_forward;
+pub mod relays;
 pub mod sftp;
 pub mod terminal;
 pub mod text_detect;
@@ -71,6 +72,9 @@ pub fn run() {
             zk::zk_set_acl,
             zk::zk_digest_id,
             zk::zk_auth,
+            relays::relay_list,
+            relays::relay_save,
+            relays::relay_delete,
             ai::ai_provider_list,
             ai::ai_provider_save,
             ai::ai_provider_delete,

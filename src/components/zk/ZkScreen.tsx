@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronRight,
   Database,
   FilePlus,
+  Plus,
   RefreshCw,
   Trash2,
   Unplug,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
@@ -31,6 +33,7 @@ import {
   type ZkNode,
 } from '@/services/zkService';
 import type { RelayTransport, SshRelayEndpoint } from '@/hosts/types';
+import { relayList, type RelayConfig } from '@/services/relayConfigService';
 import { cn } from '@/lib/utils';
 
 interface TreeNode {
@@ -51,13 +54,146 @@ function timeOf(ms: number): string {
   return new Date(ms).toLocaleString();
 }
 
-/** ZooKeeper 管理页：连接（直连/经中继）+ znode 树 + 数据/ACL 编辑。 */
-export function ZkScreen() {
+/** ZooKeeper 管理页：多 tab 外壳（会话视图常驻，切页/切 tab 状态均保留）。
+ * tab 双击重命名；关 tab = 断开会话；加号新建连接。 */
+export function ZkScreen({ isVisible = true }: { isVisible?: boolean }) {
+  const { t } = useTranslation();
+  const [tabs, setTabs] = useState<Array<{ key: number; customTitle: string | null; baseTitle: string | null }>>([
+    { key: 1, customTitle: null, baseTitle: null },
+  ]);
+  const [activeKey, setActiveKey] = useState(1);
+  const nextKeyRef = useRef(2);
+  const [renamingKey, setRenamingKey] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  const addTab = () => {
+    const key = nextKeyRef.current;
+    nextKeyRef.current += 1;
+    setTabs((current) => [...current, { key, customTitle: null, baseTitle: null }]);
+    setActiveKey(key);
+  };
+
+  const closeTab = (key: number) => {
+    setTabs((current) => {
+      const idx = current.findIndex((tab) => tab.key === key);
+      const next = current.filter((tab) => tab.key !== key);
+      if (key === activeKey) {
+        const neighbor = next[Math.min(idx, next.length - 1)];
+        setActiveKey(neighbor ? neighbor.key : 0);
+      }
+      return next;
+    });
+  };
+
+  const commitRename = () => {
+    if (renamingKey == null) return;
+    const key = renamingKey;
+    const value = renameValue.trim();
+    setTabs((current) =>
+      current.map((tab) => (tab.key === key ? { ...tab, customTitle: value.length > 0 ? value : null } : tab)),
+    );
+    setRenamingKey(null);
+  };
+
+  const setBaseTitle = (key: number, title: string | null) => {
+    setTabs((current) => current.map((tab) => (tab.key === key ? { ...tab, baseTitle: title } : tab)));
+  };
+
+  if (!isVisible && tabs.length === 0) {
+    // 不可见且无 tab：不渲染任何内容（避免后台空转）
+    return null;
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* tab 栏 */}
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/50 px-2">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {tabs.map((tab) => (
+            <div
+              key={tab.key}
+              className={cn(
+                'group/tab flex h-7 shrink-0 items-center gap-1 rounded-lg border px-2 transition-colors',
+                tab.key === activeKey
+                  ? 'border-border-hover bg-surface'
+                  : 'border-transparent text-foreground-subtle hover:bg-surface-hover',
+              )}
+              onClick={() => setActiveKey(tab.key)}
+              onDoubleClick={() => {
+                setRenamingKey(tab.key);
+                setRenameValue(tab.customTitle ?? tab.baseTitle ?? '');
+              }}
+            >
+              <Database className="size-3.5 shrink-0" />
+              {renamingKey === tab.key ? (
+                <input
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onBlur={commitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitRename();
+                    if (e.key === 'Escape') setRenamingKey(null);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-28 rounded border border-border bg-background px-1 text-ui-xs text-foreground outline-none"
+                />
+              ) : (
+                <span className="max-w-40 truncate text-ui-sm select-none">
+                  {tab.customTitle ?? tab.baseTitle ?? t('zk.newTab')}
+                </span>
+              )}
+              <button
+                type="button"
+                className="shrink-0 rounded p-0.5 text-foreground-subtlest opacity-0 transition-opacity group-hover/tab:opacity-100 hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTab(tab.key);
+                }}
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground"
+            onClick={addTab}
+            title={t('zk.newTab')}
+          >
+            <Plus className="size-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* 会话视图（常驻隐藏，状态保留；卸载即断开会话） */}
+      {tabs.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center gap-2 select-none">
+          <span className="text-ui-sm text-foreground-subtlest">{t('zk.noTabs')}</span>
+          <Button variant="outline" size="lg" className="h-7 px-2.5 text-ui-xs" onClick={addTab}>
+            {t('zk.newTab')}
+          </Button>
+        </div>
+      ) : (
+        tabs.map((tab) => (
+          <div key={tab.key} className={cn('flex min-h-0 flex-1 flex-col', tab.key !== activeKey && 'hidden')}>
+            <ZkSessionView onBaseTitle={(title) => setBaseTitle(tab.key, title)} />
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+/** 单个 ZK 连接视图：连接（直连/经中继）+ 树 + 数据/ACL 编辑，全部状态内部留存。 */
+function ZkSessionView({ onBaseTitle }: { onBaseTitle: (title: string | null) => void }) {
   const { t } = useTranslation();
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [endpoints, setEndpoints] = useState('127.0.0.1:2181');
   const [relayEnabled, setRelayEnabled] = useState(false);
+  const [relayConfigs, setRelayConfigs] = useState<RelayConfig[]>([]);
+  const [relayPickedId, setRelayPickedId] = useState<number | null>(null);
   const [relay, setRelay] = useState<SshRelayEndpoint>({
     host: '',
     port: 7300,
@@ -66,6 +202,25 @@ export function ZkScreen() {
     secret: '',
     certFingerprint: null,
   });
+
+  // 中继库（侧栏「中继」页）加载一次，供下拉选择
+  useEffect(() => {
+    void relayList().then(setRelayConfigs).catch(() => {
+      // 库不可用时退回手动输入
+    });
+  }, []);
+
+  const applyRelayConfig = (config: RelayConfig) => {
+    setRelayPickedId(config.id);
+    setRelay({
+      host: config.host,
+      port: config.port,
+      transport: config.transport,
+      keyId: config.keyId,
+      secret: config.secret,
+      certFingerprint: config.certFingerprint ?? null,
+    });
+  };
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -169,6 +324,7 @@ export function ZkScreen() {
       setSelected('/');
       await loadChildren(res.sessionId, '/');
       await selectNode(res.sessionId, '/');
+      onBaseTitle(endpoints);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -187,6 +343,7 @@ export function ZkScreen() {
     setSessionId(null);
     setNodes(new Map());
     setDetail(null);
+    onBaseTitle(null);
     setNotice(t('zk.disconnected'));
   };
 
@@ -465,9 +622,36 @@ export function ZkScreen() {
             </label>
             {relayEnabled ? (
               <>
+                {relayConfigs.length > 0 ? (
+                  <div className="w-48">
+                    <SelectMenu
+                      aria-label={t('zk.relayPicker')}
+                      value={relayPickedId != null ? String(relayPickedId) : ''}
+                      onChange={(next) => {
+                        if (next === '') {
+                          setRelayPickedId(null);
+                          return;
+                        }
+                        const config = relayConfigs.find((r) => String(r.id) === next);
+                        if (config) applyRelayConfig(config);
+                      }}
+                      options={[
+                        { value: '', label: t('zk.relayManual') },
+                        ...relayConfigs.map((r) => ({
+                          value: String(r.id),
+                          label: r.name,
+                          description: `${r.host}:${r.port} · ${r.transport.toUpperCase()}`,
+                        })),
+                      ]}
+                    />
+                  </div>
+                ) : null}
                 <TextInput
                   value={relay.host}
-                  onChange={(e) => setRelay((cur) => ({ ...cur, host: e.target.value }))}
+                  onChange={(e) => {
+                    setRelayPickedId(null);
+                    setRelay((cur) => ({ ...cur, host: e.target.value }));
+                  }}
                   placeholder="relay.example.com"
                   className="w-44"
                 />

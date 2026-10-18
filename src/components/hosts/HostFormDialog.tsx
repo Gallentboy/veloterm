@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { FormField, PasswordInput, TextArea, TextInput } from '@/components/hosts/formFields';
 import { groupPathOptions, jumpHostOptions } from '@/hosts/storage';
+import { relayList, type RelayConfig } from '@/services/relayConfigService';
 import type {
   AuthConfig,
   AuthMethod,
@@ -25,6 +26,8 @@ export interface HostFormResult {
   username: string;
   auth: AuthConfig;
   jumpHostId: number | null;
+  /** 中继库引用；选中下拉中的已保存中继时非空（嵌入式 relay 同时镜像其字段） */
+  relayId: number | null;
   /** SSH 中继（veloterm_relay）；null = 不经中继 */
   relay: SshRelayEndpoint | null;
   hostKeyVerification: SshHostKeyVerificationMode;
@@ -75,7 +78,9 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
   const [auth, setAuth] = useState<AuthConfig>(() => node?.auth ?? { method: 'password', password: '' });
   const [jumpHostId, setJumpHostId] = useState<number | null>(node?.jumpHostId ?? null);
   // SSH 中继：启用后首跳经 veloterm_relay 建立（与跳板可组合：中继送达链首端点）
-  const [relayEnabled, setRelayEnabled] = useState<boolean>(node?.relay != null);
+  const [relayEnabled, setRelayEnabled] = useState<boolean>(node?.relay != null || node?.relayId != null);
+  const [relayId, setRelayId] = useState<number | null>(node?.relayId ?? null);
+  const [relayConfigs, setRelayConfigs] = useState<RelayConfig[]>([]);
   const [relay, setRelay] = useState<SshRelayEndpoint>(
     node?.relay ?? {
       host: '',
@@ -86,6 +91,27 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
       certFingerprint: null,
     },
   );
+
+  // 中继库（侧栏「中继」页）加载一次，供下拉选择
+  useEffect(() => {
+    void relayList().then(setRelayConfigs).catch(() => {
+      // 中继库不可用时退回手动输入
+    });
+  }, []);
+
+  const applyRelayConfig = (config: RelayConfig) => {
+    setRelayId(config.id);
+    setRelay({
+      host: config.host,
+      port: config.port,
+      transport: config.transport,
+      keyId: config.keyId,
+      secret: config.secret,
+      certFingerprint: config.certFingerprint ?? null,
+    });
+  };
+
+  const clearRelayId = () => setRelayId(null);
   const [hostKeyVerification, setHostKeyVerification] = useState<SshHostKeyVerificationMode>(
     node?.hostKeyVerification ?? 'auto_accept',
   );
@@ -183,19 +209,20 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
         certFingerprint: fingerprintRaw || null,
       };
     }
-    onSave({
-      name: name.trim(),
-      host: host.trim(),
-      port: portNumber,
-      username: username.trim(),
-      auth,
-      jumpHostId: validJumpHostId,
-      relay: relayResult,
-      hostKeyVerification,
-      allowInsecureAlgos,
-      readyCommandId: validReadyCommandId,
-      groupIds: validGroupIds,
-    });
+      onSave({
+        name: name.trim(),
+        host: host.trim(),
+        port: portNumber,
+        username: username.trim(),
+        auth,
+        jumpHostId: validJumpHostId,
+        relayId: relayResult != null && relayId != null ? relayId : null,
+        relay: relayResult,
+        hostKeyVerification,
+        allowInsecureAlgos,
+        readyCommandId: validReadyCommandId,
+        groupIds: validGroupIds,
+      });
   };
 
   /** 内联新建命令：存入命令库（id=0 由后端分配）后立即选为就绪钩子 */
@@ -425,6 +452,31 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
 
             {relayEnabled ? (
               <div className="flex flex-col gap-3.5 rounded-lg border border-border p-2.5">
+                {/* 中继库下拉：选中即回填字段并记 relayId（连接时嵌入式优先，库配置更新后需重新选择同步） */}
+                {relayConfigs.length > 0 ? (
+                  <FormField label={t('hosts.form.relayPicker')}>
+                    <SelectMenu
+                      aria-label={t('hosts.form.relayPicker')}
+                      value={relayId != null ? String(relayId) : ''}
+                      onChange={(next) => {
+                        if (next === '') {
+                          clearRelayId();
+                          return;
+                        }
+                        const config = relayConfigs.find((r) => String(r.id) === next);
+                        if (config) applyRelayConfig(config);
+                      }}
+                      options={[
+                        { value: '', label: t('hosts.form.relayManual') },
+                        ...relayConfigs.map((r) => ({
+                          value: String(r.id),
+                          label: r.name,
+                          description: `${r.host}:${r.port} · ${r.transport.toUpperCase()}`,
+                        })),
+                      ]}
+                    />
+                  </FormField>
+                ) : null}
                 <div className="flex gap-3">
                   <div className="min-w-0 flex-1">
                     <FormField label={t('hosts.form.relayHost')}>

@@ -17,8 +17,11 @@ fn record_to_ssh_options(record: &crate::db::HostRecord) -> TargetSSHOptions {
         auth: record.auth.clone(),
         jump_host: None,
         host_key_verification: record.host_key_verification,
-        // SFTP 连接同样支持经中继（与终端/端口转发同型：首跳传输替换）
-        relay: record.relay.clone(),
+        // SFTP 连接同样支持经中继（与终端/端口转发同型：嵌入式优先，relay_id 兜底）
+        relay: record
+            .relay
+            .clone()
+            .or_else(|| crate::relays::endpoint_by_id(record.relay_id)),
     }
 }
 

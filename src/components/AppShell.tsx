@@ -13,6 +13,7 @@ import { EditorScreen } from '@/components/editor/EditorScreen';
 import { FilesScreen } from '@/components/files/FilesScreen';
 import { GroupsScreen } from '@/components/hosts/GroupsScreen';
 import { HostsScreen } from '@/components/hosts/HostsScreen';
+import { RelaysScreen } from '@/components/relays/RelaysScreen';
 import { ZkScreen } from '@/components/zk/ZkScreen';
 import { SettingsScreen } from '@/components/SettingsScreen';
 import { TerminalScreen } from '@/components/terminal';
@@ -499,6 +500,10 @@ export function AppShell() {
                     }}
                   />
                 </div>
+                {/* ZooKeeper 视图持久挂载（同 SFTP）：切换页面保持会话/树/编辑状态 */}
+                <div className={cn('h-full min-h-0 w-full', page !== 'zk' && 'hidden')}>
+                  <ZkScreen isVisible={page === 'zk'} />
+                </div>
                 {page === 'home' ? (
                   <WelcomeScreen
                     onNewTerminal={handleOpenNewTerminal}
@@ -529,8 +534,8 @@ export function AppShell() {
                   <GroupsScreen />
                 ) : page === 'commands' ? (
                   <CommandsScreen />
-                ) : page === 'zk' ? (
-                  <ZkScreen />
+                ) : page === 'relays' ? (
+                  <RelaysScreen />
                 ) : (
                   <SettingsScreen />
                 )}

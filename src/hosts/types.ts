@@ -58,7 +58,9 @@ export interface HostNode {
   auth: AuthConfig;
   /** 前置跳板机主机 id；null 或缺省表示直连 */
   jumpHostId?: number | null;
-  /** SSH 中继配置；null 或缺省 = 不经中继（与跳板链可组合：中继送达链首端点） */
+  /** 中继库引用（侧栏「中继」页配置 id）；嵌入式 relay 为空且此值有效时生效 */
+  relayId?: number | null;
+  /** SSH 中继配置（嵌入式）；null 或缺省 = 不经中继（与跳板链可组合：中继送达链首端点） */
   relay?: SshRelayEndpoint | null;
   /** 主机公钥校验策略；缺省为 'auto_accept'（首次连接自动信任 TOFU） */
   hostKeyVerification?: SshHostKeyVerificationMode;

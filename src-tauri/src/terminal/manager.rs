@@ -165,9 +165,18 @@ impl TerminalManager {
                     relay: None,
                 });
 
-                // 中继（仅链首生效）：主机记录配置了中继时，首跳经 veloterm_relay
-                // 建立 VLR2 流再 connect_stream；后续跳板链逻辑不变。
-                if let Some(relay) = db_host.as_ref().and_then(|h| h.relay.clone())
+                // 中继（仅链首生效）：嵌入式配置优先，否则按 relay_id 从中继库
+                // （侧栏「中继」页）解析；首跳经 veloterm_relay 建立 VLR3 流再
+                // connect_stream，后续跳板链逻辑不变
+                let relay = db_host
+                    .as_ref()
+                    .and_then(|h| h.relay.clone())
+                    .or_else(|| {
+                        db_host
+                            .as_ref()
+                            .and_then(|h| crate::relays::endpoint_by_id(h.relay_id))
+                    });
+                if let Some(relay) = relay
                     && let Some(first) = chain.first_mut()
                 {
                     first.relay = Some(relay);
