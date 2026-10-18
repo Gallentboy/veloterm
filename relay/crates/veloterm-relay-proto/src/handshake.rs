@@ -73,7 +73,10 @@ impl ServerAuth {
     }
 }
 
-/// 目标选路策略：默认目标 + 客户端可显式指定的精确白名单。
+/// 目标选路策略：客户端默认携带目标（即其配置的 SSH 主机地址）；
+/// `allowed` 为白名单（空 = 不限制，即「令牌鉴权的开放中继」——
+/// 凭证有效即可达任意目标），`default_target` 仅供客户端未携带目标的
+/// 场景兜底（UDP 模式等）。白名单存在时客户端目标必须在其中。
 #[derive(Debug, Clone, Default)]
 pub struct TargetPolicy {
     pub default_target: Option<TargetAddr>,
@@ -196,7 +199,7 @@ where
 
         let target = match &hello.target {
             Some(t) => {
-                if policy.allowed.iter().any(|a| a == t) {
+                if policy.allowed.is_empty() || policy.allowed.iter().any(|a| a == t) {
                     t.clone()
                 } else {
                     let _ = send_status(io, Status::TargetNotAllowed).await;
@@ -415,6 +418,30 @@ mod tests {
             server.await.unwrap().unwrap_err(),
             HandshakeError::AuthFailed
         ));
+    }
+
+    #[tokio::test]
+    async fn open_relay_allows_any_client_target() {
+        // 开放中继：无白名单（allowed 空）+ 无默认目标 → 客户端携带任意目标均放行
+        let (store, secret) = auth_store();
+        let (mut c, mut s) = duplex(4096);
+        let server = tokio::spawn(async move {
+            let (t, _) = server_handshake(
+                &mut s,
+                &store,
+                &TargetPolicy { default_target: None, allowed: vec![] },
+                TEST_TIMEOUT,
+            )
+            .await
+            .unwrap();
+            send_status(&mut s, Status::Ok).await.unwrap();
+            t
+        });
+        let anywhere = TargetAddr::parse("203.0.113.7:2222").unwrap();
+        client_handshake(&mut c, 9, &secret, Some(&anywhere), TEST_TIMEOUT)
+            .await
+            .unwrap();
+        assert_eq!(server.await.unwrap(), anywhere);
     }
 
     #[tokio::test]

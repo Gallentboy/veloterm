@@ -171,6 +171,7 @@ pub enum RelayTransport {
 
 /// 经 veloterm_relay 中继连接 SSH 端点的参数（挂在连接链首跳上）。
 /// secret 为 32 字节十六进制（veloterm_relay token generate 生成），存 SQLCipher 库。
+/// 目标不需要配置：客户端自动携带所连主机（或链首跳板）的 host:port 作为中继目标。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshRelayEndpoint {
@@ -179,10 +180,6 @@ pub struct SshRelayEndpoint {
     pub transport: RelayTransport,
     pub key_id: u8,
     pub secret: String,
-    /// 显式目标（host:port）；不填用链首 SSH 端点本身。
-    /// 中继侧需在 allow_targets 白名单内，或恰为中继默认目标。
-    #[serde(default)]
-    pub target: Option<String>,
 }
 
 /// 单个 SSH 目标或跳板机连接参数（迁移自 `warpgate_common::TargetSSHOptions`）。

@@ -144,11 +144,12 @@ impl FileConfig {
                 Some(t) => Some(parse_target(i, t)?),
                 None => None,
             };
-            if default_target.is_none() && l.allow_targets.is_empty() {
-                bail!(
-                    "listener[{}] 既无 target（默认目标）也无 allow_targets，客户端将无处可去",
-                    i
-                );
+            // UDP 无连接且数据报不携带目标，必须固定默认目标；
+            // 流式监听器（tcp/ws/quic）无需任何目标配置——客户端默认携带
+            // 目标（其配置的主机地址），不配 allow_targets 即为
+            // 「令牌鉴权的开放中继」，配了则按白名单限制
+            if proto == ListenerProto::Udp && default_target.is_none() {
+                bail!("listener[{}] udp 监听器必须配置 target（固定目标）", i);
             }
             if !matches!(proto, ListenerProto::Udp) && l.udp_idle_timeout_secs.is_some() {
                 bail!("listener[{}] udp_idle_timeout_secs 只适用于 udp 监听器", i);
@@ -227,8 +228,9 @@ mod tests {
         let err = future.resolve().unwrap_err().to_string();
         assert!(err.contains("未知"), "{err}");
 
-        // 既无 target 也无 allow_targets
-        let nowhere = parse_toml(&format!(
+        // tcp 流式监听器无 target/allow_targets = 开放中继（合法）；
+        // 相应语义锁定：udp 无 target 必须报错
+        let open_tcp = parse_toml(&format!(
             r#"
             [relay]
             [[token]]
@@ -241,7 +243,22 @@ mod tests {
             "#
         ))
         .unwrap();
-        assert!(nowhere.resolve().is_err());
+        assert!(open_tcp.resolve().is_ok());
+
+        let udp_no_target = parse_toml(&format!(
+            r#"
+            [[token]]
+            key_id = 1
+            name = "x"
+            secret = "{secret64}"
+            [[listener]]
+            proto = "udp"
+            bind = "0.0.0.0:7303"
+            "#
+        ))
+        .unwrap();
+        let err = udp_no_target.resolve().unwrap_err().to_string();
+        assert!(err.contains("固定目标"), "{err}");
 
         // secret 长度非法
         let bad_secret = parse_toml(

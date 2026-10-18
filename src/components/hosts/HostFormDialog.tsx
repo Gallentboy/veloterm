@@ -83,7 +83,6 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
       transport: 'tcp',
       keyId: 1,
       secret: '',
-      target: null,
     },
   );
   const [hostKeyVerification, setHostKeyVerification] = useState<SshHostKeyVerificationMode>(
@@ -166,17 +165,12 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
         setError(t('hosts.form.relaySecretInvalid'));
         return;
       }
-      if (relay.target != null && relay.target.trim() !== '' && !/^[^:]+:\d{1,5}$/.test(relay.target.trim())) {
-        setError(t('hosts.form.relayTargetInvalid'));
-        return;
-      }
       relayResult = {
         host: relay.host.trim(),
         port: relayPortNumber,
         transport: relay.transport,
         keyId: relayKeyIdNumber,
         secret: relay.secret.trim(),
-        target: relay.target?.trim() ? relay.target.trim() : null,
       };
     }
     onSave({
@@ -486,18 +480,6 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
                   </div>
                 </div>
 
-                <FormField label={`${t('hosts.form.relayTarget')}（${t('common.optional')}）`}>
-                  <TextInput
-                    value={relay.target ?? ''}
-                    onChange={(e) => setRelay((cur) => ({ ...cur, target: e.target.value }))}
-                    placeholder="linux1.internal:22"
-                    spellCheck={false}
-                    className="font-mono"
-                  />
-                </FormField>
-                <p className="text-ui-xs text-foreground-subtlest select-none">
-                  {t('hosts.form.relayTargetHint')}
-                </p>
               </div>
             ) : null}
 

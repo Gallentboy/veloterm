@@ -516,14 +516,13 @@ fn relay_transport_from_str(raw: &str) -> Option<RelayTransport> {
 
 /// 行列 → 中继配置。relay_host 为空/缺失返回 None；部分字段缺失（旧库半态）按
 /// 默认值补齐（transport 默认 tcp、port 默认 7300、key_id 默认 1）。
-#[allow(clippy::too_many_arguments)]
+/// relay_target 列已废弃（目标改由客户端自动携带），不再读取。
 fn row_to_relay(
     relay_host: Option<&str>,
     relay_port: Option<i64>,
     relay_transport: Option<&str>,
     relay_key_id: Option<i64>,
     relay_secret: Option<&str>,
-    relay_target: Option<&str>,
 ) -> Option<SshRelayEndpoint> {
     let host = relay_host?.trim().to_string();
     if host.is_empty() {
@@ -543,9 +542,6 @@ fn row_to_relay(
             .unwrap_or(RelayTransport::Tcp),
         key_id: relay_key_id.map(|k| k.clamp(0, 255) as u8).unwrap_or(1),
         secret,
-        target: relay_target
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty()),
     })
 }
 
@@ -599,7 +595,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
         .prepare(
             "SELECT id, name, host, port, username, auth_json, jump_host_id,
               host_key_verification, allow_insecure_algos, ready_command_id,
-              relay_host, relay_port, relay_transport, relay_key_id, relay_secret, relay_target,
+              relay_host, relay_port, relay_transport, relay_key_id, relay_secret,
               created_at, updated_at
        FROM hosts
        ORDER BY id ASC",
@@ -619,7 +615,6 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 row.get::<_, Option<String>>(12)?.as_deref(),
                 row.get::<_, Option<i64>>(13)?,
                 row.get::<_, Option<String>>(14)?.as_deref(),
-                row.get::<_, Option<String>>(15)?.as_deref(),
             );
             Ok(HostRecord {
                 id,
@@ -634,8 +629,8 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 ready_command_id: row.get(9)?,
                 relay,
                 group_ids: groups_by_host.remove(&id).unwrap_or_default(),
-                created_at: row.get(16)?,
-                updated_at: row.get(17)?,
+                created_at: row.get(15)?,
+                updated_at: row.get(16)?,
             })
         })
         .map_err(|e| format!("failed to query hosts: {e}"))?;
@@ -803,9 +798,9 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
             "INSERT INTO hosts (
           id, name, host, port, username, auth_json, jump_host_id,
           host_key_verification, allow_insecure_algos, ready_command_id,
-          relay_host, relay_port, relay_transport, relay_key_id, relay_secret, relay_target,
+          relay_host, relay_port, relay_transport, relay_key_id, relay_secret,
           created_at, updated_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 host.id,
                 &host.name,
@@ -822,7 +817,6 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                 host.relay.as_ref().map(|r| relay_transport_to_str(r.transport)),
                 host.relay.as_ref().map(|r| i64::from(r.key_id)),
                 host.relay.as_ref().map(|r| r.secret.clone()),
-                host.relay.as_ref().and_then(|r| r.target.clone()),
                 host.created_at,
                 host.updated_at,
             ],
@@ -962,7 +956,6 @@ mod tests {
                     transport: RelayTransport::Quic,
                     key_id: 3,
                     secret: "ab".repeat(32),
-                    target: Some("linux1.internal:22".to_string()),
                 }),
                 group_ids: vec![1],
                 created_at: 200,
