@@ -363,14 +363,19 @@ jobs:
             echo "未找到 ${TAG} 对应的 release（tauri-action 未产出或版本异常）"; exit 1
           fi
           echo "release id=$RID tag=$TAG"
-          # 清掉同 release 上已有的 veloterm_relay-* 资产（重跑/改名幂等，避免新旧并存）
+          # 清掉同 release 上已有的 veloterm_relay* 资产（重跑/改名幂等，避免新旧并存；
+          # 前缀不带连字符，连同首发事故留下的无目标后缀坏名一并清除）
           gh api "repos/${GITHUB_REPOSITORY}/releases/${RID}/assets" --paginate \
-            -q ".[] | select(.name | startswith(\"veloterm_relay-\")) | (.id|tostring)" \
+            -q ".[] | select(.name | startswith(\"veloterm_relay\")) | (.id|tostring)" \
             | while read -r aid; do
                 gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${aid}"
               done
           # 发布资产用简短友好命名（用户指定）：
           #   linux-x86 / linux-aarch64（无后缀）、x64.exe / arm64.exe（Windows 静态 CRT）
+          # 注意：gh release upload 的 # 后缀只是资产 label，资产名恒取文件 basename——
+          # Linux 两目标/Windows 两目标 basename 相同，直接传会同名 --clobber 互覆
+          # （1.0.0 曾因此 4 个塌缩成 2 个），必须先改名落盘再上传。
+          mkdir -p relay-out
           find relay-bin -type f \( -name 'veloterm_relay' -o -name 'veloterm_relay.exe' \) | while read -r f; do
             TARGET="$(basename "$(dirname "$f")")"; TARGET="${TARGET#veloterm_relay-}"
             case "$TARGET" in
@@ -381,8 +386,9 @@ jobs:
               *) echo "未知目标: $TARGET"; exit 1;;
             esac
             echo "upload: $ASSET"
-            # gh release upload 正确处理 uploads.github.com 上传端点（资产上传在
-            # api.github.com 上是 307 重定向，gh api 裸 POST 会 404）；--clobber 覆盖
-            gh release upload "$TAG" "$f#$ASSET" --clobber
+            cp "$f" "relay-out/$ASSET"
           done
+          # gh release upload 正确处理 uploads.github.com 上传端点（资产上传在
+          # api.github.com 上是 307 重定向，gh api 裸 POST 会 404）；--clobber 覆盖
+          gh release upload "$TAG" relay-out/* --clobber
           gh api "repos/${GITHUB_REPOSITORY}/releases/${RID}" -q '.html_url'
