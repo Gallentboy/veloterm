@@ -51,10 +51,34 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// 证书管理（QUIC 客户端 pin 指纹需长期稳定的证书文件）
+    Cert {
+        #[command(subcommand)]
+        action: Option<CertAction>,
+    },
     /// 凭证管理（不带子命令时等同 generate）
     Token {
         #[command(subcommand)]
         action: Option<TokenAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum CertAction {
+    /// 生成 Ed25519 自签证书对（PEM 落盘），打印 SHA-256 指纹供客户端 pin
+    Generate {
+        /// 证书输出路径（默认 cert.pem）
+        #[arg(long, default_value = "cert.pem")]
+        cert: std::path::PathBuf,
+        /// 私钥输出路径（默认 key.pem）
+        #[arg(long, default_value = "key.pem")]
+        key: std::path::PathBuf,
+        /// 额外 SAN（域名/IP，可多次；localhost 恒在内）
+        #[arg(long)]
+        san: Vec<String>,
+        /// 覆盖已存在的文件
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -73,6 +97,18 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Init { out, force }) => init_config(out.unwrap_or_else(|| cli.config.clone()), force),
+        Some(Command::Cert { action }) => {
+            let (cert, key, san, force) = match action {
+                Some(CertAction::Generate { cert, key, san, force }) => (cert, key, san, force),
+                None => (
+                    "cert.pem".into(),
+                    "key.pem".into(),
+                    Vec::new(),
+                    false,
+                ),
+            };
+            generate_cert(cert, key, san, force)
+        }
         Some(Command::Token { action }) => {
             let (key_id, name) = match action {
                 Some(TokenAction::Generate { key_id, name }) => (key_id, name),
@@ -90,6 +126,42 @@ fn main() -> anyhow::Result<()> {
         }
         None => run(cli.config, cli.check),
     }
+}
+
+/// cert generate：生成长期稳定的证书对（PEM 落盘）+ 指纹打印。
+/// 指纹形态与启动日志一致（冒号分隔大写十六进制）；客户端 pin 字段
+/// 直接粘贴，客户端会归一化比对。
+fn generate_cert(
+    cert_path: std::path::PathBuf,
+    key_path: std::path::PathBuf,
+    sans: Vec<String>,
+    force: bool,
+) -> anyhow::Result<()> {
+    for p in [&cert_path, &key_path] {
+        if p.exists() && !force {
+            anyhow::bail!("{} 已存在（--force 覆盖）", p.display());
+        }
+    }
+    let generated = server::quic::self_signed_ed25519_with_sans(sans.clone())?;
+    std::fs::write(&cert_path, &generated.cert_pem)
+        .with_context(|| format!("写入 {} 失败", cert_path.display()))?;
+    std::fs::write(&key_path, &generated.key_pem)
+        .with_context(|| format!("写入 {} 失败", key_path.display()))?;
+    let fingerprint = server::quic::fingerprint_hex(&server::quic::sha256(generated.cert.as_ref()));
+    println!("已生成证书：{} / {}", cert_path.display(), key_path.display());
+    println!("SHA-256 指纹（客户端 pin 字段直接粘贴）：");
+    println!("{fingerprint}");
+    println!();
+    println!("# relay.toml 的 quic 监听器指向这两个文件（指纹即长期稳定）：");
+    println!("# [[listener]]");
+    println!("# proto = \"quic\"");
+    println!("# bind  = \"0.0.0.0:7302\"");
+    println!("# cert  = \"{}\"", cert_path.display());
+    println!("# key   = \"{}\"", key_path.display());
+    if !sans.is_empty() {
+        println!("#（SAN: localhost + {}）", sans.join(", "));
+    }
+    Ok(())
 }
 
 /// init 子命令：生成含新凭证的配置模板。

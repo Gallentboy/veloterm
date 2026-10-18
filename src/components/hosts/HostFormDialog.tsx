@@ -83,6 +83,7 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
       transport: 'tcp',
       keyId: 1,
       secret: '',
+      certFingerprint: null,
     },
   );
   const [hostKeyVerification, setHostKeyVerification] = useState<SshHostKeyVerificationMode>(
@@ -165,12 +166,21 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
         setError(t('hosts.form.relaySecretInvalid'));
         return;
       }
+      const fingerprintRaw = relay.certFingerprint?.trim() ?? '';
+      if (fingerprintRaw !== '') {
+        const normalized = fingerprintRaw.replace(/:/g, '');
+        if (!/^[0-9a-fA-F]{64}$/.test(normalized)) {
+          setError(t('hosts.form.relayFingerprintInvalid'));
+          return;
+        }
+      }
       relayResult = {
         host: relay.host.trim(),
         port: relayPortNumber,
         transport: relay.transport,
         keyId: relayKeyIdNumber,
         secret: relay.secret.trim(),
+        certFingerprint: fingerprintRaw || null,
       };
     }
     onSave({
@@ -479,6 +489,21 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
                     </FormField>
                   </div>
                 </div>
+
+                <FormField label={`${t('hosts.form.relayFingerprint')}（${t('common.optional')}）`}>
+                  <TextInput
+                    value={relay.certFingerprint ?? ''}
+                    onChange={(e) =>
+                      setRelay((cur) => ({ ...cur, certFingerprint: e.target.value }))
+                    }
+                    placeholder="AB:CD:EF:…"
+                    spellCheck={false}
+                    className="font-mono"
+                  />
+                </FormField>
+                <p className="text-ui-xs text-foreground-subtlest select-none">
+                  {t('hosts.form.relayFingerprintHint')}
+                </p>
 
               </div>
             ) : null}

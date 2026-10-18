@@ -34,6 +34,9 @@ export interface SshRelayEndpoint {
   keyId: number;
   /** 32 字节十六进制 secret（veloterm_relay token generate 生成） */
   secret: string;
+  /** QUIC 证书指纹 pin（SHA-256，服务端 cert generate 输出，冒号分隔或裸十六进制）；
+   *  有值时强校验不匹配拒连（防中间人）；tcp/ws 忽略 */
+  certFingerprint?: string | null;
 }
 
 export interface GroupNode {

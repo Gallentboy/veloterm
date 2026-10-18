@@ -267,6 +267,6 @@ async fn handle_ws_conn(
             return;
         }
     };
-    serve_stream(WsByteStream::new(ws), &peer.to_string(), &auth, &policy, handshake_timeout)
+    serve_stream(WsByteStream::new(ws), "ws", &peer.to_string(), &auth, &policy, handshake_timeout)
         .await;
 }

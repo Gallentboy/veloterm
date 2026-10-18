@@ -65,6 +65,7 @@ fn relay_endpoint(relay: &TargetAddr) -> SshRelayEndpoint {
         transport: RelayTransport::Tcp,
         key_id: 9,
         secret: veloterm_relay_proto::auth::Secret::from_bytes([9u8; 32]).to_hex(),
+        cert_fingerprint: None,
     }
 }
 

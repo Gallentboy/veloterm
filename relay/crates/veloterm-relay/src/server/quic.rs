@@ -131,6 +131,7 @@ async fn handle_quic_conn(
                         let _permit = permit;
                         serve_stream(
                             BiStream::new(send, recv),
+                            "quic",
                             &peer,
                             &auth,
                             &policy,
@@ -209,14 +210,14 @@ fn build_server_tls(listener: &ResolvedListener) -> anyhow::Result<rustls::Serve
             .with_single_cert(load_certs(cert_path)?, load_key(key_path)?)
             .context("配置的 TLS 证书/私钥装载失败")?,
         (None, None) => {
-            let (cert, key) = self_signed_ed25519()?;
-            let fingerprint = fingerprint_hex(&sha256(cert.as_ref()));
+            let generated = self_signed_ed25519()?;
+            let fingerprint = fingerprint_hex(&sha256(generated.cert.as_ref()));
             info!(
                 fingerprint,
-                "quic listener 未配置证书，使用启动自签（Ed25519）；客户端可 pin 此 SHA-256 指纹"
+                "quic listener 未配置证书，使用启动自签（Ed25519）；客户端可 pin 此 SHA-256 指纹（注意每次重启会变，需稳定指纹用 cert generate + cert/key 配置）"
             );
             builder
-                .with_single_cert(vec![cert], key)
+                .with_single_cert(vec![generated.cert], generated.key)
                 .context("自签证书装载失败")?
         }
         // config.rs 已校验 cert/key 成对，这里防御不对称配置
@@ -248,21 +249,39 @@ fn load_key(path: &Path) -> anyhow::Result<PrivateKeyDer<'static>> {
         .ok_or_else(|| anyhow::anyhow!("私钥文件 {} 中未找到 PEM 私钥", path.display()))
 }
 
-/// 生成 Ed25519 自签证书（SAN=localhost，仅作传输加密 + 客户端 pin 指纹用）。
-fn self_signed_ed25519() -> anyhow::Result<(CertificateDer<'static>, PrivateKeyDer<'static>)> {
+/// 自签证书产物：DER（内存装配用）+ PEM（落盘用）。
+pub struct SelfSignedCert {
+    pub cert: CertificateDer<'static>,
+    pub key: PrivateKeyDer<'static>,
+    pub cert_pem: String,
+    pub key_pem: String,
+}
+
+/// 生成 Ed25519 自签证书（SAN=localhost + 额外 SAN，仅作传输加密 + 客户端 pin 指纹用）。
+/// cert generate 子命令（写盘、指纹长期稳定）与服务端启动自签（内存、当次有效）共用。
+pub fn self_signed_ed25519_with_sans(sans: Vec<String>) -> anyhow::Result<SelfSignedCert> {
+    let mut all_sans = vec!["localhost".to_string()];
+    all_sans.extend(sans);
     let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
         .context("生成 Ed25519 密钥对失败")?;
-    let params = rcgen::CertificateParams::new(vec!["localhost".to_string()])
+    let params = rcgen::CertificateParams::new(all_sans)
         .context("构造自签证书参数失败")?;
     let cert = params.self_signed(&key_pair).context("自签证书签发失败")?;
-    Ok((
-        cert.der().clone(),
-        PrivateKeyDer::Pkcs8(key_pair.serialize_der().into()),
-    ))
+    Ok(SelfSignedCert {
+        cert: cert.der().clone(),
+        key: PrivateKeyDer::Pkcs8(key_pair.serialize_der().into()),
+        cert_pem: cert.pem(),
+        key_pem: key_pair.serialize_pem(),
+    })
+}
+
+fn self_signed_ed25519() -> anyhow::Result<SelfSignedCert> {
+    self_signed_ed25519_with_sans(vec![])
 }
 
 /// SHA-256 指纹的展示形态：冒号分隔的大写十六进制（对齐 `openssl x509 -fingerprint`）。
-fn fingerprint_hex(digest: &[u8; 32]) -> String {
+/// cert generate 子命令与启动日志共用同一形态，客户端侧归一化后比对。
+pub fn fingerprint_hex(digest: &[u8; 32]) -> String {
     digest
         .iter()
         .map(|b| format!("{b:02X}"))
@@ -270,9 +289,9 @@ fn fingerprint_hex(digest: &[u8; 32]) -> String {
         .join(":")
 }
 
-/// 内置 SHA-256（仅用于自签证书指纹日志）。proto 的 sha2 未在本 crate 直接依赖，
+/// 内置 SHA-256（自签证书指纹；proto 的 sha2 未在本 crate 直接依赖，
 /// 为不扩 manifest 而自带最小实现；标准测试向量锁定正确性（见 tests）。
-fn sha256(msg: &[u8]) -> [u8; 32] {
+pub fn sha256(msg: &[u8]) -> [u8; 32] {
     #[rustfmt::skip]
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,

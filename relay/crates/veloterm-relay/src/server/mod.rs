@@ -23,6 +23,7 @@ use crate::config::ResolvedListener;
 /// 并发上限由各传输层在调用前用信号量控制。
 pub async fn serve_stream<S>(
     mut io: S,
+    transport: &'static str,
     peer: &str,
     auth: &ServerAuth,
     policy: &TargetPolicy,
@@ -50,18 +51,18 @@ pub async fn serve_stream<S>(
     if send_status(&mut io, Status::Ok).await.is_err() {
         return; // 客户端在终局状态前跑了
     }
-    info!(peer, %target, principal, "中继连接成功");
+    info!(peer, transport, %target, principal, "中继连接成功");
 
     let _ = outbound.set_nodelay(true);
     match tokio::io::copy_bidirectional(&mut io, &mut outbound).await {
         Ok((up, down)) => info!(
-            peer, %target, principal,
+            peer, transport, %target, principal,
             up_bytes = up, down_bytes = down,
             duration_ms = started.elapsed().as_millis() as u64,
             "中继连接断开"
         ),
         Err(e) => warn!(
-            peer, %target, principal,
+            peer, transport, %target, principal,
             error = %e,
             duration_ms = started.elapsed().as_millis() as u64,
             "中继连接断开（搬运中断）"
@@ -143,5 +144,5 @@ async fn handle_tcp_conn(
     _permit: tokio::sync::OwnedSemaphorePermit,
 ) {
     let _ = stream.set_nodelay(true);
-    serve_stream(stream, &peer.to_string(), &auth, &policy, handshake_timeout).await;
+    serve_stream(stream, "tcp", &peer.to_string(), &auth, &policy, handshake_timeout).await;
 }

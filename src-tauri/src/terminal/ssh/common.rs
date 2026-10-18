@@ -180,6 +180,11 @@ pub struct SshRelayEndpoint {
     pub transport: RelayTransport,
     pub key_id: u8,
     pub secret: String,
+    /// QUIC 证书指纹 pin（SHA-256，服务端 cert generate/启动日志输出的冒号分隔
+    /// 大写十六进制）；有值时强校验，不匹配拒连（防中间人）。
+    /// tcp/ws 无证书语义，忽略此字段
+    #[serde(default)]
+    pub cert_fingerprint: Option<String>,
 }
 
 /// 单个 SSH 目标或跳板机连接参数（迁移自 `warpgate_common::TargetSSHOptions`）。

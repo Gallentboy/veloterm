@@ -26,6 +26,32 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> AsyncReadWrite for T {}
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const QUIC_ALPN: &[u8] = b"veloterm-relay";
 
+/// 指纹解析：接受服务端日志/cert generate 输出的形态（冒号分隔大写十六进制）
+/// 或裸 64 位十六进制，归一化为 32 字节。
+fn parse_fingerprint(raw: &str) -> Result<[u8; 32], String> {
+    let cleaned: String = raw.trim().replace(':', "");
+    if cleaned.len() != 64 {
+        return Err(format!(
+            "证书指纹格式非法（\"{raw}\"）：应为 64 位十六进制，可含冒号分隔"
+        ));
+    }
+    let bytes: Vec<u8> = cleaned
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| {
+            let hi = pair.first().and_then(|b| (*b as char).to_digit(16));
+            let lo = pair.get(1).and_then(|b| (*b as char).to_digit(16));
+            match (hi, lo) {
+                (Some(h), Some(l)) => Ok(((h << 4) | l) as u8),
+                _ => Err(format!("证书指纹含非十六进制字符（\"{raw}\"）")),
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    bytes
+        .try_into()
+        .map_err(|_| format!("证书指纹格式非法（\"{raw}\"）"))
+}
+
 /// 经中继建立到 `ssh_endpoint` 的已握手流。
 /// 目标恒为 `ssh_endpoint`（所连主机的地址，由调用方从主机配置推导）——
 /// 用户只需配置中继服务器本身，无需在任何地方重复填目标。
@@ -61,7 +87,8 @@ pub async fn dial_relay(
             Ok(Box::new(io))
         }
         RelayTransport::Quic => {
-            let (conn, endpoint) = quic_connect(&relay.host, relay.port)
+            let pin = relay.cert_fingerprint.as_deref().map(parse_fingerprint).transpose()?;
+            let (conn, endpoint) = quic_connect(&relay.host, relay.port, pin)
                 .await
                 .map_err(|e| format!("QUIC 连接中继 {}:{} 失败: {e}", relay.host, relay.port))?;
             let (send, recv) = conn
@@ -78,15 +105,24 @@ pub async fn dial_relay(
     }
 }
 
-/// quinn 客户端连接。跳过证书校验是有意设计：中继证书通常自签，且 SSH 层
-/// 有自己的端到端主机密钥校验，QUIC 在此仅作传输加密。
-async fn quic_connect(host: &str, port: u16) -> Result<(quinn::Connection, quinn::Endpoint), String> {
+/// quinn 客户端连接。未 pin 时跳过证书校验（中继证书通常自签，且 SSH 层
+/// 有自己的端到端主机密钥校验，QUIC 在此仅作传输加密）；
+/// pin 了指纹则强校验，不匹配拒连（防中间人）。
+async fn quic_connect(
+    host: &str,
+    port: u16,
+    pin: Option<[u8; 32]>,
+) -> Result<(quinn::Connection, quinn::Endpoint), String> {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let verifier: Arc<dyn rustls::client::danger::ServerCertVerifier> = match pin {
+        Some(expected) => Arc::new(PinVerify { expected }),
+        None => Arc::new(NoVerify),
+    };
     let mut client_config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(|e| format!("rustls 协议版本协商失败: {e}"))?
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoVerify))
+        .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
     client_config.alpn_protocols = vec![QUIC_ALPN.to_vec()];
 
@@ -116,6 +152,67 @@ async fn quic_connect(host: &str, port: u16) -> Result<(quinn::Connection, quinn
 
 #[derive(Debug)]
 struct NoVerify;
+
+/// 指纹 pin 验证器：服务端证书 DER 的 SHA-256 必须与预期一致，
+/// 否则拒连（防中间人）。其余校验维度（链/域名/有效期）不适用自签场景，不检查。
+#[derive(Debug)]
+struct PinVerify {
+    expected: [u8; 32],
+}
+
+impl rustls::client::danger::ServerCertVerifier for PinVerify {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        use sha2::Digest;
+        let digest: [u8; 32] = sha2::Sha256::digest(end_entity.as_ref()).into();
+        if veloterm_relay_proto::auth::const_eq(&digest, &self.expected) {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::General(
+                "中继证书指纹不匹配（可能遭遇中间人，请核对服务端指纹）".into(),
+            ))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        // 与 NoVerify 同集：pin 模式只关心证书内容哈希，签名方案全开
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+        ]
+    }
+}
 
 impl rustls::client::danger::ServerCertVerifier for NoVerify {
     fn verify_server_cert(
@@ -330,6 +427,35 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for WsIo<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingerprint_parsing_accepts_both_display_forms() {
+        let colon_form = "F3:6A:D3:91:5D:6E:69:F8:5C:55:63:F6:C5:A0:7F:8E:F2:EC:4C:BF:BF:EA:84:96:14:C7:0B:17:71:42:47:7E";
+        let bare_form = "f36ad3915d6e69f85c5563f6c5a07f8ef2ec4cbfbfea849614c70b177142477e";
+        let a = parse_fingerprint(colon_form).unwrap();
+        let b = parse_fingerprint(bare_form).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a[0], 0xF3);
+        assert!(parse_fingerprint("xyz").is_err());
+        assert!(parse_fingerprint(&"ab".repeat(31)).is_err());
+    }
+
+    #[test]
+    fn pin_verifier_digest_matches_expected() {
+        use rustls::client::danger::ServerCertVerifier;
+        use sha2::Digest;
+        let cert = rustls::pki_types::CertificateDer::from(b"fake-cert-der".to_vec());
+        let name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        let expected: [u8; 32] = sha2::Sha256::digest(cert.as_ref()).into();
+        let ok = PinVerify { expected };
+        assert!(ok
+            .verify_server_cert(&cert, &[], &name, &[], rustls::pki_types::UnixTime::now())
+            .is_ok());
+        let bad = PinVerify { expected: [0u8; 32] };
+        assert!(bad
+            .verify_server_cert(&cert, &[], &name, &[], rustls::pki_types::UnixTime::now())
+            .is_err());
+    }
 
     #[test]
     fn adapters_implement_duplex_traits() {
