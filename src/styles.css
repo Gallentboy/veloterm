@@ -354,6 +354,41 @@ body {
   }
 }
 
+/*
+ * 连接拓扑：活跃链路段的虚线流动（repeating-linear-gradient 背景位移动画）。
+ * 段元素自身是 1px 高的 div，颜色走 currentColor（由 text-* 语义 token 控制）。
+ */
+@keyframes topology-flow {
+  from {
+    background-position-x: 0;
+  }
+  to {
+    background-position-x: 12px;
+  }
+}
+
+.topology-edge {
+  height: 1.5px;
+  background-image: repeating-linear-gradient(
+    90deg,
+    currentColor 0,
+    currentColor 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  background-size: 12px 1.5px;
+}
+
+.topology-edge-active {
+  animation: topology-flow 0.7s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topology-edge-active {
+    animation: none;
+  }
+}
+
 .about-card-in {
   animation: about-card-in 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }

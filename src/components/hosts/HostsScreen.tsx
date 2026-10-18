@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { GroupFormDialog } from '@/components/hosts/GroupFormDialog';
 import { HostFormDialog, type HostFormResult } from '@/components/hosts/HostFormDialog';
 import { PortForwardDialog } from '@/components/hosts/PortForwardDialog';
+import { HostTopologyDialog } from '@/components/hosts/HostTopologyDialog';
 import { GroupTreeRow, HostTreeRow } from '@/components/hosts/HostTree';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -57,6 +58,7 @@ export function HostsScreen({
   >(null);
   // 端口转发管理弹层目标主机
   const [forwardsHost, setForwardsHost] = useState<HostNode | null>(null);
+  const [topologyHost, setTopologyHost] = useState<HostNode | null>(null);
 
   const handleDeleteHost = (id: number) => {
     const host = hosts.find((item) => item.id === id);
@@ -133,6 +135,7 @@ export function HostsScreen({
                           onConnect={onConnectHost}
                   onOpenSftp={onOpenSftp}
                   onForwards={setForwardsHost}
+                  onTopology={setTopologyHost}
                   onDuplicate={(target) => {
                     setDeleteTarget(null);
                     setHostDialog({ mode: 'duplicate', node: target });
@@ -200,6 +203,7 @@ export function HostsScreen({
                           onConnect={onConnectHost}
                   onOpenSftp={onOpenSftp}
                   onForwards={setForwardsHost}
+                  onTopology={setTopologyHost}
                   onDuplicate={(target) => {
                     setDeleteTarget(null);
                     setHostDialog({ mode: 'duplicate', node: target });
@@ -225,6 +229,14 @@ export function HostsScreen({
 
       {forwardsHost ? (
         <PortForwardDialog host={forwardsHost} onClose={() => setForwardsHost(null)} />
+      ) : null}
+
+      {topologyHost ? (
+        <HostTopologyDialog
+          host={topologyHost}
+          hosts={hosts}
+          onClose={() => setTopologyHost(null)}
+        />
       ) : null}
 
       {hostDialog ? (

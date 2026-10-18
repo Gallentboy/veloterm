@@ -1,4 +1,4 @@
-import { ChevronRight, Copy, Folder, FolderOpen, FolderSync, Pencil, Plus, Server, Terminal, Trash2, Waypoints } from 'lucide-react';
+import { ChevronRight, Copy, Folder, FolderOpen, FolderSync, Network, Pencil, Plus, Server, Terminal, Trash2, Waypoints } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import type { GroupNode, HostNode } from '@/hosts/types';
@@ -124,6 +124,8 @@ interface HostTreeRowProps {
   onOpenSftp?: (host: HostNode) => void;
   /** 端口转发管理：打开该主机的转发规则弹层（本地/远程/动态） */
   onForwards?: (host: HostNode) => void;
+  /** 连接拓扑：展示该主机的中继/跳板链与转发分支实时状态 */
+  onTopology?: (host: HostNode) => void;
   /** 复制主机：以预填态打开新建对话框，保存后落库为新主机（不影响原主机） */
   onDuplicate?: (host: HostNode) => void;
   onEdit: (host: HostNode) => void;
@@ -139,6 +141,7 @@ export function HostTreeRow({
   onConnect,
   onOpenSftp,
   onForwards,
+  onTopology,
   onDuplicate,
   onEdit,
   onDelete,
@@ -183,6 +186,11 @@ export function HostTreeRow({
         {onForwards ? (
           <ActionButton label={t('portForward.title', { name: host.name })} onClick={() => onForwards(host)}>
             <Waypoints className="size-3.5" />
+          </ActionButton>
+        ) : null}
+        {onTopology ? (
+          <ActionButton label={t('topology.title', { name: host.name })} onClick={() => onTopology(host)}>
+            <Network className="size-3.5" />
           </ActionButton>
         ) : null}
         {onDuplicate ? (
