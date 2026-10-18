@@ -26,6 +26,8 @@ export interface NewSessionMenuProps {
   onDirectAction?: () => void;
   hosts: NewSessionMenuHost[];
   onSelectHost: (hostId: number) => void;
+  /** 主机行文案定制（如 ZK 页拼 endpoints）；缺省 `name (user@host)` */
+  renderHostLabel?: (host: NewSessionMenuHost) => string;
 }
 
 /** 菜单行：统一 16px 图标槽位 + 等宽左对齐文本（本地终端与各主机的文字左缘严格对齐） */
@@ -73,6 +75,7 @@ export function NewSessionMenu({
   onDirectAction,
   hosts,
   onSelectHost,
+  renderHostLabel,
 }: NewSessionMenuProps) {
   const [open, setOpen] = useState(false);
   // anchorRef 必须挂在根 div 上：hook 的 measure() 读它取锚点 rect，不挂就是
@@ -148,7 +151,11 @@ export function NewSessionMenu({
                 <MenuRow
                   key={host.id}
                   icon={Server}
-                  label={`${host.name} (${host.username}@${host.host})`}
+                  label={
+                    renderHostLabel
+                      ? renderHostLabel(host)
+                      : `${host.name} (${host.username}@${host.host})`
+                  }
                   onSelect={() => closeAndRun(() => onSelectHost(host.id))}
                 />
               ))}
