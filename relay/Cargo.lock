@@ -2408,6 +2408,7 @@ name = "veloterm-relay"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "futures-util",
  "quinn",
