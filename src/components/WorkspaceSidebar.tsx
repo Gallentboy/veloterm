@@ -1,11 +1,33 @@
 import { Boxes, Command, Database, FileCode, FolderSync, FolderTree, House, Network, Server, Settings, Terminal, Waypoints } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { SidebarMenuButton } from '@/components/SidebarMenuButton';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import {
+  getHiddenSidebarPages,
+  SIDEBAR_VISIBILITY_EVENT,
+} from '@/services/sidebarVisibility';
 
 export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'commands' | 'zk' | 'zkhosts' | 'relays' | 'grpc' | 'settings';
+
+/** 侧栏导航项（settings 固定展示，不参与可见性配置）。设置页的菜单展示
+ *  区块与此清单同源（同一导出），勾选状态经 kv + 事件实时联动。 */
+export const SIDEBAR_NAV_ITEMS: Array<{ page: Page; icon: LucideIcon; navKey: string }> = [
+  { page: 'home', icon: House, navKey: 'nav.home' },
+  { page: 'terminal', icon: Terminal, navKey: 'nav.terminal' },
+  { page: 'editor', icon: FileCode, navKey: 'nav.editor' },
+  { page: 'files', icon: FolderSync, navKey: 'nav.files' },
+  { page: 'hosts', icon: Server, navKey: 'nav.hosts' },
+  { page: 'relays', icon: Waypoints, navKey: 'nav.relays' },
+  { page: 'grpc', icon: Network, navKey: 'nav.grpc' },
+  { page: 'groups', icon: FolderTree, navKey: 'nav.groups' },
+  { page: 'commands', icon: Command, navKey: 'nav.commands' },
+  { page: 'zkhosts', icon: Boxes, navKey: 'nav.zkHosts' },
+  { page: 'zk', icon: Database, navKey: 'nav.zk' },
+];
 
 interface WorkspaceSidebarProps {
   activePage: Page;
@@ -13,83 +35,34 @@ interface WorkspaceSidebarProps {
   className?: string;
 }
 
-/** 左侧导航栏（结构移植自 ZCode WorkspaceSidebar）：顶部拖拽条 + 导航 + 右下角设置入口。 */
+/** 左侧导航栏（结构移植自 ZCode WorkspaceSidebar）：顶部拖拽条 + 导航 + 右下角设置入口。
+ *  菜单项可在设置页配置隐藏（默认全部展示，实时联动）。 */
 export function WorkspaceSidebar({ activePage, onPageChange, className }: WorkspaceSidebarProps) {
   const { t } = useTranslation();
+  const [hiddenPages, setHiddenPages] = useState<Set<string>>(() => getHiddenSidebarPages());
+
+  useEffect(() => {
+    const onChanged = () => setHiddenPages(getHiddenSidebarPages());
+    window.addEventListener(SIDEBAR_VISIBILITY_EVENT, onChanged);
+    return () => window.removeEventListener(SIDEBAR_VISIBILITY_EVENT, onChanged);
+  }, []);
 
   return (
     <aside className={cn('flex h-full flex-col select-none overflow-hidden', className)}>
       {/* 顶部拖拽条：macOS 原生红绿灯悬浮在这条区域上（h-12 与 Header 同高） */}
       <div className="h-12 shrink-0" data-tauri-drag-region />
 
-      {/* 导航容器：ZCode 同款 gap-1 / px-2 / py-3 */}
+      {/* 导航容器：ZCode 同款 gap-1 / px-2 / py-3；菜单可在设置页配置隐藏 */}
       <nav className="flex flex-col gap-1 px-2 py-3">
-        <SidebarMenuButton
-          icon={House}
-          label={t('nav.home')}
-          active={activePage === 'home'}
-          onClick={() => onPageChange('home')}
-        />
-        <SidebarMenuButton
-          icon={Terminal}
-          label={t('nav.terminal')}
-          active={activePage === 'terminal'}
-          onClick={() => onPageChange('terminal')}
-        />
-        <SidebarMenuButton
-          icon={FileCode}
-          label={t('nav.editor')}
-          active={activePage === 'editor'}
-          onClick={() => onPageChange('editor')}
-        />
-        <SidebarMenuButton
-          icon={FolderSync}
-          label={t('nav.files')}
-          active={activePage === 'files'}
-          onClick={() => onPageChange('files')}
-        />
-        <SidebarMenuButton
-          icon={Server}
-          label={t('nav.hosts')}
-          active={activePage === 'hosts'}
-          onClick={() => onPageChange('hosts')}
-        />
-        <SidebarMenuButton
-          icon={Waypoints}
-          label={t('nav.relays')}
-          active={activePage === 'relays'}
-          onClick={() => onPageChange('relays')}
-        />
-        <SidebarMenuButton
-          icon={Network}
-          label={t('nav.grpc')}
-          active={activePage === 'grpc'}
-          onClick={() => onPageChange('grpc')}
-        />
-        <SidebarMenuButton
-          icon={FolderTree}
-          label={t('nav.groups')}
-          active={activePage === 'groups'}
-          onClick={() => onPageChange('groups')}
-        />
-        <SidebarMenuButton
-          icon={Command}
-          label={t('nav.commands')}
-          active={activePage === 'commands'}
-          onClick={() => onPageChange('commands')}
-        />
-        <SidebarMenuButton
-          icon={Boxes}
-          label={t('nav.zkHosts')}
-          active={activePage === 'zkhosts'}
-          onClick={() => onPageChange('zkhosts')}
-        />
-        <SidebarMenuButton
-          icon={Database}
-          label={t('nav.zk')}
-          active={activePage === 'zk'}
-          onClick={() => onPageChange('zk')}
-        />
+        {SIDEBAR_NAV_ITEMS.filter(({ page }) => !hiddenPages.has(page)).map(({ page, icon, navKey }) => (
+          <SidebarMenuButton
+            key={page}
+            icon={icon}
+            label={t(navKey)}
+            active={activePage === page}
+            onClick={() => onPageChange(page)}
+          />
+        ))}
       </nav>
 
       <div className="min-h-0 flex-1" data-tauri-drag-region />
