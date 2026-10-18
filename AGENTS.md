@@ -46,6 +46,16 @@
 - `vendor/` 被 workspace `exclude`：vendor 内 coreutils/sed/ripgrep/sd 自带 workspace（onefetch 亦自带 workspace，根清单 members 为 ascii/image/manifest 三个 path 子 crate；dog 同样自带 workspace，members 为 dns/dns-transport 两个 path 子 crate），其余为无继承键的独立清单；不 exclude 则 uucore 的 `edition.workspace` 会误朝根清单取值而报错。
 - 裸 `cargo build` / `cargo test` 只作用于根包 app；工具链必须显式 `-p coreutils`。
 
+### relay 子工程（SSH 中继，独立 workspace）
+
+`relay/` 是与 src-tauri 完全隔离的独立 workspace（自带 Cargo.lock，不进 app 依赖图，同 vendor 独立清单的先例），两个成员：
+
+- **`crates/veloterm-relay-proto`——线缆协议 VLR2 与鉴权的单一实现**，服务端与 veloterm 客户端（P3 接入，src-tauri 以 path 依赖仅引 proto、不引 relay bin）共用：双 nonce 挑战响应握手（秘密 32B 永不上线、HMAC 域分隔、常数时间比较、未知 key_id 同形拒绝防枚举）、UDP 时间同步与时间窗证明、帧编解码。仅依赖 hmac/sha2/tokio(io+time)/getrandom。
+- **`crates/veloterm-relay`——服务端二进制 `veloterm_relay`**：TOML 配置（端口/监听器数量任意、每监听器默认目标 + allow_targets 精确白名单）、`token generate` CLI、TCP 监听（握手→选路→连目标→copy_bidirectional，全局并发信号量、握手超时）。阶段：P1=TCP ✅；P2=ws/quic/udp；P3=veloterm 客户端接入；P4=CI 车道与 Linux 产物（计划 musl 静态，tag `test_relay` 触发，一 yml 一目标）。
+
+测试门禁独立于 src-tauri：`cd relay && cargo test && cargo clippy --workspace --all-targets`（25 项：proto 17 + config 2 + e2e 6）。集成测试用 russh 服务端作回环 SSH 目标 + `connect_stream` 经中继连入，直接锁定「SSH over 中继」的客户端接入形态。
+
+
 ### Windows 工具链（BusyBox 模式）
 
 - 单一 `coreutils.exe` 多呼叫二进制；`rg`/`fd`/`awk`/`bat`/`onefetch`/`parallel`/`vim` 七个命令的解析器直读自身进程命令行（vim 经上游 VimMain 内部的 GetCommandLineW 自解析，见 vim 条目），**仅硬链接短名模式可用**，子命令模式给出提示。onefetch（o2sh/onefetch 3.0.0，纯 Rust：gix + tokei + askalono，升级＝换 vendor 树 + 复核 lib.rs 尾部的 veloterm 入口补丁；build.rs 需 assets/onefetch.ico 与 languages.yaml，license 检测的 resources/license.cache.zstd 为编译期 include_bytes）。

@@ -1,0 +1,15 @@
+[package]
+name = "veloterm-relay-proto"
+description = "veloterm 中继线缆协议与鉴权（服务端与客户端共用）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = ""
+
+[dependencies]
+hmac = "0.12"
+sha2 = "0.10"
+thiserror = "2"
+# 仅用于握手驱动（io 超时）与随机数；无 tokio runtime 依赖，两端皆可轻量引入
+getrandom = "0.3"
+tokio = { version = "1", features = ["io-util", "time"] }

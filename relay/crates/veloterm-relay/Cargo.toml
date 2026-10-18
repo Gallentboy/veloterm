@@ -1,0 +1,25 @@
+[package]
+name = "veloterm-relay"
+description = "veloterm SSH 中继服务端（多传输监听，端口全部配置化）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = ""
+
+[[bin]]
+name = "veloterm_relay"
+path = "src/main.rs"
+
+[dependencies]
+veloterm-relay-proto = { path = "../veloterm-relay-proto" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+
+[dev-dependencies]
+# 端到端测试：russh 服务端作回环 SSH 目标、russh 客户端经中继连入
+russh = { version = "0.63.3", default-features = false, features = ["des", "dsa", "rsa", "aws-lc-rs"] }

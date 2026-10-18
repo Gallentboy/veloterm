@@ -1,0 +1,15 @@
+[workspace]
+# veloterm 中继子工程：独立于 src-tauri 主 workspace（app 依赖图不进中继二进制）。
+# crates/veloterm-relay-proto 是线缆协议与鉴权的单一实现，服务端（veloterm-relay）
+# 与主程序客户端（src-tauri 以 path 依赖仅引用 proto，不引 relay bin）共用。
+resolver = "3"
+members = ["crates/veloterm-relay-proto", "crates/veloterm-relay"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
