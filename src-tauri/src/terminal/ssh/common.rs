@@ -165,6 +165,31 @@ fn default_allow_insecure_algos() -> bool {
     true
 }
 
+/// 中继入站传输类型（veloterm_relay 的监听协议）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RelayTransport {
+    Tcp,
+    Ws,
+    Quic,
+}
+
+/// 经 veloterm_relay 中继连接 SSH 端点的参数（挂在连接链首跳上）。
+/// secret 为 32 字节十六进制（veloterm_relay token generate 生成），存 SQLCipher 库。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshRelayEndpoint {
+    pub host: String,
+    pub port: u16,
+    pub transport: RelayTransport,
+    pub key_id: u8,
+    pub secret: String,
+    /// 显式目标（host:port）；不填用链首 SSH 端点本身。
+    /// 中继侧需在 allow_targets 白名单内，或恰为中继默认目标。
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
 /// 单个 SSH 目标或跳板机连接参数（迁移自 `warpgate_common::TargetSSHOptions`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -185,4 +210,7 @@ pub struct TargetSSHOptions {
     pub jump_host: Option<Uuid>,
     #[serde(default)]
     pub host_key_verification: SshHostKeyVerificationMode,
+    /// 中继（仅链首有效）：有值时首跳经 veloterm_relay 建立 VLR2 流再 connect_stream。
+    #[serde(default)]
+    pub relay: Option<SshRelayEndpoint>,
 }
