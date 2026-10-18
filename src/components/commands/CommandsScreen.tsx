@@ -22,6 +22,20 @@ import {
   type ImportStartResult,
 } from '@/services/commandService';
 
+/** 适配系统徽章：仅受限（非全平台）时展示，如「Win·Linux」；通用（空）不占位 */
+function PlatformsBadge({ platforms }: { platforms: string[] }) {
+  if (platforms.length === 0 || platforms.length >= 3) {
+    return null;
+  }
+  const labelOf: Record<string, string> = { win: 'Win', linux: 'Linux', mac: 'Mac' };
+  const label = platforms.map((p) => labelOf[p] ?? p).join('·');
+  return (
+    <span className="shrink-0 rounded-full bg-surface px-2 py-0.5 text-ui-xs text-foreground-subtle select-none">
+      {label}
+    </span>
+  );
+}
+
 /** 危险级别徽章 */
 function DangerBadge({ level }: { level: CommandRecord['dangerLevel'] }) {
   const { t } = useTranslation();
@@ -76,6 +90,7 @@ function CommandCard({ record, onEdit, onRun, onDelete }: CommandCardProps) {
         {record.command}
       </code>
       <DangerBadge level={record.dangerLevel} />
+      <PlatformsBadge platforms={record.platforms} />
       {placeholders.length > 0 ? (
         <span className="shrink-0 text-ui-xs text-foreground-subtlest">
           {placeholders.length}参
@@ -220,6 +235,44 @@ export function CommandsScreen() {
     );
   }, [commands, keyword]);
 
+  /** 折叠的类型组（按组名记录；搜索时忽略——结果恒全展开） */
+  const [collapsedGroups, setCollapsedGroups] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleGroup = (group: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(group)) {
+        next.delete(group);
+      } else {
+        next.add(group);
+      }
+      return next;
+    });
+  };
+
+  /** 按类型分组：键用归一化后的原始值（空/other 同归 other），展示名走 i18n
+   *（导入数据里的自定义类型回退原值）；other 组排末尾，其余按本地化标签排序 */
+  const groups = useMemo(() => {
+    const byGroup = new Map<string, CommandRecord[]>();
+    for (const record of filtered) {
+      const key = record.category.trim() || 'other';
+      const list = byGroup.get(key);
+      if (list) {
+        list.push(record);
+      } else {
+        byGroup.set(key, [record]);
+      }
+    }
+    const labelOf = (key: string) =>
+      t(`commands.categories.${key}`, { defaultValue: key === 'other' ? t('commands.categoryOther') : key });
+    return [...byGroup.entries()]
+      .map(([key, records]) => ({ key, label: labelOf(key), records }))
+      .sort((a, b) => {
+        if (a.key === 'other') return 1;
+        if (b.key === 'other') return -1;
+        return a.label.localeCompare(b.label, 'zh-Hans-CN');
+      });
+  }, [filtered, t]);
+
   const handleEdit = (record: CommandRecord | null) => {
     setEditRecord(record);
     setFormOpen(true);
@@ -302,15 +355,44 @@ export function CommandsScreen() {
             ) : null}
           </div>
         ) : (
-          filtered.map((record) => (
-            <CommandCard
-              key={record.id}
-              record={record}
-              onEdit={handleEdit}
-              onRun={handleRun}
-              onDelete={setPendingDelete}
-            />
-          ))
+          groups.map((group) => {
+            // 搜索时忽略折叠：结果恒全展开，避免命中项藏在收起的组里
+            const collapsed = !keyword && collapsedGroups.has(group.key);
+            return (
+              <div key={group.key} className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.key)}
+                  aria-expanded={!collapsed}
+                  className="flex h-8 w-full cursor-default items-center gap-1.5 rounded-md px-1 text-left transition-colors hover:bg-surface select-none"
+                >
+                  <ChevronDown
+                    className={cn(
+                      'size-3.5 shrink-0 text-foreground-subtle transition-transform',
+                      collapsed && '-rotate-90',
+                    )}
+                  />
+                  <span className="min-w-0 truncate text-ui-base font-medium text-foreground">
+                    {group.label}
+                  </span>
+                  <span className="shrink-0 text-ui-xs text-foreground-subtlest">
+                    {group.records.length}
+                  </span>
+                </button>
+                {collapsed
+                  ? null
+                  : group.records.map((record) => (
+                      <CommandCard
+                        key={record.id}
+                        record={record}
+                        onEdit={handleEdit}
+                        onRun={handleRun}
+                        onDelete={setPendingDelete}
+                      />
+                    ))}
+              </div>
+            );
+          })
         )}
       </div>
 
