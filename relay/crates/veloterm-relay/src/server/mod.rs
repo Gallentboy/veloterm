@@ -18,11 +18,12 @@ use veloterm_relay_proto::handshake::{send_status, server_handshake, ServerAuth,
 
 use crate::config::ResolvedListener;
 
-/// 传输无关的会话逻辑：VLR2 握手 → 连接目标 → 终局状态 → 双向搬运 → 日志。
+/// 传输无关的会话逻辑：VLR3 握手（密钥协商 + 加密认证）→ 连接目标 →
+/// 终局状态（加密记录）→ 双向搬运（整体跑在加密记录层）→ 日志。
 /// tcp/ws/quic 的每连接任务都以各自的（AsyncRead+AsyncWrite）流调用本函数；
 /// 并发上限由各传输层在调用前用信号量控制。
 pub async fn serve_stream<S>(
-    mut io: S,
+    io: S,
     transport: &'static str,
     peer: &str,
     auth: &ServerAuth,
@@ -32,29 +33,31 @@ pub async fn serve_stream<S>(
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let started = Instant::now();
-    let (target, principal) = match server_handshake(&mut io, auth, policy, hs_timeout).await {
-        Ok(v) => v,
+    let mut session = match server_handshake(io, auth, policy, hs_timeout).await {
+        Ok(s) => s,
         Err(e) => {
-            warn!(peer, error = %e, "握手拒绝");
+            warn!(peer, transport, error = %e, "握手拒绝");
             return;
         }
     };
+    let target = session.target;
+    let principal = session.principal;
 
     let mut outbound = match TcpStream::connect((target.host.as_str(), target.port)).await {
         Ok(s) => s,
         Err(e) => {
-            warn!(peer, %target, error = %e, "目标连接失败");
-            let _ = send_status(&mut io, Status::ConnectFailed).await;
+            warn!(peer, transport, %target, error = %e, "目标连接失败");
+            let _ = send_status(&mut session.stream, Status::ConnectFailed).await;
             return;
         }
     };
-    if send_status(&mut io, Status::Ok).await.is_err() {
+    if send_status(&mut session.stream, Status::Ok).await.is_err() {
         return; // 客户端在终局状态前跑了
     }
     info!(peer, transport, %target, principal, "中继连接成功");
 
     let _ = outbound.set_nodelay(true);
-    match tokio::io::copy_bidirectional(&mut io, &mut outbound).await {
+    match tokio::io::copy_bidirectional(&mut session.stream, &mut outbound).await {
         Ok((up, down)) => info!(
             peer, transport, %target, principal,
             up_bytes = up, down_bytes = down,

@@ -13,3 +13,11 @@ thiserror = "2"
 # 仅用于握手驱动（io 超时）与随机数；无 tokio runtime 依赖，两端皆可轻量引入
 getrandom = "0.3"
 tokio = { version = "1", features = ["io-util", "time"] }
+# VLR3 传输加密：临时 X25519 密钥协商 + HKDF 密钥推导 + ChaCha20-Poly1305 记录层
+# （纯 Rust，软实现即 GB/s 级；对称密钥由凭证+DH 推导、从不传输）
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+hkdf = "0.12"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util", "macros"] }

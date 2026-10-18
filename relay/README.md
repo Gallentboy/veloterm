@@ -34,20 +34,26 @@ cargo run -p veloterm-relay -- -c relay.toml          # 运行
 cargo run -p veloterm-relay -- -c relay.toml --check  # 仅校验配置
 ```
 
-## 鉴权（VLR2）
+## 鉴权与传输加密（VLR3）
 
-秘密（32 字节）永不上线。流式通道用双 nonce 挑战响应：每次连接的
-HMAC-SHA256 证明都不同、不可重放；UDP 模式（后续阶段）用「认证时间同步 +
-30 秒时间窗证明」。证明用常数时间比较校验；未知 key_id 走同形拒绝流程，
-防枚举。
+凭证（32 字节 secret）**永不上线、也从不直接加解密数据**。每连接协商全新密钥：
 
 ```text
-C→R: VLR2 | flags | key_id | client_nonce | [target]
-R→C: VLR2 | 0xFF  | server_nonce
-C→R: proof = HMAC-SHA256(secret, "…/stream" | key_id | 双nonce | target)
-R→C: VLR2 | status   (0=OK 进入纯字节管道)
+① 密钥协商（明文区，仅含随机字节形态的公钥与 nonce——协议特征被混淆）
+   C→R: "VLR3" | key_id | 客户端临时公钥(32B) | 客户端nonce
+   R→C: "VLR3" | 服务端临时公钥(32B) | 服务端nonce
+   双方各自推导: keys = HKDF-SHA256(凭证 ‖ X25519共享秘密, 双nonce)   ← 从不传输
+② 认证+选路（全部进 AEAD 加密记录层，目标地址也被隐藏）
+   C→R: 加密{ target | proof }   proof = HMAC(凭证, 完整协商上下文)
+   R→C: 加密{ status }
+③ 数据面：双向字节整体跑在 ChaCha20-Poly1305 记录层内
+   （每帧独立认证，篡改/重放任一帧立即断连；SSH 端到端加密嵌套其中）
 ```
 
+安全性质：无凭证者（含中间人）推导不出密钥；录制流量事后泄露凭证也解不开
+（临时 DH 前向保密）；未知 key_id 走诱饵同形拒绝（防枚举）；凭证不匹配表现为
+记录校验失败（客户端提示 AuthMismatch）。tcp/ws 由此获得与 QUIC 同级的传输
+加密；QUIC 上叠用 V3 使流量形态对中转方也呈随机字节。
 状态码：`0 OK · 1 格式错误 · 2 鉴权失败 · 3 目标不允许 · 4 目标连接失败`。
 
 ## 阶段状态

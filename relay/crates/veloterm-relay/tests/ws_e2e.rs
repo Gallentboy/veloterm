@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{connect_async, MaybeTlsStream};
 use veloterm_relay_proto::auth::Secret;
-use veloterm_relay_proto::frame::{Status, TargetAddr};
+use veloterm_relay_proto::frame::TargetAddr;
 use veloterm_relay_proto::handshake::{client_handshake, AuthEntry, ServerAuth};
 
 use veloterm_relay::config::{ListenerProto, ResolvedListener};
@@ -78,11 +78,13 @@ async fn spawn_ws_relay(
     (TargetAddr { host: bind.ip().to_string(), port: bind.port() }, tx)
 }
 
-/// ws 客户端流的形状（connect_async 的底层传输是 MaybeTlsStream）。
-type ClientWs = WsByteStream<MaybeTlsStream<TcpStream>>;
+/// ws 客户端底层形状（升级后的字节流适配器）。
+type RawWs = WsByteStream<MaybeTlsStream<TcpStream>>;
+/// ws 客户端握手的加密流（VLR3：后续字节全部走加密记录层）。
+type ClientWs = veloterm_relay_proto::crypto::EncryptedStream<RawWs>;
 
 /// 建立 ws 连接（不做 VLR2 握手）。
-async fn connect_ws(relay: &TargetAddr) -> ClientWs {
+async fn connect_ws(relay: &TargetAddr) -> RawWs {
     let (ws, _resp) = connect_async(format!("ws://{}:{}/", relay.host, relay.port))
         .await
         .expect("ws 连接应成功");
@@ -95,11 +97,10 @@ async fn connect_via_relay(
     secret: &Secret,
     target: Option<&TargetAddr>,
 ) -> ClientWs {
-    let mut io = connect_ws(relay).await;
-    client_handshake(&mut io, KEY_ID, secret, target, HS_TIMEOUT)
+    let io = connect_ws(relay).await;
+    client_handshake(io, KEY_ID, secret, target, HS_TIMEOUT)
         .await
-        .expect("握手应成功");
-    io
+        .expect("握手应成功")
 }
 
 #[tokio::test]
@@ -128,13 +129,11 @@ async fn wrong_secret_is_rejected_with_status_over_ws() {
 
     let mut io = connect_ws(&relay).await;
     let wrong = Secret::from_bytes([1u8; 32]);
-    let err = client_handshake(&mut io, KEY_ID, &wrong, None, HS_TIMEOUT)
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        err,
-        veloterm_relay_proto::handshake::ClientHandshakeError::Rejected(Status::AuthFailed)
-    ));
+    let err = match client_handshake(&mut io, KEY_ID, &wrong, None, HS_TIMEOUT).await {
+        Err(e) => e,
+        Ok(_) => panic!("错误 secret 应鉴权失败"),
+    };
+    assert!(matches!(err, veloterm_relay_proto::handshake::ClientHandshakeError::AuthMismatch));
 }
 
 mod russh_ws_e2e {
