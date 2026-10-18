@@ -70,6 +70,7 @@ impl LifecycleEmitter for AppHandle {
 }
 
 /// 便捷构造 + 发射（避免在每个调用点手写完整结构体）
+#[allow(clippy::too_many_arguments)]
 pub fn emit_ssh_lifecycle(
     emitter: &dyn LifecycleEmitter,
     kind: LifecycleKind,

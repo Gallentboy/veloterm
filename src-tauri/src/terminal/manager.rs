@@ -167,10 +167,10 @@ impl TerminalManager {
 
                 // 中继（仅链首生效）：主机记录配置了中继时，首跳经 veloterm_relay
                 // 建立 VLR2 流再 connect_stream；后续跳板链逻辑不变。
-                if let Some(relay) = db_host.as_ref().and_then(|h| h.relay.clone()) {
-                    if let Some(first) = chain.first_mut() {
-                        first.relay = Some(relay);
-                    }
+                if let Some(relay) = db_host.as_ref().and_then(|h| h.relay.clone())
+                    && let Some(first) = chain.first_mut()
+                {
+                    first.relay = Some(relay);
                 }
 
                 let sessions_ref = Arc::clone(&self.sessions);

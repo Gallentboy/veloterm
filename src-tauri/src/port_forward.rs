@@ -280,10 +280,10 @@ fn resolve_host_chain(pool: &DbPool, host_id: i64) -> Result<Vec<TargetSSHOption
         relay: None,
     });
     // 中继（仅链首生效）：与 TerminalManager 同型，端口转发连接同样可走中继
-    if let Some(relay) = target.relay.clone() {
-        if let Some(first) = chain.first_mut() {
-            first.relay = Some(relay);
-        }
+    if let Some(relay) = target.relay.clone()
+        && let Some(first) = chain.first_mut()
+    {
+        first.relay = Some(relay);
     }
     Ok(chain)
 }

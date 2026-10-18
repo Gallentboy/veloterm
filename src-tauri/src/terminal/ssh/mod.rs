@@ -39,6 +39,7 @@ pub struct SshTerminalSession {
 }
 
 impl SshTerminalSession {
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn<F>(
         id: usize,
         cols: u16,
@@ -106,7 +107,6 @@ impl SshTerminalSession {
         let lifecycle_target_port = target.port;
         let lifecycle_target_user = target.username.clone();
         // host_id 由 manager 层解析后传入（TargetSSHOptions 自身无此字段）
-        let lifecycle_host_id = lifecycle_host_id;
 
         tokio::spawn(async move {
             let mut exit_code: i32 = 0;

@@ -306,6 +306,7 @@ pub struct LocalPtySession {
 }
 
 impl LocalPtySession {
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn<F>(
         id: usize,
         cols: u16,
