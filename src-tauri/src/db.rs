@@ -1059,6 +1059,74 @@ pub fn get_all_kv(pool: &DbPool) -> Result<HashMap<String, String>, String> {
     Ok(map)
 }
 
+/// 更新主机保存的登录密码（kbd-int 认证内改密成功后自动回写）。
+/// 只动 auth_json 单列：读现行 JSON → 仅当为 Password 变体时替换
+/// password 字段 → UPDATE（Key/Agent 变体不动——改密流程只在密码
+/// 认证场景触发）。返回是否实际更新。
+pub fn update_host_password(
+    pool: &DbPool,
+    host_id: usize,
+    new_password: &str,
+) -> Result<bool, String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    let auth_json: Option<String> = conn
+        .query_row(
+            "SELECT auth_json FROM hosts WHERE id = ?1",
+            params![host_id as i64],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("failed to read host auth: {e}"))?;
+    let Some(auth_json) = auth_json else {
+        return Ok(false); // 主机不存在（临时连接等）——静默跳过
+    };
+    let mut auth: SSHTargetAuth = serde_json::from_str(&auth_json)
+        .map_err(|e| format!("failed to parse auth_json: {e}"))?;
+    match &mut auth {
+        SSHTargetAuth::Password { password } => {
+            *password = new_password.to_string();
+        }
+        _ => return Ok(false), // Key/Agent：密码改密流程不适用，不动
+    }
+    let new_json = serde_json::to_string(&auth)
+        .map_err(|e| format!("failed to serialize auth: {e}"))?;
+    let now = now_timestamp_ms();
+    let changed = conn
+        .execute(
+            "UPDATE hosts SET auth_json = ?1, updated_at = ?2 WHERE id = ?3",
+            params![new_json, now, host_id as i64],
+        )
+        .map_err(|e| format!("failed to update host password: {e}"))?;
+    if changed == 0 {
+        return Ok(false);
+    }
+    // 回读校验：确认落库值与传入一致（调用方据此打印比对）
+    let saved_json: String = conn
+        .query_row(
+            "SELECT auth_json FROM hosts WHERE id = ?1",
+            params![host_id as i64],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("failed to re-read host auth: {e}"))?;
+    let saved: SSHTargetAuth = serde_json::from_str(&saved_json)
+        .map_err(|e| format!("failed to parse saved auth: {e}"))?;
+    match saved {
+        SSHTargetAuth::Password { password } => {
+            if password == new_password {
+                Ok(true)
+            } else {
+                Err(format!(
+                    "回读不一致：写入 {} 字节、读回 {} 字节",
+                    new_password.len(),
+                    password.len()
+                ))
+            }
+        }
+        _ => Err("回读 auth 不是 Password 变体".to_string()),
+    }
+}
+
 pub fn get_kv(pool: &DbPool, key: &str) -> Result<Option<String>, String> {
     let conn = pool
         .get()

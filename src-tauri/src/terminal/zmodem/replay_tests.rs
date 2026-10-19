@@ -104,17 +104,23 @@ fn receiver_replays_full_single_file_transfer() {
     let mut reader = reader;
     let mut out: Vec<u8> = Vec::new();
     let mut session = Session::new();
-    let mut progress_hits = 0u64;
+    let counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let counter_task = std::sync::Arc::clone(&counter);
     session.on_progress = Some(Box::new(move |_bytes| {
-        progress_hits += 1;
+        counter_task.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }));
 
-    let mut config = rzsz::receiver::ReceiverConfig::default();
-    config.output_dir = tmp.clone();
+    let config = rzsz::receiver::ReceiverConfig {
+        output_dir: tmp.clone(),
+        ..Default::default()
+    };
     let result = rzsz::receiver::receive_files(&mut session, &mut reader, &mut out, &config);
 
-    // 3) 断言：不 panic、应答帧非空（ZRINIT 突发）
+    // 3) 断言：不 panic、应答帧非空（ZRINIT 突发）。
+    // 进度回调断言不适用：回放流缺少完整握手，引擎可能在落盘前就退出
+    //（回调是否触发取决于握手是否走完，非帧层回归点）
     assert!(!out.is_empty(), "receiver produced no protocol responses");
+    let _ = counter.load(std::sync::atomic::Ordering::Relaxed);
     // 回放流缺少完整握手，允许协议错误；关键是帧层可解析、不崩溃
     let _ = result;
 
@@ -137,8 +143,10 @@ fn receiver_honours_cancel_checkpoint() {
     let mut out: Vec<u8> = Vec::new();
     let mut session = Session::new();
     session.is_cancelled = Some(Box::new(|| true));
-    let mut config = rzsz::receiver::ReceiverConfig::default();
-    config.output_dir = tmp.clone();
+    let config = rzsz::receiver::ReceiverConfig {
+        output_dir: tmp.clone(),
+        ..Default::default()
+    };
 
     let result = rzsz::receiver::receive_files(&mut session, &mut reader, &mut out, &config);
     assert!(

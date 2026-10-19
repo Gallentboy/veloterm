@@ -205,6 +205,8 @@ pub async fn connect_ssh_chain(
     let (tx, _rx) = channel(64);
     let connector = Connector {
         id: session_id,
+        app_handle: None,
+        host_id: None,
         tx,
         known_hosts,
     };
@@ -213,9 +215,22 @@ pub async fn connect_ssh_chain(
 
 struct Connector {
     id: usize,
+    /// AppHandle（预留给后续 kbd-int UI 交互；终端问答路径未用）
+    #[allow(dead_code)]
+    app_handle: Option<tauri::AppHandle>,
+    /// 主机库 id（kbd-int 改密成功后回写保存密码；None=临时连接不回写）
+    host_id: Option<usize>,
     tx: Sender<RCEvent>,
     known_hosts: KnownHosts,
 }
+
+
+/// 认证期终端输入等待者（标准 ssh 客户端行为的复刻）：kbd-int 提示写到
+/// 终端显示后，等待用户在该终端按键（terminal_write → Write 命令 → 此处），
+/// 拼行直到回车作为应答。同一时刻只有一个连接在认证，单槽即可。
+pub static AUTH_INPUT_WAITER: std::sync::LazyLock<
+    std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
 /// 远程 SSH 客户端状态机（迁移自 `warpgate-protocol-ssh/src/client/mod.rs::RemoteClient`）：
 /// - 支持在连接尚未完成时预入队 `ChannelOperation`（如 `OpenShell` / `RequestPty` / `RequestShell` / `ResizePty`）；
@@ -223,6 +238,10 @@ struct Connector {
 /// - 支持密码、私钥（PEM/OpenSSH/文件路径 + Passphrase）、本地 `ssh-agent` 与 `keyboard-interactive` 认证。
 pub struct RemoteClient {
     id: usize,
+    /// AppHandle（kbd-int 改密输入事件用）
+    app_handle: Option<tauri::AppHandle>,
+    /// 主机库 id（改密成功回写；None=临时连接）
+    host_id: Option<usize>,
     tx: Sender<RCEvent>,
     session: Option<Arc<Handle<ClientHandler>>>,
     channel_pipes: Arc<Mutex<HashMap<usize, UnboundedSender<ChannelOperation>>>>,
@@ -246,7 +265,12 @@ pub struct RemoteClientHandles {
 }
 
 impl RemoteClient {
-    pub fn create(id: usize, known_hosts: KnownHosts) -> io::Result<RemoteClientHandles> {
+    pub fn create(
+        id: usize,
+        known_hosts: KnownHosts,
+        app_handle: Option<tauri::AppHandle>,
+        host_id: Option<usize>,
+    ) -> io::Result<RemoteClientHandles> {
         let (event_tx, event_rx) = channel(1024);
         let (command_tx, mut command_rx) = unbounded_channel();
         let (abort_tx, abort_rx) = unbounded_channel();
@@ -254,6 +278,8 @@ impl RemoteClient {
 
         let this = Self {
             id,
+            app_handle,
+            host_id,
             tx: event_tx,
             session: None,
             channel_pipes: Arc::new(Mutex::new(HashMap::new())),
@@ -489,6 +515,8 @@ impl RemoteClient {
                 self.set_state(RCState::Connecting).await?;
                 let connector = Connector {
                     id: self.id,
+                    app_handle: self.app_handle.clone(),
+                    host_id: self.host_id,
                     tx: self.tx.clone(),
                     known_hosts: self.known_hosts.clone(),
                 };
@@ -502,6 +530,16 @@ impl RemoteClient {
                 }
             }
             RCCommand::Channel(ch, op) => {
+                // 认证期终端输入（标准 ssh 复刻）：kbd-int 改密询问在等用户
+                // 输入时，Write 命令的字节转给等待者（拼行回车提交），
+                // 不进 channel（此时 shell channel 未开）
+                if let ChannelOperation::Data(ref data) = op {
+                    let waiter = AUTH_INPUT_WAITER.lock().unwrap().clone();
+                    if let Some(tx) = waiter {
+                        let _ = tx.send(data.to_vec());
+                        return Ok(false);
+                    }
+                }
                 self.apply_channel_op(ch, op, reply).await?;
             }
             RCCommand::ExecCapture { command, reply } => {
@@ -1013,6 +1051,54 @@ impl Connector {
         }
     }
 
+    /// 终端内询问（标准 ssh 行为复刻）：提示写到终端显示，等待用户在
+    /// 该终端输入一行（回车提交）。输入不回显（PAM echo=0，同 ssh 客户端）。
+    async fn ask_in_terminal(&self, prompt: &str) -> Option<String> {
+        // 提示显示到终端（原色，与 shell 内 passwd 提示一致的观感：
+        // 光标当前位置直接输出提示 + 末尾空格等待输入；换行由 instructions
+        // 尾部或上一输入的回车回显提供——此处再带前导换行会出现双换行空行）
+        let line = format!("{} ", prompt.trim());
+        let _ = self
+            .tx
+            .send(RCEvent::Output(1, bytes::Bytes::from(line)))
+            .await;
+        // 注册输入等待
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        *AUTH_INPUT_WAITER.lock().unwrap() = Some(tx);
+        // 拼行直到回车（处理退格；无回显）。内层 break 需传出结果
+        let mut buf: Vec<u8> = Vec::new();
+        let mut done: Option<Option<String>> = None;
+        while done.is_none() {
+            match tokio::time::timeout(std::time::Duration::from_secs(180), rx.recv()).await {
+                Ok(Some(bytes)) => {
+                    for b in bytes {
+                        if b == b'\r' || b == b'\n' {
+                            let text = String::from_utf8_lossy(&buf).into_owned();
+                            // 回显换行：输入无回显，但回车后光标需移到新行，
+                            // 否则后续输出（下一提示/登录 banner）紧贴提示行
+                            let _ = self
+                                .tx
+                                .send(RCEvent::Output(1, bytes::Bytes::from("\r\n")))
+                                .await;
+                            done = Some(Some(text));
+                            break;
+                        }
+                        if b == 0x7f || b == 0x08 {
+                            buf.pop();
+                        } else {
+                            buf.push(b);
+                        }
+                    }
+                }
+                _ => {
+                    done = Some(None); // 超时或通道关闭
+                }
+            }
+        }
+        *AUTH_INPUT_WAITER.lock().unwrap() = None;
+        done.flatten()
+    }
+
     async fn authenticate_session(
         &self,
         session: &mut Handle<ClientHandler>,
@@ -1025,6 +1111,237 @@ impl Connector {
 
         match auth {
             SSHTargetAuth::Password { password } => {
+                // 【kbd-int 优先】PAM 密码过期场景：password 方法会被直接放行
+                // （SUCCESS + banner，改密被推迟到登录后 shell 内强制 passwd），
+                // 交互链（RFC 4256 INFO_REQUEST 三连提示）只有客户端**主动
+                // 发起 keyboard-interactive** 才触发——libssh/系统 ssh 均此序。
+                // 先试 kbd-int：命中交互链 → libssh 式感知循环（提示全文 +
+                // 改密特征检测）；服务器不支持 → 回落 password。
+                let mut kb = session
+                    .authenticate_keyboard_interactive_start(username.to_string(), None)
+                    .await?;
+                let mut kbdint_worked = false;
+                let mut round = 0u32;
+                // 过期/改密流程已登记（首次 INFO 后续轮降 DEBUG 防刷屏）
+                let mut expiry_logged = false;
+                // 改密新密码跟踪：New 轮候选 → Retype 一致确认（写库依据）
+                let mut change_new_candidate: Option<String> = None;
+                let mut change_new_verified: Option<String> = None;
+                loop {
+                    match kb {
+                        KeyboardInteractiveAuthResponse::Success => {
+                            log::info!(
+                                "[SSH {}] Authenticated via keyboard-interactive as {}",
+                                self.id,
+                                username
+                            );
+                            kbdint_worked = true;
+                            break;
+                        }
+                        KeyboardInteractiveAuthResponse::Failure { .. } => break, // 服务器不支持 kbd-int
+                        KeyboardInteractiveAuthResponse::InfoRequest {
+                            name: _name,
+                            instructions,
+                            ref prompts,
+                        } => {
+                            round += 1;
+                            let prompt_texts: Vec<&str> =
+                                prompts.iter().map(|p| p.prompt.as_str()).collect();
+                            let lower_all = prompt_texts
+                                .iter()
+                                .map(|p| p.to_ascii_lowercase())
+                                .collect::<Vec<_>>()
+                                .join("\x1e");
+                            let looks_change = lower_all.contains("new password")
+                                || lower_all.contains("new unix password")
+                                || lower_all.contains("新密码")
+                                || lower_all.contains("新的密码");
+                            // 检测登记（改密流程进入时打一次 INFO，验证模式）。
+                            // 调试期日志：默认注释，排查时取消注释即可
+                            if !expiry_logged && (looks_change || !instructions.is_empty()) {
+                                expiry_logged = true;
+                                // log::info!(
+                                //     "[SSH-PASSWD-CHANGE] session={} round={} \\
+                                //      form=keyboard-interactive name={:?} \\
+                                //      instructions={:?} prompts={:?} \\
+                                //      -> 终端内问答（标准 ssh 复刻）\\
+                                //      (verification mode: log-only)",
+                                //     self.id, round, name, instructions, prompt_texts
+                                // );
+                            }
+                            // 终端内问答（标准 ssh 客户端行为复刻）：
+                            // - instructions 有内容（PAM info/warning）→ 显示到终端
+                            // - Password:/Current password: → 显示提示 + 等用户输入
+                            //   （不自动填保存的密码——检测到过期即交给用户）
+                            // - New password:/Retype: → 同上；Retype 校验一致后记住
+                            // - 应答推进循环直到 SUCCESS/FAILURE（改密在认证内完成）
+                            if round >= 20 {
+                                log::warn!(
+                                    "[SSH {}] kbd-int 轮次超上限（{}），中止回落 password",
+                                    self.id, round
+                                );
+                                break;
+                            }
+                            if !instructions.is_empty() {
+                                let info = format!("{}\r\n", instructions.trim());
+                                let _ = self
+                                    .tx
+                                    .send(RCEvent::Output(1, bytes::Bytes::from(info)))
+                                    .await;
+                            }
+                            let mut responses: Vec<String> = Vec::with_capacity(prompts.len());
+                            for p in prompts {
+                                let lp = p.prompt.to_ascii_lowercase();
+                                let is_change_step = lp.contains("current")
+                                    || lp.contains("new password")
+                                    || lp.contains("retype")
+                                    || lp.contains("当前密码")
+                                    || lp.contains("新密码")
+                                    || lp.contains("重新输入");
+                                // 普通认证提示（Password:，未进入改密流程）→
+                                // 自动填保存的密码；改密流程步骤（Current/New/
+                                // Retype）→ 终端显示提示等用户输入
+                                if !is_change_step && !expiry_logged {
+                                    responses.push(password.to_string());
+                                    continue;
+                                }
+                                let answer = self.ask_in_terminal(&p.prompt).await;
+                                match answer {
+                                    Some(a) => {
+                                        // 改密各轮跟踪 New/Retype 一致对（写库依据）。
+                                        // retype 必须先判：「Retype new password」
+                                        // 同时含「new password」，else-if 顺序错会让
+                                        // retype 分支不可达（实测：retype 轮打成
+                                        // input new 标签、verified 永不设置、
+                                        // 数据库不更新——根因）
+                                        //
+                                        // 调试期明文日志：默认注释，排查时取消注释即可
+                                        // （含明文密码，勿长期开启）
+                                        if lp.contains("current") || lp.contains("当前密码") {
+                                            // log::info!(
+                                            //     "[SSH-PASSWD-CHANGE] session={} input current={:?} \\
+                                            //      (verification mode: log-only)",
+                                            //     self.id, a
+                                            // );
+                                        } else if lp.contains("retype")
+                                            || lp.contains("重新输入")
+                                        {
+                                            // log::info!(
+                                            //     "[SSH-PASSWD-CHANGE] session={} input retype={:?} \\
+                                            //      (verification mode: log-only)",
+                                            //     self.id, a
+                                            // );
+                                            // 双保险一致性：PAM 侧也校验，
+                                            // 不一致时 PAM 会拒绝重来
+                                            if change_new_candidate.as_deref()
+                                                == Some(a.as_str())
+                                                && !a.is_empty()
+                                            {
+                                                change_new_verified = Some(a.clone());
+                                            }
+                                        } else if lp.contains("new password")
+                                            || lp.contains("新密码")
+                                        {
+                                            // log::info!(
+                                            //     "[SSH-PASSWD-CHANGE] session={} input new={:?} \\
+                                            //      (verification mode: log-only)",
+                                            //     self.id, a
+                                            // );
+                                            change_new_candidate = Some(a.clone());
+                                        }
+                                        responses.push(a);
+                                    }
+                                    None => {
+                                        // 超时/用户无输入：空应答继续（PAM 拒绝后重试）
+                                        log::warn!(
+                                            "[SSH {}] kbd-int 终端输入超时/取消",
+                                            self.id
+                                        );
+                                        responses.push(String::new());
+                                    }
+                                }
+                            }
+                            kb = session
+                                .authenticate_keyboard_interactive_respond(responses)
+                                .await?;
+                        }
+                    }
+                }
+                if kbdint_worked {
+                    // 认证内改密成功（PAM 全链验证通过才返回 Success）：
+                    // 新密码 100% 可靠（我们 setanswer 发出的 + New/Retype
+                    // 双一致确认）→ 自动回写主机库保存的密码
+                    if let Some(new_pw) = &change_new_verified {
+                        // 调试期明文日志（含新密码）：默认注释，排查时取消注释
+                        // log::info!(
+                        //     "[SSH-PASSWD-CHANGE] session={} CONFIRMED: \\
+                        //      password changed via kbd-int new={:?} \\
+                        //      (verification mode: plaintext log-only)",
+                        //     self.id, new_pw
+                        // );
+                        if let Some(host_id) = self.host_id {
+                            match crate::db::global_pool() {
+                                Some(pool) => {
+                                    match crate::db::update_host_password(
+                                        &pool, host_id, new_pw,
+                                    ) {
+                                        Ok(true) => {
+                                            log::info!(
+                                                "[SSH-PASSWD-CHANGE] session={} \
+                                                 DB-UPDATED: hosts.id={} password saved \
+                                                 (automatic, verified via kbd-int)",
+                                                self.id, host_id
+                                            );
+                                            // 比对打印（验证期用，已确认落库正确）
+                                            // 默认注释，排查时取消注释即可
+                                            // log::info!(
+                                            //     "[SSH-PASSWD-CHANGE] session={} \
+                                            //      DB-SAVED-PASSWORD={:?}",
+                                            //     self.id, new_pw
+                                            // );
+                                            // 通知前端刷新内存 host store：前端建
+                                            // 会话用内存副本，不刷新会继续用旧密码
+                                            //（实测：DB 已更新但新会话被拒）
+                                            use tauri::Emitter;
+                                            if let Some(app) = self.app_handle.as_ref() {
+                                                let _ = app.emit(
+                                                    "host-password-updated",
+                                                    serde_json::json!({
+                                                        "hostId": host_id
+                                                    }),
+                                                );
+                                            }
+                                        }
+                                        Ok(false) => log::info!(
+                                            "[SSH-PASSWD-CHANGE] session={} \\
+                                             DB-SKIP: hosts.id={} not password-auth \\
+                                             or missing (no update)",
+                                            self.id, host_id
+                                        ),
+                                        Err(e) => log::warn!(
+                                            "[SSH-PASSWD-CHANGE] session={} \\
+                                             DB-UPDATE failed: {}",
+                                            self.id, e
+                                        ),
+                                    }
+                                }
+                                None => log::warn!(
+                                    "[SSH-PASSWD-CHANGE] session={} DB pool \\
+                                     unavailable, password not saved",
+                                    self.id
+                                ),
+                            }
+                        } else {
+                            log::info!(
+                                "[SSH-PASSWD-CHANGE] session={} no host_id \\
+                                 (temporary connection), password not saved",
+                                self.id
+                            );
+                        }
+                    }
+                    return Ok(());
+                }
+                // 回落：password 方法（不支持 kbd-int 的服务器）
                 let response = session
                     .authenticate_password(username.to_string(), password)
                     .await?;
@@ -1289,9 +1606,47 @@ impl Connector {
                             .await?;
 
                         let mut used_password = false;
-                        while let KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } =
-                            kb_result
+                        // 【验证模式】libssh 式 kbd-int 感知（对齐
+                        // ssh_userauth_kbdint_getname/getinstruction/getprompt
+                        // 的拉取模型）：每轮 InfoRequest 的 name/instruction/
+                        // prompts 全文暴露；含「新密码」特征 = PAM 强制改密
+                        //（RFC 4256 多轮：弱密码被拒后服务器重发提示自然循环）。
+                        // 仅日志登记，不动数据库密码。
+                        let mut round = 0u32;
+                        while let KeyboardInteractiveAuthResponse::InfoRequest {
+                            name,
+                            instructions,
+                            ref prompts,
+                        } = kb_result
                         {
+                            round += 1;
+                            let prompt_texts: Vec<&str> =
+                                prompts.iter().map(|p| p.prompt.as_str()).collect();
+                            let lower_all = prompt_texts
+                                .iter()
+                                .map(|p| p.to_ascii_lowercase())
+                                .collect::<Vec<_>>()
+                                .join("\x1e");
+                            let looks_change = prompts.len() >= 2
+                                && lower_all.contains("new password")
+                                || lower_all.contains("new unix password")
+                                || lower_all.contains("新密码")
+                                || lower_all.contains("新的密码");
+                            if looks_change {
+                                log::info!(
+                                    "[SSH-PASSWD-CHANGE] session={} round={} \
+                                     form=keyboard-interactive name={:?} \
+                                     instructions={:?} prompts={:?} \
+                                     (verification mode: log-only)",
+                                    self.id, round, name, instructions, prompt_texts
+                                );
+                            } else {
+                                log::info!(
+                                    "[SSH {}] kbd-int round {}: name={:?} \
+                                     instructions={:?} prompts={:?}",
+                                    self.id, round, name, instructions, prompt_texts
+                                );
+                            }
                             let responses: Vec<String> = prompts
                                 .iter()
                                 .map(|p| {

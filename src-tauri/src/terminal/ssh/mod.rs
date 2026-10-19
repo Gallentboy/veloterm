@@ -68,7 +68,12 @@ impl SshTerminalSession {
             mut event_rx,
             command_tx,
             abort_tx,
-        } = RemoteClient::create(id, known_hosts)
+        } = RemoteClient::create(
+            id,
+            known_hosts,
+            app_handle.clone(),
+            lifecycle_host_id,
+        )
             .map_err(|e| format!("failed to create SSH RemoteClient: {e}"))?;
 
         // 1. 发起连接（支持单跳直连或多跳 Jump Host 链式隧道）
@@ -213,6 +218,9 @@ impl SshTerminalSession {
                                 zmodem_detector.reset();
                             }
                         }
+                        // 改密提示词扫描（旁路：不影响透传字节）
+                        crate::terminal::passwd_input::PasswdInputLog::global()
+                            .feed_output(id, &data);
                         // 未命中：探测（命中则建桥、启动传输任务）
                         let detection = zmodem_detector.feed(&data);
                         if matches!(detection, crate::terminal::zmodem::Detection::Swallow) {
@@ -234,15 +242,15 @@ impl SshTerminalSession {
                             };
                             // 上传冷却：刚结束上传后 2s 内的 ZRINIT 视为 lrz
                             // 退出的重发帧，吞掉（用户来不及发起下一轮）
-                            if direction == "upload" {
-                                if let Some(at) = last_upload_end {
-                                    if std::time::Instant::now().duration_since(at)
-                                        < std::time::Duration::from_secs(2)
-                                    {
-                                        log::debug!("[ZMODEM] session {id} ZRINIT in upload cooldown, swallowed");
-                                        continue;
-                                    }
-                                }
+                            if direction == "upload"
+                                && let Some(at) = last_upload_end
+                                && std::time::Instant::now().duration_since(at)
+                                    < std::time::Duration::from_secs(2)
+                            {
+                                // 上传冷却：刚结束上传后 2s 内的 ZRINIT 视为 lrz
+                                // 退出的重发帧，吞掉（用户来不及发起下一轮）
+                                log::debug!("[ZMODEM] session {id} ZRINIT in upload cooldown, swallowed");
+                                continue;
                             }
                             if direction == "upload" {
                                 last_upload_end = None; // 正常触发时清除
@@ -344,6 +352,10 @@ impl SshTerminalSession {
                         }
                     }
                     RCEvent::ExtendedData { channel, data, .. } if channel == shell_channel_id => {
+                        // stderr 同样喂提示词扫描：passwd 的完成消息
+                        // "password updated successfully" 实测走 stderr
+                        crate::terminal::passwd_input::PasswdInputLog::global()
+                            .feed_output(id, &data);
                         if on_output.send(data.to_vec()).is_err() {
                             break;
                         }
