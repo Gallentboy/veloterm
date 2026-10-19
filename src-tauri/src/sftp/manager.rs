@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use super::types::{SftpClient, SftpState};
+use super::types::{SftpClient, SftpSshHandle, SftpState};
+use tokio::io::AsyncReadExt as _;
 use crate::terminal::ssh::{KnownHosts, TargetSSHOptions, connect_ssh_chain};
 
 fn record_to_ssh_options(record: &crate::db::HostRecord) -> TargetSSHOptions {
@@ -60,14 +61,14 @@ pub fn resolve_host_chain(host_id: usize) -> Result<Vec<TargetSSHOptions>, Strin
     Ok(hops)
 }
 
-pub async fn connect_sftp(chain: Vec<TargetSSHOptions>) -> Result<SftpClient, String> {
+pub async fn connect_sftp(chain: Vec<TargetSSHOptions>) -> Result<(SftpClient, std::sync::Arc<SftpSshHandle>), String> {
     let known_hosts = KnownHosts::global();
     let session_id = 0; // 内部连接序号
     let connection = connect_ssh_chain(session_id, chain, known_hosts)
         .await
         .map_err(|e| format!("SSH connection failed: {e}"))?;
 
-    let session = connection.0;
+    let session = Arc::new(connection.0);
     let mut active_rx = connection.1;
 
     // 保持连接事件接收协程，防止未消费事件阻塞 SSH 状态机
@@ -94,13 +95,55 @@ pub async fn connect_sftp(chain: Vec<TargetSSHOptions>) -> Result<SftpClient, St
         .await
         .map_err(|e| format!("Failed to initialize SFTP session: {e}"))?;
 
-    Ok(Arc::new(sftp_session))
+    Ok((Arc::new(sftp_session), session))
+}
+
+/// 在 SFTP 连接的 SSH 句柄上开独立 exec 通道执行一次性命令并捕获输出
+/// （同型先例：终端侧 RCCommand::ExecCapture；不占 sftp 子系统通道）。
+/// 超时与调用方自定：du 大目录允许长跑，getent 秒回。
+pub async fn sftp_exec_capture(
+    ssh: &SftpSshHandle,
+    command: &str,
+    timeout_secs: u64,
+) -> Result<String, String> {
+    let channel = tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        ssh.channel_open_session(),
+    )
+    .await
+    .map_err(|_| "旁路命令超时：打开通道失败".to_string())?
+    .map_err(|e| format!("打开通道失败: {e}"))?;
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| format!("执行旁路命令失败: {e}"))?;
+    let mut stream = channel.into_stream();
+    let mut output = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(timeout_secs),
+        stream.read_to_string(&mut output),
+    )
+    .await
+    .map_err(|_| "旁路命令超时：读取输出失败".to_string())?
+    .map_err(|e| format!("读取旁路命令输出失败: {e}"))?;
+    Ok(output)
+}
+
+/// 取会话的 SSH 句柄（无连接/未缓存返回 None，调用方降级——如保留数字 uid）
+pub async fn get_sftp_ssh_handle(
+    state: &SftpState,
+    session_id: &str,
+) -> Option<std::sync::Arc<SftpSshHandle>> {
+    state.ssh_handles.lock().await.get(session_id).cloned()
 }
 
 /// 传输失败后把指定会话从缓存剔除（尽力关闭）：下一次 `get_or_connect_sftp`
 /// 会自动重建连接，避免重试一直命中已死亡的连接。
 pub async fn evict_sftp_session(state: &SftpState, session_id: &str) {
     let client = state.clients.lock().await.remove(session_id);
+    state.ssh_handles.lock().await.remove(session_id);
+    state.id_name_cache.lock().await.retain(|(sid, _, _), _| sid != session_id);
+    state.exec_disabled.lock().await.remove(session_id);
     if let Some(client) = client {
         let _ = client.close().await;
         log::info!("[SFTP] Evicted session '{session_id}' from cache after transfer failure");
@@ -172,7 +215,7 @@ pub async fn get_or_connect_sftp(
         );
         let started = std::time::Instant::now();
         let chain = resolve_host_chain(host_id)?;
-        let client = match connect_sftp(chain).await {
+        let (client, ssh) = match connect_sftp(chain).await {
             Ok(c) => c,
             Err(e) => {
                 state.emit_sftp(
@@ -196,6 +239,11 @@ pub async fn get_or_connect_sftp(
         );
         let mut clients = state.clients.lock().await;
         clients.insert(session_id.to_string(), Arc::clone(&client));
+        state
+            .ssh_handles
+            .lock()
+            .await
+            .insert(session_id.to_string(), ssh);
         // 新建（含断线重连）成功后，顺带清理该会话超龄的孤儿断点临时文件
         cleanup_stale_temp_files_for(state, session_id, &client).await;
         return Ok(client);
@@ -208,6 +256,9 @@ pub async fn get_or_connect_sftp(
 
 pub async fn close_sftp(state: &SftpState, session_id: &str) -> Result<(), String> {
     let client = state.clients.lock().await.remove(session_id);
+    state.ssh_handles.lock().await.remove(session_id);
+    state.id_name_cache.lock().await.retain(|(sid, _, _), _| sid != session_id);
+    state.exec_disabled.lock().await.remove(session_id);
     if let Some(client) = client {
         let _ = client.close().await;
         log::info!("[SFTP] Closed session {session_id}");

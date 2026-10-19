@@ -6,8 +6,8 @@ use tokio::io::AsyncSeekExt;
 
 use super::file_ops::{commit_temp_file, dedup_sftp_status_text, remote_dir_of, sftp_error_message, sibling_temp_path};
 use super::manager::{
-    close_sftp, connect_sftp, evict_sftp_session, get_or_connect_sftp, register_temp_dir,
-    resolve_host_chain,
+    close_sftp, connect_sftp, evict_sftp_session, get_or_connect_sftp, get_sftp_ssh_handle,
+    register_temp_dir, resolve_host_chain, sftp_exec_capture,
 };
 use super::transfer::{
     FailureSide, ProgressTracker, PumpError, PumpOptions, RemoteEndpoint, TransferKind,
@@ -90,9 +90,10 @@ pub async fn sftp_connect(
     state: State<'_, SftpState>,
 ) -> Result<(), String> {
     let chain = resolve_host_chain(host_id)?;
-    let client = connect_sftp(chain).await?;
+    let (client, ssh) = connect_sftp(chain).await?;
     let mut clients = state.clients.lock().await;
-    clients.insert(session_id, client);
+    clients.insert(session_id.clone(), client);
+    state.ssh_handles.lock().await.insert(session_id, ssh);
     Ok(())
 }
 
@@ -178,7 +179,133 @@ pub async fn sftp_list_dir(
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
+    // uid/gid → 名称：SFTP attrs 的 user/group 名称字段部分服务端不填（回退数字），
+    // 在同连接的独立 exec 通道跑 getent 补齐（缓存后零 exec；失败/无句柄保持数字）
+    resolve_owner_group_names(&state, &session_id, &mut items).await;
+
     Ok(items)
+}
+
+/// 把列表里仍是数字的 owner/group 经 getent 解析为名称并回填。
+/// 解析结果落 id_name_cache（会话维度），同会话后续列目录零 exec；
+/// 回填不依赖本次是否发起 getent——缓存命中的 id 换目录后仍回填名称
+/// （全部命中时不再 exec，但必须走回填而不是提前返回，否则显示回数字）。
+/// getent 不可用（BSD/macOS 目标机）或无 SSH 句柄时静默保持数字——
+/// 列目录主链路不受旁路命令失败影响。
+async fn resolve_owner_group_names(
+    state: &State<'_, SftpState>,
+    session_id: &str,
+    items: &mut [RemoteFileItem],
+) {
+    let sid = session_id.to_string();
+    // 数字形态才需要解析（服务端填过名称的直通）；已缓存的 id 不进缺口清单
+    let mut uid_misses: Vec<u32> = Vec::new();
+    let mut gid_misses: Vec<u32> = Vec::new();
+    {
+        let cache = state.id_name_cache.lock().await;
+        for item in items.iter() {
+            if let Ok(uid) = item.owner.parse::<u32>()
+                && !cache.contains_key(&(sid.clone(), false, uid))
+                && !uid_misses.contains(&uid)
+            {
+                uid_misses.push(uid);
+            }
+            if let Ok(gid) = item.group.parse::<u32>()
+                && !cache.contains_key(&(sid.clone(), true, gid))
+                && !gid_misses.contains(&gid)
+            {
+                gid_misses.push(gid);
+            }
+        }
+    }
+
+    // getent passwd uid... / getent group gid...：一次 exec 解析一批；
+    // 行形如 name:x:ID:...（ID 在第三列）。exec 失败（拒绝/超时/ForceCommand
+    // 劫持）标记会话降级——uid/gid 任一分支失败都标记，之后列目录零重试。
+    // 缓存锁不跨 exec await（左右分栏并发列目录互不阻塞），结果到齐后一次落锁。
+    // 仅当确有缺口、exec 未被禁且句柄在位时才发起；跳过 exec 不影响下面的回填。
+    let mut outputs: Vec<(bool, String)> = Vec::new();
+    if !(uid_misses.is_empty() && gid_misses.is_empty())
+        && !state.exec_disabled.lock().await.contains(&sid)
+        && let Some(ssh) = get_sftp_ssh_handle(state, session_id).await
+    {
+        let lookup = |is_group: bool, ids: &[u32]| {
+            let db = if is_group { "group" } else { "passwd" };
+            let args = ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" ");
+            format!("getent {db} {args}")
+        };
+        for (is_group, ids) in [(false, &uid_misses), (true, &gid_misses)] {
+            if ids.is_empty() {
+                continue;
+            }
+            match sftp_exec_capture(&ssh, &lookup(is_group, ids), 10).await {
+                Ok(out) => outputs.push((is_group, out)),
+                Err(e) => {
+                    log::warn!(
+                        "[SFTP] getent 旁路解析失败，本会话降级为数字 uid/gid: {e}"
+                    );
+                    state.exec_disabled.lock().await.insert(sid.clone());
+                }
+            }
+        }
+    }
+
+    // 回填（缓存未命中的保持数字——uid 已被删除等场景）；
+    let mut cache = state.id_name_cache.lock().await;
+    for (is_group, out) in &outputs {
+        // 索引一律 get（-D indexing-slicing 门禁 + 短行/异常行安全跳过）
+        for line in out.lines() {
+            let fields: Vec<&str> = line.split(':').collect();
+            if let (Some(&name), Some(id_str)) = (fields.first(), fields.get(2))
+                && let Ok(id) = id_str.parse::<u32>()
+            {
+                cache.insert((sid.clone(), *is_group, id), name.to_string());
+            }
+        }
+    }
+    for item in items.iter_mut() {
+        if let Ok(uid) = item.owner.parse::<u32>()
+            && let Some(name) = cache.get(&(sid.clone(), false, uid))
+        {
+            item.owner.clone_from(name);
+        }
+        if let Ok(gid) = item.group.parse::<u32>()
+            && let Some(name) = cache.get(&(sid.clone(), true, gid))
+        {
+            item.group.clone_from(name);
+        }
+    }
+}
+
+/// 目录大小：在同连接的独立 exec 通道跑 du（SFTP 递归 stat 大目录既慢又费流量）。
+/// GNU coreutils 用 `du -sb`（apparent 字节数），不支持 -b 的环境（BusyBox/macOS）
+/// 回退 `du -sk`×1024；路径单引号安全包裹。
+#[tauri::command]
+pub async fn sftp_dir_size(
+    session_id: String,
+    path: String,
+    state: State<'_, SftpState>,
+) -> Result<u64, String> {
+    // 先确保连接（连带句柄就位）
+    let _ = get_or_connect_sftp(&state, &session_id).await?;
+    let ssh = get_sftp_ssh_handle(&state, &session_id)
+        .await
+        .ok_or_else(|| "SSH 会话不可用".to_string())?;
+
+    let quoted = format!("'{}'", path.replace('\'', "'\\\"'"));
+    // du 大目录可能长跑：限时 120s；-b 失败（非法选项退出非零且无输出）再试 -sk
+    if let Ok(out) = sftp_exec_capture(&ssh, &format!("du -sb -- {quoted}"), 120).await
+        && let Some(bytes) = out.split_whitespace().next().and_then(|t| t.parse::<u64>().ok())
+    {
+        return Ok(bytes);
+    }
+    let out = sftp_exec_capture(&ssh, &format!("du -sk -- {quoted}"), 120).await?;
+    let kb = out
+        .split_whitespace()
+        .next()
+        .and_then(|t| t.parse::<u64>().ok())
+        .ok_or_else(|| format!("du 输出无法解析: {}", out.trim()))?;
+    Ok(kb.saturating_mul(1024))
 }
 
 #[tauri::command]

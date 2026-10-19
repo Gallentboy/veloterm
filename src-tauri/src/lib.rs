@@ -118,6 +118,7 @@ pub fn run() {
             sftp::commands::sftp_pick_download_path,
             sftp::commands::sftp_pick_download_dir,
             sftp::commands::sftp_remove,
+            sftp::commands::sftp_dir_size,
             sftp::commands::sftp_copy_file,
             sftp::file_ops::sftp_read_file,
             sftp::file_ops::sftp_write_file,

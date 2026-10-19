@@ -7,6 +7,12 @@ use tokio::sync::{Mutex, oneshot};
 
 pub type SftpClient = Arc<russh_sftp::client::SftpSession>;
 
+/// SFTP 连接的底层 SSH 句柄：同连接可开独立 exec 通道跑旁路命令
+/// （目录大小 du / uid-gid 名称解析 getent），与 sftp 子系统通道互不干扰
+/// （SSH 多路复用；同型先例：终端侧 RCCommand::ExecCapture）
+pub type SftpSshHandle =
+    russh::client::Handle<crate::terminal::ssh::handler::ClientHandler>;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RemoteFileItem {
     pub name: String,
@@ -31,8 +37,20 @@ pub struct TransferProgress {
     pub is_finished: bool,
 }
 
+/// uid/gid → 名称解析缓存键（session_id, is_group, id）
+pub type IdNameKey = (String, bool, u32);
+
 pub struct SftpState {
     pub clients: Arc<Mutex<HashMap<String, SftpClient>>>,
+    /// SFTP 连接的 SSH 句柄（与 clients 同生共死：旁路 exec 通道用）
+    pub ssh_handles: Arc<Mutex<HashMap<String, std::sync::Arc<SftpSshHandle>>>>,
+    /// uid/gid → 名称解析缓存（getent 一次性解析后落缓存，后续列目录零 exec；
+    /// 同会话内映射不变，天然安全）
+    pub id_name_cache: Arc<Mutex<HashMap<IdNameKey, String>>>,
+    /// exec 旁路通道不可用的会话（堡垒机禁 shell/ForceCommand internal-sftp 等）：
+    /// 一次失败即标记，后续列目录直接跳过名称解析——否则黑洞型拒绝（通道
+    /// 打开后挂起）会让每次列目录都等满超时。重连（evict/close）时清除重试
+    pub exec_disabled: Arc<Mutex<HashSet<String>>>,
     pub cancel_tokens: Arc<Mutex<HashMap<usize, oneshot::Sender<()>>>>,
     pub next_task_id: AtomicUsize,
     /// 串行化动态建连：并发请求共享一次握手，避免重复建 SSH 连接
@@ -54,6 +72,9 @@ impl SftpState {
     pub fn new() -> Self {
         Self {
             clients: Arc::new(Mutex::new(HashMap::new())),
+            ssh_handles: Arc::new(Mutex::new(HashMap::new())),
+            id_name_cache: Arc::new(Mutex::new(HashMap::new())),
+            exec_disabled: Arc::new(Mutex::new(HashSet::new())),
             cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
             next_task_id: AtomicUsize::new(1),
             connect_lock: Arc::new(Mutex::new(())),
