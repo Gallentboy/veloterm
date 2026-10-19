@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as monaco from 'monaco-editor';
 import { Button } from '@/components/ui/button';
-import { loadRemoteContent, saveRemoteContent } from '@/editor/contentLoader';
+import { loadRemoteContent, loadRemoteContentSudo, saveRemoteContent, saveRemoteContentSudo } from '@/editor/contentLoader';
 import { resolveLanguageId } from '@/editor/languageMap';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
@@ -28,6 +28,11 @@ interface SftpFilePreviewModalProps {
   onClose: () => void;
   /** 保存成功后通知父层（刷新目录列表的 size/mtime 列） */
   onSaved?: () => void;
+}
+
+/** 后端 SFTP 权限错误文案判定（OpenSSH 状态码名「Permission denied」经 dedup 后的形态） */
+function isPermissionDenied(message: string): boolean {
+  return /permission denied/i.test(message);
 }
 
 const PREVIEW_EDITOR_OPTIONS = {
@@ -68,6 +73,15 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
   /** 脏态下的二次确认待执行动作：关闭弹窗 / 退出编辑（两者都会丢失未保存更改） */
   const [pendingDiscard, setPendingDiscard] = useState<'close' | 'exit-edit' | null>(null);
 
+  /* —— sudo 提权态（Permission denied 的兜底）：sudoMode = 内容经 sudo 读入，保存走 sudo tee —— */
+  const [sudoMode, setSudoMode] = useState(false);
+  /** 最近一次验证通过的 sudo 密码（保存时复用；后端另有按主机的会话级缓存） */
+  const [sudoPassword, setSudoPassword] = useState<string | null>(null);
+  const [showSudoPrompt, setShowSudoPrompt] = useState(false);
+  const [sudoInput, setSudoInput] = useState('');
+  const [sudoBusy, setSudoBusy] = useState(false);
+  const [sudoWrong, setSudoWrong] = useState(false);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const baselineRef = useRef<string | null>(null);
@@ -105,27 +119,120 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
     };
   }, [hostId, remotePath]);
 
-  /* —— 保存（编辑态 + 脏态才可触发） —— */
-  const save = useCallback(async () => {
-    const editor = editorRef.current;
-    if (!editor || saving || !dirty) return;
-    const value = editor.getModel()?.getValue();
-    if (value == null) return;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      await saveRemoteContent(hostId, remotePath, value);
-      baselineRef.current = value;
-      setBaseline(value);
-      setDirty(false);
-      setPendingDiscard(null);
-      onSavedRef.current?.();
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSaving(false);
-    }
-  }, [dirty, hostId, remotePath, saving]);
+  /* —— sudo 前缀码 → i18n 文案（REMOTE: 原样透出服务器输出尾部） —— */
+  const mapSudoError = useCallback(
+    (raw: string): string => {
+      if (raw === 'SUDO_PASSWORD_REQUIRED') return t('files.sudoPasswordNeeded');
+      if (raw === 'SUDO_PASSWORD_WRONG') return t('files.sudoWrong');
+      if (raw === 'SUDO_NOT_ALLOWED') return t('files.sudoErrNotAllowed');
+      if (raw === 'SUDO_NO_TTY') return t('files.sudoErrNoTty');
+      if (raw === 'SUDO_MISSING') return t('files.sudoErrMissing');
+      if (raw === 'TOO_LARGE') return t('files.sudoErrTooLarge');
+      if (raw === 'NOT_TEXT') return t('files.sudoErrNotText');
+      if (raw.startsWith('REMOTE:')) return raw.slice('REMOTE:'.length);
+      return raw;
+    },
+    [t],
+  );
+
+  /** sudo 读取：null = 先走 NOPASSWD/会话缓存/主机密码凭证；需要密码时弹内联输入 */
+  const handleSudoRead = useCallback(
+    async (password: string | null) => {
+      if (sudoBusy) return;
+      setSudoBusy(true);
+      setSudoWrong(false);
+      try {
+        const result = await loadRemoteContentSudo(hostId, remotePath, password);
+        if (!result) throw new Error(tRef.current('files.previewUnavailable'));
+        baselineRef.current = result.content;
+        setBaseline(result.content);
+        setLoadError(null);
+        setShowSudoPrompt(false);
+        setSudoMode(true);
+        setSudoPassword(password);
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err);
+        if (raw === 'SUDO_PASSWORD_REQUIRED') {
+          setShowSudoPrompt(true);
+        } else if (raw === 'SUDO_PASSWORD_WRONG') {
+          setSudoWrong(true);
+          setShowSudoPrompt(true);
+        } else {
+          setLoadError(mapSudoError(raw));
+        }
+      } finally {
+        setSudoBusy(false);
+      }
+    },
+    [hostId, remotePath, sudoBusy, mapSudoError],
+  );
+
+  /** 内联 sudo 密码输入（加载失败态与保存失败态复用） */
+  const renderSudoPrompt = (onConfirm: () => void) => (
+    <div className="flex w-full max-w-sm items-center gap-2">
+      <input
+        type="password"
+        value={sudoInput}
+        onChange={(event) => setSudoInput(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && sudoInput.trim()) onConfirm();
+        }}
+        placeholder={t('files.sudoPromptTitle')}
+        autoFocus
+        className="h-7 min-w-0 flex-1 rounded-md border border-border/70 bg-background px-2 text-ui-xs text-foreground outline-none focus:border-border"
+      />
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={!sudoInput.trim()}
+        onClick={onConfirm}
+      >
+        {t('files.sudoConfirm')}
+      </Button>
+      {sudoWrong ? (
+        <span className="shrink-0 text-ui-xs text-warning">{t('files.sudoWrong')}</span>
+      ) : null}
+    </div>
+  );
+
+  /* —— 保存（编辑态 + 脏态才可触发；sudo 模式走 sudo tee） —— */
+  const save = useCallback(
+    async (passwordOverride?: string | null) => {
+      const editor = editorRef.current;
+      if (!editor || saving || !dirty) return;
+      const value = editor.getModel()?.getValue();
+      if (value == null) return;
+      setSaving(true);
+      setSaveError(null);
+      try {
+        const password = passwordOverride !== undefined ? passwordOverride : sudoPassword;
+        if (sudoMode) {
+          await saveRemoteContentSudo(hostId, remotePath, value, password);
+        } else {
+          await saveRemoteContent(hostId, remotePath, value);
+        }
+        baselineRef.current = value;
+        setBaseline(value);
+        setDirty(false);
+        setPendingDiscard(null);
+        onSavedRef.current?.();
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err);
+        if (sudoMode && (raw === 'SUDO_PASSWORD_REQUIRED' || raw === 'SUDO_PASSWORD_WRONG')) {
+          // 提权密码失效（远端改密）：就地弹密码输入重试
+          if (raw === 'SUDO_PASSWORD_WRONG') setSudoWrong(true);
+          setShowSudoPrompt(true);
+          setSaveError(mapSudoError(raw));
+        } else {
+          setSaveError(sudoMode ? mapSudoError(raw) : raw);
+        }
+      } finally {
+        setSaving(false);
+      }
+    },
+    [dirty, hostId, remotePath, saving, sudoMode, sudoPassword, mapSudoError],
+  );
 
   useEffect(() => {
     saveRef.current = () => void save();
@@ -225,6 +332,11 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
             <span className="truncate font-mono text-ui-sm text-foreground select-none">
               {fileName}
             </span>
+            {sudoMode ? (
+              <span className="shrink-0 rounded-full bg-warning/15 px-2 py-0.5 font-mono text-ui-xs text-warning select-none">
+                sudo
+              </span>
+            ) : null}
             {!editing ? (
               <span className="shrink-0 rounded-full bg-surface px-2 py-0.5 text-ui-xs text-foreground-subtle select-none">
                 {t('files.previewReadonly')}
@@ -292,20 +404,51 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
             </div>
           ) : null}
           {loadError ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-popover px-6 text-center">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-popover px-6 text-center">
               <AlertCircle className="size-6 text-warning" />
-              <p className="break-all text-ui-sm text-foreground-subtle">{loadError}</p>
+              <p className="max-w-full break-all text-ui-sm text-foreground-subtle">{loadError}</p>
+              {/* 权限拒绝 → sudo 提权读取入口：NOPASSWD/缓存/主机凭证先行，需要密码时内联输入 */}
+              {isPermissionDenied(loadError) ? (
+                sudoBusy ? (
+                  <Loader2 className="size-5 animate-spin text-foreground-subtle" />
+                ) : showSudoPrompt ? (
+                  renderSudoPrompt(() => {
+                    const pw = sudoInput.trim() || null;
+                    setSudoInput('');
+                    void handleSudoRead(pw);
+                  })
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleSudoRead(null)}
+                  >
+                    {t('files.sudoRead')}
+                  </Button>
+                )
+              ) : null}
             </div>
           ) : null}
         </div>
 
-        {saveError != null || pendingDiscard != null ? (
+        {saveError != null || pendingDiscard != null || (sudoMode && showSudoPrompt) ? (
           <div className="flex shrink-0 flex-col gap-0 border-t border-border/60">
             {saveError != null ? (
               <p className="flex items-center gap-1.5 px-4 py-1.5 text-ui-xs text-warning">
                 <AlertCircle className="size-3.5 shrink-0" />
                 <span className="break-all">{t('files.previewSaveFailed', { error: saveError })}</span>
               </p>
+            ) : null}
+            {/* sudo 保存时密码失效（远端改密）：就地重输 */}
+            {sudoMode && showSudoPrompt ? (
+              <div className="flex justify-center px-4 py-1.5">
+                {renderSudoPrompt(() => {
+                  const pw = sudoInput.trim() || null;
+                  setSudoInput('');
+                  void save(pw);
+                })}
+              </div>
             ) : null}
             {pendingDiscard != null ? (
               <div className="flex items-center justify-between gap-3 px-4 py-2">

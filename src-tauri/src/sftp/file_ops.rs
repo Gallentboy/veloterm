@@ -12,8 +12,13 @@ use tauri::State;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
-use super::manager::get_or_connect_sftp;
+use super::commands::shell_single_quote;
+use super::manager::{
+    get_or_connect_sftp, get_sftp_ssh_handle, resolve_host_chain, sftp_exec_capture_status,
+    sftp_exec_with_stdin,
+};
 use super::types::{SftpClient, SftpState};
+use crate::terminal::ssh::SSHTargetAuth;
 use crate::text_detect::{MAX_EDITABLE_FILE_SIZE_BYTES, is_editable_text};
 
 /// 文本嗅探探针长度（与 `is_text_buffer` 约定一致）。
@@ -274,9 +279,243 @@ pub async fn sftp_write_file(
     Ok(())
 }
 
+/* ─────────────────── sudo 提权读写（Permission denied 的编辑/预览兜底） ───────────────────
+ *
+ * 场景：登录用户对目标文件无读/写权限（root 属主的配置文件等）。读走
+ * `sudo cat 家族`（head -c 限长），写走 `sudo tee`（stdin 灌内容 + EOF，
+ * 原位覆写且保留属主/权限）。不走 PTY——PTY 的本地回显与 ONLCR 翻译会
+ * 污染文件内容；密码经 `sudo -S` 从 stdin 首行读取（sudo 逐字节消费，
+ * 不会吞掉后续内容），不进命令行（远端 ps 不可见）、不落日志。
+ *
+ * 密码三候选（优先级）：本次入参（前端弹窗输入）> 会话缓存（验证通过后
+ * 按主机记存、纯内存）> 主机登录密码凭证（SQLCipher 解密）。任何密码候选
+ * 都先经 `sudo -S -k -v` 验证再干活——直接把密码和文件内容一起灌给 tee，
+ * 密码错误时 sudo 会把后续内容行当密码重试吃掉，文件必写坏。
+ * 无任何候选时先探 NOPASSWD（`sudo -n`），需要密码则返回
+ * SUDO_PASSWORD_REQUIRED 由前端弹窗收集。
+ */
+
+/// sudo 凭据形态
+#[derive(Clone, PartialEq)]
+enum SudoCred {
+    /// NOPASSWD 免密（`sudo -n`，零打扰）
+    NoPassword,
+    /// 密码提权（`sudo -S`，密码走 stdin 首行）
+    WithPassword(String),
+}
+
+/// 组装 stdin：密码行（若有）+ 文件内容（若有）
+fn sudo_stdin(cred: &SudoCred, content: Option<&str>) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    if let SudoCred::WithPassword(password) = cred {
+        bytes.extend_from_slice(password.as_bytes());
+        bytes.push(b'\n');
+    }
+    if let Some(content) = content {
+        bytes.extend_from_slice(content.as_bytes());
+    }
+    bytes
+}
+
+/// sudo 读取命令：head -c 读 MAX+1 字节——长度超过 MAX 即判超限
+/// （区分恰好等于上限的合法文件），GNU/BSD/busybox head 均支持 -c。
+/// 路径为列表构造的绝对路径，仅作 $1 单引号包裹传递（同 chmod/chown 范式）。
+fn build_sudo_read_command(path: &str, cred: &SudoCred) -> String {
+    let sudo = match cred {
+        SudoCred::NoPassword => "sudo -n",
+        SudoCred::WithPassword(_) => "sudo -S -p \"\"",
+    };
+    format!(
+        "sh -c '{sudo} head -c {} \"$1\"' veloterm-sudo-read {}",
+        MAX_EDITABLE_FILE_SIZE_BYTES + 1,
+        shell_single_quote(path),
+    )
+}
+
+/// sudo 写入命令：tee 原位覆写（POSIX 规定 O_TRUNC，不留旧尾巴）且保留
+/// 属主/权限；tee 自身回显的内容重定向 /dev/null
+fn build_sudo_write_command(path: &str, cred: &SudoCred) -> String {
+    let sudo = match cred {
+        SudoCred::NoPassword => "sudo -n",
+        SudoCred::WithPassword(_) => "sudo -S -p \"\"",
+    };
+    format!(
+        "sh -c '{sudo} tee \"$1\" > /dev/null' veloterm-sudo-write {}",
+        shell_single_quote(path),
+    )
+}
+
+/// sudo 失败分类（稳定前缀码，前端映射 i18n 文案）
+fn classify_sudo_failure(output: &str, code: Option<u32>) -> String {
+    if code == Some(127) {
+        return "SUDO_MISSING".to_string();
+    }
+    let lower = output.to_lowercase();
+    if lower.contains("a password is required") {
+        return "SUDO_PASSWORD_REQUIRED".to_string();
+    }
+    if lower.contains("incorrect password")
+        || lower.contains("sorry, try again")
+        || lower.contains("authentication failure")
+    {
+        return "SUDO_PASSWORD_WRONG".to_string();
+    }
+    if lower.contains("not in the sudoers") || lower.contains("not allowed to execute") {
+        return "SUDO_NOT_ALLOWED".to_string();
+    }
+    if lower.contains("no tty present") || lower.contains("a terminal is required") {
+        return "SUDO_NO_TTY".to_string();
+    }
+    let tail: String = output.trim().chars().take(200).collect();
+    format!("REMOTE:{tail}")
+}
+
+/// 主机登录密码凭证（auth=Password 时存在，SQLCipher 已解密形态）
+fn stored_host_password(host_id: i64) -> Option<String> {
+    let chain = resolve_host_chain(host_id as usize).ok()?;
+    match &chain.last()?.auth {
+        SSHTargetAuth::Password { password } => Some(password.clone()),
+        _ => None,
+    }
+}
+
+/// 验证密码：`sudo -S -k -v`（stdin 只喂密码行 + EOF；sudo 逐字节读密码、
+/// 不碰后续数据）。stdin 不含任何文件内容，密码错误时 sudo 重试读到 EOF
+/// 即失败退出——不存在吞内容问题。
+async fn validate_sudo_password(
+    ssh: &super::types::SftpSshHandle,
+    password: &str,
+) -> Result<(), String> {
+    let stdin = format!("{password}\n");
+    let (output, code) = sftp_exec_with_stdin(ssh, "sudo -S -k -v -p \"\"", stdin.as_bytes(), 10)
+        .await
+        .map_err(|e| format!("EXEC_CHANNEL:{e}"))?;
+    match code {
+        Some(0) => Ok(()),
+        other => Err(classify_sudo_failure(&output, other)),
+    }
+}
+
+/// 解析 sudo 凭据：入参 > 会话缓存 > 主机登录密码；有候选先验证（通过落
+/// 缓存，失败清缓存交前端重输），无候选探 NOPASSWD。
+async fn resolve_sudo_credential(
+    state: &State<'_, SftpState>,
+    ssh: &super::types::SftpSshHandle,
+    host_id: i64,
+    password_param: Option<String>,
+    stored: Option<String>,
+) -> Result<SudoCred, String> {
+    let cached = state.sudo_passwords.lock().await.get(&host_id).cloned();
+    let candidate = password_param.or(cached).or(stored);
+    if let Some(password) = candidate {
+        return match validate_sudo_password(ssh, &password).await {
+            Ok(()) => {
+                state
+                    .sudo_passwords
+                    .lock()
+                    .await
+                    .insert(host_id, password.clone());
+                Ok(SudoCred::WithPassword(password))
+            }
+            Err(e) => {
+                // 密码失效（远端改密/凭证过期）：清缓存，前端弹窗重输
+                state.sudo_passwords.lock().await.remove(&host_id);
+                Err(e)
+            }
+        };
+    }
+    // 无任何密码候选：探测 NOPASSWD（-n 非交互，需要密码时立即失败）
+    let (output, code) = sftp_exec_capture_status(ssh, "sudo -n -v", 10)
+        .await
+        .map_err(|e| format!("EXEC_CHANNEL:{e}"))?;
+    match code {
+        Some(0) => Ok(SudoCred::NoPassword),
+        other => Err(classify_sudo_failure(&output, other)),
+    }
+}
+
+/// sudo 提权读取（预览/编辑的 Permission denied 兜底）：NOPASSWD 或验证
+/// 通过的密码读前 MAX+1 字节，超限判 TOO_LARGE，二进制判 NOT_TEXT。
+#[tauri::command]
+pub async fn sftp_sudo_read(
+    host_id: i64,
+    remote_path: String,
+    password: Option<String>,
+    state: State<'_, SftpState>,
+) -> Result<SftpFileContent, String> {
+    let session_key = host_id.to_string();
+    let _client = get_or_connect_sftp(&state, &session_key).await?;
+    let Some(ssh) = get_sftp_ssh_handle(&state, &session_key).await else {
+        return Err("EXEC_CHANNEL:SSH 会话不可用".to_string());
+    };
+    let stored = stored_host_password(host_id);
+    let cred = resolve_sudo_credential(&state, &ssh, host_id, password, stored).await?;
+    let command = build_sudo_read_command(&remote_path, &cred);
+    let stdin = sudo_stdin(&cred, None);
+    let (output, code) = sftp_exec_with_stdin(&ssh, &command, &stdin, 20)
+        .await
+        .map_err(|e| format!("EXEC_CHANNEL:{e}"))?;
+    match code {
+        Some(0) => {}
+        other => return Err(classify_sudo_failure(&output, other)),
+    }
+    if output.len() as u64 > MAX_EDITABLE_FILE_SIZE_BYTES {
+        return Err("TOO_LARGE".to_string());
+    }
+    let name = file_name_of(&remote_path);
+    let probe_len = output.len().min(SNIFF_PROBE_BYTES);
+    let probe = output.as_bytes().get(..probe_len).unwrap_or(&[]);
+    if !is_editable_text(Some(name), probe) {
+        return Err("NOT_TEXT".to_string());
+    }
+    let size = output.len() as u64;
+    log::info!(
+        "[SFTP] sudo read '{remote_path}' done: {size} bytes, cred={}",
+        matches!(cred, SudoCred::NoPassword)
+    );
+    Ok(SftpFileContent {
+        content: output,
+        size,
+    })
+}
+
+/// sudo 提权写入：tee 原位覆写（与常规路径的临时文件+rename 相比无原子性——
+/// 中途失败会留半截文件，提权路径接受此取舍）。stdin = 密码行 + 内容 + EOF。
+#[tauri::command]
+pub async fn sftp_sudo_write(
+    host_id: i64,
+    remote_path: String,
+    content: String,
+    password: Option<String>,
+    state: State<'_, SftpState>,
+) -> Result<(), String> {
+    let session_key = host_id.to_string();
+    let _client = get_or_connect_sftp(&state, &session_key).await?;
+    let Some(ssh) = get_sftp_ssh_handle(&state, &session_key).await else {
+        return Err("EXEC_CHANNEL:SSH 会话不可用".to_string());
+    };
+    let stored = stored_host_password(host_id);
+    let cred = resolve_sudo_credential(&state, &ssh, host_id, password, stored).await?;
+    let command = build_sudo_write_command(&remote_path, &cred);
+    let stdin = sudo_stdin(&cred, Some(&content));
+    // 内容可达 5MiB：慢链路写入留足时间
+    let (output, code) = sftp_exec_with_stdin(&ssh, &command, &stdin, 60)
+        .await
+        .map_err(|e| format!("EXEC_CHANNEL:{e}"))?;
+    match code {
+        Some(0) => {
+            log::info!(
+                "[SFTP] sudo wrote {} bytes to '{remote_path}'",
+                content.len()
+            );
+            Ok(())
+        }
+        other => Err(classify_sudo_failure(&output, other)),
+    }
+}
+
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests {    use super::*;
 
     #[test]
     fn file_name_extraction() {
@@ -386,5 +625,65 @@ mod tests {
             "Failure: custom detail"
         );
         assert_eq!(dedup_sftp_status_text("No such file"), "No such file");
+    }
+
+    // ── sudo 提权 ──
+
+    #[test]
+    fn sudo_command_shapes() {
+        assert_eq!(
+            build_sudo_read_command(
+                "/etc/shadow",
+                &SudoCred::WithPassword("pw".to_string())
+            ),
+            "sh -c 'sudo -S -p \"\" head -c 5242881 \"$1\"' veloterm-sudo-read '/etc/shadow'"
+        );
+        assert_eq!(
+            build_sudo_write_command("/x", &SudoCred::NoPassword),
+            "sh -c 'sudo -n tee \"$1\" > /dev/null' veloterm-sudo-write '/x'"
+        );
+        // 注入元字符路径仍只作一个 argv 位
+        let evil = build_sudo_read_command("a'; rm -rf /", &SudoCred::NoPassword);
+        assert!(evil.ends_with("a'\\''; rm -rf /'"));
+    }
+
+    #[test]
+    fn sudo_stdin_composition() {
+        // 密码行 + 内容；NOPASSWD 只有内容
+        assert_eq!(
+            sudo_stdin(&SudoCred::WithPassword("pw".into()), Some("body")),
+            b"pw\nbody".to_vec()
+        );
+        assert_eq!(sudo_stdin(&SudoCred::NoPassword, Some("body")), b"body".to_vec());
+        assert_eq!(sudo_stdin(&SudoCred::WithPassword("pw".into()), None), b"pw\n".to_vec());
+    }
+
+    #[test]
+    fn sudo_failure_classification() {
+        assert_eq!(
+            classify_sudo_failure("sudo: a password is required", Some(1)),
+            "SUDO_PASSWORD_REQUIRED"
+        );
+        assert_eq!(
+            classify_sudo_failure("sudo: 1 incorrect password attempt", Some(1)),
+            "SUDO_PASSWORD_WRONG"
+        );
+        assert_eq!(
+            classify_sudo_failure("Sorry, try again.", Some(1)),
+            "SUDO_PASSWORD_WRONG"
+        );
+        assert_eq!(
+            classify_sudo_failure("x is not in the sudoers file.", Some(1)),
+            "SUDO_NOT_ALLOWED"
+        );
+        assert_eq!(
+            classify_sudo_failure("sudo: no tty present and no askpass program specified", Some(1)),
+            "SUDO_NO_TTY"
+        );
+        assert_eq!(classify_sudo_failure("sh: sudo: command not found", Some(127)), "SUDO_MISSING");
+        assert_eq!(
+            classify_sudo_failure("weird failure", Some(2)),
+            "REMOTE:weird failure"
+        );
     }
 }

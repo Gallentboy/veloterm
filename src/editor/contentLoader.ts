@@ -34,6 +34,35 @@ export async function saveRemoteContent(
   await invoke<void>('sftp_write_file', { hostId, remotePath, content });
 }
 
+/**
+ * sudo 提权读取（Permission denied 的兜底）：password 传 null 时后端依次尝试
+ * NOPASSWD → 会话缓存（已验证密码）→ 主机登录密码凭证；需要密码时 reject
+ * "SUDO_PASSWORD_REQUIRED"，由前端弹窗收集后带密码重试。
+ */
+export async function loadRemoteContentSudo(
+  hostId: number,
+  remotePath: string,
+  password: string | null,
+): Promise<RemoteContentPayload | null> {
+  if (typeof window === 'undefined' || !isTauri()) {
+    return null;
+  }
+  return invoke<RemoteContentPayload>('sftp_sudo_read', { hostId, remotePath, password });
+}
+
+/** sudo 提权写入（tee 原位覆写；密码解析与错误码同读取侧） */
+export async function saveRemoteContentSudo(
+  hostId: number,
+  remotePath: string,
+  content: string,
+  password: string | null,
+): Promise<void> {
+  if (typeof window === 'undefined' || !isTauri()) {
+    throw new Error('saveRemoteContentSudo is only available in the Tauri environment');
+  }
+  await invoke<void>('sftp_sudo_write', { hostId, remotePath, content, password });
+}
+
 /** baseHash 口径统一走 types.ts 的 hashContent（SHA-256 hex） */
 export function computeBaseHash(content: string): Promise<string> {
   return hashContent(content);

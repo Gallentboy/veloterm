@@ -181,6 +181,66 @@ pub async fn sftp_exec_capture_status(
     }
 }
 
+/// 带标准输入的旁路执行（sudo 提权专用）：exec 后把 `stdin_bytes` 灌进通道
+/// 并发送 EOF，远端命令（`sudo -S` 读密码行、`tee` 读文件内容）从 stdin
+/// 消费；输出收集与退出码语义同 [`sftp_exec_capture_status`]。
+/// 密码/内容走 SSH 加密通道的 stdin，不进命令行（远端 ps 不可见）。
+pub async fn sftp_exec_with_stdin(
+    ssh: &SftpSshHandle,
+    command: &str,
+    stdin_bytes: &[u8],
+    timeout_secs: u64,
+) -> Result<(String, Option<u32>), String> {
+    let channel = tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        ssh.channel_open_session(),
+    )
+    .await
+    .map_err(|_| "旁路命令超时：打开通道失败".to_string())?
+    .map_err(|e| format!("打开通道失败: {e}"))?;
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| format!("执行旁路命令失败: {e}"))?;
+    let mut channel = channel;
+    // 先灌 stdin 再 EOF（tee 依赖 EOF 判输入结束）；data() 内部处理窗口背压
+    channel
+        .data(stdin_bytes)
+        .await
+        .map_err(|e| format!("写入标准输入失败: {e}"))?;
+    channel
+        .eof()
+        .await
+        .map_err(|e| format!("发送 EOF 失败: {e}"))?;
+    let mut output = String::new();
+    let mut exit_code: Option<u32> = None;
+    let deadline = tokio::time::Duration::from_secs(timeout_secs);
+    let result = tokio::time::timeout(deadline, async {
+        loop {
+            match channel.wait().await {
+                Some(russh::ChannelMsg::Data { ref data }) => {
+                    output.push_str(&String::from_utf8_lossy(data));
+                }
+                Some(russh::ChannelMsg::ExtendedData { ref data, .. }) => {
+                    output.push_str(&String::from_utf8_lossy(data));
+                }
+                Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                    exit_code = Some(exit_status);
+                }
+                Some(russh::ChannelMsg::Close) | None => break,
+                Some(_) => {}
+            }
+        }
+        Ok(())
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => Ok((output, exit_code)),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err("旁路命令超时：读取输出失败".to_string()),
+    }
+}
+
 /// 取会话的 SSH 句柄（无连接/未缓存返回 None，调用方降级——如保留数字 uid）
 pub async fn get_sftp_ssh_handle(
     state: &SftpState,

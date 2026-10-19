@@ -990,7 +990,7 @@ const REMOVE_PROGRESS_EVERY: u32 = 20;
 
 /// POSIX 单引号安全包裹（' → '\''）：路径只作为独立 argv（$1）传给内层 sh，
 /// 绝不拼接进命令体——引号/空格/分号/反引号/中文全部失效，无注入面
-fn shell_single_quote(s: &str) -> String {
+pub(crate) fn shell_single_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
     for ch in s.chars() {
