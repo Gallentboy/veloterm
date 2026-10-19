@@ -4,12 +4,15 @@ import {
   ArrowUp,
   Download,
   File,
-  FileCode,
   Folder,
   FolderOpen,
+  HardDrive,
   Loader2,
+  Pencil,
   RefreshCw,
   RotateCw,
+  SquareTerminal,
+  Eye,
   Trash2,
   Upload,
   X,
@@ -30,6 +33,7 @@ import {
   type SftpItemEntry,
 } from '@/services/dragDropService';
 import {
+  dirSizeRemote,
   listRemoteDirectory,
   pickDownloadDir,
   pickDownloadPath,
@@ -38,6 +42,10 @@ import {
   type RemoteFileItem,
 } from '@/services/sftpService';
 import { loadRemoteContent } from '@/editor/contentLoader';
+import { SftpFilePreviewModal } from '@/components/files/SftpFilePreviewModal';
+import { sendToTerminal } from '@/services/aiTerminalTools';
+import { formatPathForTerminal } from '@/lib/shellPath';
+import { useTerminalStore } from '@/terminal/TerminalProvider';
 import {
   transferQueue,
   useTransferSettings,
@@ -279,6 +287,8 @@ export interface SftpSessionViewProps {
   onOpenEditor?: (file: { hostId: number; remotePath: string }) => void;
   /** 面板获得焦点（双栏场景下用于标记激活面板，任意指针交互捕获触发） */
   onPaneFocus?: () => void;
+  /** 切到终端页（「在此目录打开终端」用；由 AppShell 注入 setPage('terminal')） */
+  onNavigateTerminal?: () => void;
 }
 
 export function SftpSessionView({
@@ -289,8 +299,10 @@ export function SftpSessionView({
   onPathChange,
   onOpenEditor,
   onPaneFocus,
+  onNavigateTerminal,
 }: SftpSessionViewProps) {
   const { t } = useTranslation();
+  const { createSession } = useTerminalStore();
   const [currentPath, setCurrentPath] = useState<string>(initialPath || '/');
   const [pathInput, setPathInput] = useState<string>(initialPath || '/');
   const [items, setItems] = useState<RemoteFileItem[]>([]);
@@ -298,6 +310,9 @@ export function SftpSessionView({
   const [error, setError] = useState<string | null>(null);
   const [itemToDelete, setItemToDelete] = useState<RemoteFileItem | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  // 目录大小（远端 du 经独立 exec 通道）：算过的目录填到大小说明列；同目录防重入
+  const [dirSizes, setDirSizes] = useState<Record<string, number>>({});
+  const [dirSizePath, setDirSizePath] = useState<string | null>(null);
   // 文件/目录行右键菜单（与面板空白菜单同款定位与dismiss模式）
   const [fileMenu, setFileMenu] = useState<
     { x: number; y: number; item: RemoteFileItem } | null
@@ -306,6 +321,8 @@ export function SftpSessionView({
   // 「尝试编辑」失败弹窗（后端拒绝原因直接展示给用户）
   const [editAttempt, setEditAttempt] = useState<{ name: string; message: string } | null>(null);
   const [isTryingEdit, setIsTryingEdit] = useState<boolean>(false);
+  // 文件预览弹窗（Monaco：默认只读、可切换编辑保存；内容加载/保存由弹窗组件自理）
+  const [preview, setPreview] = useState<{ name: string; path: string } | null>(null);
   // 是否正被拖拽悬停（作为放置目标时的高亮态）
   const [isDropTarget, setIsDropTarget] = useState<boolean>(false);
 
@@ -422,6 +439,11 @@ export function SftpSessionView({
     [hostId, isTryingEdit, onOpenEditor],
   );
 
+  /** 文件预览：打开 Monaco 弹窗（默认只读，弹窗内可切换编辑并保存回远端） */
+  const handlePreview = useCallback((item: RemoteFileItem) => {
+    setPreview({ name: item.name, path: item.path });
+  }, []);
+
   // onPathChange 经 ref 稳定引用：父组件（FilesScreen）每次重渲染传入的都是新的内联回调，
   // 若进入 loadDirectory 依赖数组，拖分栏/聚焦切换/任何重渲染都会重建 loadDirectory，
   // 触发下方加载 effect 重跑并真实刷新远端目录列表（表现为文件列表闪刷）
@@ -473,6 +495,29 @@ export function SftpSessionView({
 
   const handleNavigate = (targetPath: string) => {
     void loadDirectory(targetPath);
+  };
+
+  /** 在此目录打开终端：为该主机建终端会话，就绪后注入 cd（sendToTerminal
+   *  内部等待 terminalId 就绪，连接慢也不会丢命令）；Tab 标题取目录名 */
+  const handleOpenTerminalHere = (dirPath: string) => {
+    const title = dirPath.split('/').filter(Boolean).pop() ?? dirPath;
+    const sessionKey = createSession({ hostId, customTitle: title || dirPath });
+    onNavigateTerminal?.();
+    void sendToTerminal(sessionKey, `cd ${formatPathForTerminal(dirPath, 'posix')}\n`);
+  };
+
+  /** 计算目录大小（远端 du；同一目录防重入，结果填大小说明列） */
+  const handleCalcDirSize = async (item: RemoteFileItem) => {
+    if (dirSizePath) return;
+    setDirSizePath(item.path);
+    try {
+      const bytes = await dirSizeRemote(sessionId, item.path);
+      setDirSizes((prev) => ({ ...prev, [item.path]: bytes }));
+    } catch (err) {
+      setError(`${item.name}: ${err}`);
+    } finally {
+      setDirSizePath(null);
+    }
   };
 
   const handleUpDir = () => {
@@ -941,7 +986,15 @@ export function SftpSessionView({
                       </div>
                     </td>
                     <td className="py-1.5 px-2 font-mono text-foreground-subtle">
-                      {item.is_dir ? '-' : formatBytes(Number(item.size))}
+                      {item.is_dir
+                        ? dirSizePath === item.path
+                          ? (
+                              <Loader2 className="inline size-3.5 animate-spin text-foreground-subtlest" />
+                            )
+                          : dirSizes[item.path] != null
+                            ? formatBytes(dirSizes[item.path])
+                            : '-'
+                        : formatBytes(Number(item.size))}
                     </td>
                     <td className="py-1.5 px-2 font-mono text-foreground-subtle">
                       {formatPermissions(item.permissions, item.is_dir, item.is_symlink)}
@@ -958,7 +1011,7 @@ export function SftpSessionView({
                     <td className="py-1.5 pl-2 pr-4 text-right">
                       <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                         {item.is_dir ? (
-                          <Tooltip content={t('files.tooltips.enterDir')} side="left">
+                          <Tooltip content={t('files.tooltips.enterDir')} side="top">
                             <Button
                               type="button"
                               size="icon-xs"
@@ -975,8 +1028,25 @@ export function SftpSessionView({
                           </Tooltip>
                         ) : (
                           <>
+                            {item.editable ? (
+                              <Tooltip content={t('files.tooltips.preview')} side="top">
+                                <Button
+                                  type="button"
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handlePreview(item);
+                                  }}
+                                  className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
+                                  aria-label={t('files.preview')}
+                                >
+                                  <Eye className="size-3.5" />
+                                </Button>
+                              </Tooltip>
+                            ) : null}
                             {item.editable && onOpenEditor ? (
-                              <Tooltip content={t('files.tooltips.edit')} side="left">
+                              <Tooltip content={t('files.tooltips.edit')} side="top">
                                 <Button
                                   type="button"
                                   size="icon-xs"
@@ -988,28 +1058,28 @@ export function SftpSessionView({
                                   className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
                                   aria-label={t('files.edit')}
                                 >
-                                  <FileCode className="size-3.5" />
+                                  <Pencil className="size-3.5" />
                                 </Button>
                               </Tooltip>
                             ) : null}
-                            <Tooltip content={t('files.tooltips.download')} side="left">
-                            <Button
-                              type="button"
-                              size="icon-xs"
-                              variant="ghost"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void handleDownload(item);
-                              }}
-                              className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
-                              aria-label={t('files.download')}
-                            >
-                              <Download className="size-3.5" />
-                            </Button>
-                          </Tooltip>
+                            <Tooltip content={t('files.tooltips.download')} side="top">
+                              <Button
+                                type="button"
+                                size="icon-xs"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleDownload(item);
+                                }}
+                                className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
+                                aria-label={t('files.download')}
+                              >
+                                <Download className="size-3.5" />
+                              </Button>
+                            </Tooltip>
                           </>
                         )}
-                        <Tooltip content={t('files.tooltips.delete')} side="left">
+                        <Tooltip content={t('files.tooltips.delete')} side="top">
                           <Button
                             type="button"
                             size="icon-xs"
@@ -1186,7 +1256,7 @@ export function SftpSessionView({
         </div>
       ) : null}
 
-      {/* 文件/目录行右键菜单：文件（编辑[尝试]/下载/删除）、目录（进入/删除） */}
+      {/* 文件/目录行右键菜单：文件（预览/编辑[尝试]/下载/删除）、目录（进入/开终端/算大小/删除） */}
       {fileMenu ? (
         <div
           ref={fileMenuRef}
@@ -1196,45 +1266,95 @@ export function SftpSessionView({
           className="fixed z-50 min-w-36 overflow-hidden rounded-lg border border-border bg-menu p-1 text-ui-sm text-foreground shadow-lg"
         >
           {fileMenu.item.is_dir ? (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                const target = fileMenu.item;
-                setFileMenu(null);
-                handleNavigate(target.path);
-              }}
-              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
-            >
-              <FolderOpen className="size-3.5 text-foreground-subtle" />
-              <span>{t('files.enterDir')}</span>
-            </button>
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const target = fileMenu.item;
+                  setFileMenu(null);
+                  handleNavigate(target.path);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+              >
+                <FolderOpen className="size-3.5 text-foreground-subtle" />
+                <span>{t('files.enterDir')}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const target = fileMenu.item;
+                  setFileMenu(null);
+                  handleOpenTerminalHere(target.path);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+              >
+                <SquareTerminal className="size-3.5 text-foreground-subtle" />
+                <span>{t('files.openTerminalHere')}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={dirSizePath != null}
+                onClick={() => {
+                  const target = fileMenu.item;
+                  setFileMenu(null);
+                  void handleCalcDirSize(target);
+                }}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors',
+                  dirSizePath != null ? 'cursor-not-allowed opacity-40' : 'hover:bg-menu-hover',
+                )}
+              >
+                <HardDrive className="size-3.5 text-foreground-subtle" />
+                <span>{t('files.calcDirSize')}</span>
+              </button>
+            </>
           ) : (
-            <button
-              type="button"
-              role="menuitem"
-              disabled={!onOpenEditor || isTryingEdit}
-              onClick={() => void handleTryEdit(fileMenu.item)}
-              className={cn(
-                'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors',
-                !onOpenEditor || isTryingEdit
-                  ? 'cursor-not-allowed opacity-40'
-                  : 'hover:bg-menu-hover',
-              )}
-            >
-              {isTryingEdit ? (
-                <Loader2 className="size-3.5 animate-spin text-foreground-subtle" />
-              ) : (
-                <FileCode className="size-3.5 text-foreground-subtle" />
-              )}
-              <span>{t('files.edit')}</span>
-              {/* 非白名单文件：编辑是「尝试」——后端探针嗅探，文本则开，否则弹窗说明 */}
-              {!fileMenu.item.editable ? (
-                <span className="ml-auto font-mono text-ui-xs text-foreground-subtlest">
-                  {t('files.menu.tryHint')}
-                </span>
+            <>
+              {/* 预览与编辑同门槛：后端判非可编辑（非文本后缀 / 超 5MB）的内容拉下来也无法展示 */}
+              {fileMenu.item.editable ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    const target = fileMenu.item;
+                    setFileMenu(null);
+                    handlePreview(target);
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+                >
+                  <Eye className="size-3.5 text-foreground-subtle" />
+                  <span>{t('files.preview')}</span>
+                </button>
               ) : null}
-            </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!onOpenEditor || isTryingEdit}
+                onClick={() => void handleTryEdit(fileMenu.item)}
+                className={cn(
+                  'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors',
+                  !onOpenEditor || isTryingEdit
+                    ? 'cursor-not-allowed opacity-40'
+                    : 'hover:bg-menu-hover',
+                )}
+              >
+                {isTryingEdit ? (
+                  <Loader2 className="size-3.5 animate-spin text-foreground-subtle" />
+                ) : (
+                  <Pencil className="size-3.5 text-foreground-subtle" />
+                )}
+                <span>{t('files.edit')}</span>
+                {/* 非白名单文件：编辑是「尝试」——后端探针嗅探，文本则开，否则弹窗说明 */}
+                {!fileMenu.item.editable ? (
+                  <span className="ml-auto font-mono text-ui-xs text-foreground-subtlest">
+                    {t('files.menu.tryHint')}
+                  </span>
+                ) : null}
+              </button>
+            </>
           )}
           {!fileMenu.item.is_dir ? (
             <button
@@ -1265,6 +1385,20 @@ export function SftpSessionView({
             <span>{t('files.delete')}</span>
           </button>
         </div>
+      ) : null}
+
+      {/* 文件预览弹窗：Monaco 承载，默认只读，可切换编辑并保存（脏态关闭需确认） */}
+      {preview ? (
+        <SftpFilePreviewModal
+          hostId={hostId}
+          fileName={preview.name}
+          remotePath={preview.path}
+          onClose={() => setPreview(null)}
+          onSaved={() => {
+            // 保存成功：刷新目录列表（size/mtime 列随之更新）
+            void loadDirectory(currentPath);
+          }}
+        />
       ) : null}
 
       {/* 尝试编辑失败弹窗：展示后端真实拒绝原因（非文本 / 超大小上限等） */}
