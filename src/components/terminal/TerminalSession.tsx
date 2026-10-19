@@ -1086,7 +1086,15 @@ export function TerminalSession({
   const handleClear = () => {
     const term = termRef.current;
     closeContextMenu();
-    term?.clear();
+    // Windows 本地终端（cmd）：term.clear() 只清前端视口、旧内容仍留在回滚区，
+    // 而 cmd 用户习惯的 cls 是整缓冲清除——把 cls 当键入发给 PTY。程序化注入走
+    // transport.write 直写（与就绪钩子同路）：不进 onData，联动模式不会把
+    // cls 文本镜像到其余终端（那些目标仍走前端清屏）
+    if (hostId == null && platformKind === 'windows') {
+      void transport.write({ id: sessionId, data: encodeTerminalInput('cls\r') });
+    } else {
+      term?.clear();
+    }
     // 联动开启时清屏同步到组内其余终端（纯前端缓冲清除，与输入镜像同一门控）
     mirrorClearToSessions(broadcastTargetsRef.current, sessionId);
     requestFocus();
