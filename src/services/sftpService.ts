@@ -10,7 +10,7 @@ export interface RemoteFileItem {
   permissions: number;
   owner?: string;
   group?: string;
-  /** 是否可编辑（后端 text_detect 判定：文本扩展名 + ≤5MB） */
+  /** 是否可编辑（后端 text_detect 判定：文本扩展名 / 常见点文件名 / .env 家族 + ≤5MB） */
   editable?: boolean;
 }
 
@@ -198,5 +198,13 @@ export async function removeRemoteItem(
 ): Promise<void> {
   return invoke<void>('sftp_remove', { sessionId, path, isDir });
 }
+
+/**
+ * 目录大小（远端 du：SFTP 递归 stat 大目录既慢又费流量；返回字节数）
+ */
+export async function dirSizeRemote(sessionId: string, path: string): Promise<number> {
+  return invoke<number>('sftp_dir_size', { sessionId, path });
+}
+
 
 

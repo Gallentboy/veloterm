@@ -60,6 +60,8 @@ export interface FilesScreenProps {
   onNavigateHosts?: () => void;
   /** 打开可编辑文件到编辑器页（由 AppShell 注入：openFile + 切页） */
   onOpenEditor?: (file: { hostId: number; remotePath: string }) => void;
+  /** 切到终端页（SFTP「在此目录打开终端」用） */
+  onNavigateTerminal?: () => void;
 }
 
 /**
@@ -74,7 +76,7 @@ export interface FilesScreenProps {
  *   状态避免整树重渲），释放时才提交 state 并持久化；
  * - 窗格分配/聚焦侧与左栏宽度均持久化，重启后恢复双栏布局。
  */
-export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }: FilesScreenProps) {
+export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor, onNavigateTerminal }: FilesScreenProps) {
   const { t } = useTranslation();
   const { hosts } = useHostsStore();
   const {
@@ -718,6 +720,7 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor }:
                   isVisible={Boolean(isVisible && paneSide != null)}
                   onPathChange={(path) => updateSessionPath(session.id, path)}
                   onOpenEditor={onOpenEditor}
+                  onNavigateTerminal={onNavigateTerminal}
                   onPaneFocus={paneSide ? () => focusPane(paneSide) : undefined}
                 />
               </div>

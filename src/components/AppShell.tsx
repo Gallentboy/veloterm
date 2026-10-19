@@ -496,6 +496,7 @@ export function AppShell() {
                   <FilesScreen
                     isVisible={page === 'files'}
                     onNavigateHosts={() => setPage('hosts')}
+                    onNavigateTerminal={() => setPage('terminal')}
                     onOpenEditor={(file) => {
                       openEditorFile(file);
                       setPage('editor');
