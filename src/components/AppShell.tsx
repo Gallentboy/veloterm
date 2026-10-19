@@ -473,10 +473,10 @@ export function AppShell() {
             />
           ) : null}
 
-          {/* 内容列内缩：右 4px（ZCode 一致）、左/上/下 0——底部原与 ZCode 一致留
-              4px，但终端资源监控条贴面板最底，这 4px 使整条相对窗口底部视觉抬高
-              （用户实测：pb=0 即居中），故底部清零让面板贴住窗口底缘 */}
-          <div className="flex min-w-[320px] flex-1 flex-col pr-1">
+          {/* 内容列内缩：右 4px + 底 4px（对齐 ZCode WorkspaceShellLayout 的
+              hasDesktopPanelInset 形态 p-1 pl-0 pt-0，顶部由内部 h-1 拖拽条承担）；
+              底部曾因终端资源监控条贴面板底被清零，现按用户要求恢复与 ZCode 一致 */}
+          <div className="flex min-w-[320px] flex-1 flex-col pr-1 pb-1">
             <div className="h-1 w-full shrink-0" data-tauri-drag-region />
             <div
               className="flex min-h-0 flex-1"
