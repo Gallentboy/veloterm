@@ -80,6 +80,10 @@ pub struct RemoteIdName {
 /// 会话维度的用户/组全量清单缓存键 session_id → (users, groups)
 pub type UserGroupCache = HashMap<String, (Vec<RemoteIdName>, Vec<RemoteIdName>)>;
 
+/// sudo 密码会话缓存（host_id → 验证通过的密码，纯内存不落库：
+/// sudo 密码与登录密码是两回事，持久化属独立安全决策；应用退出即清）
+pub type SudoPasswordCache = HashMap<i64, String>;
+
 pub struct SftpState {
     pub clients: Arc<Mutex<HashMap<String, SftpClient>>>,
     /// SFTP 连接的 SSH 句柄（与 clients 同生共死：旁路 exec 通道用）
@@ -94,6 +98,8 @@ pub struct SftpState {
     /// 远端用户/组全量清单（属性弹窗下拉；getent 拉取后按会话缓存，
     /// LDAP 域可能上千条，懒加载 + 会话级复用避免反复拉）
     pub user_group_cache: Arc<Mutex<UserGroupCache>>,
+    /// sudo 提权密码缓存（验证通过后按主机记存，同主机后续提权零重复弹窗）
+    pub sudo_passwords: Arc<Mutex<SudoPasswordCache>>,
     pub cancel_tokens: Arc<Mutex<HashMap<usize, oneshot::Sender<()>>>>,
     pub next_task_id: AtomicUsize,
     /// 串行化动态建连：并发请求共享一次握手，避免重复建 SSH 连接
@@ -119,6 +125,7 @@ impl SftpState {
             id_name_cache: Arc::new(Mutex::new(HashMap::new())),
             exec_disabled: Arc::new(Mutex::new(HashSet::new())),
             user_group_cache: Arc::new(Mutex::new(HashMap::new())),
+            sudo_passwords: Arc::new(Mutex::new(HashMap::new())),
             cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
             next_task_id: AtomicUsize::new(1),
             connect_lock: Arc::new(Mutex::new(())),

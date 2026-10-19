@@ -129,6 +129,8 @@ pub fn run() {
             sftp::commands::sftp_exec_available,
             sftp::commands::sftp_copy_file,
             sftp::file_ops::sftp_read_file,
+            sftp::file_ops::sftp_sudo_read,
+            sftp::file_ops::sftp_sudo_write,
             sftp::file_ops::sftp_write_file,
             editor_storage::editor_load_state,
             editor_storage::editor_save_panel_state,
