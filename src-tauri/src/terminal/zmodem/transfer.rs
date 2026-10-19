@@ -46,6 +46,7 @@ fn emit_start(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_finish(
     app: &AppHandle,
     session_id: &str,
@@ -189,11 +190,14 @@ pub async fn start_download_batch(app: AppHandle, hits: Vec<PendingHit>) {
             session.is_cancelled = Some(Box::new(move || {
                 cancel_flag.load(std::sync::atomic::Ordering::Relaxed)
             }));
-            let mut config = rzsz::receiver::ReceiverConfig::default();
-            config.output_dir = dir;
             // 联动批量落同一目录：同名自动加 .1/.2 后缀
-            config.rename = true;
-            let result = rzsz::receiver::receive_files(&mut session, &mut reader, &mut writer, &config);
+            let config = rzsz::receiver::ReceiverConfig {
+                output_dir: dir,
+                rename: true,
+                ..Default::default()
+            };
+            let result =
+                rzsz::receiver::receive_files(&mut session, &mut reader, &mut writer, &config);
             // 记录最终已收字节（完成事件用）
             done_bytes_task.store(
                 size_slot_final.load(std::sync::atomic::Ordering::Relaxed),

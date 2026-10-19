@@ -8,6 +8,7 @@ import {
   saveHostStore,
   subtreeIds,
 } from './storage';
+import { subscribeDbHostStore } from '@/services/dbStorage';
 import type { GroupInput, GroupNode, HostInput, HostNode, HostStoreData } from './types';
 
 function touch(): number {
@@ -27,6 +28,10 @@ export function useHosts() {
   useEffect(() => {
     saveHostStore(store);
   }, [store]);
+
+  // 后端改密回写后 dbStorage 会刷新内存并广播——同步 React 状态副本
+  //（否则主机编辑页仍显示旧密码；同引用时 React 自动 bailout，无循环）
+  useEffect(() => subscribeDbHostStore((data) => setStore(data)), []);
 
   useEffect(() => {
     saveCollapsedIds(collapsedIds);

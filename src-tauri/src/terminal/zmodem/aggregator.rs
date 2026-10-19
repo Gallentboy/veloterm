@@ -46,6 +46,7 @@ struct GroupState {
     /// 已登记方向（sz/rz 混在同一批时以先到者为准）
     direction: &'static str,
     /// 触发回调（凑齐或窗口到期时调用一次）
+    #[allow(dead_code)]
     fire_tx: Option<oneshot::Sender<()>>,
 }
 

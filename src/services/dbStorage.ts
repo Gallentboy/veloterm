@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { GroupNode, HostNode, HostStoreData, LegacyHostStoreData } from '@/hosts/types';
 
 interface BootstrapStatePayload {
@@ -20,6 +21,24 @@ const LEGACY_HOSTS_V1_KEY = 'veloterm:hosts:v1';
 const LEGACY_SESSIONS_FALLBACK_KEY = 'veloterm:sessions:fallback:v1';
 
 const memoryKv = new Map<string, string>();
+/** 主机库变更订阅（React 侧状态副本同步：useHosts 的 setStore） */
+type HostStoreListener = (data: HostStoreData) => void;
+const hostStoreListeners = new Set<HostStoreListener>();
+
+export function subscribeDbHostStore(listener: HostStoreListener): () => void {
+  hostStoreListeners.add(listener);
+  return () => {
+    hostStoreListeners.delete(listener);
+  };
+}
+
+/** 写入内存主机库并广播给订阅者（React 状态副本身份保持一致） */
+function applyHostStore(data: HostStoreData): void {
+  memoryHostStore = data;
+  for (const listener of hostStoreListeners) {
+    listener(data);
+  }
+}
 let memoryHostStore: HostStoreData = {
   version: 2,
   groups: [],
@@ -122,6 +141,24 @@ export async function bootstrapDbStorage(): Promise<void> {
       memoryKv.set(k, v);
     }
 
+    // 改密回写同步：后端在 kbd-int 认证内改密成功后已更新 hosts 表，
+    // 前端内存副本必须同步刷新——否则新建会话仍用旧密码（实测被拒）。
+    // 事件只带 hostId（不传密码），重拉 bootstrap 取权威数据。
+    void listen<{ hostId: number }>('host-password-updated', () => {
+      void invoke<BootstrapStatePayload>('db_bootstrap_state')
+        .then((fresh) => {
+          if (
+            fresh.hostStore &&
+            (fresh.hostStore.groups.length > 0 || fresh.hostStore.hosts.length > 0)
+          ) {
+            applyHostStore(fresh.hostStore);
+          }
+        })
+        .catch((err) => {
+          console.error('[dbStorage] refresh after password update failed:', err);
+        });
+    });
+
     // 迁移旧版 localStorage 中的键值配置到 SQLCipher `app_kv` 表并移除 localStorage 项
     for (const key of LEGACY_KV_KEYS) {
       try {
@@ -142,7 +179,7 @@ export async function bootstrapDbStorage(): Promise<void> {
       payload.hostStore &&
       (payload.hostStore.groups.length > 0 || payload.hostStore.hosts.length > 0)
     ) {
-      memoryHostStore = payload.hostStore;
+      applyHostStore(payload.hostStore);
     } else {
       const legacyHostStore = extractLegacyHostStoreFromLocalStorage();
       if (legacyHostStore) {
@@ -213,7 +250,7 @@ export function getDbHostStore(): HostStoreData {
 }
 
 export function setDbHostStore(data: HostStoreData): void {
-  memoryHostStore = data;
+  applyHostStore(data);
   if (typeof window !== 'undefined' && isTauri()) {
     void invoke('db_save_host_store', { store: data }).catch((err) => {
       console.error('[dbStorage] db_save_host_store failed:', err);

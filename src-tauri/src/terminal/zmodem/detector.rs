@@ -109,32 +109,28 @@ impl ZmodemDetector {
 
             // bin16 / bin32：`**\x18A` / `**\x18C` + 1 字节帧类型
             for pfx in [BIN16_PREFIX, BIN32_PREFIX] {
-                if let Some(pos) = find_subslice(&self.tail, pfx) {
-                    if let Some(&frame_type) = self.tail.get(pos + pfx.len()) {
-                        let prefix = self.tail.clone();
-                        self.tail.clear();
-                        // 只认入口帧：0 = ZRQINIT（sz 下载）、1 = ZRINIT（rz 上传）。
-                        // 其他类型（ZFIN=08 收尾、ZFILE=04 传输中等）是既有会话
-                        // 的信号，不触发新传输——实测上传完成后服务器 lrz 发的
-                        // ZFIN 被「非 01 即 Sz」误判为下载，弹了假保存框。
-                        return match frame_type {
-                            0 => Detection::Sz { prefix },
-                            1 => Detection::Rz { prefix },
-                            // 收尾/进行中帧：吞掉（透传会进 bash 被当命令执行）
-                            _ => Detection::Swallow,
-                        };
-                    }
+                if let Some(pos) = find_subslice(&self.tail, pfx)
+                    && let Some(&frame_type) = self.tail.get(pos + pfx.len())
+                {
+                    let prefix = self.tail.clone();
+                    self.tail.clear();
+                    // 只认入口帧：0 = ZRQINIT（sz 下载）、1 = ZRINIT（rz 上传）。
+                    // 其他类型（ZFIN=08 收尾、ZFILE=04 传输中等）是既有会话
+                    // 的信号，不触发新传输——实测上传完成后服务器 lrz 发的
+                    // ZFIN 被「非 01 即 Sz」误判为下载，弹了假保存框。
+                    return match frame_type {
+                        0 => Detection::Sz { prefix },
+                        1 => Detection::Rz { prefix },
+                        // 收尾/进行中帧：吞掉（透传会进 bash 被当命令执行）
+                        _ => Detection::Swallow,
+                    };
                 }
             }
 
 
             // 行首状态推进：只有 \n 之后才是行首（\r 不算——CRLF 的 \r 后
             // 紧跟 \n；旧式 \r 结尾的行不视为新行）
-            if b == b'\n' {
-                self.at_line_start = true;
-            } else {
-                self.at_line_start = false;
-            }
+            self.at_line_start = b == b'\n';
             let _ = was_line_start;
         }
         Detection::None
