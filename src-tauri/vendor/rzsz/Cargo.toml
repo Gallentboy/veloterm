@@ -1,0 +1,12 @@
+[package]
+name = "rzsz"
+version = "0.1.5"
+edition = "2021"
+description = "ZModem file transfer protocol engine — vendored from kookob/rzsz (library subset only)."
+license = "Apache-2.0"
+repository = "https://github.com/kookob/rzsz"
+
+# VeloTerm vendor 修改：库子集（仅 zmodem 协议引擎），无二进制/tty/串口胶水。
+# 上游 v0.1.5（commit dbccc0f）+ 本地修补清单见本目录 README.md。
+[dependencies]
+log = "0.4"

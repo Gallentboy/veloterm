@@ -17,6 +17,7 @@ import { NewSessionMenu } from '@/components/NewSessionMenu';
 import { BroadcastCommandBar } from '@/components/terminal/BroadcastCommandBar';
 import { TerminalGridContainer } from '@/components/terminal/TerminalGridContainer';
 import { TerminalTabTrigger } from '@/components/terminal/TerminalTabTrigger';
+import { ZmodemTerminalStatus } from '@/components/terminal/ZmodemTerminalStatus';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useHostsStore } from '@/hosts/HostsProvider';
@@ -498,6 +499,8 @@ export function TerminalScreen({
       )}
 
       <AskAiErrorChip onAsk={(prompt) => onOpenAiChat?.(prompt)} />
+      {/* ZMODEM 传输状态：直接写终端缓冲（就地刷新，不叠浮层） */}
+      <ZmodemTerminalStatus />
     </section>
   );
 }

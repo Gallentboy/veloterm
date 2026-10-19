@@ -343,6 +343,14 @@ export const terminalSessionRegistry = {
     return sessions.get(key)?.terminalId ?? null;
   },
 
+  /** 按后端 terminalId 反查会话（ZMODEM 等后端事件只带 terminalId 时用） */
+  findByTerminalId(terminalId: number): TerminalSessionRegistryEntry | undefined {
+    for (const entry of sessions.values()) {
+      if (entry.terminalId === terminalId) return entry;
+    }
+    return undefined;
+  },
+
   /** 打开指定会话的终端搜索栏（Ctrl+F 统一入口；组件未挂载时静默忽略） */
   showSearch(key: number): boolean {
     const entry = sessions.get(key);

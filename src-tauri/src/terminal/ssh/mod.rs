@@ -50,6 +50,8 @@ impl SshTerminalSession {
         on_session_closed: F,
         lifecycle: Option<std::sync::Arc<dyn LifecycleEmitter>>,
         lifecycle_host_id: Option<usize>,
+        app_handle: Option<tauri::AppHandle>,
+        zmodem_aggregator: Option<std::sync::Arc<crate::terminal::zmodem::ZmodemAggregator>>,
     ) -> Result<(Arc<Self>, TerminalCreateResult), String>
     where
         F: FnOnce(usize) + Send + 'static,
@@ -112,6 +114,9 @@ impl SshTerminalSession {
             let mut exit_code: i32 = 0;
             // shell-ready 只发一次：首次收到 Output 时标记
             let mut shell_ready_emitted = false;
+            // ── ZMODEM 传输态（探测命中后接管输出流，不再转发前端）──
+            let mut zmodem_detector = crate::terminal::zmodem::ZmodemDetector::new();
+            let mut zmodem_active: Option<crate::terminal::zmodem::ZmodemBridge> = None;
             // 生命周期便捷发射（emitter 为 None 时静默跳过）
             let emit =
                 |kind: LifecycleKind, error: Option<&str>, reason: Option<DisconnectReason>| {
@@ -130,7 +135,28 @@ impl SshTerminalSession {
                     }
                 };
 
-            while let Some(event) = event_rx.recv().await {
+            // 传输期定时检查 finished：取消/失败后即使服务器不再输出，
+            // 也能及时清理 zmodem_active 恢复透传（否则终端永久卡死）
+            let mut zmodem_tick = tokio::time::interval(std::time::Duration::from_millis(200));
+            zmodem_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                let event = tokio::select! {
+                    maybe = event_rx.recv() => match maybe {
+                        Some(ev) => ev,
+                        None => break,
+                    },
+                    _ = zmodem_tick.tick() => {
+                        if let Some(bridge) = zmodem_active.as_ref()
+                            && bridge.finished_flag().load(std::sync::atomic::Ordering::Relaxed)
+                        {
+                            zmodem_active = None;
+                            zmodem_detector.reset();
+                            log::debug!("[ZMODEM] session {id} transfer ended, passthrough restored");
+                        }
+                        continue;
+                    }
+                };
                 match event {
                     RCEvent::State(RCState::Connecting) => {
                         emit(LifecycleKind::Connecting, None, None);
@@ -159,8 +185,134 @@ impl SshTerminalSession {
                             shell_ready_emitted = true;
                             emit(LifecycleKind::ShellReady, None, None);
                         }
-                        if on_output.send(data.to_vec()).is_err() {
-                            break;
+                        // 传输中：字节全部喂引擎，不再转发前端。
+                        // finished（含取消/失败）→ 立即清理并**把本块字节
+                        // 重新走探测/透传**（不能丢弃：其中可能已含下一轮
+                        // 传输的帧；旧实现丢弃后若服务器静默，zmodem_active
+                        // 永不清理 → 后续所有输出被吞 → 终端卡死）
+                        if let Some(bridge) = zmodem_active.as_ref() {
+                            if bridge.finished_flag().load(std::sync::atomic::Ordering::Relaxed) {
+                                zmodem_active = None;
+                                zmodem_detector.reset();
+                            } else if bridge.feed(&data) {
+                                continue;
+                            } else {
+                                // 引擎已结束：恢复透传，并给前端补一个换行
+                                // 让 shell 提示符立即出现在新行（服务器 sz 可能
+                                // 还没完全退出，不等它）
+                                zmodem_active = None;
+                                zmodem_detector.reset();
+                            }
+                        }
+                        // 未命中：探测（命中则建桥、启动传输任务）
+                        let detection = zmodem_detector.feed(&data);
+                        if matches!(detection, crate::terminal::zmodem::Detection::None) {
+                            log::trace!(
+                                "[ZMODEM] session {} no detection, chunk={} bytes",
+                                id, data.len()
+                            );
+                            if on_output.send(data.to_vec()).is_err() {
+                                break;
+                            }
+                        } else if let (Some(app), Some(aggregator)) = (app_handle.clone(), zmodem_aggregator.clone()) {
+                            let direction = match detection {
+                                crate::terminal::zmodem::Detection::Sz { .. } => "download",
+                                _ => "upload",
+                            };
+                            let sid = format!("terminal-{id}");
+                            let (bridge, inbound_rx) =
+                                crate::terminal::zmodem::ZmodemBridge::new(sid.clone(), direction);
+                            // 引擎写回通道 → SSH 通道（写操作走 command 队列）
+                            let (out_tx, mut out_rx) =
+                                tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+                            let cmd_tx = relay_command_tx.clone();
+                            let chan = shell_channel_id;
+                            tokio::spawn(async move {
+                                while let Some(bytes) = out_rx.recv().await {
+                                    let _ = cmd_tx.send((
+                                        RCCommand::Channel(
+                                            chan,
+                                            ChannelOperation::Data(bytes.into()),
+                                        ),
+                                        None,
+                                    ));
+                                }
+                            });
+                            // 下载（sz）方向：立即回 ZRINIT 突发，稳住服务器
+                            // sz——它等不到应答会超时放弃（用户还在选保存目录
+                            // 时就会退出，导致后续引擎握手无人应答而卡死）。
+                            // 上传（rz）方向由引擎主动发起，无需提前应答。
+                            if direction == "download" {
+                                let mut enc = rzsz::zmodem::frame::FrameEncoder::new();
+                                // flags[3] = CANFDX|CANOVIO|CANFC32（与引擎
+                                // build_zrinit_flags 一致；buflen=0 = 流式发送）
+                                let flags = [
+                                    0u8,
+                                    0u8,
+                                    0u8,
+                                    rzsz::zmodem::frame::CANFDX
+                                        | rzsz::zmodem::frame::CANOVIO
+                                        | rzsz::zmodem::frame::CANFC32,
+                                ];
+                                let mut burst = Vec::new();
+                                for _ in 0..5 {
+                                    let _ = enc.send_hex_header(
+                                        rzsz::zmodem::frame::FrameType::ZrInit,
+                                        &flags,
+                                        &mut burst,
+                                    );
+                                }
+                                if !burst.is_empty() {
+                                    let _ = out_tx.send(burst);
+                                }
+                            }
+                            // 命中前缀（含本段）先入引擎
+                            let _ = bridge.feed(&data);
+                            // 登记到聚合器：联动组内凑齐成员后统一弹一次对话框；
+                            // 未联动则立即返回单台批
+                            let hit = crate::terminal::zmodem::PendingHit {
+                                inbound_rx,
+                                bridge: bridge.clone(),
+                                outbound_tx: out_tx,
+                            };
+                            log::info!(
+                                "[ZMODEM] session {} detected {} ({} bytes chunk, head={:?})",
+                                id,
+                                direction,
+                                data.len(),
+                                String::from_utf8_lossy(&data[..data.len().min(16)])
+                            );
+                            if let Some(batch) = aggregator.register(id, direction, hit) {
+                                tokio::spawn(crate::terminal::zmodem::start_batch(
+                                    app, batch.direction, batch.hits,
+                                ));
+                            } else {
+                                // 已并入等待中的批：起兜底定时器（凑齐会提前触发）
+                                let agg = aggregator.clone();
+                                let app_timer = app.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(
+                                        crate::terminal::zmodem::aggregator::AGGREGATE_WINDOW,
+                                    )
+                                    .await;
+                                    if let Some(group) = agg.group_of(id)
+                                        && let Some(batch) = agg.take_batch(&group)
+                                    {
+                                        crate::terminal::zmodem::start_batch(
+                                            app_timer, batch.direction, batch.hits,
+                                        )
+                                        .await;
+                                    }
+                                });
+                            }
+                            zmodem_detector.reset();
+                            zmodem_active = Some(bridge);
+                        } else {
+                            // 无 app handle（测试/无头）→ 透传降级
+                            if on_output.send(data.to_vec()).is_err() {
+                                break;
+                            }
+                            zmodem_detector.reset();
                         }
                     }
                     RCEvent::ExtendedData { channel, data, .. } if channel == shell_channel_id => {
@@ -246,6 +398,24 @@ impl SshTerminalSession {
                     RCEvent::Done => break,
                     _ => {}
                 }
+            }
+
+            // 会话结束（关闭/断线）时若仍在 ZMODEM 传输中：给服务器发中止序列，
+            // 否则远端 lrz/lsz 会挂在接收态（下次登录可见残留提示）
+            if let Some(bridge) = zmodem_active.take() {
+                let mut out = Vec::new();
+                let mut enc = rzsz::zmodem::frame::FrameEncoder::new();
+                let _ = enc.send_cancel(&mut out);
+                if !out.is_empty() {
+                    let _ = relay_command_tx.send((
+                        RCCommand::Channel(
+                            shell_channel_id,
+                            ChannelOperation::Data(out.into()),
+                        ),
+                        None,
+                    ));
+                }
+                bridge.cancel();
             }
 
             on_session_closed(id);

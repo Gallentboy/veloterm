@@ -1,3 +1,4 @@
+import { listen } from '@tauri-apps/api/event';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { Terminal as XTerm, type IDisposable } from '@xterm/xterm';
@@ -135,6 +136,81 @@ export function TerminalSession({
     broadcastTargetsRef.current = broadcastTargets;
   }, [broadcastTargets]);
   const isPanelResizingRef = useRef(isPanelResizing);
+  // ── ZMODEM 传输期输入锁 ──
+  // 传输中用户键入会混入协议流、破坏 ZMODEM 帧；故 onData/onBinary 统一在
+  // writeInputAndMirror 入口拦截（直接 return，不写后端 → 不污染）。
+  // 解锁三重保障：① 后端 isFinished 事件（成功/失败/取消都发）；
+  // ② 看门狗超时兜底（事件丢失/后端崩溃也不会永久锁死）；③ 组件卸载清理。
+  const zmodemLockRef = useRef(false);
+  const [zmodemLocked, setZmodemLocked] = useState(false);
+  const zmodemWatchdogRef = useRef<number | null>(null);
+  // 光标隐藏状态：与输入锁**同一时机**（同一事件、同一解锁路径、同一看门狗）
+  const zmodemCursorHiddenRef = useRef(false);
+  // 提示节流：连续敲键时只在首次给出提示，避免刷屏
+  const zmodemHintShownRef = useRef(false);
+  const [zmodemHint, setZmodemHint] = useState(false);
+
+  useEffect(() => {
+    const unlock = () => {
+      zmodemLockRef.current = false;
+      zmodemHintShownRef.current = false;
+      setZmodemLocked(false);
+      setZmodemHint(false);
+      if (zmodemWatchdogRef.current !== null) {
+        window.clearTimeout(zmodemWatchdogRef.current);
+        zmodemWatchdogRef.current = null;
+      }
+      // 恢复光标（与解锁同一路径，幂等）
+      if (zmodemCursorHiddenRef.current) {
+        zmodemCursorHiddenRef.current = false;
+        termRef.current?.write('\x1b[?25h');
+      }
+    };
+    /** 传输期隐藏光标（幂等；与输入锁同步进入） */
+    const lockAndHideCursor = () => {
+      zmodemLockRef.current = true;
+      setZmodemLocked(true);
+      if (!zmodemCursorHiddenRef.current) {
+        zmodemCursorHiddenRef.current = true;
+        termRef.current?.write('\x1b[?25l');
+      }
+    };
+    let disposed = false;
+    // 本会话当前是否处于传输中（组级锁：组内任一成员传输 → 全组锁输入）
+    let selfTransferring = false;
+    const unlistenPromise = listen<{ sessionId: string; isFinished: boolean }>(
+      'zmodem-progress',
+      (event) => {
+        if (disposed) return;
+        // 后端事件带的是 terminalId；本组件的 sessionId 是前端编号，
+        // 经 registry 的 entry.terminalId 对齐（两套独立计数）
+        const myTerminalId = terminalSessionRegistry.getTerminalId(sessionId);
+        const mine = myTerminalId !== null && event.payload.sessionId === `terminal-${myTerminalId}`;
+        const inGroup =
+          broadcastTargetsRef.current.length > 1 &&
+          broadcastTargetsRef.current.includes(sessionId);
+        // 组内其他成员的事件同样影响本会话的锁状态
+        if (!mine && !inGroup) return;
+        if (mine) selfTransferring = !event.payload.isFinished;
+        if (selfTransferring) {
+          lockAndHideCursor();
+          if (zmodemWatchdogRef.current !== null) {
+            window.clearTimeout(zmodemWatchdogRef.current);
+          }
+          zmodemWatchdogRef.current = window.setTimeout(unlock, 10 * 60 * 1000);
+        } else if (mine) {
+          // 本会话结束：组内若还有其他传输，保持锁定（无法精确得知，保守解锁）
+          unlock();
+        }
+      },
+    );
+    return () => {
+      disposed = true;
+      unlock();
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [sessionId]);
+
   const resizeRAFRef = useRef(0);
   const resizeThrottleTimerRef = useRef<number | null>(null);
   const webglDeferTimerRef = useRef<number | null>(null);
@@ -701,6 +777,15 @@ export function TerminalSession({
      * 它本就只应作用于本终端。
      */
     const writeInputAndMirror = (bytes: Uint8Array) => {
+      // ZMODEM 传输期：拦截一切用户输入（不写后端 → 协议流零污染）。
+      // 首次拦截给出可见提示，之后静默（避免连续敲键刷屏）。
+      if (zmodemLockRef.current) {
+        if (!zmodemHintShownRef.current) {
+          zmodemHintShownRef.current = true;
+          setZmodemHint(true);
+        }
+        return;
+      }
       const tid = terminalIdRef.current ?? terminalSessionRegistry.getTerminalId(sessionId);
       if (tid === null) return;
       void transport.write({ id: tid, data: bytes });
@@ -1110,6 +1195,18 @@ export function TerminalSession({
         ref={containerRef}
         className="terminal-xterm-shell min-h-0 w-full flex-1 overflow-hidden"
       />
+
+      {/* ZMODEM 传输期输入锁提示：键入被拦截时短暂显示（不写入终端缓冲，
+          避免污染终端内容/协议流） */}
+      {zmodemLocked && zmodemHint ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none absolute left-1/2 top-2 z-20 -translate-x-1/2 rounded-full border border-border bg-menu px-2.5 py-0.5 font-mono text-ui-xs text-foreground-subtle shadow-md"
+        >
+          {t('terminal.zmodem.inputLocked')}
+        </div>
+      ) : null}
 
       {/* 远程主机资源监控条（终端内容最底一行）：仅 SSH 会话 + 标签页模式展示；
           挂载/卸载改变 xterm 容器高度，ResizeObserver 会自动 refit */}

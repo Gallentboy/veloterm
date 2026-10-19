@@ -1,0 +1,565 @@
+use std::io::{self, Write};
+
+use super::crc::{update_crc16, update_crc32, CRC32_MAGIC};
+use super::escape::EscapeTable;
+use super::frame::*;
+use crate::serial::reader::{ModemReader, TimeoutRead};
+
+/// Protocol error types — exhaustive, no silent failures.
+#[derive(Debug)]
+pub enum ZError {
+    CrcMismatch { expected: u32, got: u32 },
+    Timeout,
+    FrameError(String),
+    Cancelled,
+    Io(io::Error),
+    InvalidFrame(u8),
+    TooManyErrors,
+    GarbageCount(usize),
+}
+
+impl From<io::Error> for ZError {
+    fn from(e: io::Error) -> Self {
+        if e.kind() == io::ErrorKind::TimedOut {
+            ZError::Timeout
+        } else {
+            ZError::Io(e)
+        }
+    }
+}
+
+impl std::fmt::Display for ZError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ZError::CrcMismatch { expected, got } => {
+                write!(f, "CRC mismatch: expected {expected:#x}, got {got:#x}")
+            }
+            ZError::Timeout => write!(f, "timeout"),
+            ZError::FrameError(msg) => write!(f, "frame error: {msg}"),
+            ZError::Cancelled => write!(f, "transfer cancelled"),
+            ZError::Io(e) => write!(f, "I/O error: {e}"),
+            ZError::InvalidFrame(b) => write!(f, "invalid frame type: {b:#x}"),
+            ZError::TooManyErrors => write!(f, "too many errors"),
+            ZError::GarbageCount(n) => write!(f, "too much garbage ({n} bytes)"),
+        }
+    }
+}
+
+impl std::error::Error for ZError {}
+
+/// Explicit session state — compiler enforces exhaustive handling.
+#[derive(Debug)]
+pub enum SessionState {
+    Init,
+    Handshake { retries: u8 },
+    FileHeader { filename: String, size: u64 },
+    DataTransfer { offset: u64, block_size: usize },
+    Eof,
+    Fin,
+}
+
+/// Received header result.
+pub struct ReceivedHeader {
+    pub frame_type: FrameType,
+    pub encoding: FrameEncoding,
+    pub hdr: [u8; 4],
+}
+
+/// File metadata for transfer.
+pub struct FileInfo {
+    pub name: String,
+    pub size: u64,
+    pub mod_time: u64,
+    pub mode: u32,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub bytes_skipped: u64,
+}
+
+/// ZModem session — all state is here, no globals.
+pub struct Session {
+    pub state: SessionState,
+    pub encoder: FrameEncoder,
+    pub escape_table: EscapeTable,
+    pub rx_timeout_tenths: u32,
+    pub errors: u32,
+    pub max_retries: u32,
+    pub max_block_size: usize,
+    pub attn: Vec<u8>,
+    pub escape_all_ctrl: bool,
+    pub rx_window: usize,
+    /// VeloTerm vendor 增补：进度回调（已接收字节数）。None = 上游原行为
+    /// （嵌入式宿主用它驱动 UI 进度；回调在引擎线程内同步调用，须快速返回）
+    pub on_progress: Option<Box<dyn FnMut(u64) + Send>>,
+    /// VeloTerm vendor 增补：取消检查点——返回 true 时引擎以 ZError::Cancelled
+    /// 终止（宿主在用户取消/会话关闭时置位）
+    pub is_cancelled: Option<Box<dyn Fn() -> bool + Send>>,
+    /// VeloTerm vendor 增补：当前传输文件名（接收端解析到 ZFILE 时写入，
+    /// 宿主进度回调据此显示「下载中… report.log」）。用共享单元以便宿主在
+    /// 进度回调（闭包）内读取，不受借用限制
+    pub current_file: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// VeloTerm vendor 增补：当前传输文件总大小（ZFILE 头解析所得；
+    /// 宿主进度显示「已传/总量」用）
+    pub current_file_size: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl Default for Session {
+    fn default() -> Self { Self::new() }
+}
+
+impl Session {
+    pub fn new() -> Self {
+        Self {
+            state: SessionState::Init,
+            encoder: FrameEncoder::new(),
+            escape_table: EscapeTable::new(false, false),
+            rx_timeout_tenths: 100,
+            errors: 0,
+            max_retries: 10,
+            max_block_size: 1024,
+            attn: Vec::new(),
+            escape_all_ctrl: false,
+            // Garbage tolerated per header search. C lrz uses
+            // Zrwindow (1400) + baudrate (38400 on a pty). After a mid-stream
+            // ZRPOS the stale data still in flight must fit in here times
+            // RETRY_MAX, or the receiver gives up before it resyncs.
+            rx_window: 40_000,
+            on_progress: None,
+            is_cancelled: None,
+            current_file: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            current_file_size: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+
+    /// VeloTerm vendor 增补：取消检查点（宿主每轮数据/头部处理后调用）
+    pub fn cancelled(&self) -> bool {
+        self.is_cancelled.as_ref().map(|f| f()).unwrap_or(false)
+    }
+
+    /// VeloTerm vendor 增补：进度上报（宿主在数据落盘后调用）
+    pub fn report_progress(&mut self, bytes: u64) {
+        if let Some(cb) = self.on_progress.as_mut() {
+            cb(bytes);
+        }
+    }
+
+    /// Read a byte from modem, filtering XON/XOFF and optionally control chars.
+    /// Equivalent to noxrd7() in zm.c.
+    fn read_filtered<R: TimeoutRead>(
+        &self,
+        reader: &mut ModemReader<R>,
+    ) -> Result<u8, ZError> {
+        loop {
+            let c = reader.read_byte(self.rx_timeout_tenths)?;
+            let c7 = c & 0x7f;
+            match c7 {
+                XON | XOFF => continue,
+                _ if self.escape_all_ctrl && (c7 & 0x60) == 0 => continue,
+                b'\r' | b'\n' | ZDLE => return Ok(c7),
+                _ => return Ok(c7),
+            }
+        }
+    }
+
+    /// Decode a hex digit pair. Equivalent to zgethex() in zm.c.
+    fn read_hex<R: TimeoutRead>(
+        &self,
+        reader: &mut ModemReader<R>,
+    ) -> Result<u8, ZError> {
+        let c = self.read_filtered(reader)?;
+        let mut n = c.wrapping_sub(b'0');
+        if n > 9 {
+            n = n.wrapping_sub(b'a' - b':');
+        }
+        if n > 15 {
+            return Err(ZError::FrameError("invalid hex digit".into()));
+        }
+
+        let c = self.read_filtered(reader)?;
+        let mut low = c.wrapping_sub(b'0');
+        if low > 9 {
+            low = low.wrapping_sub(b'a' - b':');
+        }
+        if low > 15 {
+            return Err(ZError::FrameError("invalid hex digit".into()));
+        }
+
+        Ok((n << 4) | low)
+    }
+
+    /// Read a ZDLE-escaped byte. Equivalent to zdlread() in zm.c.
+    /// Uses iterative loop instead of recursion to avoid stack overflow on noise.
+    fn read_escaped<R: TimeoutRead>(
+        &self,
+        reader: &mut ModemReader<R>,
+    ) -> Result<u16, ZError> {
+        loop {
+            let c = reader.read_byte(self.rx_timeout_tenths)?;
+            // Quick check for non-control characters
+            if c & 0x60 != 0 {
+                return Ok(c as u16);
+            }
+
+            // Handle special cases
+            match c {
+                ZDLE => {}
+                XON | XOFF | 0x91 | 0x93 => continue, // Filter flow control
+                _ if self.escape_all_ctrl && (c & 0x60) == 0 => continue,
+                _ => return Ok(c as u16),
+            }
+
+            // After ZDLE — read the escaped byte (C zdlread2: up to 3 more
+            // CANs are swallowed, then the final byte is interpreted; a 5th
+            // CAN in a row means abort).
+            loop {
+                let mut c = reader.read_byte(self.rx_timeout_tenths)?;
+                for _ in 0..3 {
+                    if c != 0x18 {
+                        break;
+                    }
+                    c = reader.read_byte(self.rx_timeout_tenths)?;
+                }
+                match c {
+                    0x18 => return Err(ZError::Cancelled),
+                    ZCRCE | ZCRCG | ZCRCQ | ZCRCW => {
+                        return Ok(c as u16 | 0x100);
+                    }
+                    ZRUB0 => return Ok(0x7f),
+                    ZRUB1 => return Ok(0xff),
+                    XON | XOFF | 0x91 | 0x93 => continue, // Filter and retry
+                    _ if self.escape_all_ctrl && (c & 0x60) == 0 => continue,
+                    _ if (c & 0x60) == 0x40 => return Ok((c ^ 0x40) as u16),
+                    _ => return Err(ZError::FrameError(format!("bad ZDLE sequence: {c:#x}"))),
+                }
+            }
+        }
+    }
+
+    /// Receive a binary header with 16-bit CRC.
+    fn receive_bin16_header<R: TimeoutRead>(
+        &self,
+        reader: &mut ModemReader<R>,
+    ) -> Result<ReceivedHeader, ZError> {
+        let type_val = self.read_escaped(reader)? as u8;
+        let mut crc: u16 = update_crc16(0, type_val);
+        let mut hdr = [0u8; 4];
+
+        for b in hdr.iter_mut() {
+            let val = self.read_escaped(reader)? as u8;
+            *b = val;
+            crc = update_crc16(crc, val);
+        }
+
+        let crc_hi = self.read_escaped(reader)? as u8;
+        let crc_lo = self.read_escaped(reader)? as u8;
+        crc = update_crc16(crc, crc_hi);
+        crc = update_crc16(crc, crc_lo);
+
+        if crc != 0 {
+            return Err(ZError::CrcMismatch {
+                expected: 0,
+                got: crc as u32,
+            });
+        }
+
+        let frame_type = FrameType::from_u8(type_val)
+            .ok_or(ZError::InvalidFrame(type_val))?;
+
+        Ok(ReceivedHeader {
+            frame_type,
+            encoding: FrameEncoding::Bin16,
+            hdr,
+        })
+    }
+
+    /// Receive a binary header with 32-bit CRC.
+    fn receive_bin32_header<R: TimeoutRead>(
+        &self,
+        reader: &mut ModemReader<R>,
+    ) -> Result<ReceivedHeader, ZError> {
+        let type_val = self.read_escaped(reader)? as u8;
+        let mut crc: u32 = update_crc32(0xFFFF_FFFF, type_val);
+        let mut hdr = [0u8; 4];
+
+        for b in hdr.iter_mut() {
+            let val = self.read_escaped(reader)? as u8;
+            *b = val;
+            crc = update_crc32(crc, val);
+        }
+
+        for _ in 0..4 {
+            let val = self.read_escaped(reader)? as u8;
+            crc = update_crc32(crc, val);
+        }
+
+        if crc != CRC32_MAGIC {
+            return Err(ZError::CrcMismatch {
+                expected: CRC32_MAGIC,
+                got: crc,
+            });
+        }
+
+        let frame_type = FrameType::from_u8(type_val)
+            .ok_or(ZError::InvalidFrame(type_val))?;
+
+        Ok(ReceivedHeader {
+            frame_type,
+            encoding: FrameEncoding::Bin32,
+            hdr,
+        })
+    }
+
+    /// Receive a hex header.
+    fn receive_hex_header<R: TimeoutRead>(
+        &self,
+        reader: &mut ModemReader<R>,
+    ) -> Result<ReceivedHeader, ZError> {
+        let type_val = self.read_hex(reader)?;
+        let mut crc: u16 = update_crc16(0, type_val);
+        let mut hdr = [0u8; 4];
+
+        for b in hdr.iter_mut() {
+            let val = self.read_hex(reader)?;
+            *b = val;
+            crc = update_crc16(crc, val);
+        }
+
+        let crc_hi = self.read_hex(reader)?;
+        let crc_lo = self.read_hex(reader)?;
+        crc = update_crc16(crc, crc_hi);
+        crc = update_crc16(crc, crc_lo);
+
+        if crc != 0 {
+            return Err(ZError::CrcMismatch {
+                expected: 0,
+                got: crc as u32,
+            });
+        }
+
+        // Read and discard trailing CR/LF and possible XON
+        let c = reader.read_byte(self.rx_timeout_tenths)?;
+        if c == b'\r' {
+            let _ = reader.read_byte(self.rx_timeout_tenths); // LF
+        }
+        // Possible XON — push back if it's not XON (belongs to next frame)
+        if let Ok(b) = reader.read_byte(1) {
+            if b != XON {
+                reader.unread_byte(b);
+            }
+        }
+
+        let frame_type = FrameType::from_u8(type_val)
+            .ok_or(ZError::InvalidFrame(type_val))?;
+
+        Ok(ReceivedHeader {
+            frame_type,
+            encoding: FrameEncoding::Hex,
+            hdr,
+        })
+    }
+
+    /// Receive any header — auto-detects encoding.
+    /// Equivalent to zgethdr() in zm.c.
+    pub fn receive_header<R: TimeoutRead>(
+        &self,
+        reader: &mut ModemReader<R>,
+    ) -> Result<ReceivedHeader, ZError> {
+        let mut garbage_count: usize = 0;
+        let mut can_count: u32 = 0;
+
+        loop {
+            let c = reader.read_byte(self.rx_timeout_tenths)?;
+
+            // Track consecutive CAN (0x18) bytes for cancel detection.
+            // Note: 0x18 is both CAN and ZDLE. We only treat it as cancel
+            // when we see 5+ consecutive CANs NOT preceded by ZPAD.
+            if c == 0x18 {
+                can_count += 1;
+                if can_count >= 5 {
+                    return Err(ZError::Cancelled);
+                }
+                // Don't consume — fall through to ZPAD check
+                // (0x18 is not ZPAD, so it will be counted as garbage below)
+            } else {
+                can_count = 0;
+            }
+
+            match c {
+                ZPAD => {
+                    // Reset CAN counter — valid frame start
+
+                }
+                _ => {
+                    garbage_count += 1;
+                    if garbage_count > self.rx_window {
+                        return Err(ZError::GarbageCount(garbage_count));
+                    }
+                    continue;
+                }
+            }
+
+            // Got ZPAD — look for second ZPAD or ZDLE
+            let c = reader.read_byte(self.rx_timeout_tenths)?;
+            // Reset CAN counter since we're in a valid frame sequence
+            can_count = 0;
+            if c == ZPAD {
+                // Second ZPAD — next must be ZDLE
+                let c = reader.read_byte(self.rx_timeout_tenths)?;
+                if c != ZDLE {
+                    garbage_count += 3;
+                    continue;
+                }
+            } else if c != ZDLE {
+                garbage_count += 2;
+                continue;
+            }
+
+            // Got ZPAD ZDLE (or ZPAD ZPAD ZDLE) — read encoding byte
+            let c = reader.read_byte(self.rx_timeout_tenths)?;
+            match c {
+                ZBIN => return self.receive_bin16_header(reader),
+                ZBIN32 => return self.receive_bin32_header(reader),
+                ZHEX => return self.receive_hex_header(reader),
+                _ => {
+                    garbage_count += 1;
+                    continue;
+                }
+            }
+        }
+    }
+
+    /// Receive a data subpacket. The CRC width follows the encoding of the
+    /// header that introduced the frame (C zrdata: Rxframeind == ZBIN32).
+    pub fn receive_data<R: TimeoutRead>(
+        &self,
+        reader: &mut ModemReader<R>,
+        buf: &mut Vec<u8>,
+        max_len: usize,
+        crc32: bool,
+    ) -> Result<FrameEnd, ZError> {
+        if crc32 {
+            self.receive_data32(reader, buf, max_len)
+        } else {
+            self.receive_data16(reader, buf, max_len)
+        }
+    }
+
+    /// Receive data with 16-bit CRC.
+    pub fn receive_data16<R: TimeoutRead>(
+        &self,
+        reader: &mut ModemReader<R>,
+        buf: &mut Vec<u8>,
+        max_len: usize,
+    ) -> Result<FrameEnd, ZError> {
+        let mut crc: u16 = 0;
+        buf.clear();
+
+        loop {
+            let val = self.read_escaped(reader)?;
+            if val & 0x100 != 0 {
+                // Frame end marker
+                let end_byte = (val & 0xff) as u8;
+                crc = update_crc16(crc, end_byte);
+
+                let crc_hi = self.read_escaped(reader)? as u8;
+                let crc_lo = self.read_escaped(reader)? as u8;
+                crc = update_crc16(crc, crc_hi);
+                crc = update_crc16(crc, crc_lo);
+
+                if crc != 0 {
+                    return Err(ZError::CrcMismatch {
+                        expected: 0,
+                        got: crc as u32,
+                    });
+                }
+
+                return FrameEnd::from_u8(end_byte).ok_or_else(|| {
+                    ZError::FrameError(format!("invalid frame end: {end_byte:#x}"))
+                });
+            }
+
+            if buf.len() >= max_len {
+                return Err(ZError::FrameError("data exceeds max length".into()));
+            }
+            let byte = val as u8;
+            buf.push(byte);
+            crc = update_crc16(crc, byte);
+        }
+    }
+
+    /// Receive data with 32-bit CRC.
+    pub fn receive_data32<R: TimeoutRead>(
+        &self,
+        reader: &mut ModemReader<R>,
+        buf: &mut Vec<u8>,
+        max_len: usize,
+    ) -> Result<FrameEnd, ZError> {
+        let mut crc: u32 = 0xFFFF_FFFF;
+        buf.clear();
+
+        loop {
+            let val = self.read_escaped(reader)?;
+            if val & 0x100 != 0 {
+                let end_byte = (val & 0xff) as u8;
+                crc = update_crc32(crc, end_byte);
+
+                for _ in 0..4 {
+                    let b = self.read_escaped(reader)? as u8;
+                    crc = update_crc32(crc, b);
+                }
+
+                if crc != CRC32_MAGIC {
+                    return Err(ZError::CrcMismatch {
+                        expected: CRC32_MAGIC,
+                        got: crc,
+                    });
+                }
+
+                return FrameEnd::from_u8(end_byte).ok_or_else(|| {
+                    ZError::FrameError(format!("invalid frame end: {end_byte:#x}"))
+                });
+            }
+
+            if buf.len() >= max_len {
+                return Err(ZError::FrameError("data exceeds max length".into()));
+            }
+            let byte = val as u8;
+            buf.push(byte);
+            crc = update_crc32(crc, byte);
+        }
+    }
+
+    /// Send a hex header with position.
+    pub fn send_pos_header<W: Write>(
+        &mut self,
+        frame_type: FrameType,
+        pos: u64,
+        out: &mut W,
+    ) -> io::Result<()> {
+        let hdr = store_position(pos);
+        self.encoder.send_hex_header(frame_type, &hdr, out)
+    }
+
+    /// Send a binary header with position.
+    pub fn send_bin_pos_header<W: Write>(
+        &mut self,
+        frame_type: FrameType,
+        pos: u64,
+        out: &mut W,
+    ) -> io::Result<()> {
+        let hdr = store_position(pos);
+        self.encoder
+            .send_binary_header(frame_type, &hdr, 0, &self.escape_table, out)
+    }
+
+    /// Send data frame.
+    pub fn send_data<W: Write>(
+        &mut self,
+        data: &[u8],
+        frame_end: FrameEnd,
+        out: &mut W,
+    ) -> io::Result<()> {
+        self.encoder
+            .send_data(data, frame_end, &self.escape_table, out)
+    }
+}

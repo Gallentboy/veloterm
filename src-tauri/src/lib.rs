@@ -34,6 +34,11 @@ pub fn run() {
         // 绕开 WKWebView navigator.clipboard 的粘贴授权弹层（原生「粘贴」按钮）
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(terminal::manager::TerminalManager::new())
+        // 联动组内 ZMODEM 请求聚合（一次交互，N 路扇出）；Arc 形态与
+        // TerminalManager 的 try_state 取值类型一致
+        .manage(std::sync::Arc::new(
+            terminal::zmodem::ZmodemAggregator::new(),
+        ))
         .manage(port_forward::PortForwardManager::default())
         .manage(sftp::types::SftpState::new())
         .manage(zk::ZkState::new())
@@ -54,6 +59,8 @@ pub fn run() {
             commands::session::db_load_host_store,
             commands::session::db_save_host_store,
             terminal::commands::terminal_create,
+            terminal::commands::terminal_set_broadcast_group,
+            terminal::commands::terminal_cancel_zmodem,
             terminal::commands::terminal_write,
             terminal::commands::terminal_resize,
             terminal::commands::terminal_dispose,

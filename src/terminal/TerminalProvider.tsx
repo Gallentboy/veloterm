@@ -17,6 +17,7 @@ import {
   type TerminalPanelState,
   type TerminalSessionDescriptor,
 } from './terminalPanelState';
+import { invoke } from '@tauri-apps/api/core';
 import { terminalSessionRegistry } from './terminalSessionRegistry';
 import { getDbKv, setDbKv } from '@/services/dbStorage';
 import { defaultTerminalTransport } from './transport';
@@ -110,6 +111,15 @@ export function TerminalProvider({
   useEffect(() => {
     persistTerminalPanelState(panelState);
   }, [panelState]);
+
+  // 联动集合同步给后端：ZMODEM 命中聚合（联动时多台同时 sz/rz 只弹一次对话框）
+  useEffect(() => {
+    void invoke('terminal_set_broadcast_group', {
+      sessionIds: isBroadcastActive ? broadcastTargets : [],
+    }).catch(() => {
+      // 纯浏览器预览环境无后端：忽略
+    });
+  }, [isBroadcastActive, broadcastTargets]);
 
   const createSession = useCallback(
     (params?: { cwd?: string; hostId?: number; customTitle?: string }) => {
