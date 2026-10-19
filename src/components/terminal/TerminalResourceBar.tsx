@@ -135,7 +135,7 @@ export function TerminalResourceBar({ sessionId, disconnected }: TerminalResourc
   const isLinux = snapshot?.platform === 'linux';
 
   return (
-    <div className="@container flex h-[42px] shrink-0 select-none items-center gap-1 overflow-hidden border-t border-border/50 bg-background px-2">
+    <div className="@container flex h-[28px] shrink-0 select-none items-center gap-1 overflow-hidden border-t border-border/50 bg-background px-2">
       <Pill
         label={t('terminal.resourceMonitor.latency')}
         value={formatLatency(snapshot?.rttMs ?? null)}
