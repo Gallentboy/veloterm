@@ -80,8 +80,11 @@ export function ZmodemTerminalStatus() {
         return;
       }
 
-      // 结束：三态收尾（耗时用后端实测值，前端计时仅兜底）
-      const localElapsed = Date.now() - (startedAtRef.current.get(numericId) ?? Date.now());
+      // 结束：三态收尾。无论首帧是否显示过，完成行必须输出——这是用户
+      // 唯一的结果反馈（实测：首帧被门限跳过后完成行也不显示，传输结果
+      // 全部丢失）
+      const startedAt = startedAtRef.current.get(numericId);
+      const localElapsed = startedAt ? Date.now() - startedAt : 0;
       const elapsedMs = payload.elapsedMs > 0 ? payload.elapsedMs : localElapsed;
       startedAtRef.current.delete(numericId);
       const ok = !payload.error;
