@@ -24,9 +24,20 @@ const OPPOSITE_SIDE: Record<TooltipSide, TooltipSide> = {
 export interface TooltipPlacement<T extends HTMLElement> {
   anchorRef: RefObject<T | null>;
   tooltipRef: RefObject<T | null>;
-  /** fixed 视口坐标；首帧（测量前）为 null，配合 visibility:hidden 使用 */
+  /** fixed 视口坐标；首帧（测量前）为 null，配合 TOOLTIP_HIDDEN_STYLE 使用 */
   style: CSSProperties | null;
 }
+
+/**
+ * 提示层首帧（坐标测量前）的隐藏样式。必须含 `position: fixed`：
+ * 首帧若为静态布局，块级提示层会横向撑满 body，`offsetWidth` 测出视口宽，
+ * 夹取数学（maxLeft 为负）会把提示钉死在视口左缘；fixed 下宽度收缩为内容宽，
+ * 测量与最终渲染同上下文。
+ */
+export const TOOLTIP_HIDDEN_STYLE: CSSProperties = {
+  position: 'fixed',
+  visibility: 'hidden',
+};
 
 /**
  * tooltip 的「portal + fixed 定位 + 空间不足自动翻转 + 视口夹取」定位逻辑，
