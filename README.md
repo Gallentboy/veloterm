@@ -1,16 +1,16 @@
 # VeloTerm
 
-VeloTerm 是快速、精致的跨平台桌面终端（Tauri 2 + React 19），面向远程运维场景：SSH 终端、SFTP 双栏文件管理、远端文件编辑器、常用命令库与多终端协同广播。Windows 版额外内置完整的 Unix 工具链（coreutils/grep/sed/find/diff/ripgrep/jq/yq 等 100+ 命令），安装后开箱即用，不依赖 Git Bash / MSYS2。
+VeloTerm 是快速、精致的跨平台桌面终端（Tauri 2 + React 19），面向远程运维场景：SSH 终端、SFTP 双栏文件管理、远端文件编辑器、常用命令库、自托管 SSH 中继（relay）与多终端协同广播。Windows 版额外内置完整的 Unix 工具链（coreutils/grep/sed/find/diff/ripgrep/jq/yq 等 100+ 命令），安装后开箱即用，不依赖 Git Bash / MSYS2。
 
 ## 功能概览
 
 | 模块 | 能力 |
 | --- | --- |
-| 终端 | 本地终端（继承系统 Shell Profile）与 SSH 远程终端；标签页 / 九宫格平铺两种布局；⌘T 新建、⌘R 重连断开会话；协同广播（一输入多终端执行、Ctrl+C 中断广播、清屏同步）；复制/粘贴快捷键 + 右键菜单键位指示；拖拽文件进终端自动写入路径（Windows 按需引号 / POSIX 转义，对齐原生 cmd/zsh）；SSH 远程主机资源监控条（延迟/CPU/内存/SWAP/网络速率/磁盘，标签页模式底部展示、随宽度响应式展开） |
-| 文件管理 | SFTP 双栏对照，左右拖拽互拷（跨主机直连不落盘）；上传 / 下载 / 断点续传 / 限速；文件右键「尝试编辑」（内容嗅探，非白名单文本也能打开） |
+| 终端 | 本地终端（继承系统 Shell Profile）与 SSH 远程终端；标签页 / 九宫格平铺两种布局；⌘T 新建、⌘R 重连断开会话；协同广播（一输入多终端执行、Ctrl+C 中断广播、清屏同步）；复制/粘贴快捷键 + 右键菜单键位指示；拖拽文件进终端自动写入路径（Windows 按需引号 / POSIX 转义，对齐原生 cmd/zsh）；SSH 远程主机资源监控条（延迟/CPU/内存/SWAP/网络速率/磁盘，默认关闭、终端工具栏一键开关，随宽度响应式展开） |
+| 文件管理 | SFTP 双栏对照，左右拖拽互拷（跨主机直连不落盘）；上传 / 下载 / 断点续传 / 限速；uid/gid 自动解析为用户/组名；右键「在此目录打开终端」「计算目录大小」（远端 du）；文件 Monaco 只读预览（可切换编辑并 ⌘S 保存回远端）与「尝试编辑」（内容嗅探，非白名单文本也能打开）；「属性」弹窗——权限九宫格（预设/八进制联动/SUID 等特殊位）、属主与属组修改、递归应用（智能模式防目录丢执行位）；目录递归删除（纯 SFTP 逐文件 / Shell 极速两路） |
 | 编辑器 | Monaco 内嵌（81 种语言高亮、TS/JS/JSON 智能提示全离线）；远端文件在线编辑、冲突检测（本地 vs 远端 baseHash）、草稿防抖暂存；SQLCipher 加密保存 |
-| 主机库 | 分组树 + 跳板机链 + 三种认证（密码 / 私钥 / Agent）；「终端就绪钩子」——连接建立后自动执行命令库中的指定命令 |
-| 命令库 | 常用命令收藏，支持 `{{参数}}` 占位符模板、危险级别、Markdown 详细说明；全局命令面板快捷执行 |
+| 主机库 | 分组树 + 跳板机链 + 三种认证（密码 / 私钥 / Agent）+ 自托管中继（TCP/WS/UDP/QUIC 四传输，独立 veloterm_relay 服务端、终端/端口转发/SFTP 全链路支持）；「终端就绪钩子」——连接建立后自动执行命令库中的指定命令 |
+| 命令库 | 常用命令收藏，支持 `{{参数}}` 占位符模板、危险级别、Markdown 详细说明；内置 192 条按官方文档求证的预置用法（分类分组、平台适配标注）；全局命令面板快捷执行 |
 | 内置工具链（仅 Windows） | 单一 `coreutils.exe` 多呼叫二进制 + NTFS 硬链接短名入口（`ls` `grep` `rg` `awk` `bat` `bc` `jq` `yq` `qalc` `nmap` `ncat` `nping` `zoxide` `fzf` `dog` `vim` `onefetch` … 130 个命令），BusyBox 模式零拷贝分发 |
 
 ## 环境要求
@@ -75,7 +75,7 @@ cargo clippy --workspace --all-targets
 | tar-rs · eza · wget-rs | tar（自研 GNU 兼容 CLI 壳）、eza/tree、wget |
 | openssl-app + openssl-src | openssl CLI（vcpkg 3.6.4 静态库 + 锁版本源码，仅 Windows） |
 | putty-telnet | telnet（PuTTY 源码内嵌 + C 层 GNU 参数解析，仅 Windows） |
-| jq-app | jq（jqlang/jq 1.7.1 + 捆绑 oniguruma 6.9.8，vendor 源码 cc 现场编译 FFI 直调 umain，仅 Windows；vendor 树含本地修补清单，见 `src-tauri/vendor/jq/README.md`） |
+| jq-app | jq（jqlang/jq 1.8.2 + 捆绑 oniguruma 6.9.10，vendor 源码 cc 现场编译 FFI 直调 umain，仅 Windows；vendor 树含本地修补清单，见 `src-tauri/vendor/jq/README.md`） |
 | bc-app | bc（gavinhoward/bc 7.1.0，vendor 源码 cc 现场编译 FFI 直调改名 main，上游自带官方 MSVC 工程零修补，仅 Windows） |
 | yq + fzf（Go） | 合并为单一 `veloterm_goffi.dll`（yq v4.54.1 + fzf 0.74.5：源码内 vendor + `vendor/go.work` 跨模块聚合、运行时按符号动态导入 FFI，仅 Windows；GOAMD64=v3 以 AVX2 为基线、单次 CLI 关闭常规 GC；Go 官方不支持 MSVC 链接 c-archive，DLL 是 extern 链接的唯一形态；fzf 是交互式模糊查找器，渲染直接落在 veloterm 终端上） |
 | libqalculate（C++） | qalc（5.13.1：源码内 vendor + MSYS2 MinGW64 构建 + `qalcffi.dll` 动态导入 FFI，仅 Windows；上游无 MSVC 工程且官方 Windows 版即 MinGW 构建，依赖全静态打入、定义 XML 编进二进制） |
@@ -89,7 +89,7 @@ cargo clippy --workspace --all-targets
 
 ## 打包与发布
 
-正式 Windows 安装包由 GitHub Actions 出（`.github/workflows/publish.yml`）：push 到 `release` 分支或手动 dispatch 触发，windows-latest runner 上构建（coreutils 二进制 → Tauri NSIS 安装包），产物为 draft release。vcpkg 依赖（OpenSSL 静态库）走 GitHub Packages NuGet 二进制缓存，首次冷编译后续秒级恢复。
+正式 Windows 安装包由 GitHub Actions 出（`.github/workflows/publish.yml`）：**推版本 tag 触发**（`v1.0.1` 或 `1.0.1` 形态；release 分支常规推送不出包），windows-latest runner 上构建（coreutils 二进制 → Tauri NSIS 安装包），产物为 draft release。vcpkg 依赖（OpenSSL 静态库）走 GitHub Packages NuGet 二进制缓存，首次冷编译后续秒级恢复。
 
 主二进制名为 `VeloTerm.exe`（`mainBinaryName` 配置），任务管理器与 `ps` 可按 `VeloTerm` 检索。
 

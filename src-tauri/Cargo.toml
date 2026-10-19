@@ -21,7 +21,7 @@ resolver = "3"
 
 [package]
 name = "app"
-version = "1.0.0"
+version = "1.0.1"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
