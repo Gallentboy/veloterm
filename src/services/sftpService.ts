@@ -199,6 +199,95 @@ export async function removeRemoteItem(
   return invoke<void>('sftp_remove', { sessionId, path, isDir });
 }
 
+/** 目录递归删除的扫描结果（truncated=true 表示触计数上限，显示「N+」） */
+export interface TreeScanResult {
+  nodeCount: number;
+  truncated: boolean;
+}
+
+/** Shell 极速删除预览：command 为后端与执行同一函数构造的完整命令串 */
+export interface FastRemovePreview {
+  command: string;
+  timeoutSecs: number;
+}
+
+/** 纯 SFTP 递归删除进度事件 */
+export interface RemoveProgress {
+  taskId: number;
+  deleted: number;
+  failed: number;
+  total: number | null;
+  isFinished: boolean;
+}
+
+/** 纯 SFTP 递归删除结果 */
+export interface RemoveTreeOutcome {
+  deleted: number;
+  failed: number;
+}
+
+/**
+ * 扫描目录节点数（含根；上限 2000、超时 8s，超限 truncated=true）——
+ * 由前端决定是否走「极速删除」询问流程
+ */
+export async function scanRemoteTree(sessionId: string, path: string): Promise<TreeScanResult> {
+  return invoke<TreeScanResult>('sftp_scan_tree', { sessionId, path });
+}
+
+/**
+ * 极速删除预览：取将与执行完全一致的命令串（红字审批框展示用）。
+ * 服务器无 POSIX shell（exec_disabled）时抛错——调用方静默转纯 SFTP 路径
+ */
+export async function previewFastRemove(
+  sessionId: string,
+  path: string,
+  nodeCount: number | null,
+): Promise<FastRemovePreview> {
+  return invoke<FastRemovePreview>('sftp_preview_fast_remove', {
+    sessionId,
+    path,
+    nodeCount,
+  });
+}
+
+/** Shell 极速删除（sh -c 'rm -rf -- "$1"' 形态；失败自动回退由调用方编排） */
+export async function removeRemoteFast(
+  sessionId: string,
+  path: string,
+  nodeCount: number | null,
+): Promise<void> {
+  return invoke<void>('sftp_remove_fast', { sessionId, path, nodeCount });
+}
+
+/**
+ * 纯 SFTP 逐文件递归删除（进度 + 可取消）：
+ * - taskId 与传输任务同一命名空间，cancelTransfer(taskId) 即取消
+ * - 取消后后端返回 Err("CANCELLED:<已删数>")——已删不恢复，如实提示
+ */
+export async function removeRemoteTree(
+  sessionId: string,
+  path: string,
+  totalHint: number | null,
+  onUpdate: (progress: RemoveProgress) => void,
+): Promise<TransferHandle> {
+  const taskId = await invoke<number>('sftp_next_task_id');
+  const onProgress = new Channel<RemoveProgress>();
+  onProgress.onmessage = (progress) => {
+    onUpdate(progress);
+  };
+  const cancel = () => {
+    void invoke('sftp_cancel_transfer', { taskId });
+  };
+  const done = invoke<RemoveTreeOutcome>('sftp_remove_tree', {
+    sessionId,
+    path,
+    taskId,
+    totalHint,
+    onProgress,
+  }).then(() => undefined);
+  return { taskId, cancel, done };
+}
+
 /**
  * 目录大小（远端 du：SFTP 递归 stat 大目录既慢又费流量；返回字节数）
  */

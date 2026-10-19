@@ -7,13 +7,15 @@ use tokio::io::AsyncSeekExt;
 use super::file_ops::{commit_temp_file, dedup_sftp_status_text, remote_dir_of, sftp_error_message, sibling_temp_path};
 use super::manager::{
     close_sftp, connect_sftp, evict_sftp_session, get_or_connect_sftp, get_sftp_ssh_handle,
-    register_temp_dir, resolve_host_chain, sftp_exec_capture,
+    register_temp_dir, resolve_host_chain, sftp_exec_capture, sftp_exec_capture_status,
 };
 use super::transfer::{
     FailureSide, ProgressTracker, PumpError, PumpOptions, RemoteEndpoint, TransferKind,
     evict_decision, pump_stream, resolve_resume_offset,
 };
-use super::types::{RemoteFileItem, SftpState, TransferProgress};
+use super::types::{
+    FastRemovePreview, RemoteFileItem, RemoveProgress, SftpState, TransferProgress, TreeScanResult,
+};
 use crate::text_detect::is_editable_sftp_entry;
 
 /// 构造逐块进度回调：累计绝对字节数（含续传起始偏移），≥100ms 节流发包。
@@ -966,4 +968,568 @@ pub async fn sftp_remove(
     }
 
     Ok(())
+}
+
+// ─────────── 目录递归删除（纯 SFTP 逐文件 + Shell 极速两路） ───────────
+//
+// 交互契约（前端 SftpSessionView 的 useRemoteDelete 状态机）：
+//   确认删除目录 → sftp_scan_tree 计数（上限/超时，超限即 truncated）
+//     ├─ ≤ 阈值且未截断 → sftp_remove_tree（进度 + 可取消）
+//     └─ 超阈值/截断 → sftp_preview_fast_remove 取真实命令串弹红字审批框
+//         ├─ 确认 → sftp_remove_fast（退出码==0 判成功；失败自动回退 remove_tree）
+//         └─ 仍用 SFTP → sftp_remove_tree
+
+/// 触发「极速删除」询问的节点数阈值：SFTP unlink 实测 80–200 项/秒，
+/// 500 ≈ 3–6s+，是用户可感知「慢」的起点（含根目录自身）
+const FAST_ASK_THRESHOLD: usize = 500;
+/// 扫描计数上限：超过即判「大量文件」（truncated=true，前端显示「N+」）。
+/// readdir 批量很快，2000 节点亚秒级——不必数全即可决策
+const SCAN_CAP: usize = 2000;
+/// 扫描超时（秒）：防御黑洞型 readdir 挂起（堡垒机限流等）
+const SCAN_TIMEOUT_SECS: u64 = 8;
+/// 进度事件节流：每处理 N 项发一次（Channel 事件开销控制）
+const REMOVE_PROGRESS_EVERY: u32 = 20;
+
+/// POSIX 单引号安全包裹（' → '\''）：路径只作为独立 argv（$1）传给内层 sh，
+/// 绝不拼接进命令体——引号/空格/分号/反引号/中文全部失效，无注入面
+fn shell_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// 构造极速删除命令（预览与执行同一函数——单一事实源，展示什么就执行什么；
+/// 执行命令绝不信前端回传）。外层登录 shell（sh/bash/zsh 通吃）把它解析为
+/// 固定四参，路径仅作为内层 sh 的 $1：`sh -c 'rm -rf -- "$1"' veloterm-rm <q>`
+fn build_fast_remove_command(path: &str) -> String {
+    format!(
+        "sh -c 'rm -rf -- \"$1\"' veloterm-rm {}",
+        shell_single_quote(path)
+    )
+}
+
+/// 极速删除超时：节点数换算（rm -rf 实测数千项/秒，公式留 10× 余量），
+/// 封顶 600s、无节点提示时取保守上限
+fn fast_remove_timeout_secs(node_count: Option<u64>) -> u64 {
+    node_count
+        .map(|n| std::cmp::min(600, 60 + n / 100))
+        .unwrap_or(600)
+}
+
+/// 删除目标护栏：拒绝服务器根（rm -rf 的口令式灾难必须代码层拦死，
+/// 前端已拦一道，这里是后端双保险）
+fn ensure_safe_remove_target(path: &str) -> Result<(), String> {
+    let p = path.trim().trim_end_matches('/');
+    if p.is_empty() || p == "/" {
+        return Err("拒绝删除服务器根目录".to_string());
+    }
+    Ok(())
+}
+
+/// 归一化删除目标路径（trim + 反斜杠→正斜杠，与 sftp_remove 同规则）
+fn normalize_remove_path(path: &str) -> Result<String, String> {
+    let p = path.trim().replace('\\', "/");
+    ensure_safe_remove_target(&p)?;
+    Ok(p)
+}
+
+/// 远端路径拼接（与 sftp_list_dir 的 full_path 规则一致：根目录不加双斜杠）
+fn join_remote(base: &str, name: &str) -> String {
+    if base == "/" {
+        format!("/{name}")
+    } else {
+        format!("{base}/{name}")
+    }
+}
+
+/// 可测试的远端树操作抽象：真实实现包 russh_sftp 客户端；单测用内存假实现
+/// （symlink 不下钻 / 深层迭代 / 部分失败继续 / 截断计数四类语义在 macOS 门禁可测）
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct TreeEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+}
+
+pub(super) trait RemoteTreeFs: Send + Sync {
+    fn list(&self, path: &str) -> impl std::future::Future<Output = Result<Vec<TreeEntry>, String>> + Send;
+    fn unlink(&self, path: &str) -> impl std::future::Future<Output = Result<(), String>> + Send;
+    fn rmdir(&self, path: &str) -> impl std::future::Future<Output = Result<(), String>> + Send;
+}
+
+/// russh_sftp 真实适配层
+struct SftpTreeFs<'a> {
+    client: &'a russh_sftp::client::SftpSession,
+}
+
+impl RemoteTreeFs for SftpTreeFs<'_> {
+    async fn list(&self, path: &str) -> Result<Vec<TreeEntry>, String> {
+        let entries = self
+            .client
+            .read_dir(path)
+            .await
+            .map_err(sftp_error_message)?;
+        Ok(entries
+            .into_iter()
+            .map(|e| TreeEntry {
+                name: e.file_name(),
+                is_dir: e.file_type().is_dir(),
+                is_symlink: e.file_type().is_symlink(),
+            })
+            .collect())
+    }
+
+    async fn unlink(&self, path: &str) -> Result<(), String> {
+        self.client.remove_file(path).await.map_err(sftp_error_message)
+    }
+
+    async fn rmdir(&self, path: &str) -> Result<(), String> {
+        self.client.remove_dir(path).await.map_err(sftp_error_message)
+    }
+}
+
+/// 计数扫描：DFS 显式栈（防深目录递归溢出），symlink 只计数不下钻；
+/// 读不了的子目录跳过（扫描只为决策与进度分母，不追求精确）。
+/// 返回 (节点数含根, 是否触上限截断)
+async fn count_tree<Fs: RemoteTreeFs>(fs: &Fs, root: &str, cap: usize) -> (u64, bool) {
+    let mut count: u64 = 1; // 根自身
+    let mut truncated = false;
+    let mut stack = vec![root.to_string()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs.list(&dir).await else {
+            continue;
+        };
+        for e in entries {
+            count += 1;
+            if count as usize >= cap {
+                truncated = true;
+                return (count, true);
+            }
+            if e.is_dir && !e.is_symlink {
+                stack.push(join_remote(&dir, &e.name));
+            }
+        }
+    }
+    (count, truncated)
+}
+
+/// 递归删除汇总
+pub(super) struct RemoveSummary {
+    pub deleted: u64,
+    pub failed: u64,
+    pub first_error: Option<String>,
+}
+
+enum TreeOp {
+    /// 进入目录：列子项，压入自身 Rmdir + 各子项操作（后序：子项全清才删自身）
+    Enter(String),
+    Unlink(String),
+    Rmdir(String),
+}
+
+/// 纯 SFTP 后序递归删除：显式栈迭代（无递归栈深限制）；symlink 直接 unlink
+/// 不下钻（与 rm -rf 同语义）；单项失败（权限等）记录并继续——部分删除是
+/// 递归删除的正确语义，连接级错误由上层 await 自然中断。
+/// on_progress 节流回调 (deleted, failed)，每 REMOVE_PROGRESS_EVERY 项一次。
+async fn remove_tree<Fs: RemoteTreeFs>(
+    fs: &Fs,
+    root: &str,
+    mut on_progress: impl FnMut(u64, u64),
+) -> RemoveSummary {
+    let mut summary = RemoveSummary { deleted: 0, failed: 0, first_error: None };
+    let mut since_event: u32 = 0;
+    let mut record = |summary: &mut RemoveSummary, r: Result<(), String>| match r {
+        Ok(()) => summary.deleted += 1,
+        Err(e) => {
+            summary.failed += 1;
+            if summary.first_error.is_none() {
+                summary.first_error = Some(e);
+            }
+        }
+    };
+    let mut stack = vec![TreeOp::Enter(root.to_string())];
+    while let Some(op) = stack.pop() {
+        match op {
+            TreeOp::Enter(dir) => {
+                match fs.list(&dir).await {
+                    Ok(entries) => {
+                        // 先压 Rmdir（栈序保证最后弹出），再压子项
+                        stack.push(TreeOp::Rmdir(dir.clone()));
+                        for e in entries {
+                            let child = join_remote(&dir, &e.name);
+                            if e.is_dir && !e.is_symlink {
+                                stack.push(TreeOp::Enter(child));
+                            } else {
+                                stack.push(TreeOp::Unlink(child));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        summary.failed += 1;
+                        if summary.first_error.is_none() {
+                            summary.first_error = Some(e);
+                        }
+                    }
+                }
+            }
+            TreeOp::Unlink(p) => record(&mut summary, fs.unlink(&p).await),
+            TreeOp::Rmdir(p) => record(&mut summary, fs.rmdir(&p).await),
+        }
+        since_event += 1;
+        if since_event >= REMOVE_PROGRESS_EVERY {
+            since_event = 0;
+            on_progress(summary.deleted, summary.failed);
+        }
+    }
+    summary
+}
+
+/// 扫描计数：超过 FAST_ASK_THRESHOLD（且未截断）由前端直接走纯 SFTP 删除；
+/// 截断即「大量文件」必然询问。阈值不在此处判断——决策留在前端状态机
+#[tauri::command]
+pub async fn sftp_scan_tree(
+    session_id: String,
+    path: String,
+    state: State<'_, SftpState>,
+) -> Result<TreeScanResult, String> {
+    let client = get_or_connect_sftp(&state, &session_id).await?;
+    let target = normalize_remove_path(&path)?;
+    let fs = SftpTreeFs { client: &client };
+    let (node_count, truncated) = tokio::time::timeout(
+        tokio::time::Duration::from_secs(SCAN_TIMEOUT_SECS),
+        count_tree(&fs, &target, SCAN_CAP),
+    )
+    .await
+    .map_err(|_| format!("扫描超时（>{SCAN_TIMEOUT_SECS}s），目录过大或网络不稳定"))?;
+    Ok(TreeScanResult { node_count, truncated })
+}
+
+/// 极速删除预览：返回将与执行完全一致（同一构造函数）的命令串与超时，
+/// 前端弹红字审批框。EXEC_DISABLED 的会话在预览即报错——前端不弹极速选项
+#[tauri::command]
+pub async fn sftp_preview_fast_remove(
+    session_id: String,
+    path: String,
+    node_count: Option<u64>,
+    state: State<'_, SftpState>,
+) -> Result<FastRemovePreview, String> {
+    let _ = get_or_connect_sftp(&state, &session_id).await?;
+    if state.exec_disabled.lock().await.contains(&session_id) {
+        return Err("EXEC_DISABLED".to_string());
+    }
+    if get_sftp_ssh_handle(&state, &session_id).await.is_none() {
+        return Err("SSH 会话不可用".to_string());
+    }
+    let target = normalize_remove_path(&path)?;
+    Ok(FastRemovePreview {
+        command: build_fast_remove_command(&target),
+        timeout_secs: fast_remove_timeout_secs(node_count),
+    })
+}
+
+/// Shell 极速删除：sh -c 'rm -rf -- "$1"' 形态（路径仅作 $1，无注入面）；
+/// 退出码==0 判成功 + stat 双保险；127（sh 不存在，如 Windows 默认 shell）
+/// 标记 exec_disabled 并给出明确文案。无进度、不可中断（语义如审批框提示）
+#[tauri::command]
+pub async fn sftp_remove_fast(
+    session_id: String,
+    path: String,
+    node_count: Option<u64>,
+    state: State<'_, SftpState>,
+) -> Result<(), String> {
+    let client = get_or_connect_sftp(&state, &session_id).await?;
+    if state.exec_disabled.lock().await.contains(&session_id) {
+        return Err("EXEC_DISABLED".to_string());
+    }
+    let ssh = get_sftp_ssh_handle(&state, &session_id)
+        .await
+        .ok_or_else(|| "SSH 会话不可用".to_string())?;
+    let target = normalize_remove_path(&path)?;
+    let command = build_fast_remove_command(&target);
+    let (output, code) = sftp_exec_capture_status(
+        &ssh,
+        &command,
+        fast_remove_timeout_secs(node_count),
+    )
+    .await
+    .map_err(|e| format!("服务器 Shell 通道不可用：{e}"))?;
+    match code {
+        Some(0) => {
+            // 双保险：命令报成功但目标仍在（如只读挂载上 rm 静默失败的场景）
+            if client.metadata(&target).await.is_ok() {
+                return Err(format!(
+                    "命令报告成功但目标仍存在：{}",
+                    output.trim()
+                ));
+            }
+            Ok(())
+        }
+        Some(127) => {
+            // command not found：服务器无 POSIX sh（Windows OpenSSH 默认 cmd 等）
+            state.exec_disabled.lock().await.insert(session_id.clone());
+            Err("服务器无 POSIX shell（sh 不可用），极速删除不适用".to_string())
+        }
+        other => Err(format!(
+            "服务器 Shell 删除失败（退出码 {other:?}）：{}",
+            output.trim().chars().take(200).collect::<String>()
+        )),
+    }
+}
+
+/// 纯 SFTP 递归删除结果
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveTreeOutcome {
+    pub deleted: u64,
+    pub failed: u64,
+}
+
+/// 纯 SFTP 逐文件递归删除（进度 + 可取消）：单项失败继续、结束汇总；
+/// 取消语义——已删不恢复，如实上报（前端 toast 已删计数）
+#[tauri::command]
+pub async fn sftp_remove_tree(
+    session_id: String,
+    path: String,
+    task_id: usize,
+    total_hint: Option<u64>,
+    on_progress: Channel<RemoveProgress>,
+    state: State<'_, SftpState>,
+) -> Result<RemoveTreeOutcome, String> {
+    let client = get_or_connect_sftp(&state, &session_id).await?;
+    let target = normalize_remove_path(&path)?;
+
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+    state.cancel_tokens.lock().await.insert(task_id, cancel_tx);
+
+    // 取消后仍需读到的最新计数（闭包与外层共享）
+    let counters = std::sync::Arc::new(std::sync::Mutex::new((0u64, 0u64)));
+    let progress_counters = std::sync::Arc::clone(&counters);
+    let final_channel = on_progress.clone();
+    let fs = SftpTreeFs { client: &client };
+
+    let outcome = tokio::select! {
+        _ = cancel_rx => Err("CANCELLED".to_string()),
+        summary = remove_tree(&fs, &target, move |deleted, failed| {
+            if let Ok(mut c) = progress_counters.lock() {
+                *c = (deleted, failed);
+            }
+            let _ = on_progress.send(RemoveProgress {
+                task_id,
+                deleted,
+                failed,
+                total: total_hint,
+                is_finished: false,
+            });
+        }) => Ok(summary),
+    };
+    remove_cancel_token(&state, task_id).await;
+
+    let (deleted, failed) = *counters.lock().map_err(|e| e.to_string())?;
+    let _ = final_channel.send(RemoveProgress {
+        task_id,
+        deleted,
+        failed,
+        total: total_hint,
+        is_finished: true,
+    });
+
+    match outcome {
+        Ok(summary) => {
+            if summary.failed > 0 {
+                Err(format!(
+                    "已删除 {} 项，{} 项失败：{}",
+                    summary.deleted,
+                    summary.failed,
+                    summary.first_error.unwrap_or_default()
+                ))
+            } else {
+                Ok(RemoveTreeOutcome { deleted: summary.deleted, failed: 0 })
+            }
+        }
+        Err(_) => Err(format!("CANCELLED:{deleted}")),
+    }
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+
+    // ── 引号安全（注入攻击面）──
+
+    #[test]
+    fn shell_single_quote_escapes_attacker_inputs() {
+        assert_eq!(shell_single_quote(""), "''");
+        assert_eq!(shell_single_quote("plain"), "'plain'");
+        assert_eq!(shell_single_quote("with space"), "'with space'");
+        // 单引号闭合注入：a' → 'a'\''b' 在 shell 中解析为字面 a'b
+        assert_eq!(shell_single_quote("a'b"), "'a'\\''b'");
+        // 命令注入元字符全部落在引号内、原样传递
+        assert_eq!(
+            shell_single_quote("x'; rm -rf /; '"),
+            "'x'\\''; rm -rf /; '\\'''"
+        );
+        assert_eq!(shell_single_quote("$(id)`id`"), "'$(id)`id`'");
+        assert_eq!(shell_single_quote("中文/路径"), "'中文/路径'");
+        assert_eq!(shell_single_quote("line\nbreak"), "'line\nbreak'");
+    }
+
+    #[test]
+    fn fast_remove_command_shape() {
+        let cmd = build_fast_remove_command("/srv/data old");
+        assert_eq!(cmd, "sh -c 'rm -rf -- \"$1\"' veloterm-rm '/srv/data old'");
+        // 含单引号的路径仍只产生一个 argv 位（'\'' 闭合-转义-重开序列）
+        let evil = build_fast_remove_command("a'; rm -rf /");
+        assert!(evil.ends_with("a'\\''; rm -rf /'"));
+        // 以 sh -n 等价性手验：外层解析后恰为 4 个词，$1 为路径本身
+    }
+
+    #[test]
+    fn fast_remove_timeout_formula() {
+        assert_eq!(fast_remove_timeout_secs(None), 600);
+        assert_eq!(fast_remove_timeout_secs(Some(0)), 60);
+        assert_eq!(fast_remove_timeout_secs(Some(5000)), 110);
+        assert_eq!(fast_remove_timeout_secs(Some(1_000_000)), 600); // 封顶
+    }
+
+    #[test]
+    fn remove_target_guard() {
+        assert!(ensure_safe_remove_target("/").is_err());
+        assert!(ensure_safe_remove_target("//").is_err());
+        assert!(ensure_safe_remove_target("").is_err());
+        assert!(ensure_safe_remove_target("   ").is_err());
+        assert!(ensure_safe_remove_target("/a").is_ok());
+        assert!(ensure_safe_remove_target("/a/").is_ok());
+        assert!(ensure_safe_remove_target("relative/x").is_ok());
+    }
+
+    // ── 树核心（内存假实现）──
+
+    /// 假远端：HashMap 目录表 + 文件/符号链接集合；fail_on 模拟权限失败
+    struct FakeFs {
+        dirs: std::collections::HashMap<String, Vec<TreeEntry>>,
+        files: std::collections::HashSet<String>,
+        fail_on: Option<String>,
+    }
+
+    impl FakeFs {
+        fn new() -> Self {
+            Self { dirs: std::collections::HashMap::new(), files: std::collections::HashSet::new(), fail_on: None }
+        }
+        fn dir(mut self, path: &str, children: &[(&str, bool, bool)]) -> Self {
+            let entries = children
+                .iter()
+                .map(|(n, d, s)| TreeEntry { name: n.to_string(), is_dir: *d, is_symlink: *s })
+                .collect();
+            self.dirs.insert(path.to_string(), entries);
+            self
+        }
+        fn file(mut self, path: &str) -> Self {
+            self.files.insert(path.to_string());
+            self
+        }
+        fn fail_on(mut self, path: &str) -> Self {
+            self.fail_on = Some(path.to_string());
+            self
+        }
+    }
+
+    impl RemoteTreeFs for FakeFs {
+        async fn list(&self, path: &str) -> Result<Vec<TreeEntry>, String> {
+            match self.dirs.get(path) {
+                Some(v) => Ok(v.clone()),
+                None => Err(format!("no such dir: {path}")),
+            }
+        }
+        async fn unlink(&self, path: &str) -> Result<(), String> {
+            if Some(path) == self.fail_on.as_deref() {
+                return Err(format!("permission denied: {path}"));
+            }
+            Ok(())
+        }
+        async fn rmdir(&self, path: &str) -> Result<(), String> {
+            if Some(path) == self.fail_on.as_deref() {
+                return Err(format!("permission denied: {path}"));
+            }
+            Ok(())
+        }
+    }
+
+    fn sample_tree() -> FakeFs {
+        FakeFs::new()
+            .dir("/r", &[("a", true, false), ("f1", false, false), ("link", false, true)])
+            .dir("/r/a", &[("f2", false, false), ("b", true, false)])
+            .dir("/r/a/b", &[("f3", false, false)])
+            .file("/r/f1")
+            .file("/r/a/f2")
+            .file("/r/a/b/f3")
+    }
+
+    #[tokio::test]
+    async fn count_tree_walks_without_following_symlinks() {
+        let fs = sample_tree();
+        // 根 + a + f1 + link + f2 + b + f3 = 7；link 是 symlink 不下钻
+        let (count, truncated) = count_tree(&fs, "/r", 100).await;
+        assert_eq!(count, 7);
+        assert!(!truncated);
+    }
+
+    #[tokio::test]
+    async fn count_tree_caps_and_reports_truncation() {
+        // 100 个文件 + 根：cap=50 必截断
+        let mut fs = FakeFs::new();
+        let children: Vec<(&str, bool, bool)> =
+            (0..100).map(|i| (Box::leak(format!("f{i}").into_boxed_str()) as &str, false, false)).collect();
+        fs = fs.dir("/big", &children);
+        let (count, truncated) = count_tree(&fs, "/big", 50).await;
+        assert!(truncated);
+        assert_eq!(count as usize, 50);
+    }
+
+    #[tokio::test]
+    async fn remove_tree_is_post_order_and_counts_all() {
+        let fs = sample_tree();
+        let summary = remove_tree(&fs, "/r", |_, _| {}).await;
+        assert_eq!(summary.deleted, 7); // 3 文件 + link + 3 目录
+        assert_eq!(summary.failed, 0);
+    }
+
+    #[tokio::test]
+    async fn remove_tree_continues_on_single_failure() {
+        let fs = sample_tree().fail_on("/r/a/f2");
+        let summary = remove_tree(&fs, "/r", |_, _| {}).await;
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.deleted, 6);
+        assert!(summary.first_error.unwrap().contains("permission denied"));
+    }
+
+    #[tokio::test]
+    async fn remove_tree_handles_deep_chains_iteratively() {
+        // 500 层深链：递归实现会栈溢出，显式栈必须无恙
+        let mut fs = FakeFs::new();
+        let mut children: Vec<TreeEntry> = Vec::new();
+        let mut path = String::from("/deep");
+        for i in 0..500 {
+            let child = format!("{path}/d{i}");
+            let mut entries = vec![TreeEntry { name: format!("d{i}"), is_dir: true, is_symlink: false }];
+            if i % 50 == 0 {
+                entries.push(TreeEntry { name: format!("f{i}"), is_dir: false, is_symlink: false });
+            }
+            // 用字符串名重建（避免借用）：直接插入下轮目录
+            fs.dirs.insert(path.clone(), entries);
+            path = child;
+        }
+        fs.dirs.insert(path, vec![]); // 最底层空目录
+        let summary = remove_tree(&fs, "/deep", |_, _| {}).await;
+        assert_eq!(summary.failed, 0);
+        // 501 个目录（含根 /deep 与末层空目录）+ 每 50 层一个文件共 10 个
+        assert_eq!(summary.deleted, 511);
+    }
 }
