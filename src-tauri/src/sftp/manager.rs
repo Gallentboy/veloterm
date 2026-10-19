@@ -195,6 +195,7 @@ pub async fn evict_sftp_session(state: &SftpState, session_id: &str) {
     let client = state.clients.lock().await.remove(session_id);
     state.ssh_handles.lock().await.remove(session_id);
     state.id_name_cache.lock().await.retain(|(sid, _, _), _| sid != session_id);
+    state.user_group_cache.lock().await.remove(session_id);
     state.exec_disabled.lock().await.remove(session_id);
     if let Some(client) = client {
         let _ = client.close().await;
