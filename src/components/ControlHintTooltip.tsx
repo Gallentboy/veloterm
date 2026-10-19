@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  TOOLTIP_HIDDEN_STYLE,
   useTooltipPlacement,
   type TooltipAlign,
   type TooltipSide,
@@ -82,8 +83,8 @@ export function ControlHintTooltip({
           <span
             ref={tooltipRef}
             role="tooltip"
-            // 首帧测量前隐藏，避免 fixed 坐标未定时的 (0,0) 闪烁
-            style={style ?? { visibility: 'hidden' }}
+            // 首帧测量前隐藏（fixed + hidden：测量与最终渲染同一布局上下文，见 TOOLTIP_HIDDEN_STYLE）
+            style={style ?? TOOLTIP_HIDDEN_STYLE}
             className={cn(
               'pointer-events-none z-[80] inline-flex w-fit items-center gap-2 rounded-lg border border-border bg-tooltip px-2.5 py-1 text-left whitespace-nowrap animate-in fade-in duration-100',
               shortcut && 'pr-1',

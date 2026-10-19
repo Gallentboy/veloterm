@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useTooltipPlacement, type TooltipAlign, type TooltipSide } from '@/hooks/useTooltipPlacement';
+import { useTooltipPlacement, TOOLTIP_HIDDEN_STYLE, type TooltipAlign, type TooltipSide } from '@/hooks/useTooltipPlacement';
 import { cn } from '@/lib/utils';
 
 export type { TooltipSide, TooltipAlign };
@@ -67,10 +67,10 @@ export function Tooltip({
           <div
             ref={tooltipRef}
             role="tooltip"
-            // 首帧测量前隐藏，避免 fixed 坐标未定时的 (0,0) 闪烁
-            style={style ?? { visibility: 'hidden' }}
+            // 首帧测量前隐藏（fixed + hidden：测量与最终渲染同一布局上下文，见 TOOLTIP_HIDDEN_STYLE）
+            style={style ?? TOOLTIP_HIDDEN_STYLE}
             className={cn(
-              'pointer-events-none z-[80] whitespace-nowrap rounded-md px-2 py-1 text-ui-xs font-normal text-foreground bg-popover/95 border border-border/80 shadow-md backdrop-blur-xs transition-opacity duration-150 animate-in fade-in select-none',
+              'pointer-events-none z-[80] w-fit max-w-[calc(100vw-16px)] whitespace-nowrap rounded-md px-2 py-1 text-ui-xs font-normal text-foreground bg-popover/95 border border-border/80 shadow-md backdrop-blur-xs transition-opacity duration-150 animate-in fade-in select-none',
               className,
             )}
           >
