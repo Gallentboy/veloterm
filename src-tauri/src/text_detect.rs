@@ -1,7 +1,7 @@
 //! 文本文件检测：判断远程/本地文件是否为可直接编辑的纯文本。
 //!
 //! 两级判定：
-//! 1. [`is_text_file_by_name`] —— 扩展名/常见无后缀文件名静态映射，零 I/O 成本；
+//! 1. [`is_text_file_by_name`] —— 扩展名/常见无后缀文件名/常见点文件全名静态映射，零 I/O 成本；
 //!    白名单/黑名单能确定的直接给结论，未知后缀返回 `None` 交给第二级。
 //! 2. [`is_text_buffer`] —— 内容首部字节嗅探（调用方通常只读取前 512 字节）：
 //!    零字节规则 + 不可打印控制字符占比阈值（与 Git 的二进制判定思路一致）。
@@ -17,8 +17,10 @@ use std::path::Path;
 /// SFTP 在线编辑允许的最大文件大小（5 MiB）：列表条目与读取入口共用同一上限。
 pub const MAX_EDITABLE_FILE_SIZE_BYTES: u64 = 5 * 1024 * 1024;
 
-/// 无后缀的常见文本配置文件名（全小写比较）。
+/// 无后缀的常见文本文件名（全小写比较）：项目顶层文档 + `/etc` 经典系统文件 +
+/// SSH 密钥/授权文件（这些名字按惯例恒为文本，命中即免嗅探）。
 const EXACT_TEXT_FILES: &[&str] = &[
+    // 项目顶层文档（GNU/开源惯例，无后缀）
     "dockerfile",
     "makefile",
     "cmakelists.txt",
@@ -28,7 +30,128 @@ const EXACT_TEXT_FILES: &[&str] = &[
     "licence",
     "license",
     "readme",
+    "changelog",
+    "contributing",
+    "copying",
+    "authors",
+    "news",
+    "install",
+    "thanks",
+    "todo",
+    "version",
+    // /etc 经典无后缀文本
+    "hosts",
+    "passwd",
+    "group",
+    "shadow",
+    "gshadow",
+    "fstab",
+    "hostname",
+    "shells",
+    "services",
+    "protocols",
+    "networks",
+    "crontab",
+    "inittab",
+    "os-release",
+    "lsb-release",
+    // SSH：授权/已知主机与常见私钥名（OpenSSH/PEM 均为文本）
+    "authorized_keys",
+    "known_hosts",
+    "id_rsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "id_dsa",
 ];
+
+/// 常见文本点文件全名（全小写比较）。
+///
+/// 点文件不能靠扩展名判定：`Path::extension()` 把 `.bashrc` 整体视为无扩展名
+/// （前导点 = 隐藏文件标记），`.bash_profile` 则拆出未知后缀 `profile`——
+/// 因此按完整文件名精确匹配。仅收录惯例上恒为文本的名字；
+/// 二进制的点文件（如 `.DS_Store` / `.Xauthority`）不收录，落到内容嗅探。
+const DOT_TEXT_FILES: &[&str] = &[
+    // Bash / 登录 shell
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".bash_logout",
+    ".bash_aliases",
+    ".bash_functions",
+    ".bash_history",
+    ".profile",
+    ".login",
+    ".logout",
+    ".forward",
+    // zsh / 其他 shell
+    ".zshrc",
+    ".zprofile",
+    ".zlogin",
+    ".zlogout",
+    ".zshenv",
+    ".zsh_history",
+    ".zsh_aliases",
+    ".cshrc",
+    ".tcshrc",
+    ".kshrc",
+    ".inputrc",
+    ".screenrc",
+    // Git
+    ".gitignore",
+    ".gitattributes",
+    ".gitmodules",
+    ".gitconfig",
+    ".gitmessage",
+    ".gitkeep",
+    ".mailmap",
+    // 编辑器与开发工具
+    ".vimrc",
+    ".gvimrc",
+    ".exrc",
+    ".viminfo",
+    ".ideavimrc",
+    ".editorconfig",
+    ".emacs",
+    ".clang-format",
+    ".clang-tidy",
+    ".gdbinit",
+    // JS / 工具链版本与配置
+    ".eslintrc",
+    ".prettierrc",
+    ".babelrc",
+    ".npmrc",
+    ".yarnrc",
+    ".nvmrc",
+    ".node-version",
+    ".python-version",
+    ".ruby-version",
+    ".tool-versions",
+    // Python
+    ".flake8",
+    ".pylintrc",
+    ".condarc",
+    // ignore 家族
+    ".dockerignore",
+    ".eslintignore",
+    ".prettierignore",
+    ".hgignore",
+    // 命令行工具 rc / X11
+    ".wgetrc",
+    ".curlrc",
+    ".netrc",
+    ".hgrc",
+    ".xinitrc",
+    ".xsession",
+    ".xprofile",
+    ".xresources",
+    // 各家 REPL 历史（纯文本）
+    ".python_history",
+    ".mysql_history",
+    ".node_repl_history",
+];
+
+/// `.env` 家族前缀：`.env` / `.env.local` / `.env.production` / `.envrc` 等恒为文本。
+const DOT_ENV_PREFIX: &str = ".env";
 
 /// 纯文本扩展名白名单（编程语言、脚本、配置、文档）。
 const TEXT_EXTENSIONS: &[&str] = &[
@@ -48,10 +171,13 @@ const BINARY_EXTENSIONS: &[&str] = &[
 ///
 /// - `Some(true)`：文件名/后缀命中文本白名单；
 /// - `Some(false)`：命中二进制黑名单；
-/// - `None`：未知后缀或无后缀（如 `.gitignore`），需读取内容走第二级嗅探。
+/// - `None`：未知后缀或无后缀（如 `.DS_Store`），需读取内容走第二级嗅探。
 pub fn is_text_file_by_name(filename: &str) -> Option<bool> {
     let lower_name = filename.to_lowercase();
-    if EXACT_TEXT_FILES.contains(&lower_name.as_str()) {
+    if EXACT_TEXT_FILES.contains(&lower_name.as_str())
+        || DOT_TEXT_FILES.contains(&lower_name.as_str())
+        || lower_name.starts_with(DOT_ENV_PREFIX)
+    {
         return Some(true);
     }
 
@@ -117,6 +243,44 @@ mod tests {
         assert_eq!(is_text_file_by_name("Dockerfile"), Some(true));
         assert_eq!(is_text_file_by_name("Makefile"), Some(true));
         assert_eq!(is_text_file_by_name("CMakeLists.txt"), Some(true));
+        assert_eq!(is_text_file_by_name("hosts"), Some(true));
+        assert_eq!(is_text_file_by_name("authorized_keys"), Some(true));
+    }
+
+    #[test]
+    fn dotfiles_are_text() {
+        // shell rc / 历史与别名（大小写不敏感）
+        assert_eq!(is_text_file_by_name(".bashrc"), Some(true));
+        assert_eq!(is_text_file_by_name(".BASHRC"), Some(true));
+        assert_eq!(is_text_file_by_name(".bash_profile"), Some(true));
+        assert_eq!(is_text_file_by_name(".bash_history"), Some(true));
+        assert_eq!(is_text_file_by_name(".bash_aliases"), Some(true));
+        assert_eq!(is_text_file_by_name(".zshrc"), Some(true));
+        assert_eq!(is_text_file_by_name(".zshenv"), Some(true));
+        assert_eq!(is_text_file_by_name(".profile"), Some(true));
+        assert_eq!(is_text_file_by_name(".kshrc"), Some(true));
+        // 工具链与版本控制
+        assert_eq!(is_text_file_by_name(".gitignore"), Some(true));
+        assert_eq!(is_text_file_by_name(".gitconfig"), Some(true));
+        assert_eq!(is_text_file_by_name(".vimrc"), Some(true));
+        assert_eq!(is_text_file_by_name(".dockerignore"), Some(true));
+        assert_eq!(is_text_file_by_name(".editorconfig"), Some(true));
+        assert_eq!(is_text_file_by_name(".tool-versions"), Some(true));
+    }
+
+    #[test]
+    fn env_family_prefix_is_text() {
+        assert_eq!(is_text_file_by_name(".env"), Some(true));
+        assert_eq!(is_text_file_by_name(".env.local"), Some(true));
+        assert_eq!(is_text_file_by_name(".env.production"), Some(true));
+        assert_eq!(is_text_file_by_name(".envrc"), Some(true));
+    }
+
+    #[test]
+    fn binary_dotfiles_still_defer_to_sniff() {
+        // 已知二进制点文件不在清单：落到内容嗅探（列表阶段保守不可编辑）
+        assert_eq!(is_text_file_by_name(".DS_Store"), None);
+        assert_eq!(is_text_file_by_name(".Xauthority"), None);
     }
 
     #[test]
@@ -136,7 +300,7 @@ mod tests {
     #[test]
     fn unknown_or_no_extension_defers_to_sniff() {
         assert_eq!(is_text_file_by_name("runbook"), None);
-        assert_eq!(is_text_file_by_name(".gitignore"), None);
+        assert_eq!(is_text_file_by_name(".DS_Store"), None);
     }
 
     #[test]
@@ -180,9 +344,22 @@ mod tests {
     fn editable_sftp_entry_rejects_unknown_extension() {
         // 限内未知后缀 → false（列表阶段不嗅探，保守不可编辑）
         assert!(!is_editable_sftp_entry("runbook", 100));
-        assert!(!is_editable_sftp_entry(".gitignore", 100));
+        assert!(!is_editable_sftp_entry(".DS_Store", 100));
         // 命中二进制黑名单同样不可编辑
         assert!(!is_editable_sftp_entry("logo.png", 100));
+    }
+
+    #[test]
+    fn editable_sftp_entry_accepts_dotfiles() {
+        // 点文件命中清单 → 列表阶段即可编辑（预览/编辑按钮直接可用）
+        assert!(is_editable_sftp_entry(".bashrc", 512));
+        assert!(is_editable_sftp_entry(".env.production", 512));
+        assert!(is_editable_sftp_entry("authorized_keys", 512));
+        // 清单命中也受大小上限约束
+        assert!(!is_editable_sftp_entry(
+            ".bash_history",
+            MAX_EDITABLE_FILE_SIZE_BYTES + 1
+        ));
     }
 
     #[test]
