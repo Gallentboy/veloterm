@@ -129,6 +129,58 @@ pub async fn sftp_exec_capture(
     Ok(output)
 }
 
+/// sftp_exec_capture 的退出码变体：用 channel.wait() 循环收
+/// Data/ExtendedData/ExitStatus（模式对齐终端侧 channel_session），通道关闭
+/// 或收到 Close 后返回 (stdout+stderr 合并输出, 退出码)。退出码缺省 None
+/// （服务器没发 ExitStatus 就关通道的受限 shell 形态）。
+/// 消费方：rm -rf 极速删除——必须以退出码==0 判成功，不能只看输出。
+pub async fn sftp_exec_capture_status(
+    ssh: &SftpSshHandle,
+    command: &str,
+    timeout_secs: u64,
+) -> Result<(String, Option<u32>), String> {
+    let channel = tokio::time::timeout(
+        std::time::Duration::from_secs(8),
+        ssh.channel_open_session(),
+    )
+    .await
+    .map_err(|_| "旁路命令超时：打开通道失败".to_string())?
+    .map_err(|e| format!("打开通道失败: {e}"))?;
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| format!("执行旁路命令失败: {e}"))?;
+    let mut channel = channel;
+    let mut output = String::new();
+    let mut exit_code: Option<u32> = None;
+    let deadline = tokio::time::Duration::from_secs(timeout_secs);
+    let result = tokio::time::timeout(deadline, async {
+        loop {
+            // russh 0.63：wait() 直接返回 Option<ChannelMsg>（None = 通道关闭）
+            match channel.wait().await {
+                Some(russh::ChannelMsg::Data { ref data }) => {
+                    output.push_str(&String::from_utf8_lossy(data));
+                }
+                Some(russh::ChannelMsg::ExtendedData { ref data, .. }) => {
+                    output.push_str(&String::from_utf8_lossy(data));
+                }
+                Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                    exit_code = Some(exit_status);
+                }
+                Some(russh::ChannelMsg::Close) | None => break,
+                Some(_) => {}
+            }
+        }
+        Ok(())
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => Ok((output, exit_code)),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err("旁路命令超时：读取输出失败".to_string()),
+    }
+}
+
 /// 取会话的 SSH 句柄（无连接/未缓存返回 None，调用方降级——如保留数字 uid）
 pub async fn get_sftp_ssh_handle(
     state: &SftpState,

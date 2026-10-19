@@ -37,6 +37,36 @@ pub struct TransferProgress {
     pub is_finished: bool,
 }
 
+/// 目录递归删除的扫描结果（计数带上限：超限即 truncated=true，前端显示「N+」
+/// 并按「大量文件」走极速删除询问流程）
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeScanResult {
+    pub node_count: u64,
+    pub truncated: bool,
+}
+
+/// Shell 极速删除的预览载荷：command 为后端用与执行完全相同的构造函数生成
+/// （单一事实源——展示什么就执行什么；执行命令绝不信前端回传）
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct FastRemovePreview {
+    pub command: String,
+    pub timeout_secs: u64,
+}
+
+/// 递归删除进度事件（纯 SFTP 逐文件路径；Channel 直发，同 TransferProgress 先例）
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveProgress {
+    pub task_id: usize,
+    pub deleted: u64,
+    pub failed: u64,
+    /// 总项数（扫描计数所得；扫描超限时为 None，前端显示不定进度）
+    pub total: Option<u64>,
+    pub is_finished: bool,
+}
+
 /// uid/gid → 名称解析缓存键（session_id, is_group, id）
 pub type IdNameKey = (String, bool, u32);
 

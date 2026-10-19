@@ -38,7 +38,12 @@ import {
   pickDownloadDir,
   pickDownloadPath,
   pickUploadFiles,
+  previewFastRemove,
+  removeRemoteFast,
   removeRemoteItem,
+  removeRemoteTree,
+  scanRemoteTree,
+  type FastRemovePreview,
   type RemoteFileItem,
 } from '@/services/sftpService';
 import { loadRemoteContent } from '@/editor/contentLoader';
@@ -310,6 +315,25 @@ export function SftpSessionView({
   const [error, setError] = useState<string | null>(null);
   const [itemToDelete, setItemToDelete] = useState<RemoteFileItem | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+
+  // ── 目录递归删除流程（纯 SFTP 逐文件 + Shell 极速两路）──
+  // 与后端 FAST_ASK_THRESHOLD 同值的客户端阈值：扫描计数超过即弹极速询问
+  const FAST_ASK_THRESHOLD_CLIENT = 500;
+  type DeleteFlowPhase = 'counting' | 'ask-fast' | 'deleting' | 'fast';
+  interface DeleteFlowState {
+    phase: DeleteFlowPhase;
+    item: RemoteFileItem;
+    count: number | null;
+    truncated: boolean;
+    preview: FastRemovePreview | null;
+    progress: { deleted: number; failed: number; total: number | null } | null;
+    fallbackNote: string | null;
+  }
+  const [deleteFlow, setDeleteFlow] = useState<DeleteFlowState | null>(null);
+  const [fastDontAsk, setFastDontAsk] = useState(false);
+  const deleteCancelRef = useRef<(() => void) | null>(null);
+  // 「本会话不再询问」（会话内存态：跨会话环境可能变化，保守不落库）
+  const fastDeleteSkipRef = useRef<Set<string>>(new Set());
   // 目录大小（远端 du 经独立 exec 通道）：算过的目录填到大小说明列；同目录防重入
   const [dirSizes, setDirSizes] = useState<Record<string, number>>({});
   const [dirSizePath, setDirSizePath] = useState<string | null>(null);
@@ -553,18 +577,115 @@ export function SftpSessionView({
     }
   };
 
-  // 删除确认执行
-  const handleDeleteConfirm = async () => {
-    if (!itemToDelete || !sessionId) return;
-    setIsDeleting(true);
+  // 纯 SFTP 递归删除执行（进度 + 可取消）；fallbackNote 用于极速失败回退时的提示
+  const runSftpTreeDelete = async (
+    item: RemoteFileItem,
+    total: number | null,
+    fallbackNote?: string,
+  ) => {
+    if (!sessionId) return;
+    setDeleteFlow({
+      phase: 'deleting',
+      item,
+      count: total,
+      truncated: false,
+      preview: null,
+      progress: { deleted: 0, failed: 0, total },
+      fallbackNote: fallbackNote ?? null,
+    });
     try {
-      await removeRemoteItem(sessionId, itemToDelete.path, itemToDelete.is_dir);
-      setItemToDelete(null);
+      const handle = await removeRemoteTree(sessionId, item.path, total, (p) => {
+        if (!p.isFinished) {
+          setDeleteFlow(
+            (f) =>
+              f && {
+                ...f,
+                progress: { deleted: p.deleted, failed: p.failed, total: p.total },
+              },
+          );
+        }
+      });
+      deleteCancelRef.current = handle.cancel;
+      await handle.done;
+      setDeleteFlow(null);
+      deleteCancelRef.current = null;
       await loadDirectory(currentPath);
     } catch (err) {
+      const msg = String(err);
+      setDeleteFlow(null);
+      deleteCancelRef.current = null;
+      if (msg.startsWith('CANCELLED:')) {
+        setError(t('files.deleteCancelled', { done: msg.split(':')[1] ?? '0' }));
+      } else {
+        setError(`删除失败: ${msg}`);
+      }
+      // 部分删除/取消后刷新列表，如实反映远端现状
+      await loadDirectory(currentPath);
+    }
+  };
+
+  // 极速删除执行：失败自动回退纯 SFTP（用户意图是「删掉」，不弹第三个框）
+  const handleFastDelete = async () => {
+    if (!deleteFlow || !sessionId) return;
+    const { item, count, truncated } = deleteFlow;
+    if (fastDontAsk) fastDeleteSkipRef.current.add(sessionId);
+    setDeleteFlow((f) => f && { ...f, phase: 'fast' });
+    try {
+      await removeRemoteFast(sessionId, item.path, truncated ? null : count);
+      setDeleteFlow(null);
+      await loadDirectory(currentPath);
+    } catch (err) {
+      await runSftpTreeDelete(
+        item,
+        truncated ? null : count,
+        t('files.fastDeleteFallback', { reason: String(err) }),
+      );
+    }
+  };
+
+  // 删除确认执行：文件走原单层路径；目录进入扫描→阈值分流→（极速询问）→递归删除
+  const handleDeleteConfirm = async () => {
+    if (!itemToDelete || !sessionId) return;
+    if (!itemToDelete.is_dir) {
+      setIsDeleting(true);
+      try {
+        await removeRemoteItem(sessionId, itemToDelete.path, false);
+        setItemToDelete(null);
+        await loadDirectory(currentPath);
+      } catch (err) {
+        setError(`删除失败: ${err}`);
+      } finally {
+        setIsDeleting(false);
+      }
+      return;
+    }
+    const item = itemToDelete;
+    setItemToDelete(null);
+    setFastDontAsk(false);
+    setDeleteFlow({
+      phase: 'counting', item, count: null, truncated: false,
+      preview: null, progress: null, fallbackNote: null,
+    });
+    try {
+      const scan = await scanRemoteTree(sessionId, item.path);
+      const total = scan.truncated ? null : scan.nodeCount;
+      const big = scan.truncated || scan.nodeCount > FAST_ASK_THRESHOLD_CLIENT;
+      if (!big || fastDeleteSkipRef.current.has(sessionId)) {
+        await runSftpTreeDelete(item, total);
+        return;
+      }
+      // 取极速命令预览（无 POSIX shell/无句柄时预览报错——静默转纯 SFTP）
+      try {
+        const preview = await previewFastRemove(sessionId, item.path, total);
+        setDeleteFlow(
+          (f) => f && { ...f, phase: 'ask-fast', count: scan.nodeCount, truncated: scan.truncated, preview },
+        );
+      } catch {
+        await runSftpTreeDelete(item, total);
+      }
+    } catch (err) {
+      setDeleteFlow(null);
       setError(`删除失败: ${err}`);
-    } finally {
-      setIsDeleting(false);
     }
   };
 
@@ -1179,6 +1300,11 @@ export function SftpSessionView({
             </h4>
             <div className="mt-2 space-y-2 text-ui-sm text-foreground-subtle">
               <p>{t('files.confirmDelete', { name: itemToDelete.name })}</p>
+              {itemToDelete.is_dir && (
+                <p className="text-foreground">
+                  {t('files.deleteDirNote', { defaultValue: '将递归删除整个目录及其全部内容。' })}
+                </p>
+              )}
               <p className="font-mono text-ui-xs text-foreground bg-surface/60 px-2.5 py-1.5 rounded-md border border-border/60 break-all select-all">
                 {itemToDelete.path}
               </p>
@@ -1210,6 +1336,168 @@ export function SftpSessionView({
                 <span>{t('files.delete')}</span>
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 目录递归删除流程弹窗：统计计数 → 极速询问（红字命令审批）→ 执行（极速/进度） */}
+      {deleteFlow && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/25 p-4 animate-in fade-in duration-150"
+        >
+          <div className="flex w-[440px] max-w-full flex-col overflow-hidden rounded-2xl border border-border/80 bg-popover p-5 shadow-2xl animate-in zoom-in-95 duration-150">
+            {/* ── 统计中 ── */}
+            {deleteFlow.phase === 'counting' && (
+              <>
+                <h4 className="flex items-center gap-2 text-ui-base font-semibold text-foreground select-none">
+                  <Loader2 className="size-4 animate-spin" />
+                  {t('files.deleteCounting', { defaultValue: '统计文件数…' })}
+                </h4>
+                <p className="mt-2 font-mono text-ui-xs text-foreground-subtle bg-surface/60 px-2.5 py-1.5 rounded-md border border-border/60 break-all">
+                  {deleteFlow.item.path}
+                </p>
+                <div className="mt-5 flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    onClick={() => setDeleteFlow(null)}
+                    className="h-8 px-3 text-ui-base"
+                  >
+                    {t('common.cancel', { defaultValue: '取消' })}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {/* ── 极速删除审批（红字命令展示）── */}
+            {deleteFlow.phase === 'ask-fast' && deleteFlow.preview && (
+              <>
+                <h4 className="text-ui-base font-semibold text-foreground select-none">
+                  {t('files.fastDeleteTitle', { defaultValue: '使用服务器 Shell 极速删除？' })}
+                </h4>
+                <div className="mt-2 space-y-2 text-ui-sm text-foreground-subtle">
+                  <p>
+                    {t('files.fastDeleteBody', {
+                      count: deleteFlow.truncated
+                        ? `${deleteFlow.count ?? ''}+`
+                        : deleteFlow.count,
+                    })}
+                  </p>
+                  <p className="font-mono text-ui-xs text-foreground-subtle bg-surface/60 px-2.5 py-1.5 rounded-md border border-border/60 break-all select-all">
+                    {deleteFlow.item.path}
+                  </p>
+                  <p className="text-foreground">
+                    {t('files.fastDeleteCommandLabel', { defaultValue: '将在服务器执行：' })}
+                  </p>
+                  <pre className="font-mono text-ui-xs leading-relaxed text-destructive bg-surface/60 px-2.5 py-1.5 rounded-md border border-border/60 break-all whitespace-pre-wrap select-all">
+                    {deleteFlow.preview.command}
+                  </pre>
+                </div>
+                <label className="mt-3 flex items-center gap-2 text-ui-xs text-foreground-subtle select-none">
+                  <input
+                    type="checkbox"
+                    checked={fastDontAsk}
+                    onChange={(e) => setFastDontAsk(e.target.checked)}
+                    className="size-3.5 accent-foreground"
+                  />
+                  {t('files.fastDeleteDontAsk', { defaultValue: '本会话不再询问' })}
+                </label>
+                <div className="mt-4 flex items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    onClick={() => {
+                      if (sessionId && fastDontAsk) fastDeleteSkipRef.current.add(sessionId);
+                      void runSftpTreeDelete(
+                        deleteFlow.item,
+                        deleteFlow.truncated ? null : deleteFlow.count,
+                      );
+                    }}
+                    className="h-8 px-3 text-ui-base"
+                  >
+                    {t('files.fastDeleteKeepSftp', { defaultValue: '仍用 SFTP' })}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="lg"
+                    onClick={() => void handleFastDelete()}
+                    className="h-8 px-3 text-ui-base"
+                  >
+                    {t('files.fastDeleteExecute', { defaultValue: '确认执行' })}
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {/* ── 极速执行中（无进度、不可中断——语义已在审批框提示）── */}
+            {deleteFlow.phase === 'fast' && (
+              <>
+                <h4 className="flex items-center gap-2 text-ui-base font-semibold text-foreground select-none">
+                  <Loader2 className="size-4 animate-spin" />
+                  {t('files.fastDeleteRunning', { defaultValue: '服务器 Shell 删除中…' })}
+                </h4>
+                <p className="mt-2 font-mono text-ui-xs text-destructive bg-surface/60 px-2.5 py-1.5 rounded-md border border-border/60 break-all">
+                  {deleteFlow.preview?.command}
+                </p>
+              </>
+            )}
+
+            {/* ── 纯 SFTP 逐文件删除（进度 + 可取消）── */}
+            {deleteFlow.phase === 'deleting' && (
+              <>
+                <h4 className="flex items-center gap-2 text-ui-base font-semibold text-foreground select-none">
+                  <Loader2 className="size-4 animate-spin" />
+                  {t('files.deleteProgressTitle', { defaultValue: '正在删除…' })}
+                </h4>
+                {deleteFlow.fallbackNote && (
+                  <p className="mt-2 rounded-md border border-border/60 bg-surface/60 px-2.5 py-1.5 text-ui-xs text-foreground-subtle">
+                    {deleteFlow.fallbackNote}
+                  </p>
+                )}
+                <p className="mt-2 font-mono text-ui-xs text-foreground-subtle bg-surface/60 px-2.5 py-1.5 rounded-md border border-border/60 break-all">
+                  {deleteFlow.item.path}
+                </p>
+                <div className="mt-3">
+                  {deleteFlow.progress?.total ? (
+                    <>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface">
+                        <div
+                          className="h-full rounded-full bg-foreground transition-[width] duration-200"
+                          style={{
+                            width: `${Math.min(100, (deleteFlow.progress.deleted / deleteFlow.progress.total) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <p className="mt-1.5 text-right font-mono text-ui-xs text-foreground-subtle">
+                        {deleteFlow.progress.deleted} / {deleteFlow.progress.total}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-right font-mono text-ui-xs text-foreground-subtle">
+                      {t('files.deleteProgressCount', {
+                        done: deleteFlow.progress?.deleted ?? 0,
+                      })}
+                    </p>
+                  )}
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    onClick={() => deleteCancelRef.current?.()}
+                    className="h-8 px-3 text-ui-base"
+                  >
+                    {t('files.deleteCancel', { defaultValue: '取消删除' })}
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
