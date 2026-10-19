@@ -17,7 +17,8 @@ export interface TerminalGridContainerProps {
   broadcastTargets: number[];
   isPanelResizing: boolean;
   isVisible: boolean;
-  /** 服务器资源监控总开关（TerminalScreen 工具栏控制，默认关）：关 = 不渲染监控条、不采样 */
+  /** 服务器资源监控开关（每会话独立，TerminalScreen 工具栏控制激活会话，默认关）：
+   *  关 = 不渲染监控条、不采样；SSH 会话专属（本地终端无远端可采） */
   resourceMonitorOn: boolean;
   onActivateSession: (sessionId: number) => void;
   onMaximizeSession: (sessionId: number | null) => void;
