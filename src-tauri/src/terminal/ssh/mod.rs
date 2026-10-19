@@ -116,6 +116,10 @@ impl SshTerminalSession {
             let mut shell_ready_emitted = false;
             // ── ZMODEM 传输态（探测命中后接管输出流，不再转发前端）──
             let mut zmodem_detector = crate::terminal::zmodem::ZmodemDetector::new();
+            // 上次上传结束时刻：lrz 退出时可能重发 ZRINIT（合法入口帧），
+            // 2s 冷却窗口内忽略之——正常用户不可能 2s 内完成「敲 rz→服务器
+            // 回 ZRINIT」的全流程。下载（ZRQINIT）不受此限制
+            let mut last_upload_end: Option<std::time::Instant> = None;
             let mut zmodem_active: Option<crate::terminal::zmodem::ZmodemBridge> = None;
             // 生命周期便捷发射（emitter 为 None 时静默跳过）
             let emit =
@@ -150,6 +154,9 @@ impl SshTerminalSession {
                         if let Some(bridge) = zmodem_active.as_ref()
                             && bridge.finished_flag().load(std::sync::atomic::Ordering::Relaxed)
                         {
+                            if bridge.direction == "upload" {
+                                last_upload_end = Some(std::time::Instant::now());
+                            }
                             zmodem_active = None;
                             zmodem_detector.reset();
                             log::debug!("[ZMODEM] session {id} transfer ended, passthrough restored");
@@ -197,15 +204,21 @@ impl SshTerminalSession {
                             } else if bridge.feed(&data) {
                                 continue;
                             } else {
-                                // 引擎已结束：恢复透传，并给前端补一个换行
-                                // 让 shell 提示符立即出现在新行（服务器 sz 可能
-                                // 还没完全退出，不等它）
+                                // 引擎已结束：恢复透传。若刚结束的是上传，
+                                // 记录时刻供 ZRINIT 冷却判定
+                                if bridge.direction == "upload" {
+                                    last_upload_end = Some(std::time::Instant::now());
+                                }
                                 zmodem_active = None;
                                 zmodem_detector.reset();
                             }
                         }
                         // 未命中：探测（命中则建桥、启动传输任务）
                         let detection = zmodem_detector.feed(&data);
+                        if matches!(detection, crate::terminal::zmodem::Detection::Swallow) {
+                            // 收尾/进行中帧：吞掉（上一次会话的 ZFIN 等）
+                            continue;
+                        }
                         if matches!(detection, crate::terminal::zmodem::Detection::None) {
                             log::trace!(
                                 "[ZMODEM] session {} no detection, chunk={} bytes",
@@ -219,6 +232,21 @@ impl SshTerminalSession {
                                 crate::terminal::zmodem::Detection::Sz { .. } => "download",
                                 _ => "upload",
                             };
+                            // 上传冷却：刚结束上传后 2s 内的 ZRINIT 视为 lrz
+                            // 退出的重发帧，吞掉（用户来不及发起下一轮）
+                            if direction == "upload" {
+                                if let Some(at) = last_upload_end {
+                                    if std::time::Instant::now().duration_since(at)
+                                        < std::time::Duration::from_secs(2)
+                                    {
+                                        log::debug!("[ZMODEM] session {id} ZRINIT in upload cooldown, swallowed");
+                                        continue;
+                                    }
+                                }
+                            }
+                            if direction == "upload" {
+                                last_upload_end = None; // 正常触发时清除
+                            }
                             let sid = format!("terminal-{id}");
                             let (bridge, inbound_rx) =
                                 crate::terminal::zmodem::ZmodemBridge::new(sid.clone(), direction);

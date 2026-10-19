@@ -18,6 +18,9 @@
 pub enum Detection {
     /// 未命中，透传
     None,
+    /// 命中协议帧但非入口类型（ZFIN/ZFILE 等收尾/进行中信号）：
+    /// 吞掉不透传（防进 bash 被当命令执行）、不启动新传输
+    Swallow,
     /// 命中 sz 下载（服务器要发文件，帧为 ZFILE 等）
     Sz { prefix: Vec<u8> },
     /// 命中 rz 上传（服务器在等文件：ZRQINIT 帧，或 `rz\r` 公告）
@@ -90,11 +93,15 @@ impl ZmodemDetector {
                         let frame_type = (hi << 4) | lo;
                         let prefix = self.tail.clone();
                         self.tail.clear();
-                        // 0 = ZRQINIT（sz 下载）；1 = ZRINIT（rz 上传）
-                        return if frame_type == 1 {
-                            Detection::Rz { prefix }
-                        } else {
-                            Detection::Sz { prefix }
+                        // 只认入口帧：0 = ZRQINIT（sz 下载）、1 = ZRINIT（rz 上传）。
+                        // 其他类型（ZFIN=08 收尾、ZFILE=04 传输中等）是既有会话
+                        // 的信号，不触发新传输——实测上传完成后服务器 lrz 发的
+                        // ZFIN 被「非 01 即 Sz」误判为下载，弹了假保存框。
+                        return match frame_type {
+                            0 => Detection::Sz { prefix },
+                            1 => Detection::Rz { prefix },
+                            // 收尾/进行中帧：吞掉（透传会进 bash 被当命令执行）
+                            _ => Detection::Swallow,
                         };
                     }
                 }
@@ -106,11 +113,15 @@ impl ZmodemDetector {
                     if let Some(&frame_type) = self.tail.get(pos + pfx.len()) {
                         let prefix = self.tail.clone();
                         self.tail.clear();
-                        // 0 = ZRQINIT（sz 下载）；1 = ZRINIT（rz 上传）
-                        return if frame_type == 1 {
-                            Detection::Rz { prefix }
-                        } else {
-                            Detection::Sz { prefix }
+                        // 只认入口帧：0 = ZRQINIT（sz 下载）、1 = ZRINIT（rz 上传）。
+                        // 其他类型（ZFIN=08 收尾、ZFILE=04 传输中等）是既有会话
+                        // 的信号，不触发新传输——实测上传完成后服务器 lrz 发的
+                        // ZFIN 被「非 01 即 Sz」误判为下载，弹了假保存框。
+                        return match frame_type {
+                            0 => Detection::Sz { prefix },
+                            1 => Detection::Rz { prefix },
+                            // 收尾/进行中帧：吞掉（透传会进 bash 被当命令执行）
+                            _ => Detection::Swallow,
                         };
                     }
                 }
