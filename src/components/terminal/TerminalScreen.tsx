@@ -59,7 +59,7 @@ export function TerminalScreen({
     activeSession,
     layoutMode,
     toggleLayoutMode,
-    resourceMonitorOn,
+    resourceMonitorBySession,
     toggleResourceMonitor,
     maximizedSessionId,
     setMaximizedSessionId,
@@ -78,6 +78,12 @@ export function TerminalScreen({
 
   const [sizesBySession, setSizesBySession] = useState<Record<number, TerminalSize>>({});
   const [rendererBySession, setRendererBySession] = useState<Record<number, 'webgl' | 'canvas2d' | 'dom'>>({});
+
+  // 激活会话的监控开关：资源监控仅对 SSH 会话有意义（本地终端无远端可采），
+  // 开关按钮也只在激活会话是 SSH 时展示；被控态每会话独立（切 Tab 各自记忆）
+  const activeSessionId = activeSession?.id ?? 0;
+  const activeSessionIsSsh = activeSession?.hostId != null;
+  const activeMonitorOn = activeSessionIsSsh && !!resourceMonitorBySession[activeSessionId];
 
   const handleSizeChange = useCallback((sessionId: number, size: TerminalSize) => {
     setSizesBySession((prev) => {
@@ -311,29 +317,29 @@ export function TerminalScreen({
                 </Button>
               </ControlHintTooltip>
             ) : null}
-            {/* 服务器资源监控开关（默认关）：开 = 当前 SSH 会话底部展示监控条并后台采样，
-                关 = 隐藏且停止轮询；状态落库跨启动保留 */}
-            {sessions.length > 0 ? (
+            {/* 服务器资源监控开关（每会话独立、默认关）：仅 SSH 会话展示——开 = 该会话
+                底部展示监控条并后台采样，切 Tab 各自记忆；本地终端无远端可采不展示 */}
+            {activeSessionIsSsh ? (
               <ControlHintTooltip
-                title={resourceMonitorOn ? t('terminal.resourceMonitor.disable') : t('terminal.resourceMonitor.enable')}
+                title={activeMonitorOn ? t('terminal.resourceMonitor.disable') : t('terminal.resourceMonitor.enable')}
                 side="bottom"
               >
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  onClick={toggleResourceMonitor}
-                  aria-pressed={resourceMonitorOn}
+                  onClick={() => toggleResourceMonitor(activeSessionId)}
+                  aria-pressed={activeMonitorOn}
                   aria-label={t('terminal.resourceMonitor.toggleAria')}
                   className={cn(
                     // 与左侧命令面板按钮完全同规格（icon-sm 26px + rounded-lg +
                     // ghost 默认 text-foreground），关闭态零叠加；
                     // 此前手写 size-7（28px）比 ⌘ 按钮大一圈，并排尺寸不齐
-                    resourceMonitorOn && 'bg-selected text-foreground hover:bg-selected'
+                    activeMonitorOn && 'bg-selected text-foreground hover:bg-selected'
                   )}
                 >
                   <Gauge
-                    className={cn('size-3.5', resourceMonitorOn && 'text-primary')}
+                    className={cn('size-3.5', activeMonitorOn && 'text-primary')}
                     strokeWidth={2.5}
                   />
                 </Button>
@@ -472,7 +478,7 @@ export function TerminalScreen({
           broadcastTargets={broadcastTargets}
           isPanelResizing={isPanelResizing}
           isVisible={isVisible}
-          resourceMonitorOn={resourceMonitorOn}
+          resourceMonitorOn={activeMonitorOn}
           onActivateSession={activateSession}
           onMaximizeSession={setMaximizedSessionId}
           onCloseSession={closeSession}

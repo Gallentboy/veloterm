@@ -32,9 +32,10 @@ export interface TerminalContextValue {
   layoutMode: TerminalLayoutMode;
   setLayoutMode: (mode: TerminalLayoutMode) => void;
   toggleLayoutMode: () => void;
-  /** 服务器资源监控开关（持久化，默认关）：开 = 底部监控条显示且后台采样，关 = 隐藏且停止轮询 */
-  resourceMonitorOn: boolean;
-  toggleResourceMonitor: () => void;
+  /** 服务器资源监控开关（每会话独立、默认关）：开 = 该 SSH 会话底部展示监控条并后台采样；
+   * 会话是运行期实体（不跨启动恢复），被控态不落库、关会话即清理 */
+  resourceMonitorBySession: Record<number, boolean>;
+  toggleResourceMonitor: (sessionId: number) => void;
   maximizedSessionId: number | null;
   setMaximizedSessionId: (sessionId: number | null) => void;
   isBroadcastActive: boolean;
@@ -57,7 +58,6 @@ export interface TerminalContextValue {
 }
 
 const LAYOUT_MODE_STORAGE_KEY = 'veloterm:terminal:layout-mode';
-const RESOURCE_MONITOR_STORAGE_KEY = 'veloterm:terminal:resource-monitor';
 
 const TerminalContext = createContext<TerminalContextValue | null>(null);
 
@@ -93,16 +93,12 @@ export function TerminalProvider({
     });
   }, []);
 
-  // 服务器资源监控：默认关（仅显式开启才展示监控条并后台采样），状态落库跨启动保留
-  const [resourceMonitorOn, setResourceMonitorOn] = useState<boolean>(
-    () => getDbKv(RESOURCE_MONITOR_STORAGE_KEY) === '1',
-  );
-  const toggleResourceMonitor = useCallback(() => {
-    setResourceMonitorOn((prev) => {
-      const next = !prev;
-      setDbKv(RESOURCE_MONITOR_STORAGE_KEY, next ? '1' : '0');
-      return next;
-    });
+  // 服务器资源监控：每会话独立开关（默认关，仅显式开启才展示监控条并后台采样）
+  const [resourceMonitorBySession, setResourceMonitorBySession] = useState<
+    Record<number, boolean>
+  >({});
+  const toggleResourceMonitor = useCallback((sessionId: number) => {
+    setResourceMonitorBySession((prev) => ({ ...prev, [sessionId]: !prev[sessionId] }));
   }, []);
 
   const toggleBroadcast = useCallback(() => {
@@ -132,6 +128,11 @@ export function TerminalProvider({
     // 先释放 xterm 实例与底层 Channel 会话，再更新 Tab 列表
     terminalSessionRegistry.release(sessionId);
     setMaximizedSessionId((prev) => (prev === sessionId ? null : prev));
+    setResourceMonitorBySession((prev) => {
+      if (!(sessionId in prev)) return prev;
+      const { [sessionId]: _closed, ...rest } = prev;
+      return rest;
+    });
     setPanelState((current) => {
       const { state } = removeTerminalSession(current, sessionId);
       return state;
@@ -227,7 +228,7 @@ export function TerminalProvider({
       layoutMode,
       setLayoutMode,
       toggleLayoutMode,
-      resourceMonitorOn,
+      resourceMonitorBySession,
       toggleResourceMonitor,
       maximizedSessionId,
       setMaximizedSessionId,
@@ -257,7 +258,7 @@ export function TerminalProvider({
       markDisconnected,
       maximizedSessionId,
       reconnectSession,
-      resourceMonitorOn,
+      resourceMonitorBySession,
       sessions,
       setLayoutMode,
       toggleBroadcast,
