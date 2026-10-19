@@ -22,10 +22,12 @@ const DARWIN_GUI_FALLBACK_PATHS: &[&str] = &[
     "/sbin",
 ];
 
-/// Windows 本地 cmd 会话的「跨盘符 cd 适配层」启动命令（作为 `cmd /k` 参数注入）：
-/// 用 doskey 宏把交互输入的 `cd`/`chdir` 透明补上 `/d` 开关。
+/// Windows 本地 cmd 会话的「命令适配层」启动命令（作为 `cmd /k` 参数注入）：
+/// doskey 宏两组——把交互输入的 `cd`/`chdir` 透明补上 `/d` 开关（跨盘符适配），
+/// 并预置 `ll` 别名（= `ls -lh`，对齐 Linux 常见习惯；`ls` 由内置工具链硬链接
+/// 短名提供，未装工具链的裸跑场景宏定义无害——执行时才报「'ls' 不是内部或外部命令」）。
 ///
-/// 背景：cmd 的 `cd` 不带 `/d` 时不切换当前盘符——`cd D:\proj` 只是替 D 盘记住
+/// 背景（cd 适配）：cmd 的 `cd` 不带 `/d` 时不切换当前盘符——`cd D:\proj` 只是替 D 盘记住
 /// 「该盘的当前目录」，进程 CWD 与提示符都停在原盘，用户视角即 cd 未生效
 /// （PowerShell / Git Bash 无此问题：前者 cd 内建切盘，后者是 POSIX shell，
 /// 盘符统一挂成 `/c/` `/d/` 单一根命名空间，没有「每盘各记一个目录」的概念；
@@ -41,7 +43,8 @@ const DARWIN_GUI_FALLBACK_PATHS: &[&str] = &[
 ///   重复形态会报错——适配生效后无需再手写 `/d`。真机表现需随 Windows 构建回归
 ///   （macOS 无法验证 cmd 语义）。
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-const WINDOWS_CMD_CD_COMPAT: &str = "doskey cd=cd /d $* & doskey chdir=chdir /d $*";
+const WINDOWS_CMD_CD_COMPAT: &str =
+    "doskey cd=cd /d $* & doskey chdir=chdir /d $* & doskey ll=ls -lh $*";
 
 // 现在 Unix 分支的 Shell 探测专用；Windows 固定 cmd.exe 后暂时无调用点，
 // 保留实现并允许 Windows 下 dead_code，供后续按需复用。
@@ -499,17 +502,18 @@ impl TerminalBackendSession for LocalPtySession {
 mod tests {
     use super::WINDOWS_CMD_CD_COMPAT;
 
-    /// 跨盘符 cd 适配层启动命令的形态锁定：
+    /// cmd 启动适配层命令的形态锁定：
     /// - 成对覆盖 `cd` 与 `chdir`（同一内建命令的两个拼写），宏体只补 `/d`；
+    /// - `ll` 别名 = `ls -lh`（内置工具链 ls 短名），`$*` 透传追加参数；
     /// - 全串不得含引号/管道/重定向——`/k` 字符串里出现引号会触发 cmd 的引号
     ///   剥离特判分支，保持无引号才走最朴素的解析路径（portable-pty 仅因空格
     ///   为参数加引号，cmd 按 `/k` 旧规则剥掉首尾引号后即还原为本串）；
-    /// - 两条 doskey 以 ` & ` 分隔：cmd 在解析层先按 `&` 切分命令，doskey 的
-    ///   宏文本天然吃到行尾，两条定义互不污染。
+    /// - 多条 doskey 以 ` & ` 分隔：cmd 在解析层先按 `&` 切分命令，doskey 的
+    ///   宏文本天然吃到行尾，多条定义互不污染。
     #[test]
     fn windows_cmd_cd_compat_shape() {
         let parts: Vec<&str> = WINDOWS_CMD_CD_COMPAT.split(" & ").collect();
-        assert_eq!(parts.len(), 2, "应为两条 doskey 定义：{WINDOWS_CMD_CD_COMPAT}");
+        assert_eq!(parts.len(), 3, "应为三条 doskey 定义：{WINDOWS_CMD_CD_COMPAT}");
         for expected_name in ["cd", "chdir"] {
             let part = format!("doskey {expected_name}={expected_name} /d $*");
             assert!(
@@ -517,6 +521,10 @@ mod tests {
                 "缺少定义「{part}」，实际：{WINDOWS_CMD_CD_COMPAT}"
             );
         }
+        assert!(
+            parts.contains(&"doskey ll=ls -lh $*"),
+            "缺少 ll 别名定义，实际：{WINDOWS_CMD_CD_COMPAT}"
+        );
         assert!(
             !WINDOWS_CMD_CD_COMPAT.contains(['"', '|', '>', '<']),
             "不得引入引号/管道/重定向字符：{WINDOWS_CMD_CD_COMPAT}"
