@@ -196,8 +196,14 @@ impl TerminalManager {
                             map.remove(&closed_id);
                         }
                     },
-                    Some(std::sync::Arc::new(app)),
+                    Some(std::sync::Arc::new(app.clone())),
                     host_id,
+                    Some(app.clone()),
+                    {
+                        use tauri::Manager;
+                        app.try_state::<std::sync::Arc<crate::terminal::zmodem::ZmodemAggregator>>()
+                            .map(|s| std::sync::Arc::clone(s.inner()))
+                    },
                 )?;
 
                 let mut map = self

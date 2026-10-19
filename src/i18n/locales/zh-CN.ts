@@ -330,6 +330,13 @@ export default {
   },
   terminal: {
     title: '终端',
+    zmodem: {
+      downloading: 'ZMODEM 下载中…',
+      uploading: 'ZMODEM 上传中…',
+      done: 'ZMODEM 传输完成',
+      failed: 'ZMODEM 传输失败：{{error}}',
+      inputLocked: 'ZMODEM 传输中，输入已锁定',
+    },
     hint: 'Shell 终端核心即将就绪',
     defaultTab: '终端',
     new: '新建终端',

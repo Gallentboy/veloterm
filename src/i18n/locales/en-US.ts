@@ -330,6 +330,13 @@ export default {
   },
   terminal: {
     title: 'Terminal',
+    zmodem: {
+      downloading: 'ZMODEM downloading…',
+      uploading: 'ZMODEM uploading…',
+      done: 'ZMODEM transfer complete',
+      failed: 'ZMODEM transfer failed: {{error}}',
+      inputLocked: 'ZMODEM transfer in progress — input locked',
+    },
     hint: 'Shell terminal core is coming',
     defaultTab: 'Terminal',
     new: 'New Terminal',

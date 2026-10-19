@@ -75,3 +75,27 @@ pub async fn ssh_remove_known_host(id: usize) -> Result<bool, String> {
 pub async fn ssh_clear_known_hosts() -> Result<usize, String> {
     KnownHosts::global().clear()
 }
+
+/// 同步终端联动（广播）组成员给后端：ZMODEM 命中聚合用（一次交互 N 路扇出）。
+/// `session_ids` 为当前勾选的联动集合；空数组 = 关闭联动。
+#[tauri::command]
+pub async fn terminal_set_broadcast_group(
+    session_ids: Vec<usize>,
+    aggregator: tauri::State<'_, std::sync::Arc<crate::terminal::zmodem::ZmodemAggregator>>,
+) -> Result<(), String> {
+    if session_ids.is_empty() {
+        aggregator.clear_all();
+        return Ok(());
+    }
+    // 组键固定为 "broadcast"（前端只有一组联动集合）
+    aggregator.set_group("broadcast", &session_ids);
+    Ok(())
+}
+
+/// 取消进行中的 ZMODEM 传输：向服务器发中止序列（CAN×10+BS×10）并让引擎退出。
+/// 前端浮层的「取消」按钮调用；会话关闭时后端也会自动执行同样清理。
+#[tauri::command]
+pub async fn terminal_cancel_zmodem(session_id: usize) -> Result<(), String> {
+    crate::terminal::zmodem::request_cancel(session_id);
+    Ok(())
+}
