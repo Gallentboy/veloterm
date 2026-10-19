@@ -14,7 +14,8 @@ use super::transfer::{
     evict_decision, pump_stream, resolve_resume_offset,
 };
 use super::types::{
-    FastRemovePreview, RemoteFileItem, RemoveProgress, SftpState, TransferProgress, TreeScanResult,
+    FastRemovePreview, RemoteFileItem, RemoteIdName, RemoveProgress, SftpState, TransferProgress,
+    TreeScanResult,
 };
 use crate::text_detect::is_editable_sftp_entry;
 
@@ -979,9 +980,6 @@ pub async fn sftp_remove(
 //         ├─ 确认 → sftp_remove_fast（退出码==0 判成功；失败自动回退 remove_tree）
 //         └─ 仍用 SFTP → sftp_remove_tree
 
-/// 触发「极速删除」询问的节点数阈值：SFTP unlink 实测 80–200 项/秒，
-/// 500 ≈ 3–6s+，是用户可感知「慢」的起点（含根目录自身）
-const FAST_ASK_THRESHOLD: usize = 500;
 /// 扫描计数上限：超过即判「大量文件」（truncated=true，前端显示「N+」）。
 /// readdir 批量很快，2000 节点亚秒级——不必数全即可决策
 const SCAN_CAP: usize = 2000;
@@ -1101,7 +1099,7 @@ impl RemoteTreeFs for SftpTreeFs<'_> {
 /// 返回 (节点数含根, 是否触上限截断)
 async fn count_tree<Fs: RemoteTreeFs>(fs: &Fs, root: &str, cap: usize) -> (u64, bool) {
     let mut count: u64 = 1; // 根自身
-    let mut truncated = false;
+    let truncated = false;
     let mut stack = vec![root.to_string()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs.list(&dir).await else {
@@ -1110,7 +1108,6 @@ async fn count_tree<Fs: RemoteTreeFs>(fs: &Fs, root: &str, cap: usize) -> (u64, 
         for e in entries {
             count += 1;
             if count as usize >= cap {
-                truncated = true;
                 return (count, true);
             }
             if e.is_dir && !e.is_symlink {
@@ -1146,7 +1143,7 @@ async fn remove_tree<Fs: RemoteTreeFs>(
 ) -> RemoveSummary {
     let mut summary = RemoveSummary { deleted: 0, failed: 0, first_error: None };
     let mut since_event: u32 = 0;
-    let mut record = |summary: &mut RemoveSummary, r: Result<(), String>| match r {
+    let record = |summary: &mut RemoveSummary, r: Result<(), String>| match r {
         Ok(()) => summary.deleted += 1,
         Err(e) => {
             summary.failed += 1;
@@ -1192,7 +1189,7 @@ async fn remove_tree<Fs: RemoteTreeFs>(
     summary
 }
 
-/// 扫描计数：超过 FAST_ASK_THRESHOLD（且未截断）由前端直接走纯 SFTP 删除；
+/// 扫描计数：阈值判断（是否弹「极速删除」询问）由前端持有；
 /// 截断即「大量文件」必然询问。阈值不在此处判断——决策留在前端状态机
 #[tauri::command]
 pub async fn sftp_scan_tree(
@@ -1282,6 +1279,275 @@ pub async fn sftp_remove_fast(
             output.trim().chars().take(200).collect::<String>()
         )),
     }
+}
+
+/* ─────────────────── 文件属性：权限 / 属主 / 属组（shell 命令版） ─────────────────── */
+
+/// 单条 chmod/chown 的执行超时（秒）；递归另用宽限值
+const PROPS_SINGLE_TIMEOUT_SECS: u64 = 20;
+const PROPS_RECURSIVE_TIMEOUT_SECS: u64 = 120;
+
+/// 智能递归的符号模式翻译：期望 mode → `u=rwX,g=rX,o=rX[,u+s][,g+s][,+t]`。
+/// X（大写）= 仅目录或本已可执行的文件获得执行位——裸 `chmod -R 644` 会把
+/// 子目录的执行位抹掉（目录无法 cd 进入），智能递归以 X 兜底；该类无任何
+/// rwx 位时输出空子句（`g=`，彻底清空）。SUID/SGID/Sticky 以独立子句追加
+/// （`=` 右侧带 s/t 的写法在部分实现不合法）。字符集封闭，无注入面。
+fn smart_symbolic_mode(mode: u32) -> String {
+    const CLASSES: [(u32, u32, u32, char); 3] = [
+        (0o400, 0o200, 0o100, 'u'),
+        (0o040, 0o020, 0o010, 'g'),
+        (0o004, 0o002, 0o001, 'o'),
+    ];
+    let mut parts: Vec<String> = CLASSES
+        .iter()
+        .map(|&(r, w, x, class)| {
+            if mode & (r | w | x) == 0 {
+                return format!("{class}=");
+            }
+            let mut clause = format!("{class}=");
+            if mode & r != 0 {
+                clause.push('r');
+            }
+            if mode & w != 0 {
+                clause.push('w');
+            }
+            clause.push('X');
+            clause
+        })
+        .collect();
+    if mode & 0o4000 != 0 {
+        parts.push("u+s".to_string());
+    }
+    if mode & 0o2000 != 0 {
+        parts.push("g+s".to_string());
+    }
+    if mode & 0o1000 != 0 {
+        parts.push("+t".to_string());
+    }
+    parts.join(",")
+}
+
+/// chmod 命令构造（同极速删除范式：模板 + 位置参数，路径/模式串仅作 $1/$2，
+/// 单引号包裹，无注入面）。路径为列表构造的绝对路径，不加 `--`（绝对路径
+/// 不可能被解析为选项，且 BSD chmod 对 `--` 兼容性参差）。
+fn build_chmod_command(path: &str, mode_arg: &str, recursive: bool) -> String {
+    let script = if recursive {
+        r#"chmod -R "$1" "$2""#
+    } else {
+        r#"chmod "$1" "$2""#
+    };
+    format!(
+        "sh -c '{script}' veloterm-chmod {} {}",
+        shell_single_quote(mode_arg),
+        shell_single_quote(path)
+    )
+}
+
+/// chown 命令构造：spec 形如 `root` / `:wheel` / `root:wheel`
+fn build_chown_command(path: &str, spec: &str, recursive: bool) -> String {
+    let script = if recursive {
+        r#"chown -R "$1" "$2""#
+    } else {
+        r#"chown "$1" "$2""#
+    };
+    format!(
+        "sh -c '{script}' veloterm-chown {} {}",
+        shell_single_quote(spec),
+        shell_single_quote(path)
+    )
+}
+
+/// 属主/属组 → chown 规格串；两侧都空返回 None（调用方 no-op）
+fn chown_spec(owner: Option<&str>, group: Option<&str>) -> Option<String> {
+    let owner = owner.map(str::trim).filter(|s| !s.is_empty());
+    let group = group.map(str::trim).filter(|s| !s.is_empty());
+    match (owner, group) {
+        (Some(o), Some(g)) => Some(format!("{o}:{g}")),
+        (Some(o), None) => Some(o.to_string()),
+        (None, Some(g)) => Some(format!(":{g}")),
+        (None, None) => None,
+    }
+}
+
+/// chmod/chown 失败分类（稳定前缀码，前端映射 i18n 文案）：
+/// PERMISSION = 权限不足 / INVALID_ID = 用户或组在远端不存在 /
+/// REMOTE:<输出尾部> = 其它（原样透出不猜原因）
+fn classify_props_failure(output: &str) -> String {
+    let lower = output.to_lowercase();
+    if lower.contains("operation not permitted") || lower.contains("permission denied") {
+        return "PERMISSION".to_string();
+    }
+    if lower.contains("invalid user")
+        || lower.contains("invalid group")
+        || lower.contains("unknown user")
+        || lower.contains("unknown group")
+        || lower.contains("no such user")
+    {
+        return "INVALID_ID".to_string();
+    }
+    let tail: String = output.trim().chars().take(200).collect();
+    format!("REMOTE:{tail}")
+}
+
+/// chmod/chown 的公共执行骨架：EXEC_DISABLED 前置短路 → 构造命令 →
+/// 通道层失败与 127（无 POSIX sh）标记会话降级，命令层失败走分类映射。
+/// 返回 Err 字符串均为稳定前缀码（EXEC_* / PERMISSION / INVALID_ID / REMOTE:）
+async fn run_props_command(
+    state: &State<'_, SftpState>,
+    session_id: &str,
+    command: &str,
+    timeout_secs: u64,
+) -> Result<(), String> {
+    if state.exec_disabled.lock().await.contains(session_id) {
+        return Err("EXEC_DISABLED".to_string());
+    }
+    let Some(ssh) = get_sftp_ssh_handle(state, session_id).await else {
+        return Err("EXEC_CHANNEL:SSH 会话不可用".to_string());
+    };
+    let (output, code) = match sftp_exec_capture_status(&ssh, command, timeout_secs).await {
+        Ok(v) => v,
+        Err(e) => {
+            // 通道层失败（黑洞型拒绝/超时）：标记降级，本会话后续不再尝试
+            state.exec_disabled.lock().await.insert(session_id.to_string());
+            return Err(format!("EXEC_CHANNEL:{e}"));
+        }
+    };
+    match code {
+        Some(0) => Ok(()),
+        Some(127) => {
+            // command not found：服务器无 POSIX sh（Windows OpenSSH 默认 cmd 等）
+            state.exec_disabled.lock().await.insert(session_id.to_string());
+            Err("EXEC_DISABLED".to_string())
+        }
+        _ => Err(classify_props_failure(&output)),
+    }
+}
+
+/// 修改权限（属性弹窗）：mode 为 0o7777 全量（含特殊位）；smart 仅在
+/// recursive 时生效（X 符号模式，防裸 -R 抹掉子目录执行位）。
+#[tauri::command]
+pub async fn sftp_chmod(
+    session_id: String,
+    path: String,
+    mode: u32,
+    recursive: bool,
+    smart: bool,
+    state: State<'_, SftpState>,
+) -> Result<(), String> {
+    let _ = get_or_connect_sftp(&state, &session_id).await?;
+    let mode = mode & 0o7777;
+    let mode_arg = if recursive && smart {
+        smart_symbolic_mode(mode)
+    } else {
+        format!("{mode:o}")
+    };
+    let command = build_chmod_command(&path, &mode_arg, recursive);
+    let timeout = if recursive {
+        PROPS_RECURSIVE_TIMEOUT_SECS
+    } else {
+        PROPS_SINGLE_TIMEOUT_SECS
+    };
+    run_props_command(&state, &session_id, &command, timeout).await
+}
+
+/// 修改属主/属组（属性弹窗）：owner/group 传名字或数字 id 均可（远端 chown
+/// 自行解析），都为空则 no-op。执行顺序约定（前端编排）：先 chmod 后 chown——
+/// 先转走属主会让自己丧失后续 chmod 的权限。
+#[tauri::command]
+pub async fn sftp_chown(
+    session_id: String,
+    path: String,
+    owner: Option<String>,
+    group: Option<String>,
+    recursive: bool,
+    state: State<'_, SftpState>,
+) -> Result<(), String> {
+    let _ = get_or_connect_sftp(&state, &session_id).await?;
+    let Some(spec) = chown_spec(owner.as_deref(), group.as_deref()) else {
+        return Ok(());
+    };
+    let command = build_chown_command(&path, &spec, recursive);
+    let timeout = if recursive {
+        PROPS_RECURSIVE_TIMEOUT_SECS
+    } else {
+        PROPS_SINGLE_TIMEOUT_SECS
+    };
+    run_props_command(&state, &session_id, &command, timeout).await
+}
+
+/// 用户/组清单条目上限（LDAP 域可能上千条，下拉体验与传输双考量）
+const USER_GROUP_LIST_CAP: usize = 5000;
+
+/// getent passwd / group 输出解析（第 0 列名称、第 2 列数字 id）；
+/// 异常行（字段不足/id 非数字）安全跳过
+fn parse_getent_list(output: &str) -> Vec<RemoteIdName> {
+    let mut list = Vec::new();
+    for line in output.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        if let (Some(&name), Some(id_str)) = (fields.first(), fields.get(2))
+            && let Ok(id) = id_str.parse::<u32>()
+            && !name.is_empty()
+        {
+            list.push(RemoteIdName {
+                id,
+                name: name.to_string(),
+            });
+            if list.len() >= USER_GROUP_LIST_CAP {
+                break;
+            }
+        }
+    }
+    list
+}
+
+/// 远端用户/组全量清单（属性弹窗下拉）：getent 全量解析后按会话缓存；
+/// exec 被禁的会话直接报 EXEC_DISABLED（前端降级为手输模式）
+#[tauri::command]
+pub async fn sftp_list_users_groups(
+    session_id: String,
+    state: State<'_, SftpState>,
+) -> Result<(Vec<RemoteIdName>, Vec<RemoteIdName>), String> {
+    let _ = get_or_connect_sftp(&state, &session_id).await?;
+    if let Some(cached) = state.user_group_cache.lock().await.get(&session_id) {
+        return Ok(cached.clone());
+    }
+    if state.exec_disabled.lock().await.contains(&session_id) {
+        return Err("EXEC_DISABLED".to_string());
+    }
+    let Some(ssh) = get_sftp_ssh_handle(&state, &session_id).await else {
+        return Err("EXEC_CHANNEL:SSH 会话不可用".to_string());
+    };
+    // getent 输出走 stdout，sftp_exec_capture 恰只收 stdout
+    let users_out = match sftp_exec_capture(&ssh, "getent passwd", 10).await {
+        Ok(out) => out,
+        Err(e) => {
+            state.exec_disabled.lock().await.insert(session_id.clone());
+            return Err(format!("EXEC_CHANNEL:{e}"));
+        }
+    };
+    let groups_out = match sftp_exec_capture(&ssh, "getent group", 10).await {
+        Ok(out) => out,
+        Err(e) => {
+            state.exec_disabled.lock().await.insert(session_id.clone());
+            return Err(format!("EXEC_CHANNEL:{e}"));
+        }
+    };
+    let result = (parse_getent_list(&users_out), parse_getent_list(&groups_out));
+    state
+        .user_group_cache
+        .lock()
+        .await
+        .insert(session_id, result.clone());
+    Ok(result)
+}
+
+/// 会话的旁路 exec 通道是否可用（属性弹窗等功能的入口门控与失败后联动）
+#[tauri::command]
+pub async fn sftp_exec_available(
+    session_id: String,
+    state: State<'_, SftpState>,
+) -> Result<bool, String> {
+    Ok(!state.exec_disabled.lock().await.contains(&session_id))
 }
 
 /// 纯 SFTP 递归删除结果
@@ -1514,7 +1780,6 @@ mod tree_tests {
     async fn remove_tree_handles_deep_chains_iteratively() {
         // 500 层深链：递归实现会栈溢出，显式栈必须无恙
         let mut fs = FakeFs::new();
-        let mut children: Vec<TreeEntry> = Vec::new();
         let mut path = String::from("/deep");
         for i in 0..500 {
             let child = format!("{path}/d{i}");
@@ -1531,5 +1796,109 @@ mod tree_tests {
         assert_eq!(summary.failed, 0);
         // 501 个目录（含根 /deep 与末层空目录）+ 每 50 层一个文件共 10 个
         assert_eq!(summary.deleted, 511);
+    }
+}
+
+#[cfg(test)]
+mod props_tests {
+    use super::*;
+
+    // ── 命令构造（注入攻击面快照）──
+
+    #[test]
+    fn chmod_command_shape() {
+        assert_eq!(
+            build_chmod_command("/tmp/a b", "755", false),
+            "sh -c 'chmod \"$1\" \"$2\"' veloterm-chmod '755' '/tmp/a b'"
+        );
+        assert_eq!(
+            build_chmod_command("/x", "u=rwX,g=rX,o=rX", true),
+            "sh -c 'chmod -R \"$1\" \"$2\"' veloterm-chmod 'u=rwX,g=rX,o=rX' '/x'"
+        );
+        // 含注入元字符的路径仍只产生一个 argv 位
+        let evil = build_chmod_command("a'; touch pwned", "755", false);
+        assert!(evil.ends_with("a'\\''; touch pwned'"));
+    }
+
+    #[test]
+    fn chown_command_shape_and_spec() {
+        assert_eq!(
+            chown_spec(Some("root"), Some("wheel")),
+            Some("root:wheel".to_string())
+        );
+        assert_eq!(chown_spec(None, Some("wheel")), Some(":wheel".to_string()));
+        assert_eq!(chown_spec(Some("root"), None), Some("root".to_string()));
+        // 空白串视为未填
+        assert_eq!(chown_spec(Some("  "), None), None);
+        assert_eq!(chown_spec(None, None), None);
+        assert_eq!(
+            build_chown_command("/x", "root:wheel", true),
+            "sh -c 'chown -R \"$1\" \"$2\"' veloterm-chown 'root:wheel' '/x'"
+        );
+        let evil = build_chown_command("a'; rm -rf /", ":wheel'; x", false);
+        assert!(evil.contains("a'\\''; rm -rf /'"));
+        assert!(evil.contains(":wheel'\\''; x'"));
+    }
+
+    // ── 智能递归符号翻译 ──
+
+    #[test]
+    fn smart_symbolic_translations() {
+        assert_eq!(smart_symbolic_mode(0o755), "u=rwX,g=rX,o=rX");
+        // 644 与 755 译后同串：X 按目录/已有执行位决定，两者意图一致
+        assert_eq!(smart_symbolic_mode(0o644), "u=rwX,g=rX,o=rX");
+        // 无任何位的类输出空子句（目录也得不到执行位，如 700 语义）
+        assert_eq!(smart_symbolic_mode(0o600), "u=rwX,g=,o=");
+        assert_eq!(smart_symbolic_mode(0o700), "u=rwX,g=,o=");
+        // 特殊位独立子句追加（4=SUID / 2=SGID / 1=Sticky）
+        assert_eq!(smart_symbolic_mode(0o4755), "u=rwX,g=rX,o=rX,u+s");
+        assert_eq!(smart_symbolic_mode(0o2755), "u=rwX,g=rX,o=rX,g+s");
+        assert_eq!(smart_symbolic_mode(0o6755), "u=rwX,g=rX,o=rX,u+s,g+s");
+        assert_eq!(smart_symbolic_mode(0o1777), "u=rwX,g=rwX,o=rwX,+t");
+    }
+
+    // ── 失败分类 ──
+
+    #[test]
+    fn props_failure_classification() {
+        assert_eq!(
+            classify_props_failure("chmod: changing permissions of '/x': Operation not permitted"),
+            "PERMISSION"
+        );
+        assert_eq!(
+            classify_props_failure("chown: changing ownership of '/x': Permission denied"),
+            "PERMISSION"
+        );
+        assert_eq!(classify_props_failure("chown: invalid user: 'foo'"), "INVALID_ID");
+        assert_eq!(classify_props_failure("chown: unknown group bar"), "INVALID_ID");
+        let remote = classify_props_failure("some weird error");
+        assert!(remote.starts_with("REMOTE:some weird error"));
+    }
+
+    // ── getent 全量清单解析 ──
+
+    #[test]
+    fn getent_list_parsing() {
+        let out = concat!(
+            "root:x:0:0:root:/root:/bin/bash\n",
+            "daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n",
+            "BADLINE\n",
+            "x:y:zz:1\n", // id 非数字，跳过
+            "\n"
+        );
+        let list = parse_getent_list(out);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list.first().map(|e| e.name.as_str()), Some("root"));
+        assert_eq!(list.first().map(|e| e.id), Some(0));
+        assert_eq!(list.get(1).map(|e| e.name.as_str()), Some("daemon"));
+        assert_eq!(list.get(1).map(|e| e.id), Some(1));
+    }
+
+    #[test]
+    fn getent_list_cap() {
+        let out: String = (0..6000)
+            .map(|i| format!("u{i}:x:{i}:1::/home:/bin/sh\n"))
+            .collect();
+        assert_eq!(parse_getent_list(&out).len(), USER_GROUP_LIST_CAP);
     }
 }

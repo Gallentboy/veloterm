@@ -7,6 +7,7 @@ import {
   Folder,
   FolderOpen,
   HardDrive,
+  Info,
   Loader2,
   Pencil,
   RefreshCw,
@@ -34,6 +35,7 @@ import {
 } from '@/services/dragDropService';
 import {
   dirSizeRemote,
+  execAvailableRemote,
   listRemoteDirectory,
   pickDownloadDir,
   pickDownloadPath,
@@ -48,6 +50,7 @@ import {
 } from '@/services/sftpService';
 import { loadRemoteContent } from '@/editor/contentLoader';
 import { SftpFilePreviewModal } from '@/components/files/SftpFilePreviewModal';
+import { SftpFilePropsDialog } from '@/components/files/SftpFilePropsDialog';
 import { sendToTerminal } from '@/services/aiTerminalTools';
 import { formatPathForTerminal } from '@/lib/shellPath';
 import { useTerminalStore } from '@/terminal/TerminalProvider';
@@ -467,6 +470,18 @@ export function SftpSessionView({
   const handlePreview = useCallback((item: RemoteFileItem) => {
     setPreview({ name: item.name, path: item.path });
   }, []);
+
+  // 文件属性弹窗（权限/属主/属组；应用成功后刷新目录）
+  const [propsItem, setPropsItem] = useState<RemoteFileItem | null>(null);
+  // 旁路 exec 通道可用性（属性/目录大小等 shell 能力的入口门控）：
+  // 目录切换时同步（getent 已在列表阶段探过路，堡垒机场景此时已标禁）
+  const [execAvailable, setExecAvailable] = useState(true);
+  useEffect(() => {
+    if (!sessionId) return;
+    execAvailableRemote(sessionId)
+      .then(setExecAvailable)
+      .catch(() => setExecAvailable(true));
+  }, [sessionId, currentPath]);
 
   // onPathChange 经 ref 稳定引用：父组件（FilesScreen）每次重渲染传入的都是新的内联回调，
   // 若进入 loadDirectory 依赖数组，拖分栏/聚焦切换/任何重渲染都会重建 loadDirectory，
@@ -1544,7 +1559,7 @@ export function SftpSessionView({
         </div>
       ) : null}
 
-      {/* 文件/目录行右键菜单：文件（预览/编辑[尝试]/下载/删除）、目录（进入/开终端/算大小/删除） */}
+      {/* 文件/目录行右键菜单：文件（预览/编辑[尝试]/下载/属性/删除）、目录（进入/开终端/算大小/属性/删除） */}
       {fileMenu ? (
         <div
           ref={fileMenuRef}
@@ -1659,6 +1674,29 @@ export function SftpSessionView({
               <span>{t('files.download')}</span>
             </button>
           ) : null}
+          {/* 属性（权限/属主/属组）：依赖旁路 exec 通道，禁用的会话置灰并提示 */}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!execAvailable}
+            onClick={() => {
+              const target = fileMenu.item;
+              setFileMenu(null);
+              setPropsItem(target);
+            }}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors',
+              !execAvailable ? 'cursor-not-allowed opacity-40' : 'hover:bg-menu-hover',
+            )}
+          >
+            <Info className="size-3.5 text-foreground-subtle" />
+            <span>{t('files.props')}</span>
+            {!execAvailable ? (
+              <span className="ml-auto font-mono text-ui-xs text-foreground-subtlest">
+                {t('files.propsMenuDisabledHint')}
+              </span>
+            ) : null}
+          </button>
           <button
             type="button"
             role="menuitem"
@@ -1686,6 +1724,19 @@ export function SftpSessionView({
             // 保存成功：刷新目录列表（size/mtime 列随之更新）
             void loadDirectory(currentPath);
           }}
+        />
+      ) : null}
+
+      {/* 文件属性弹窗：权限九宫格/预设/八进制联动/特殊位/属主属组/递归；应用后刷新目录 */}
+      {propsItem ? (
+        <SftpFilePropsDialog
+          sessionId={sessionId}
+          item={propsItem}
+          onClose={() => setPropsItem(null)}
+          onApplied={() => {
+            void loadDirectory(currentPath);
+          }}
+          onExecUnavailable={() => setExecAvailable(false)}
         />
       ) : null}
 

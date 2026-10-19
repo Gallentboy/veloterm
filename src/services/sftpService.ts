@@ -295,5 +295,51 @@ export async function dirSizeRemote(sessionId: string, path: string): Promise<nu
   return invoke<number>('sftp_dir_size', { sessionId, path });
 }
 
+/* ── 文件属性（权限 / 属主 / 属组）── */
+
+/** 远端用户/组清单条目（属性弹窗下拉；getent 解析，会话级缓存） */
+export interface RemoteIdName {
+  id: number;
+  name: string;
+}
+
+/**
+ * 修改权限。mode 为 0o7777 全量（含 SUID/SGID/Sticky 高位）；
+ * smart 仅 recursive 时生效（X 符号模式，防裸 -R 抹掉子目录执行位）。
+ * 错误为稳定前缀码：EXEC_*（通道不可用）/ PERMISSION / INVALID_ID / REMOTE:<原文>
+ */
+export async function chmodRemote(
+  sessionId: string,
+  path: string,
+  mode: number,
+  recursive: boolean,
+  smart: boolean,
+): Promise<void> {
+  await invoke('sftp_chmod', { sessionId, path, mode, recursive, smart });
+}
+
+/** 修改属主/属组（名字或数字 id 均可，远端 chown 自行解析；null = 不改） */
+export async function chownRemote(
+  sessionId: string,
+  path: string,
+  owner: string | null,
+  group: string | null,
+  recursive: boolean,
+): Promise<void> {
+  await invoke('sftp_chown', { sessionId, path, owner, group, recursive });
+}
+
+/** 远端用户/组全量清单（下拉提示；exec 被禁的会话 reject EXEC_DISABLED） */
+export async function listUsersGroupsRemote(
+  sessionId: string,
+): Promise<[RemoteIdName[], RemoteIdName[]]> {
+  return invoke<[RemoteIdName[], RemoteIdName[]]>('sftp_list_users_groups', { sessionId });
+}
+
+/** 会话的旁路 exec 通道是否可用（属性等 shell 功能的入口门控） */
+export async function execAvailableRemote(sessionId: string): Promise<boolean> {
+  return invoke<boolean>('sftp_exec_available', { sessionId });
+}
+
 
 

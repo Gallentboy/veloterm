@@ -70,6 +70,16 @@ pub struct RemoveProgress {
 /// uid/gid → 名称解析缓存键（session_id, is_group, id）
 pub type IdNameKey = (String, bool, u32);
 
+/// 远端用户/组清单条目（属性弹窗下拉用；getent 全量解析后按会话缓存）
+#[derive(Debug, Serialize, Clone)]
+pub struct RemoteIdName {
+    pub id: u32,
+    pub name: String,
+}
+
+/// 会话维度的用户/组全量清单缓存键 session_id → (users, groups)
+pub type UserGroupCache = HashMap<String, (Vec<RemoteIdName>, Vec<RemoteIdName>)>;
+
 pub struct SftpState {
     pub clients: Arc<Mutex<HashMap<String, SftpClient>>>,
     /// SFTP 连接的 SSH 句柄（与 clients 同生共死：旁路 exec 通道用）
@@ -81,6 +91,9 @@ pub struct SftpState {
     /// 一次失败即标记，后续列目录直接跳过名称解析——否则黑洞型拒绝（通道
     /// 打开后挂起）会让每次列目录都等满超时。重连（evict/close）时清除重试
     pub exec_disabled: Arc<Mutex<HashSet<String>>>,
+    /// 远端用户/组全量清单（属性弹窗下拉；getent 拉取后按会话缓存，
+    /// LDAP 域可能上千条，懒加载 + 会话级复用避免反复拉）
+    pub user_group_cache: Arc<Mutex<UserGroupCache>>,
     pub cancel_tokens: Arc<Mutex<HashMap<usize, oneshot::Sender<()>>>>,
     pub next_task_id: AtomicUsize,
     /// 串行化动态建连：并发请求共享一次握手，避免重复建 SSH 连接
@@ -105,6 +118,7 @@ impl SftpState {
             ssh_handles: Arc::new(Mutex::new(HashMap::new())),
             id_name_cache: Arc::new(Mutex::new(HashMap::new())),
             exec_disabled: Arc::new(Mutex::new(HashSet::new())),
+            user_group_cache: Arc::new(Mutex::new(HashMap::new())),
             cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
             next_task_id: AtomicUsize::new(1),
             connect_lock: Arc::new(Mutex::new(())),
