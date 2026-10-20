@@ -311,7 +311,21 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           client_key_pem TEXT,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
-      );",
+      );
+
+      CREATE TABLE IF NOT EXISTS command_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          host_id INTEGER,
+          session_id INTEGER NOT NULL,
+          command TEXT NOT NULL,
+          exit_code INTEGER NOT NULL,
+          created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_command_history_host_time
+          ON command_history(host_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_command_history_failed
+          ON command_history(created_at DESC) WHERE exit_code != 0;",
     )
     .map_err(|e| format!("failed to initialize schema in SQLCipher database: {e}"))?;
 
@@ -376,6 +390,8 @@ pub fn init_db(app_handle: &AppHandle, master_key: &str) -> Result<DbPool, Strin
         log::warn!("[DB] 内置预置命令播种失败（不影响启动）: {e}");
     }
     let _ = GLOBAL_DB_POOL.set(pool.clone());
+    // 命令历史采集开关回灌（kv 持久化；缺省开）
+    crate::terminal::command_history::init_enabled_from_db(&pool);
     Ok(pool)
 }
 

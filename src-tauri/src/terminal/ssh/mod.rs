@@ -232,7 +232,14 @@ impl SshTerminalSession {
                                 "[ZMODEM] session {} no detection, chunk={} bytes",
                                 id, data.len()
                             );
-                            if on_output.send(data.to_vec()).is_err() {
+                            // 命令历史采集（旁路剥离：OSC 7777 序列截获，其余字节原样透传）
+                            let mut forwarded = data.to_vec();
+                            crate::terminal::command_history::tap_output(
+                                id as i64,
+                                lifecycle_host_id.map(|v| v as i64),
+                                &mut forwarded,
+                            );
+                            if !forwarded.is_empty() && on_output.send(forwarded).is_err() {
                                 break;
                             }
                         } else if let (Some(app), Some(aggregator)) = (app_handle.clone(), zmodem_aggregator.clone()) {
@@ -459,6 +466,7 @@ impl SshTerminalSession {
             }
 
             on_session_closed(id);
+            crate::terminal::command_history::end_session(id as i64);
             // 断开事件：用户主动关闭 → user；其他（网络中断、服务端关闭）→ network
             let reason = if relay_closed_flag.load(Ordering::SeqCst) {
                 DisconnectReason::User

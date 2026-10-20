@@ -1,3 +1,4 @@
+pub mod command_history;
 pub mod commands;
 pub mod local_pty;
 pub mod manager;
