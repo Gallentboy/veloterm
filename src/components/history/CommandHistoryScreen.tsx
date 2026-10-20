@@ -63,7 +63,7 @@ __veloterm_report() {
   if [[ -n \${__veloterm_skip:-} ]]; then __veloterm_skip=; return; fi
   cmd=\${history[\${#history}]}
   [[ -n $cmd ]] || return
-  enc=\${cmd//%/%25}; enc=\${enc//;/%3B}; enc=\${enc//$'\\x1b'/%1B}; enc=\${enc//$'\\a'/%07}
+  enc=\${cmd//"%"/%25}; enc=\${enc//;/%3B}; enc=\${enc//$'\\x1b'/%1B}; enc=\${enc//$'\\a'/%07}
   enc=\${enc//$'\\n'/%0A}; enc=\${enc//$'\\r'/%0D}
   printf '\\033]7777;cmd;%s;%s\\033\\\\' "$rc" "$enc"
 }
