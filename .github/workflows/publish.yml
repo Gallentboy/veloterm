@@ -19,9 +19,35 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Windows x86_64 (64-bit x86). Only this platform is built.
+          # Windows x86_64 (64-bit x86)
           - platform: 'windows-latest'
+            rust_target: x86_64-pc-windows-msvc
+            # rust-toolchain 步骤需安装的 target 集（mac universal 需两个）
+            rust_targets: x86_64-pc-windows-msvc
+            vcpkg_triplet: x64-windows-static
+            msys_arch: x86_64
+            # NSIS 安装包文件名中的架构段（x64 / arm64）
+            nsis_arch: x64
             args: '--target x86_64-pc-windows-msvc'
+          # Windows ARM64（aarch64 原生 runner，relay 车道已验证可用）：
+          # 工具链全套同构——MSYS2 换 CLANGARM64 环境（gcc/g++ 由 gcc-compat
+          # 包提供兼容名）、vcpkg 换 arm64-windows-static、vim nmake CPU=ARM64、
+          # nmap cmake -A ARM64（Npcap SDK 1.16 自带 Lib/ARM64）、GOAMD64 不适用
+          - platform: 'windows-11-arm'
+            rust_target: aarch64-pc-windows-msvc
+            rust_targets: aarch64-pc-windows-msvc
+            vcpkg_triplet: arm64-windows-static
+            msys_arch: clang-aarch64
+            nsis_arch: arm64
+            args: '--target aarch64-pc-windows-msvc'
+          # macOS：universal 二进制（arm64 + x86_64 单包通吃，安装包体积翻倍、
+          # 免分架构分发）。externalBin 只在 tauri.windows.conf.json（Tauri 平台
+          # 约定自动合并），mac 构建零工具链依赖。无签名证书，产出未签名 dmg
+          # （首次打开需右键绕 Gatekeeper）
+          - platform: 'macos-latest'
+            rust_target: universal-apple-darwin
+            rust_targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+            args: '--target universal-apple-darwin'
 
     runs-on: ${{ matrix.platform }}
     env:
@@ -51,12 +77,14 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.rust_targets }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          # 按 rust target 隔离缓存（x64/arm64/universal 三腿互不污染；首次冷构建一次）
+          key: ${{ matrix.rust_target }}
 
       # 1. 用 GITHUB_TOKEN 把 GitHub Packages 注册为 NuGet 源（写入运行器用户级 NuGet.Config，
       #    vcpkg 内部调用的 nuget.exe 会读同一份配置）。若首次推送遇到 401（组织限制默认
@@ -99,7 +127,7 @@ jobs:
         shell: pwsh
         env:
           VCPKG_BUILD_TYPE: release
-          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_triplet }}
         run: |
           $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
           # C:\vcpkg 由镜像生成账户检出、作业以 runneradmin 运行：git 视为可疑属主
@@ -119,7 +147,7 @@ jobs:
         shell: pwsh
         run: |
           $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
-          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          $opensslDir = "$vcpkgRoot\installed\${{ matrix.vcpkg_triplet }}"
           echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
           echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
@@ -158,7 +186,22 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm make gettext mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-libxml2 mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr"
+          # x86_64 走 MinGW64（gcc）；arm64 走 CLANGARM64（clang + gcc-compat
+          # 提供 gcc/g++ 兼容名，供 goffi 段的 cgo 与 qalc 段的 autotools 复用）
+          $pkgs = if ('${{ matrix.msys_arch }}' -eq 'x86_64') {
+            'make gettext mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-libxml2 mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr'
+          } else {
+            'make gettext mingw-w64-clang-aarch64-gcc-compat mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-pkg-config mingw-w64-clang-aarch64-libxml2 mingw-w64-clang-aarch64-gmp mingw-w64-clang-aarch64-mpfr'
+          }
+          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm $pkgs"
+
+      # windows-11-arm 镜像不预装 Go（x64 镜像预装）：goffi 段（yq+fzf 的
+      # c-shared DLL）需要；与 test-jq/test-commands 车道同一 setup 手法
+      - name: setup Go (windows-11-arm)
+        if: matrix.platform == 'windows-11-arm'
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
 
       # 编译 coreutils 多呼叫二进制（uutils/coreutils 全集 + vendor 的 grep/sed/
       # findutils/diffutils/ripgrep/fd/sd/frawk/rust-parallel/onefetch/eza/wget/tar；
@@ -166,7 +209,8 @@ jobs:
       # 到 src-tauri/binaries/ 供 Tauri externalBin 打进安装包（--target 须与构建矩阵一致）；
       # 安装后应用启动时在 tools/ 下创建硬链接短名入口（ls.exe/grep.exe/…）
       - name: Build coreutils binary
-        run: node scripts/build-tools.mjs --target x86_64-pc-windows-msvc
+        if: runner.os == 'Windows'
+        run: node scripts/build-tools.mjs --target ${{ matrix.rust_target }}
 
       # 前端依赖安装排在 coreutils 编译之后：build-tools.mjs 只用 Node 内建模块
       # （child_process/fs/path/url），不依赖 node_modules——先编工具链，能在耗时
@@ -196,7 +240,7 @@ jobs:
         shell: pwsh
         run: |
           $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $setup = "src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/VeloTerm_${ver}_x64-setup.exe"
+          $setup = "src-tauri/target/${{ matrix.rust_target }}/release/bundle/nsis/VeloTerm_${ver}_${{ matrix.nsis_arch }}-setup.exe"
           pwsh -NoProfile -File scripts/verify-installer-layout.ps1 -Installer $setup
 
   # ── relay 中继程序的四目标发布（relay/** 有变化才构建，产物挂 Releases 页面）──

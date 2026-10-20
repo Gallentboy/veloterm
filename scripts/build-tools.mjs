@@ -47,6 +47,11 @@ if (!target) {
 
 console.log(`[build-tools] target: ${target}`);
 
+// arm64 分支：目标为 aarch64 时工具链假设切换——MSYS2 走 CLANGARM64 环境
+// （编译器为 clang，依赖 mingw-w64-clang-aarch64-gcc-compat 提供 gcc/g++ 兼容名）、
+// MSVC/cmake/nmake 走 ARM64、GOAMD64 仅对 x86_64 有意义
+const isArm64 = target.startsWith('aarch64-');
+
 // --only <段>：局部构建（coreutils / goffi / qalc / vim / nmap / ncat / nping）。
 // tag 触发的 test-*.yml 快速反馈车道用
 // `--only qalc` 只依赖 MSYS2；`--only vim` 只依赖 MSVC nmake（零外部包，最轻）；
@@ -175,6 +180,9 @@ if (!only || only === 'goffi') {
       'C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw32\\bin',
       'C:\\msys64\\mingw64\\bin',
       'C:\\tools\\msys64\\mingw64\\bin',
+      // arm64：MSYS2 CLANGARM64 环境（gcc.exe 由 gcc-compat 包提供，
+      // CI 的 pacman 步骤负责安装）
+      'C:\\msys64\\clangarm64\\bin',
     ];
     for (const dir of candidates) {
       if (existsSync(join(dir, 'gcc.exe'))) {
@@ -201,13 +209,13 @@ if (!only || only === 'goffi') {
   const goffiHost = join(srcTauri, 'vendor', 'fzf');
   const yqVersion = readFileSync(join(srcTauri, 'vendor', 'yq', 'VELOTERM_VERSION'), 'utf8').trim();
   const fzfVersion = readFileSync(join(goffiHost, 'VELOTERM_VERSION'), 'utf8').trim();
-  console.log(`[build-tools] goffi: yq ${yqVersion} + fzf ${fzfVersion} -> veloterm_goffi.dll (GOAMD64=v3)`);
+  console.log(`[build-tools] goffi: yq ${yqVersion} + fzf ${fzfVersion} -> veloterm_goffi.dll (${isArm64 ? 'arm64' : 'GOAMD64=v3'})`);
   execSync(
     `go build -buildmode=c-shared -tags "veloterm_ffi veloterm_goffi" -trimpath -buildvcs=false ` +
       `-ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${yqVersion} -X main.version=${fzfVersion} -X main.revision=" ` +
       `-o "${join(outDir, 'veloterm_goffi.dll')}" .`,
     { cwd: goffiHost, stdio: 'inherit',
-      env: { ...process.env, CGO_ENABLED: '1', GOAMD64: 'v3' } },
+      env: { ...process.env, CGO_ENABLED: '1', ...(isArm64 ? {} : { GOAMD64: 'v3' }) } },
   );
   console.log(`[build-tools] veloterm_goffi.dll (yq ${yqVersion} + fzf ${fzfVersion}) -> ${join(outDir, 'veloterm_goffi.dll')}`);
 }
@@ -242,9 +250,10 @@ if (msysNeeded) {
     process.exit(1);
   }
   bashExe = join(msysRoot, 'usr', 'bin', 'bash.exe');
-  // MSYSTEM=MINGW64 + 登录 shell：/etc/profile 按该变量前置 /mingw64/bin，
-  // bash 内的 g++/make/pkg-config 即 x86_64-w64-mingw32 工具链
-  mingwEnv = { ...process.env, MSYSTEM: 'MINGW64' };
+  // 登录 shell 里 /etc/profile 按 MSYSTEM 前置对应工具链到 PATH：
+  // x86_64 目标用 MINGW64（g++/make/pkg-config 即 x86_64-w64-mingw32 工具链），
+  // aarch64 目标用 CLANGARM64（clang 工具链，gcc/g++ 由 gcc-compat 包提供兼容名）
+  mingwEnv = { ...process.env, MSYSTEM: isArm64 ? 'CLANGARM64' : 'MINGW64' };
 }
 
 if (!only || only === 'qalc') {
@@ -265,14 +274,19 @@ if (!only || only === 'qalc') {
 // 分发臂见 crates/coreutils 的 qalc_impl.rs（与 yqffi 同一套运行时定位约定）。
 const qalcSrc = join(srcTauri, 'vendor', 'libqalculate');
 const qalcVersion = readFileSync(join(qalcSrc, 'VELOTERM_VERSION'), 'utf8').trim();
-console.log(`[build-tools] qalc ${qalcVersion}: MSYS2 MinGW64 autotools 构建`);
+console.log(`[build-tools] qalc ${qalcVersion}: MSYS2 ${isArm64 ? 'CLANGARM64' : 'MinGW64'} autotools 构建`);
 
 // 工具链与依赖探测：编译器 + libxml2/gmp/mpfr 开发包（.pc），缺什么给出
 // 对应 pacman 安装命令（CI 的 Install MSYS2 packages for qalc 步骤负责装）
-const PACMAN_QALC =
-  'pacman -S --needed --noconfirm make gettext mingw-w64-x86_64-gcc ' +
-  'mingw-w64-x86_64-pkg-config mingw-w64-x86_64-libxml2 ' +
-  'mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr';
+const PACMAN_QALC = isArm64
+  ? 'pacman -S --needed --noconfirm make gettext mingw-w64-clang-aarch64-gcc-compat \
+' +
+    'mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-pkg-config \
+' +
+    'mingw-w64-clang-aarch64-libxml2 mingw-w64-clang-aarch64-gmp mingw-w64-clang-aarch64-mpfr'
+  : 'pacman -S --needed --noconfirm make gettext mingw-w64-x86_64-gcc ' +
+    'mingw-w64-x86_64-pkg-config mingw-w64-x86_64-libxml2 ' +
+    'mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr';
 try {
   execFileSync(
     bashExe,
@@ -372,10 +386,11 @@ if (only === 'qalc') {
 if (!only || only === 'vim') {
   const vimSrc = join(srcTauri, 'vendor', 'vim');
   const vimVersion = readFileSync(join(vimSrc, 'VELOTERM_VERSION'), 'utf8').trim();
-  console.log(`[build-tools] vim ${vimVersion}: MSVC nmake VIMDLL 构建（x64）`);
+  console.log(`[build-tools] vim ${vimVersion}: MSVC nmake VIMDLL 构建（${isArm64 ? 'arm64' : 'x64'}）`);
 
-  // nmake 需 VS 环境：vswhere 定位最新含 VC 工具链的安装 → vcvars64.bat
-  // （windows-latest 预装；本地 Windows 开发机亦然）。找不到时给出可诊断提示。
+  // nmake 需 VS 环境：vswhere 定位最新含 VC 工具链的安装 → vcvarsall.bat
+  // 带架构参数（x64 / arm64，与 relay 车道同一手法；windows-latest 与
+  // windows-11-arm 各自预装对应 VS。找不到时给出可诊断提示。
   const vswhereCandidates = [
     process.env['ProgramFiles(x86)']
       ? join(process.env['ProgramFiles(x86)'], 'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
@@ -385,19 +400,23 @@ if (!only || only === 'vim') {
   let vcvars = '';
   for (const vswhere of vswhereCandidates) {
     if (!existsSync(vswhere)) continue;
+    // 架构对应的 VC 工具集组件：x64 目标为 VC.Tools.x86.x64，arm64 为 VC.Tools.ARM64
+    const component = isArm64
+      ? 'Microsoft.VisualStudio.Component.VC.Tools.ARM64'
+      : 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64';
     const vsPath = execSync(
-      `"${vswhere}" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`,
+      `"${vswhere}" -latest -products * -requires ${component} -property installationPath`,
       { encoding: 'utf8' },
     ).trim();
     if (vsPath) {
-      const cand = join(vsPath, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat');
+      const cand = join(vsPath, 'VC', 'Auxiliary', 'Build', 'vcvarsall.bat');
       if (existsSync(cand)) vcvars = cand;
       break;
     }
   }
   if (!vcvars) {
     console.error(
-      '[build-tools] 未找到 Visual Studio x64 环境（vcvars64.bat，vim 构建必需）：' +
+      `[build-tools] 未找到 Visual Studio ${isArm64 ? 'ARM64' : 'x64'} 环境（vcvarsall.bat，vim 构建必需）：` +
         '请安装含 “使用 C++ 的桌面开发” 的 VS 2022，或确认 vswhere.exe 存在',
     );
     process.exit(1);
@@ -412,11 +431,13 @@ if (!only || only === 'vim') {
   cpSync(join(vimSrc, 'src'), buildSrc, { recursive: true });
 
   // 官方形态：VIMDLL=yes（隐含 GUI=yes，DLL 同时编入 GUI/控制台代码，运行期
-  // 按宿主 exe 的 PE subsystem 选择）+ CPU=AMD64 + 静态 CRT（未设 USE_MSVCRT
+  // 按宿主 exe 的 PE subsystem 选择）+ CPU=AMD64/ARM64 + 静态 CRT（未设 USE_MSVCRT
   // 时 Make_mvc 自动 /MT）。目标只要 vim.exe（依赖链自动先出 vim64.dll），
-  // gvim.exe/xxd/install 等不构建
+  // gvim.exe/xxd/install 等不构建。vcvarsall 带目标架构，arm64 宿主上即原生 ARM64 工具链
+  const msvcArch = isArm64 ? 'arm64' : 'x64';
+  const nmakeCpu = isArm64 ? 'ARM64' : 'AMD64';
   execSync(
-    `call "${vcvars}" >nul && cd /d "${buildSrc}" && nmake /nologo -f Make_mvc.mak VIMDLL=yes CPU=AMD64 vim.exe`,
+    `call "${vcvars}" ${msvcArch} >nul && cd /d "${buildSrc}" && nmake /nologo -f Make_mvc.mak VIMDLL=yes CPU=${nmakeCpu} vim.exe`,
     { stdio: 'inherit' },
   );
 
@@ -495,15 +516,15 @@ if (only === 'vim') {
 // Npcap 冒烟。数据文件细节见 vendor/nmap/README.md。
 const nmapSrc = join(srcTauri, 'vendor', 'nmap');
 const nmapVersion = readFileSync(join(nmapSrc, 'VELOTERM_VERSION'), 'utf8').trim();
-console.log(`[build-tools] nmap ${nmapVersion}: MSVC + CMake 构建（x64）`);
+console.log(`[build-tools] nmap ${nmapVersion}: MSVC + CMake 构建（${isArm64 ? 'arm64' : 'x64'}）`);
 
 // 依赖探测：cmake（runner 自带）+ OpenSSL（CI 的 vcpkg 安装步骤提供，
-// 与 SQLCipher / openssl-app 同源 x64-windows-static）
-const opensslDir = process.env.OPENSSL_DIR ?? 'C:\\vcpkg\\installed\\x64-windows-static';
+// 与 SQLCipher / openssl-app 同源，triplet 随目标架构：x64/arm64-windows-static）
+const opensslDir = process.env.OPENSSL_DIR ?? `C:\\vcpkg\\installed\\${isArm64 ? 'arm64' : 'x64'}-windows-static`;
 if (!existsSync(join(opensslDir, 'lib', 'libcrypto.lib'))) {
   console.error(
     `[build-tools] 未找到 OpenSSL 静态库（nmapffi.dll 构建必需）：${opensslDir}\\lib\\libcrypto.lib 不存在。\n` +
-      '  CI 上由 publish.yml 的 vcpkg 步骤安装并导出 OPENSSL_DIR；本地请设 OPENSSL_DIR 指向 x64-windows-static 安装根。',
+      `  CI 上由 publish.yml 的 vcpkg 步骤安装并导出 OPENSSL_DIR；本地请设 OPENSSL_DIR 指向 ${isArm64 ? 'arm64' : 'x64'}-windows-static 安装根。`,
   );
   process.exit(1);
 }
@@ -550,7 +571,7 @@ if (!existsSync(sdkInclude)) {
 const cmakeSrc = join(nmapSrc, 'veloterm-win');
 const buildDir = join(nmapBuild, 'cmake');
 execSync(
-  `cmake -S "${cmakeSrc}" -B "${buildDir}" -A x64 ` +
+  `cmake -S "${cmakeSrc}" -B "${buildDir}" -A ${isArm64 ? 'ARM64' : 'x64'} ` +
     `-DNPCAP_SDK_DIR="${sdkDir}" -DOPENSSL_DIR="${opensslDir}"`,
   { stdio: 'inherit' },
 );

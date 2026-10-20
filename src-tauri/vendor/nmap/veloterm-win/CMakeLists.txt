@@ -48,6 +48,14 @@ foreach(required_var NPCAP_SDK_DIR OPENSSL_DIR)
     endif()
 endforeach()
 
+# Npcap 导入库的架构子目录：跟随 VS 生成器平台（-A x64 → x64，-A ARM64 → ARM64）。
+# SDK 1.16 起两目录齐备（Lib/x64 与 Lib/ARM64 各有 wpcap.lib/Packet.lib）
+if("${CMAKE_GENERATOR_PLATFORM}" STREQUAL "ARM64")
+    set(VELOTERM_NPCAP_ARCH "ARM64")
+else()
+    set(VELOTERM_NPCAP_ARCH "x64")
+endif()
+
 set(NMAP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "nmap 源码根（vendor/nmap）")
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 14)
@@ -336,9 +344,11 @@ set(VELOTERM_NMAP_LIBS
     pcre2-8-static
     zlibstatic
     dnet
-    # Npcap SDK 导入库（pcap_* 来自 wpcap，Packet* 来自 packet）
-    "${NPCAP_SDK_DIR}/Lib/x64/wpcap.lib"
-    "${NPCAP_SDK_DIR}/Lib/x64/Packet.lib"
+    # Npcap SDK 导入库（pcap_* 来自 wpcap，Packet* 来自 packet）。
+    # SDK 按架构分目录（Lib/x64 与 Lib/ARM64，1.16 起两者齐备）；
+    # VS 多配置生成器经 -A x64 / -A ARM64 传入平台，此处跟随选择
+    "${NPCAP_SDK_DIR}/Lib/${VELOTERM_NPCAP_ARCH}/wpcap.lib"
+    "${NPCAP_SDK_DIR}/Lib/${VELOTERM_NPCAP_ARCH}/Packet.lib"
     # OpenSSL（vcpkg 静态，与 SQLCipher / openssl-app 共用）
     "${OPENSSL_DIR}/lib/libssl.lib"
     "${OPENSSL_DIR}/lib/libcrypto.lib"
