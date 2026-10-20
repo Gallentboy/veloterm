@@ -40,14 +40,19 @@ jobs:
             msys_arch: clang-aarch64
             nsis_arch: arm64
             args: '--target aarch64-pc-windows-msvc'
-          # macOS：universal 二进制（arm64 + x86_64 单包通吃，安装包体积翻倍、
-          # 免分架构分发）。externalBin 只在 tauri.windows.conf.json（Tauri 平台
-          # 约定自动合并），mac 构建零工具链依赖。无签名证书，产出未签名 dmg
-          # （首次打开需右键绕 Gatekeeper）
+          # macOS：两腿分开出包（arm64 / x86_64 各一个 dmg）。externalBin 只在
+          # tauri.windows.conf.json（Tauri 平台约定自动合并），mac 腿零工具链
+          # 依赖。两腿都在 macos-latest（arm 宿主）上构建——x86_64 腿为交叉编译
+          # （cc crate 对 apple 目标自动传 -arch x86_64，SQLCipher 等 C 依赖
+          # 同链交叉）。无签名证书，产出未签名 dmg（首次打开需右键绕 Gatekeeper）
           - platform: 'macos-latest'
-            rust_target: universal-apple-darwin
-            rust_targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
-            args: '--target universal-apple-darwin'
+            rust_target: aarch64-apple-darwin
+            rust_targets: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            rust_target: x86_64-apple-darwin
+            rust_targets: x86_64-apple-darwin
+            args: '--target x86_64-apple-darwin'
 
     runs-on: ${{ matrix.platform }}
     env:
