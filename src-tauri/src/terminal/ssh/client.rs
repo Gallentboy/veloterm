@@ -1210,12 +1210,26 @@ impl Connector {
                                         match crate::db::update_host_password(
                                             &pool, host_id, entered,
                                         ) {
-                                            Ok(true) => log::info!(
-                                                "[SSH {}] 用户手输密码通过认证，\
-                                                 已更新主机库 hosts.id={}（原保存密码错误）",
-                                                self.id,
-                                                host_id
-                                            ),
+                                            Ok(true) => {
+                                                log::info!(
+                                                    "[SSH {}] 用户手输密码通过认证，\
+                                                     已更新主机库 hosts.id={}（原保存密码错误）",
+                                                    self.id,
+                                                    host_id
+                                                );
+                                                // 前端同步：广播密码已更新，让 dbStorage
+                                                // 重拉 bootstrap 并刷新内存/React 状态，
+                                                // 否则主机编辑页仍显示旧密码（同改密路径）
+                                                use tauri::Emitter;
+                                                if let Some(app) = self.app_handle.as_ref() {
+                                                    let _ = app.emit(
+                                                        "host-password-updated",
+                                                        serde_json::json!({
+                                                            "hostId": host_id
+                                                        }),
+                                                    );
+                                                }
+                                            }
                                             Ok(false) => log::info!(
                                                 "[SSH {}] 主机 {} 非密码认证，跳过回写",
                                                 self.id,
