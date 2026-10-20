@@ -1153,6 +1153,14 @@ impl Connector {
                 let mut secret_answers: Vec<String> = Vec::new();
                 // 普通密码提示只自动填一次（见下方 prompt 循环注释）
                 let mut plain_password_filled = false;
+                // 用户手输的普通密码（非改密链）：用于「保存密码错了、用户手输对了」
+                // 的自动回写。判定 100% 可靠的依据是服务器亲口确认——
+                //   ① 该提示是普通密码（非 current/new/retype 改密链）
+                //   ② 值来自用户手输（非自动填的保存密码）
+                //   ③ 本轮最终认证 Success（服务器已用该密码验证通过）
+                //   ④ 本轮只有一次这样的手输（无歧义）
+                // 四条同时满足才写库，任一不满足则宁可不写。
+                let mut user_entered_password: Option<String> = None;
                 // kbd-int 整体失败重试计数（对齐 OpenSSH sshconnect2.c：
                 // `if (attempt_kbdint++ >= number_of_password_prompts) return 0;`
                 // ——后置递增，默认值 3，实际是「初始 1 次 + 重试 3 次 = 4 次」）
@@ -1188,6 +1196,44 @@ impl Connector {
                                 self.id,
                                 username
                             );
+                            // 保存密码错了、用户手输对了 → 自动回写（100% 可靠）：
+                            // 服务器已用这个值通过认证（Success），且它来自用户手输、
+                            // 不是改密链的一环、本轮无歧义（无第二次手输）。三个条件
+                            // 缺一不可；改密链成功走下面 verified_new_password 路径。
+                            if secret_answers.is_empty()
+                                && let Some(entered) = user_entered_password.as_deref()
+                                && entered != password
+                                && let Some(host_id) = self.host_id
+                            {
+                                match crate::db::global_pool() {
+                                    Some(pool) => {
+                                        match crate::db::update_host_password(
+                                            &pool, host_id, entered,
+                                        ) {
+                                            Ok(true) => log::info!(
+                                                "[SSH {}] 用户手输密码通过认证，\
+                                                 已更新主机库 hosts.id={}（原保存密码错误）",
+                                                self.id,
+                                                host_id
+                                            ),
+                                            Ok(false) => log::info!(
+                                                "[SSH {}] 主机 {} 非密码认证，跳过回写",
+                                                self.id,
+                                                host_id
+                                            ),
+                                            Err(e) => log::warn!(
+                                                "[SSH {}] 回写手输密码失败: {}",
+                                                self.id,
+                                                e
+                                            ),
+                                        }
+                                    }
+                                    None => log::warn!(
+                                        "[SSH {}] DB pool 不可用，手输密码未保存",
+                                        self.id
+                                    ),
+                                }
+                            }
                             kbdint_worked = true;
                             break;
                         }
@@ -1223,6 +1269,9 @@ impl Connector {
                             // 5s+ 才报错（实测体感）。保持 filled=true 后，重试轮
                             // 会显示 Password: 等用户输入，失败也能立刻让用户改。
                             secret_answers.clear();
+                            // 手输密码也清：失败轮的值未通过服务器验证，不能留作
+                            // 写库依据（下一轮用户重新输入的才是有效的）
+                            user_entered_password = None;
                             round = 0;
                             kb = session
                                 .authenticate_keyboard_interactive_start(
@@ -1359,6 +1408,12 @@ impl Connector {
                                         // 写库判定仍走协议不变量（尾部两条相等）。
                                         if text_is_change_step && !a.is_empty() {
                                             secret_answers.push(a.clone());
+                                        } else if !text_is_change_step && !a.is_empty() {
+                                            // 普通密码提示 + 用户手输：每次覆盖记录。
+                                            // 取**最后一次**而不是要求「只有一次」——
+                                            // 用户可能输错两次第三次才对，而服务器
+                                            // 最终 Success 验证的正是最后那一次。
+                                            user_entered_password = Some(a.clone());
                                         }
                                         responses.push(a);
                                     }
