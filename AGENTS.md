@@ -91,6 +91,8 @@
 
 命令库（commands 表）带**内置预置种子**：192 条详细用法（tools-catalog 全量 130 命令 + Windows cmd 常用命令，内容按官方文档求证——GNU 手册 / Microsoft Learn / 各上游仓库，每条 source 字段留档）。产线在 `src-tauri/seed-parts/part1..5.json`，`scripts/build-command-seed.mjs` 合并强校验（schema/占位符契约/与 tools-catalog 全集核对/uuidv5 确定性生成）产出 `src-tauri/assets/builtin-commands-seed.json`；Rust 侧 `seed_builtin_commands`（init_db 挂点）以 kv 版本标记门控 + uuid INSERT OR IGNORE 差量插入——同版本只播种一次，用户删除的预置条目不复活；数据变更时递增 SEED_VERSION 补插新增。改种子内容：改分片 → 跑脚本 → `cargo test -p app --lib command_library`（载荷合法性单测会拦 schema 偏差）→ SEED_VERSION 递增。
 
+命令历史（command_history 表）是**被动采集**形态：应用绝不主动注入 shell 脚本——用户按「历史」页提供的片段自行贴到服务器 `~/.bashrc` / `~/.zshrc` / fish config（或主机就绪钩子），shell 钩子在每个 prompt 前以私有 OSC 7777 序列上报「命令 + 退出码」（单发自包含：载荷 percent-encode 保 7-bit ASCII，`;`/ESC/BEL/换行全编码；终止符 ST/BEL 双认；未知子命令剥离不入库向前兼容），`terminal/command_history.rs` 在 SSH 与本地 PTY 输出流旁路截获剥离（增量状态机跨 chunk 拼接、他方 OSC 原样透传、超 64KB 无终止脏数据整段原样放行），经有界队列（1024，满即丢弃计数，绝不反压 PTY/SSH 读循环）转专职线程批量事务入库；host 归因复用 lifecycle_host_id，本地终端 host_id 记空。采集开关（kv `command_history_enabled`，缺省开）只控制入库、**剥离永远执行**——已注入的序列绝不能显示到终端。命令层 `commands/command_history.rs` 提供 list/clear/get_enabled/set_enabled 四个 invoke。bash 片段的 history 行去序号为纯参数展开免外部进程、zsh 用 `${history[$#history]}` 零子进程；三片段均幂等可重复粘贴、首 prompt 跳过（防把上一会话的旧 history 记进来）。
+
 ## 命令速查
 
 | 用途 | 命令 |
