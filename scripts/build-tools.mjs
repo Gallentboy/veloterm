@@ -162,10 +162,27 @@ if (!only || only === 'goffi') {
     console.error('[build-tools] 未找到 go 工具链（veloterm_goffi.dll 构建必需）：请安装 Go ≥ 1.26 或将其加入 PATH');
     process.exit(1);
   }
-  // c-shared 需要 cgo：CGO_ENABLED=1 + gcc。windows-latest 镜像通常自带 MinGW
-  // 且在 PATH（GitHub 文档不保证，实例间可能变化），找不到时按常见安装位置
-  // 探测（choco mingw / msys2 / 手动安装）并前置 PATH，全找不到才报错退出。
+  // c-shared 需要 cgo：CGO_ENABLED=1 + 与目标架构匹配的 C 编译器。
+  // x86_64：MinGW-w64 gcc（windows-latest 镜像通常自带且在 PATH，GitHub 文档
+  // 不保证、实例间可能变化，找不到时按常见安装位置探测并前置 PATH）。
+  // aarch64：**必须**用 MSYS2 CLANGARM64 的 clang——不能沿用 PATH 里已有的
+  // x86_64 gcc：cgo 会用宿主 gcc 汇编 AArch64 的 gcc_arm64.S，报
+  // "no such instruction: stp x19,x20"（windows-11-arm 车道实测）。
+  // 故 arm64 分支不先试探 PATH，直接定位 clangarm64 并前置，且显式设 CC，
+  // 避免 go 从 PATH 里挑到 x64 的 gcc。
+  let goffiCC = '';
   function ensureGccOnPath() {
+    if (isArm64) {
+      const armDir = ['C:\\msys64\\clangarm64\\bin', 'C:\\tools\\msys64\\clangarm64\\bin'].find(
+        (dir) => existsSync(join(dir, 'clang.exe')) || existsSync(join(dir, 'gcc.exe')),
+      );
+      if (!armDir) return null;
+      process.env.PATH = `${armDir};${process.env.PATH}`;
+      const clang = join(armDir, 'clang.exe');
+      goffiCC = existsSync(clang) ? clang : join(armDir, 'gcc.exe');
+      console.log(`[build-tools] goffi(arm64): 使用 ${goffiCC}`);
+      return armDir;
+    }
     try {
       execSync('gcc --version', { stdio: 'ignore' });
       return 'PATH';
@@ -180,9 +197,6 @@ if (!only || only === 'goffi') {
       'C:\\ProgramData\\chocolatey\\lib\\mingw\\tools\\install\\mingw32\\bin',
       'C:\\msys64\\mingw64\\bin',
       'C:\\tools\\msys64\\mingw64\\bin',
-      // arm64：MSYS2 CLANGARM64 环境（gcc.exe 由 gcc-compat 包提供，
-      // CI 的 pacman 步骤负责安装）
-      'C:\\msys64\\clangarm64\\bin',
     ];
     for (const dir of candidates) {
       if (existsSync(join(dir, 'gcc.exe'))) {
@@ -195,11 +209,15 @@ if (!only || only === 'goffi') {
   }
   if (!ensureGccOnPath()) {
     console.error(
-      '[build-tools] 未找到 gcc（cgo 编译 veloterm_goffi.dll 必需）：windows-latest 通常自带 MinGW，' +
-        '若镜像变化请安装 MinGW-w64 或把其 bin 目录加入 PATH',
+      isArm64
+        ? '[build-tools] 未找到 CLANGARM64 clang（cgo 编译 arm64 veloterm_goffi.dll 必需）：' +
+            '请安装 MSYS2 的 mingw-w64-clang-aarch64-clang（默认 C:\\msys64\\clangarm64）'
+        : '[build-tools] 未找到 gcc（cgo 编译 veloterm_goffi.dll 必需）：windows-latest 通常自带 MinGW，' +
+            '若镜像变化请安装 MinGW-w64 或把其 bin 目录加入 PATH',
     );
     process.exit(1);
   }
+  if (goffiCC) process.env.CC = goffiCC;
 }
 
 // 合并构建：宿主 = vendor/fzf（package main，veloterm_ffi.go 导出 fzf 入口），
