@@ -155,6 +155,10 @@ if (only === 'coreutils') {
 // --version 都打出真实版本。
 // GOAMD64=v3：以 AVX2 为基线（2013+ Intel/AMD）换取向量化性能，基线以下的
 // CPU 会非法指令崩溃——性能与兼容的权衡，回退只需删掉该环境变量。
+// arm64 的 cgo 编译器（CLANGARM64 clang/gcc 全路径）；x86_64 留空沿用 PATH
+// 上的 MinGW gcc。声明在模块级：探测在下面的 if 块里，go build 在另一个 if
+// 块里（两处都要可见）
+let goffiCC = '';
 if (!only || only === 'goffi') {
   try {
     execSync('go version', { stdio: 'ignore' });
@@ -170,7 +174,6 @@ if (!only || only === 'goffi') {
   // "no such instruction: stp x19,x20"（windows-11-arm 车道实测）。
   // 故 arm64 分支不先试探 PATH，直接定位 clangarm64 并前置，且显式设 CC，
   // 避免 go 从 PATH 里挑到 x64 的 gcc。
-  let goffiCC = '';
   function ensureGccOnPath() {
     if (isArm64) {
       const armDir = ['C:\\msys64\\clangarm64\\bin', 'C:\\tools\\msys64\\clangarm64\\bin'].find(
