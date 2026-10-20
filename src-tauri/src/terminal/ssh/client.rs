@@ -1166,6 +1166,9 @@ impl Connector {
                 // ——后置递增，默认值 3，实际是「初始 1 次 + 重试 3 次 = 4 次」）
                 let mut kbdint_attempts = 0u32;
                 const KBDINT_MAX_ATTEMPTS: u32 = 4;
+                // 服务器在 FAILURE 里给出的剩余认证方法（最终失败时按 OpenSSH
+                // 的「Permission denied (method1,method2)」格式呈现）
+                let mut last_remaining_methods: Option<String> = None;
                 loop {
                     match kb {
                         KeyboardInteractiveAuthResponse::Success => {
@@ -1254,7 +1257,12 @@ impl Connector {
                             kbdint_worked = true;
                             break;
                         }
-                        KeyboardInteractiveAuthResponse::Failure { .. } => {
+                        KeyboardInteractiveAuthResponse::Failure {
+                            remaining_methods, ..
+                        } => {
+                            // 记录服务器允许的剩余方法，供最终失败时按 OpenSSH
+                            // 格式打印「Permission denied (method1,method2)」
+                            last_remaining_methods = Some(format!("{remaining_methods:?}"));
                             // 复刻 OpenSSH sshconnect2.c：kbd-int 失败**不是**终止
                             // 认证，而是由 input_userauth_failure → userauth() 重新
                             // 发起一轮（attempt_kbdint 计数上限 number_of_password_prompts，
@@ -1281,6 +1289,17 @@ impl Connector {
                                 self.id,
                                 kbdint_attempts + 1
                             );
+                            // 重试前给用户一条可见提示。OpenSSH 在此处是静默的
+                            // （仅 debug2 日志），但终端用户连续看到三个 Password:
+                            // 而不知道前一次已失败，观感像卡住——补一条与原生命令
+                            // 行 ssh 输出同义的提示。
+                            let _ = self
+                                .tx
+                                .send(RCEvent::Output(
+                                    1,
+                                    bytes::Bytes::from("\r\nPermission denied, please try again.\r\n"),
+                                ))
+                                .await;
                             // 新一轮：清空本轮的应答收集。**不再重置
                             // plain_password_filled**——保存的密码只在第一次尝试时
                             // 自动填一次：若它错了，重试时再填同一个错密码只会让
@@ -1549,9 +1568,15 @@ impl Connector {
                          skipping password fallback",
                         self.id
                     );
-                    return Err(ConnectionError::Authentication(
-                        "keyboard-interactive rejected the saved password".to_string(),
-                    ));
+                    // 复刻 OpenSSH userauth() 方法用尽时的报错（sshconnect2.c:543
+                    // `%s@%s: Permission denied (%s).`）：括号内是服务器给出的
+                    // 剩余认证方法列表
+                    let methods = last_remaining_methods
+                        .as_deref()
+                        .unwrap_or("publickey,password,keyboard-interactive");
+                    return Err(ConnectionError::Authentication(format!(
+                        "Permission denied ({methods})."
+                    )));
                 }
                 let response = session
                     .authenticate_password(username.to_string(), password)
