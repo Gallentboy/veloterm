@@ -1,11 +1,19 @@
-import { Plus } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Check, Copy, Eye, EyeOff, History, Loader2, Plus, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { FormField, PasswordInput, TextArea, TextInput } from '@/components/hosts/formFields';
 import { groupPathOptions, jumpHostOptions } from '@/hosts/storage';
+import { writeClipboardText } from '@/lib/clipboard';
+import {
+  hostPasswordHistoryClear,
+  hostPasswordHistoryList,
+  type HostPasswordHistoryEntry,
+} from '@/services/hostPasswordHistoryService';
 import { relayList, type RelayConfig } from '@/services/relayConfigService';
 import type {
   AuthConfig,
@@ -68,6 +76,256 @@ const RELAY_TRANSPORTS: Array<{ transport: RelayTransport; labelKey: string }> =
   { transport: 'quic', labelKey: 'hosts.form.relayTransportQuic' },
 ];
 
+/** 密码历史默认打码占位（与密码输入框的视觉口径一致） */
+const PASSWORD_MASK = '••••••••';
+
+/** 本地时区格式化到秒（与命令历史 / SFTP 列表的时间口径一致） */
+function formatReplacedAt(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+interface PasswordHistoryDialogProps {
+  hostId: number;
+  onClose: () => void;
+}
+
+/**
+ * 密码历史弹层：**打开时才请求**（后端每主机最多 20 条）。
+ * 每行可单独显隐/复制；清空走弹层内二次确认（不叠 ConfirmDialog，避免嵌套弹层
+ * 的 Escape 语义纠缠）。
+ */
+function PasswordHistoryDialog({ hostId, onClose }: PasswordHistoryDialogProps) {
+  const { t } = useTranslation();
+  const [entries, setEntries] = useState<HostPasswordHistoryEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [visibleIds, setVisibleIds] = useState<ReadonlySet<number>>(() => new Set());
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const copyTimerRef = useRef(0);
+
+  const load = useCallback(() => {
+    setEntries(null);
+    setError(null);
+    hostPasswordHistoryList(hostId)
+      .then(setEntries)
+      .catch((err) => setError(String(err)));
+  }, [hostId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => () => window.clearTimeout(copyTimerRef.current), []);
+
+  // 本弹层嵌套在主机表单 Modal 内：Escape 必须只关自己。window 捕获阶段拦截并
+  // stopPropagation，外层 Modal 的冒泡监听收不到（否则会连主机表单一起关掉、
+  // 丢掉未保存的编辑）；自身关闭也在这里处理，不依赖被拦截的冒泡监听。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      if (confirmClear) {
+        setConfirmClear(false);
+      } else {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [confirmClear, onClose]);
+
+  const toggleVisible = (id: number) => {
+    setVisibleIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleCopy = async (entry: HostPasswordHistoryEntry) => {
+    try {
+      await writeClipboardText(entry.password);
+      setCopiedId(entry.id);
+      window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => setCopiedId(null), 1500);
+    } catch {
+      // 剪贴板不可用时静默（与终端 / 命令历史的复制路径一致）
+    }
+  };
+
+  const handleClear = async () => {
+    setClearing(true);
+    try {
+      await hostPasswordHistoryClear(hostId);
+      setEntries([]);
+      setError(null);
+      setConfirmClear(false);
+    } catch (err) {
+      setError(`${t('hostPasswordHistory.clearFailed')}: ${String(err)}`);
+      setConfirmClear(false);
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={t('hostPasswordHistory.title')}
+      onClose={onClose}
+      className="w-[560px]"
+      footer={
+        <>
+          <Button
+            variant="ghost"
+            size="lg"
+            className="mr-auto h-8 gap-1.5 px-3 text-ui-base text-destructive hover:bg-destructive/10"
+            onClick={() => setConfirmClear(true)}
+            disabled={confirmClear || clearing || entries == null || entries.length === 0}
+          >
+            <Trash2 className="size-4" />
+            <span>{t('hostPasswordHistory.clear')}</span>
+          </Button>
+          <Button variant="outline" size="lg" className="h-8 px-3 text-ui-base" onClick={onClose}>
+            {t('common.close')}
+          </Button>
+        </>
+      }
+    >
+      {confirmClear ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-ui-sm text-foreground">{t('hostPasswordHistory.clearConfirm')}</p>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="lg"
+              className="h-8 px-3 text-ui-base"
+              onClick={() => setConfirmClear(false)}
+              disabled={clearing}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              size="lg"
+              className="h-8 gap-1.5 px-3 text-ui-base"
+              onClick={() => void handleClear()}
+              disabled={clearing}
+            >
+              {clearing ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Trash2 className="size-4" />
+              )}
+              <span>{t('hostPasswordHistory.clear')}</span>
+            </Button>
+          </div>
+        </div>
+      ) : error != null && entries == null ? (
+        <div className="flex flex-col items-center gap-2 py-8 text-center">
+          <p className="text-ui-sm text-destructive">{t('hostPasswordHistory.loadFailed')}</p>
+          <p className="max-w-full break-all font-mono text-ui-xs text-foreground-subtlest">
+            {error}
+          </p>
+          <Button
+            variant="outline"
+            size="lg"
+            className="mt-1 h-8 px-3 text-ui-base"
+            onClick={load}
+          >
+            {t('hostPasswordHistory.retry')}
+          </Button>
+        </div>
+      ) : entries == null ? (
+        <div className="flex items-center justify-center gap-2 py-10 text-ui-sm text-foreground-subtle select-none">
+          <Loader2 className="size-4 animate-spin" />
+          <span>{t('hostPasswordHistory.loading')}</span>
+        </div>
+      ) : entries.length === 0 ? (
+        <p className="py-10 text-center text-ui-sm text-foreground-subtle">
+          {t('hostPasswordHistory.empty')}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {error ? (
+            <p className="break-all rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1 text-ui-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <p className="pb-0.5 text-ui-xs text-foreground-subtlest select-none">
+            {t('hostPasswordHistory.hint')}
+          </p>
+          {entries.map((entry) => {
+            const visible = visibleIds.has(entry.id);
+            const copied = copiedId === entry.id;
+            const sourceLabel =
+              entry.source === 'kbd-int-change'
+                ? t('hostPasswordHistory.sourceAuto')
+                : entry.source === 'user-input'
+                  ? t('hostPasswordHistory.sourceUserInput')
+                  : entry.source;
+            return (
+              <div
+                key={entry.id}
+                className="flex items-center gap-2 rounded-lg border border-border/60 bg-surface/40 px-2.5 py-1.5"
+              >
+                <span className="w-40 shrink-0 font-mono text-ui-xs text-foreground-subtle">
+                  {formatReplacedAt(entry.replacedAt)}
+                </span>
+                <span
+                  className="min-w-0 flex-1 truncate font-mono text-ui-sm text-foreground"
+                  title={visible ? entry.password : undefined}
+                >
+                  {visible ? entry.password : PASSWORD_MASK}
+                </span>
+                <span className="shrink-0 rounded border border-border/60 bg-surface px-1.5 py-0.5 text-ui-xs text-foreground-subtle select-none">
+                  {sourceLabel}
+                </span>
+                <ControlHintTooltip
+                  title={visible ? t('common.hidePassword') : t('common.showPassword')}
+                >
+                  <button
+                    type="button"
+                    aria-label={visible ? t('common.hidePassword') : t('common.showPassword')}
+                    onClick={() => toggleVisible(entry.id)}
+                    className="inline-flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground"
+                  >
+                    {visible ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                  </button>
+                </ControlHintTooltip>
+                <ControlHintTooltip
+                  title={copied ? t('hostPasswordHistory.copied') : t('hostPasswordHistory.copy')}
+                >
+                  <button
+                    type="button"
+                    aria-label={t('hostPasswordHistory.copy')}
+                    onClick={() => void handleCopy(entry)}
+                    className="inline-flex size-6 items-center justify-center rounded-md text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground"
+                  >
+                    {copied ? <Check className="size-3.5 text-primary" /> : <Copy className="size-3.5" />}
+                  </button>
+                </ControlHintTooltip>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 /** 主机新建/编辑对话框：主机名 + 地址/端口/用户名 + 三种认证方式 + 跳板机/公钥策略/旧版算法兼容 + 所属分组（多选）。 */
 export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSave, onClose }: HostFormDialogProps) {
   const { t } = useTranslation();
@@ -120,6 +378,8 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
   );
   const [groupIds, setGroupIds] = useState<number[]>(node?.groupIds ?? []);
   const [error, setError] = useState<string | null>(null);
+  // 密码历史弹层：仅编辑已存在主机时可用（新主机还没有可查的 host id）
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // 终端就绪钩子：引用命令库主键 id（可下拉选已有，也可内联新建保存后选用）
   const [readyCommandId, setReadyCommandId] = useState<number | null>(
@@ -361,6 +621,16 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
                   onChange={(e) => setAuth({ method: 'password', password: e.target.value })}
                   autoComplete="new-password"
                 />
+                {node != null ? (
+                  <button
+                    type="button"
+                    onClick={() => setHistoryOpen(true)}
+                    className="inline-flex items-center gap-1 self-start rounded text-ui-xs text-foreground-subtle transition-colors hover:text-foreground"
+                  >
+                    <History className="size-3" />
+                    <span>{t('hostPasswordHistory.entry')}</span>
+                  </button>
+                ) : null}
               </FormField>
             ) : null}
 
@@ -702,6 +972,14 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
         </div>
 
         {error ? <p className="text-ui-sm text-destructive">{error}</p> : null}
+
+        {/* 密码历史弹层：portal 到 body，避开表单面板的 overflow 裁剪 */}
+        {historyOpen && node != null
+          ? createPortal(
+              <PasswordHistoryDialog hostId={node.id} onClose={() => setHistoryOpen(false)} />,
+              document.body,
+            )
+          : null}
       </div>
     </Modal>
   );
