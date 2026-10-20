@@ -1263,11 +1263,20 @@ impl Connector {
                     // 新密码取协议驱动收集的序列尾部：PAM 只在新密码两次一致时
                     // 才 SUCCESS，故最后两条相等且非空即可确认（不看提示文本）
                     let verified_new_password: Option<String> = {
+                        // 取尾部两条（用 get 避免索引 panic：仓库 deny indexing_slicing）
                         let n = secret_answers.len();
                         if n >= 2 {
-                            let last = &secret_answers[n - 1];
-                            let prev = &secret_answers[n - 2];
-                            (!last.is_empty() && last == prev).then(|| last.clone())
+                            match (
+                                secret_answers.get(n - 2),
+                                secret_answers.get(n - 1),
+                            ) {
+                                (Some(prev), Some(last))
+                                    if !last.is_empty() && last == prev =>
+                                {
+                                    Some(last.clone())
+                                }
+                                _ => None,
+                            }
                         } else {
                             None
                         }
