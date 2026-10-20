@@ -12,10 +12,15 @@ A modern Rust rewrite of the classic [lrzsz](https://ohse.de/uwe/software/lrzsz.
 按三档递进解码（`decode_filename`，receiver.rs）：
 
 1. 严格 UTF-8（Linux 发送端常态）→ 直接使用
-2. GB18030 兜底（GBK 超集）——ZMODEM 协议不定文件名编码，GBK 命名
-   文件经 from_utf8_lossy 会替换成 U+FFFD 落盘即乱码；引入 encoding_rs
-   （0.8 已在 lock，reqwest 传递依赖，零新增编译）做兜底解码
-3. lossy 折损（GB18030 也解不了的截断序列，替换 U+FFFD 保底）
+2. CJK 编码依次探测：GB18030（GBK 超集，简中 Windows CP936）→ BIG5
+   （繁中 CP950）→ SHIFT_JIS（日文 CP932）→ EUC-KR（韩文 CP949）——
+   返回第一个完整解码的结果（ZMODEM 协议不定文件名编码，非 UTF-8
+   命名文件经 from_utf8_lossy 会替换成 U+FFFD 落盘即乱码；引入
+   encoding_rs 0.8，已在 lock 零新增编译）。注意编码探测的固有局限：
+   多数字节序列在多种编码下都合法，「无解码错误」不等于「编码正确」
+   ——排序按实际使用概率（简中环境压倒性多数），误判时结果仍是可打印
+   文本而非 U+FFFD，但不保证字面正确
+3. lossy 折损（全部解不了的截断序列，替换 U+FFFD 保底）
 
 unix 侧不受影响：OsStr 本质是字节串，`OsStr::from_bytes` 原样保留
 原始字节（上游行为）。
