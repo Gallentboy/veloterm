@@ -1,5 +1,12 @@
+# Apple Silicon 本地开发性能优化 + CI 恒定基线。
+# 不可用 target-cpu=native：GitHub 的 macOS ARM runner 跑在虚拟机里，LLVM 的
+# native 探测在该环境下会丢失 aes/sha2 等默认特性，导致 ring 0.17.14 的
+# const 断言（cpu/arm/darwin.rs 的 CAPS_STATIC == MIN_STATIC_FEATURES）在 CI
+# 编译期炸掉（本机真机探测齐全不触发——同版本 rustc/ring 本机全绿 CI 失败的
+# 根因）。固定 apple-m1 基线不做任何运行时探测，CI/本地行为恒定；相比
+# v8.0-a 默认基线保留 crypto/crc 等绝大部分收益（M 系芯片全覆盖）。
 [target.aarch64-apple-darwin]
-rustflags = ["-C", "target-cpu=native"]
+rustflags = ["-C", "target-cpu=apple-m1"]
 
 # Windows MSVC：静态链接 C 运行时（/MT），产物不依赖目标机的 VC++ Redistributable
 # （vcruntime140.dll），干净系统可直接运行；代价是每个 exe 增大约 100-200KB。

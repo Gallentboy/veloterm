@@ -13,7 +13,7 @@
     "tauri": "tauri",
     "veloterm:dev": "tauri dev",
     "veloterm:build": "node scripts/build-tools.mjs && tauri build",
-    "veloterm:build:mac-arm": "tauri build --target aarch64-apple-darwin --bundles app"
+    "veloterm:build:mac-arm": "RUSTFLAGS='-C target-cpu=native' tauri build --target aarch64-apple-darwin --bundles app"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.3",
