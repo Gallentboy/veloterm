@@ -21,7 +21,7 @@
 # - libpcre (PCRE2 8-bit 静态) / libz (zlib 静态) / libdnet-stripped (静态，
 #   需 Npcap SDK 提供 Packet) —— add_subdirectory 直接消费其 CMake target，
 #   不猜库文件名。
-# - Npcap SDK：-DNPCAP_SDK_DIR=<含 Include/ 与 Lib/x64/ 的根>
+# - Npcap SDK：-DNPCAP_SDK_DIR=<含 Include/ 与 Lib/{x64,ARM64}/ 的根>
 # - OpenSSL：-DOPENSSL_DIR=<含 include/ 与 lib/libssl.lib、libcrypto.lib 的根>
 #   （CI 复用 vcpkg 的 x64-windows-static，与 SQLCipher / openssl-app 同源）
 #
@@ -491,7 +491,7 @@ set(VELOTERM_NCAT_LIBS
     veloterm_nbase
     veloterm_nsock
     veloterm_lua
-    "${NPCAP_SDK_DIR}/Lib/x64/wpcap.lib"
+    "${NPCAP_SDK_DIR}/Lib/${VELOTERM_NPCAP_ARCH}/wpcap.lib"
     "${OPENSSL_DIR}/lib/libssl.lib"
     "${OPENSSL_DIR}/lib/libcrypto.lib"
     ws2_32 iphlpapi advapi32 shell32 user32 gdi32 crypt32
@@ -504,8 +504,8 @@ set(VELOTERM_NPING_LIBS
     veloterm_nsock
     veloterm_netutil
     dnet
-    "${NPCAP_SDK_DIR}/Lib/x64/wpcap.lib"
-    "${NPCAP_SDK_DIR}/Lib/x64/Packet.lib"
+    "${NPCAP_SDK_DIR}/Lib/${VELOTERM_NPCAP_ARCH}/wpcap.lib"
+    "${NPCAP_SDK_DIR}/Lib/${VELOTERM_NPCAP_ARCH}/Packet.lib"
     "${OPENSSL_DIR}/lib/libssl.lib"
     "${OPENSSL_DIR}/lib/libcrypto.lib"
     ws2_32 iphlpapi advapi32 shell32 user32 gdi32 crypt32
