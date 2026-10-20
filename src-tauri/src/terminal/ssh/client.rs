@@ -1215,9 +1215,14 @@ impl Connector {
                                 self.id,
                                 kbdint_attempts + 1
                             );
-                            // 新一轮：清空本轮的应答收集与首轮自动填标记
+                            // 新一轮：清空本轮的应答收集。**不再重置
+                            // plain_password_filled**——保存的密码只在第一次尝试时
+                            // 自动填一次：若它错了，重试时再填同一个错密码只会让
+                            // 服务器重复做 PAM 校验（pam_unix 的哈希计算刻意慢，
+                            // 防暴力破解），4 次 kbd-int + 1 次 password 回落累计
+                            // 5s+ 才报错（实测体感）。保持 filled=true 后，重试轮
+                            // 会显示 Password: 等用户输入，失败也能立刻让用户改。
                             secret_answers.clear();
-                            plain_password_filled = false;
                             round = 0;
                             kb = session
                                 .authenticate_keyboard_interactive_start(
@@ -1466,7 +1471,19 @@ impl Connector {
                     }
                     return Ok(());
                 }
-                // 回落：password 方法（不支持 kbd-int 的服务器）
+                // 回落：password 方法（仅当 kbd-int 从未成功发起过交互——
+                // 即服务器不支持 kbd-int）。若 kbd-int 已经用同一个保存密码
+                // 试过并失败，再走 password 必然同样失败，只会白等一次服务器
+                // PAM 校验（pam_unix 哈希刻意慢，实测 ~3.2s/次），故直接跳过。
+                if kbdint_attempts > 0 {
+                    log::info!(
+                        "[SSH {}] kbd-int 已用保存密码失败过，跳过 password 回落（避免重复等待）",
+                        self.id
+                    );
+                    return Err(ConnectionError::Authentication(
+                        "kbd-int 已用保存密码失败过，跳过 password 回落".to_string(),
+                    ));
+                }
                 let response = session
                     .authenticate_password(username.to_string(), password)
                     .await?;
