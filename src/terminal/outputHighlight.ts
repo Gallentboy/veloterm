@@ -23,6 +23,8 @@
  * - IPv4（可带 :port）/ `::` 压缩形 IPv6 / 常见端口 → 蓝
  * - 已着色探测：若该行已含 ANSI 前景色码，跳过整行（避免与程序自身
  *   颜色冲突——git diff --color、ls --color 等自带颜色的输出不再二次着色）
+ * - 字符串型序列保护：行内含 OSC/DCS/APC/SOS/PM 起点（载荷为任意文本）时
+ *   跳过整行，防止颜色码注入序列载荷破坏其解析（标题/链接/剪贴板等）
  *
  * 可点击链接（URL / IPv4）走 xterm registerLinkProvider——原样写入文本、
  * 悬停下划线 + 点击事件，不注入转义。URL 经合成 anchor(target=_blank)
@@ -76,13 +78,22 @@ const LS_PERM_LINE = /^\s*[-dl][rwxsStT+-]{9}(\s|$)/;
 const HAS_ANSI_FG = /\x1b\[(3|4|9|10)[0-9]m/;
 
 /**
+ * 行内含「字符串型转义序列」起点（OSC `]` / DCS `P` / APC `_` / SOS `X` / PM `^`）
+ * → 跳过整行。这些序列的载荷是任意文本（标题、OSC 8 链接 URL、OSC 52 剪贴板
+ * base64、图形数据），在其中注入颜色码会破坏序列本身——xterm 的 OSC 解析器
+ * 见载荷内 ESC 即判序列中断，残余载荷泄漏为可见文本；CSI 等结构化序列的
+ * 参数不含字母词形，无需排除。
+ */
+const HAS_STRING_SEQ = /\x1b[\]P_X^]/;
+
+/**
  * 扫描单行文本，返回带 ANSI 转义注入的行（原样返回=未命中）。
- * 行内的 CSI/OSC 序列会被当普通文本扫（规则均为可见字符词形，
- * 不会在序列字节内命中；已着色行整体跳过兜底）。
+ * 已着色行、含字符串型序列的行、ls 权限行整行跳过；其余按规则扫描注入。
  */
 function highlightLine(line: string): string {
-  if (line.length > 8192) return line; // 超长行跳过（性能兜底）
+  if (line.length > 8192) return line; // 超长行跳过（性能兑底）
   if (HAS_ANSI_FG.test(line)) return line; // 程序已着色，跳过
+  if (HAS_STRING_SEQ.test(line)) return line; // OSC/DCS/APC 载荷不可注入（宁可漏不可错）
   if (LS_PERM_LINE.test(line)) return line;
 
   // diff 行首着色（+/- 前缀 + 缩进原样保留）
