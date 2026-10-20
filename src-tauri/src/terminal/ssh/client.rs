@@ -1128,6 +1128,8 @@ impl Connector {
                 // 非空应答；PAM 只在新密码两次一致时返回 SUCCESS，故成功时
                 // 「最后两条相等」即为新密码（无需识别提示文本语义）
                 let mut secret_answers: Vec<String> = Vec::new();
+                // 普通密码提示只自动填一次（见下方 prompt 循环注释）
+                let mut plain_password_filled = false;
                 loop {
                     match kb {
                         KeyboardInteractiveAuthResponse::Success => {
@@ -1244,19 +1246,22 @@ impl Connector {
                                     text_is_current || text_is_new || text_is_retype;
                                 // 是否为「需要用户输入的改密步骤」：协议信号优先
                                 let is_secret = !p.echo;
-                                let is_change_step = text_is_change_step
-                                    || (is_secret && (expiry_logged || round > 1));
-                                // 复刻 OpenSSH sshconnect2.c::input_userauth_info_req：
-                                // kbd-int 的**每个** prompt 都由用户输入，绝不自动填
-                                // 保存的密码——那里只用 echo 决定是否回显：
-                                //     response = read_passphrase(prompt, echo ? RP_ECHO : 0)
-                                // 保存的密码只属于 password 认证方法（userauth_passwd），
-                                // 两条路径在 OpenSSH 里严格分开。此前我们在 kbd-int
-                                // 第一轮自动填密码，导致密码过期场景下服务器直接接受
-                                // 旧密码放行（Success），改密链被跳过、改密推迟到 shell
-                                // 内 passwd——实测「Current password 输错也能进 shell」
-                                // 正是这条路径造成的。
-                                let _ = is_change_step; // 保留分类供调试/日志使用
+                                let _ = is_secret;
+                                // 第一次普通密码提示（Password:，非改密链）→ 自动填
+                                // 保存的密码，省去手输；此后的所有提示（含改密链的
+                                // Current/New/Retype）与 OpenSSH 一致交给用户输入
+                                // （sshconnect2.c::input_userauth_info_req 的
+                                // read_passphrase(prompt, echo?RP_ECHO:0) 就是每轮都问）。
+                                //
+                                // 判据只看「是不是第一次普通密码提示」，不看
+                                // expiry_logged：过期场景第一轮的 instructions 就带
+                                // 「required to change」，会让 expiry_logged 立即置位，
+                                // 若用它做判据则第一轮 Password: 既不自动填也不问用户。
+                                if !text_is_change_step && !plain_password_filled {
+                                    plain_password_filled = true;
+                                    responses.push(password.to_string());
+                                    continue;
+                                }
                                 let answer = self.ask_in_terminal(&p.prompt).await;
                                 match answer {
                                     Some(a) => {
