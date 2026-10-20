@@ -1131,6 +1131,28 @@ impl Connector {
                 loop {
                     match kb {
                         KeyboardInteractiveAuthResponse::Success => {
+                            // 零 prompt 的 Success = 服务器未验证密码就放行。
+                            // 这是 OpenSSH 对「密码已过期」账号的行为：pam_acct_mgmt
+                            // 返回 PAM_NEW_AUTHTOK_REQD 时 sshd 视认证为成功，改密
+                            // 推迟到登录后的 do_pwchange()（shell 内强制 passwd）。
+                            // 后果：用户在 shell 的 passwd 里输错当前密码时，passwd
+                            // 失败退出但 shell 仍会起来（实测），看起来像「密码错了
+                            // 还能进」——客户端无法阻止（是服务端策略），但必须让
+                            // 用户知道这次登录未经密码校验。
+                            if round == 0 {
+                                log::warn!(
+                                    "[SSH {}] keyboard-interactive 未经任何提示即 Success：\
+                                     密码未被服务器校验（典型为密码过期，改密被推迟到 shell 内 passwd）",
+                                    self.id
+                                );
+                                let notice = "\r\n\x1b[93m[提示] 服务器未校验密码即放行（密码可能已过期）。\
+如果随后出现 passwd 提示，请在 shell 内完成改密；当前密码输错时 passwd 会失败，\
+但服务器仍可能放行登录。\x1b[0m\r\n";
+                                let _ = self
+                                    .tx
+                                    .send(RCEvent::Output(1, bytes::Bytes::from(notice)))
+                                    .await;
+                            }
                             log::info!(
                                 "[SSH {}] Authenticated via keyboard-interactive as {}",
                                 self.id,
@@ -1224,20 +1246,29 @@ impl Connector {
                                 let is_secret = !p.echo;
                                 let is_change_step = text_is_change_step
                                     || (is_secret && (expiry_logged || round > 1));
-                                // 普通认证提示（Password:，未进入改密流程）→
-                                // 自动填保存的密码；改密流程步骤 → 终端等用户输入
-                                if !is_change_step && !expiry_logged {
-                                    responses.push(password.to_string());
-                                    continue;
-                                }
+                                // 复刻 OpenSSH sshconnect2.c::input_userauth_info_req：
+                                // kbd-int 的**每个** prompt 都由用户输入，绝不自动填
+                                // 保存的密码——那里只用 echo 决定是否回显：
+                                //     response = read_passphrase(prompt, echo ? RP_ECHO : 0)
+                                // 保存的密码只属于 password 认证方法（userauth_passwd），
+                                // 两条路径在 OpenSSH 里严格分开。此前我们在 kbd-int
+                                // 第一轮自动填密码，导致密码过期场景下服务器直接接受
+                                // 旧密码放行（Success），改密链被跳过、改密推迟到 shell
+                                // 内 passwd——实测「Current password 输错也能进 shell」
+                                // 正是这条路径造成的。
+                                let _ = is_change_step; // 保留分类供调试/日志使用
                                 let answer = self.ask_in_terminal(&p.prompt).await;
                                 match answer {
                                     Some(a) => {
-                                        // 协议驱动收集：改密流程中所有 echo=false
-                                        // 的非空应答按序入列；文本命中只用于把
-                                        // 明确的 new/retype 也纳入（echo=true 的
-                                        // 异常模块兜底）
-                                        if (is_secret || text_is_change_step) && !a.is_empty() {
+                                        // 只收集**改密链**的应答（current/new/retype）。
+                                        // 不能用 (is_secret || text_is_change_step)：
+                                        // 第一轮的普通 Password: 也是 echo=false，
+                                        // 收进来会让「尾部两条相等」在「用户两次输
+                                        // 同一个密码」时误判为改密成功并写库。
+                                        // 改密链的识别靠文本分类（PAM 的改密提示
+                                        // 文案有限且稳定：current/new/retype 三族），
+                                        // 写库判定仍走协议不变量（尾部两条相等）。
+                                        if text_is_change_step && !a.is_empty() {
                                             secret_answers.push(a.clone());
                                         }
                                         responses.push(a);
