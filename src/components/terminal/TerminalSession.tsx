@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { useDropTarget } from '@/hooks/useDropTarget';
 import { highlightOutput, registerOutputLinkProvider } from '@/terminal/outputHighlight';
+import { onSshKind } from '@/services/sshLifecycle';
 import { restoreSessionSnapshot, saveSessionSnapshot } from '@/terminal/sessionSnapshot';
 import { TerminalSearchBar } from '@/components/terminal/TerminalSearchBar';
 import { TerminalResourceBar } from '@/components/terminal/TerminalResourceBar';
@@ -638,6 +639,9 @@ export function TerminalSession({
       commandId: null as number | null,
       command: null as string | null,
       sent: false,
+      /** shell 通道已就绪（LifecycleKind::ShellReady）——认证期不得注入，
+       *  否则命令+回车会被 kbd-int 的 AUTH_INPUT_WAITER 当成密码提交 */
+      shellReady: false,
       quietTimer: null as number | null,
       deadlineTimer: null as number | null,
     };
@@ -655,6 +659,8 @@ export function TerminalSession({
 
     const hookTrySend = () => {
       if (isEntryDisposed || hookInjector.sent) return;
+      // 双保险：deadline 兜底计时也不能绕过 shellReady（认证可能远超 6s）
+      if (!hookInjector.shellReady) return;
       const { terminalId, commandId, command } = hookInjector;
       if (terminalId == null || command == null) return;
       hookInjector.sent = true;
@@ -669,6 +675,11 @@ export function TerminalSession({
     /** 输出到达：重置静止计时（仅在待注入时生效） */
     const hookOnOutput = () => {
       if (hookInjector.command == null || hookInjector.sent || isEntryDisposed) return;
+      // 认证期禁止注入：密码过期时 kbd-int 提示（"当前的密码:"）也走输出流，
+      // 若在此计时会把就绪钩子命令+回车当成密码提交给 AUTH_INPUT_WAITER，
+      // 直接导致认证失败断开（实测：提示一出现就自动回车）。只有 shell 通道
+      // 真正就绪（LifecycleKind::ShellReady）后才允许开始静止计时
+      if (!hookInjector.shellReady) return;
       if (hookInjector.quietTimer != null) {
         window.clearTimeout(hookInjector.quietTimer);
       }
@@ -1115,6 +1126,25 @@ export function TerminalSession({
         // + readline 重绘各显示一次，用户会看到命令出现两遍。命令已被删则静默跳过
         const readyCommandId = resolvedHost?.readyCommandId ?? null;
         if (readyCommandId != null) {
+          // shell 通道真正就绪（认证全部完成后首个 shell 输出）才允许注入：
+          // 认证期的 kbd-int 提示同样走输出流，若按输出计时会把钩子命令当成
+          // 密码提交（见 hookOnOutput 注释）。监听失败则 hookInjector.shellReady
+          // 永不置位 → 钩子静默不发（宁可不用，不可误发密码）
+          void onSshKind('shell-ready', (event) => {
+            if (isEntryDisposed) return;
+            const myTerminalId = terminalSessionRegistry.getTerminalId(sessionId);
+            if (myTerminalId === null || event.sessionId !== myTerminalId) return;
+            hookInjector.shellReady = true;
+            hookOnOutput();
+          })
+            .then((unlisten) => {
+              if (isEntryDisposed) {
+                unlisten();
+                return;
+              }
+              registryDisposers.push({ dispose: unlisten });
+            })
+            .catch(() => undefined);
           void listCommands()
             .then((all) => all.find((cmd) => cmd.id === readyCommandId))
             .then((cmd) => {
@@ -1122,10 +1152,12 @@ export function TerminalSession({
               hookInjector.terminalId = id;
               hookInjector.commandId = cmd.id;
               hookInjector.command = cmd.command;
-              // 兜底上限：持续刷屏 / 取命令期间已静默但后续无输出的极端场景
+              // 兜底上限：shell-ready 后持续刷屏 / 无输出的极端场景
               hookInjector.deadlineTimer = window.setTimeout(hookTrySend, HOOK_MAX_WAIT_MS);
-              // 从取到命令这一刻起立即开始静止计时（覆盖「首屏已输出完、当前静默」的常态）
-              hookInjector.quietTimer = window.setTimeout(hookTrySend, HOOK_QUIET_MS);
+              // 若 shell-ready 已先到（事件早于命令加载完成），立即开始静止计时
+              if (hookInjector.shellReady) {
+                hookInjector.quietTimer = window.setTimeout(hookTrySend, HOOK_QUIET_MS);
+              }
             })
             .catch(() => undefined);
         }

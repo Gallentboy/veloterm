@@ -1154,8 +1154,7 @@ impl Connector {
                                 .join("\x1e");
                             let looks_change = lower_all.contains("new password")
                                 || lower_all.contains("new unix password")
-                                || lower_all.contains("新密码")
-                                || lower_all.contains("新的密码");
+                                || (lower_all.contains('新') && lower_all.contains("密码"));
                             // 检测登记（改密流程进入时打一次 INFO，验证模式）。
                             // 调试期日志：默认注释，排查时取消注释即可
                             if !expiry_logged && (looks_change || !instructions.is_empty()) {
@@ -1192,12 +1191,26 @@ impl Connector {
                             let mut responses: Vec<String> = Vec::with_capacity(prompts.len());
                             for p in prompts {
                                 let lp = p.prompt.to_ascii_lowercase();
-                                let is_change_step = lp.contains("current")
-                                    || lp.contains("new password")
-                                    || lp.contains("retype")
-                                    || lp.contains("当前密码")
-                                    || lp.contains("新密码")
-                                    || lp.contains("重新输入");
+                                // 提示类别判定（中英双语 + 容错）：
+                                // - 中文 PAM 文案不固定：「新的密码」「新密码」「新的
+                                //   UNIX 密码」都是新密码轮，不能用连续子串「新密码」
+                                //   匹配（「新的密码」中间夹「的」→ 漏判 → candidate
+                                //   永不设置 → 一致对失败 → 不写库，实测）。
+                                //   改为「新」+「密码」双关键词（顺序无关）。
+                                // - 顺序：retype 必须先于 new 判（「重新输入新的密码」
+                                //   同时含两组关键词）
+                                let is_retype = lp.contains("retype")
+                                    || lp.contains("re-enter")
+                                    || lp.contains("重新输入")
+                                    || lp.contains("再次输入");
+                                let is_current = lp.contains("current")
+                                    || lp.contains("当前")
+                                    || lp.contains("原来");
+                                let is_new = !is_retype
+                                    && (lp.contains("new password")
+                                        || lp.contains("new unix password")
+                                        || (lp.contains('新') && lp.contains("密码")));
+                                let is_change_step = is_current || is_new || is_retype;
                                 // 普通认证提示（Password:，未进入改密流程）→
                                 // 自动填保存的密码；改密流程步骤（Current/New/
                                 // Retype）→ 终端显示提示等用户输入
@@ -1208,24 +1221,14 @@ impl Connector {
                                 let answer = self.ask_in_terminal(&p.prompt).await;
                                 match answer {
                                     Some(a) => {
-                                        // 改密各轮跟踪 New/Retype 一致对（写库依据）。
-                                        // retype 必须先判：「Retype new password」
-                                        // 同时含「new password」，else-if 顺序错会让
-                                        // retype 分支不可达（实测：retype 轮打成
-                                        // input new 标签、verified 永不设置、
-                                        // 数据库不更新——根因）
-                                        //
-                                        // 调试期明文日志：默认注释，排查时取消注释即可
-                                        // （含明文密码，勿长期开启）
-                                        if lp.contains("current") || lp.contains("当前密码") {
+                                        // 改密各轮跟踪 New/Retype 一致对（写库依据）
+                                        if is_current {
                                             // log::info!(
                                             //     "[SSH-PASSWD-CHANGE] session={} input current={:?} \\
                                             //      (verification mode: log-only)",
                                             //     self.id, a
                                             // );
-                                        } else if lp.contains("retype")
-                                            || lp.contains("重新输入")
-                                        {
+                                        } else if is_retype {
                                             // log::info!(
                                             //     "[SSH-PASSWD-CHANGE] session={} input retype={:?} \\
                                             //      (verification mode: log-only)",
@@ -1239,9 +1242,7 @@ impl Connector {
                                             {
                                                 change_new_verified = Some(a.clone());
                                             }
-                                        } else if lp.contains("new password")
-                                            || lp.contains("新密码")
-                                        {
+                                        } else if is_new {
                                             // log::info!(
                                             //     "[SSH-PASSWD-CHANGE] session={} input new={:?} \\
                                             //      (verification mode: log-only)",

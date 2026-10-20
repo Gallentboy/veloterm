@@ -217,7 +217,12 @@ if (!only || only === 'goffi') {
     );
     process.exit(1);
   }
-  if (goffiCC) process.env.CC = goffiCC;
+  if (goffiCC) {
+    // 不写 process.env.CC：configure/libtool 也会继承它，而 libtool 会把
+    // Windows 反斜杠路径吃掉（C:\msys64\... → C:msys64...，command not
+    // found）——CC 只在下面 go build 调用时局部传入
+    console.log(`[build-tools] goffi(arm64): CC=${goffiCC}（仅本次 go build）`);
+  }
 }
 
 // 合并构建：宿主 = vendor/fzf（package main，veloterm_ffi.go 导出 fzf 入口），
@@ -233,7 +238,14 @@ if (!only || only === 'goffi') {
       `-ldflags "-s -w -X github.com/mikefarah/yq/v4/cmd.GitDescribe=${yqVersion} -X main.version=${fzfVersion} -X main.revision=" ` +
       `-o "${join(outDir, 'veloterm_goffi.dll')}" .`,
     { cwd: goffiHost, stdio: 'inherit',
-      env: { ...process.env, CGO_ENABLED: '1', ...(isArm64 ? {} : { GOAMD64: 'v3' }) } },
+      env: {
+        ...process.env,
+        CGO_ENABLED: '1',
+        ...(isArm64 ? {} : { GOAMD64: 'v3' }),
+        // arm64：显式指定 CLANGARM64 编译器（正斜杠路径——cgo 同样不认反斜杠
+        // 以外的转义形式；x86_64 不设，沿用 PATH 上的 MinGW gcc）
+        ...(goffiCC ? { CC: goffiCC.replaceAll('\\', '/') } : {}),
+      } },
   );
   console.log(`[build-tools] veloterm_goffi.dll (yq ${yqVersion} + fzf ${fzfVersion}) -> ${join(outDir, 'veloterm_goffi.dll')}`);
 }
