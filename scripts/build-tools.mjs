@@ -450,9 +450,23 @@ if (!only || only === 'vim') {
     }
   }
 
-  // runtime 数据树 staging（vendor 树已裁剪 GUI 专属内容，直接整目录拷贝）
-  rmSync(join(outDir, 'vim-runtime'), { recursive: true, force: true });
-  cpSync(join(vimSrc, 'runtime'), join(outDir, 'vim-runtime'), { recursive: true });
+  // runtime 数据树 staging：整目录拷贝后剔除上游测试夹具——
+  // syntax/testdir（11MB，2411 个 .dump 期望输出快照）与 indent/testdir（348K）
+  // 是 vim 上游跑测试的输入/基线，运行时零用途（此前整拷使 Windows 安装包
+  // 平白多出 11.4MB 无关文件）；doc/testing.txt 与 colortest/hitest.vim 等
+  // 保留（前者是用户文档，后者是可在 vim 里 :so 演示的实用脚本）
+  const rtSrc = join(vimSrc, 'runtime');
+  const rtDest = join(outDir, 'vim-runtime');
+  rmSync(rtDest, { recursive: true, force: true });
+  cpSync(rtSrc, rtDest, { recursive: true });
+  const testFixtures = ['syntax/testdir', 'indent/testdir'];
+  for (const rel of testFixtures) {
+    const target = join(rtDest, rel);
+    if (existsSync(target)) {
+      rmSync(target, { recursive: true, force: true });
+      console.log(`[build-tools] 剔除 vim 测试夹具: runtime/${rel}`);
+    }
+  }
 
   // 构建期冒烟：--version + 无终端 headless 编辑（-es 静默 ex 模式，替换并写回
   // 后校验内容）——启动器与 vim64.dll 同目录加载，冒烟通过即证明 DLL 导出与
