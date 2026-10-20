@@ -16,6 +16,7 @@ import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { FormField, PasswordInput, TextArea, TextInput } from '@/components/hosts/formFields';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
+import { Tooltip } from '@/components/ui/tooltip';
 import {
   ACL_ALL,
   ACL_BITS,
@@ -52,6 +53,12 @@ interface TreeNode {
 
 const PERM_KEYS = ['read', 'write', 'create', 'delete', 'admin'] as const;
 type PermKey = (typeof PERM_KEYS)[number];
+
+/** 树栏宽度约束（同主布局侧栏的可拖语义）：默认 320px（原 w-80），最小 200、最大 640 */
+const ZK_TREE_DEFAULT_WIDTH = 320;
+const ZK_TREE_MIN_WIDTH = 200;
+const ZK_TREE_MAX_WIDTH = 640;
+const ZK_TREE_WIDTH_STORAGE_KEY = 'veloterm.zk.treeWidth';
 
 function timeOf(ms: number): string {
   if (ms === 0) return '—';
@@ -313,6 +320,14 @@ function ZkSessionView({
   const [treeFullyLoaded, setTreeFullyLoaded] = useState(false);
   const searchVersionRef = useRef(0);
   const [selected, setSelected] = useState('/');
+  // 树栏宽度（可拖动，语义同主布局左栏）：px 值持久化到 localStorage，
+  // 拖动期间只改内存态，pointerup 才落盘（避免每帧写 storage）
+  const [treeWidth, setTreeWidth] = useState<number>(() => {
+    const saved = Number(window.localStorage.getItem(ZK_TREE_WIDTH_STORAGE_KEY));
+    return Number.isFinite(saved) && saved >= ZK_TREE_MIN_WIDTH ? saved : ZK_TREE_DEFAULT_WIDTH;
+  });
+  const [isTreeResizing, setIsTreeResizing] = useState(false);
+  const treeResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [detail, setDetail] = useState<ZkNode | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [draftData, setDraftData] = useState('');
@@ -335,6 +350,35 @@ function ZkSessionView({
   const [aclAddId, setAclAddId] = useState('anyone');
   const [aclAddDigestUser, setAclAddDigestUser] = useState('');
   const [aclAddDigestPass, setAclAddDigestPass] = useState('');
+
+  // 树栏拖动（pointer 事件 + 全局捕获，同 AppShell 的 AI 面板拖拽条模式）：
+  // 拖动期间只改内存宽度，pointerup 才写 localStorage
+  const handleTreeResizePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    treeResizeRef.current = { startX: event.clientX, startWidth: treeWidth };
+    setIsTreeResizing(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const handleTreeResizePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const origin = treeResizeRef.current;
+    if (!origin) return;
+    const next = Math.min(
+      ZK_TREE_MAX_WIDTH,
+      Math.max(ZK_TREE_MIN_WIDTH, origin.startWidth + (event.clientX - origin.startX)),
+    );
+    setTreeWidth(next);
+  };
+  const finishTreeResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!treeResizeRef.current) return;
+    treeResizeRef.current = null;
+    setIsTreeResizing(false);
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // 指针已释放（pointercancel 等）：忽略
+    }
+    window.localStorage.setItem(ZK_TREE_WIDTH_STORAGE_KEY, String(treeWidth));
+  };
 
   const buildRelayId = (): number | null => {
     if (!relayEnabled) return null;
@@ -917,12 +961,15 @@ function ZkSessionView({
           <Network className="size-3.5" />
           {t('zk.grpcCall')}
         </Button>
-        <span
-          className="truncate font-mono text-ui-xs text-foreground-subtlest select-none"
-          title={grpcServiceSeed.service}
+        <Tooltip
+          content={grpcServiceSeed.service}
+          side="bottom"
+          className="max-w-[420px] whitespace-normal break-all"
         >
-          {grpcServiceSeed.service}
-        </span>
+          <span className="truncate font-mono text-ui-xs text-foreground-subtlest select-none">
+            {grpcServiceSeed.service}
+          </span>
+        </Tooltip>
       </div>
     ) : null;
 
@@ -1071,8 +1118,11 @@ function ZkSessionView({
       {/* 主体：树 + 详情 */}
       {sessionId ? (
         <div className="flex min-h-0 flex-1">
-          {/* 左：znode 树 */}
-          <div className="flex w-80 shrink-0 flex-col border-r border-border/50">
+          {/* 左：znode 树（宽度可拖，持久化到 localStorage） */}
+          <div
+            className="flex shrink-0 flex-col border-r border-border/50"
+            style={{ width: treeWidth }}
+          >
             <div className="flex items-center justify-between px-3 py-1.5">
               <div className="flex min-w-0 items-center gap-1.5">
                 <span className="text-ui-sm text-foreground-subtle select-none">{t('zk.treeTitle')}</span>
@@ -1182,34 +1232,61 @@ function ZkSessionView({
                         </button>
                       ) : null}
                     </span>
-                    <span
-                      className={cn(
-                        'truncate font-mono text-ui-sm',
-                        isSearchHit(node)
-                          ? 'font-medium text-primary'
-                          : node.ephemeral
-                            ? 'text-primary'
-                            : 'text-foreground',
-                      )}
-                      title={node.path}
+                    <Tooltip
+                      content={node.path}
+                      side="right"
+                      className="max-w-[420px] whitespace-normal break-all leading-relaxed"
                     >
-                      {node.name}
-                    </span>
+                      <span
+                        className={cn(
+                          'truncate font-mono text-ui-sm',
+                          isSearchHit(node)
+                            ? 'font-medium text-primary'
+                            : node.ephemeral
+                              ? 'text-primary'
+                              : 'text-foreground',
+                        )}
+                      >
+                        {node.name}
+                      </span>
+                    </Tooltip>
                   </button>
                   {node.path !== '/' ? (
                     <button
                       type="button"
                       className="shrink-0 p-1 text-foreground-subtlest opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
                       onClick={() => setDeleting(node.path)}
-                      title={t('zk.deleteTitle')}
                     >
-                      <Trash2 className="size-3" />
+                      <Tooltip content={t('zk.deleteTitle')} side="top">
+                        <Trash2 className="size-3" />
+                      </Tooltip>
                     </button>
                   ) : null}
                 </div>
               ))}
             </div>
           </div>
+
+          {/* 树栏拖拽条：与主布局（AI 面板/侧栏）同款——4px 热区 + hover 显示细胶囊 */}
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('zk.treeResize')}
+            aria-valuemin={ZK_TREE_MIN_WIDTH}
+            aria-valuemax={ZK_TREE_MAX_WIDTH}
+            aria-valuenow={treeWidth}
+            tabIndex={0}
+            onPointerDown={handleTreeResizePointerDown}
+            onPointerMove={handleTreeResizePointerMove}
+            onPointerUp={finishTreeResize}
+            onPointerCancel={finishTreeResize}
+            className={cn(
+              'group/zk-handle relative z-10 flex w-1 shrink-0 cursor-ew-resize touch-none items-center justify-center bg-transparent outline-none focus:outline-none focus-visible:ring-0',
+              "after:pointer-events-none after:absolute after:inset-y-0 after:w-0.5 after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-['']",
+              'hover:after:opacity-100 focus-visible:after:opacity-100',
+              isTreeResizing && 'after:opacity-100',
+            )}
+          />
 
           {/* 右：节点详情（数据 / 信息 / ACL） */}
           <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
@@ -1218,9 +1295,14 @@ function ZkSessionView({
             ) : detail ? (
               <div className="flex flex-col gap-4 p-4">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-mono text-ui-base text-foreground" title={selected}>
-                    {selected}
-                  </span>
+                  <Tooltip
+                    content={selected}
+                    side="bottom"
+                    align="start"
+                    className="max-w-[min(560px,calc(100vw-32px))] whitespace-normal break-all leading-relaxed"
+                  >
+                    <span className="truncate font-mono text-ui-base text-foreground">{selected}</span>
+                  </Tooltip>
                   <span className="shrink-0 text-ui-xs text-foreground-subtle select-none">
                     {t('zk.stat.version')}: {detail.stat.version} ·{' '}
                     {t('zk.stat.children')}: {detail.stat.numChildren} ·{' '}
