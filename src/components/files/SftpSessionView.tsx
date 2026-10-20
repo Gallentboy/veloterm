@@ -197,6 +197,9 @@ interface SftpFileRowProps {
   onDeleteItem: (item: RemoteFileItem) => void;
 }
 
+const SFTP_ROW_HEIGHT = 34;
+const SFTP_OVERSCAN = 15;
+
 const SftpFileRow = memo(function SftpFileRow({
   item,
   index,
@@ -228,7 +231,7 @@ const SftpFileRow = memo(function SftpFileRow({
       onDoubleClick={() => onDoubleClick(item)}
       onContextMenu={(event) => onContextMenu(event, item)}
       className={cn(
-        'transition-colors cursor-pointer group',
+        'h-[34px] transition-colors cursor-pointer group',
         isSelected ? 'bg-selected' : 'hover:bg-surface/40',
       )}
     >
@@ -546,6 +549,54 @@ export function SftpSessionView({
     setSelectedPaths(new Set());
     selectionAnchorRef.current = null;
   }, [currentPath]);
+
+  // ── 文件列表固定行高虚拟滚动（无论上千或上万文件，视口内仅保持 30~50 行 DOM）──
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const [listScrollTop, setListScrollTop] = useState(0);
+  const [listContainerHeight, setListContainerHeight] = useState(600);
+
+  const handleListScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setListScrollTop(e.currentTarget.scrollTop);
+  }, []);
+
+  useEffect(() => {
+    const el = listScrollRef.current;
+    if (!el) return;
+    setListContainerHeight(el.clientHeight || 600);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.height > 0) {
+          setListContainerHeight(entry.contentRect.height);
+        }
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // 切换目录时滚动位置归零
+  useEffect(() => {
+    if (listScrollRef.current) {
+      listScrollRef.current.scrollTop = 0;
+      setListScrollTop(0);
+    }
+  }, [currentPath]);
+
+  const { startIndex, endIndex, topSpacerHeight, bottomSpacerHeight } = useMemo(() => {
+    const count = items.length;
+    if (count === 0) {
+      return { startIndex: 0, endIndex: 0, topSpacerHeight: 0, bottomSpacerHeight: 0 };
+    }
+    const start = Math.max(0, Math.floor(listScrollTop / SFTP_ROW_HEIGHT) - SFTP_OVERSCAN);
+    const end = Math.min(count, Math.ceil((listScrollTop + listContainerHeight) / SFTP_ROW_HEIGHT) + SFTP_OVERSCAN);
+    const topSpacer = start * SFTP_ROW_HEIGHT;
+    const bottomSpacer = Math.max(0, (count - end) * SFTP_ROW_HEIGHT);
+    return { startIndex: start, endIndex: end, topSpacerHeight: topSpacer, bottomSpacerHeight: bottomSpacer };
+  }, [items.length, listScrollTop, listContainerHeight]);
+
+  const visibleItems = useMemo(() => {
+    return items.slice(startIndex, endIndex);
+  }, [items, startIndex, endIndex]);
 
   // ── 字体大小调节（每个 SFTP 会话独立，关闭 Tab 即复位，不持久化）──
   // 触发方式借用 Chrome 两指捏合手势：WebKit(WKWebView) 的 gesture 事件 + Chrome 合成的 ctrl+滚轮；
@@ -1267,7 +1318,11 @@ export function SftpSessionView({
       )}
 
       {/* 远程文件列表 */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={listScrollRef}
+        onScroll={handleListScroll}
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
         {isLoading && items.length === 0 ? (
           <div className="flex h-48 items-center justify-center text-foreground-subtle text-xs gap-2">
             <Loader2 className="size-4 animate-spin text-primary" />
@@ -1291,27 +1346,40 @@ export function SftpSessionView({
               </tr>
             </thead>
             <tbody className="divide-y divide-border/30">
-              {items.map((item, index) => (
-                <SftpFileRow
-                  key={item.path}
-                  item={item}
-                  index={index}
-                  isSelected={selectedPaths.has(item.path)}
-                  dirSizeLoading={dirSizePath === item.path}
-                  dirSize={dirSizes[item.path]}
-                  hostId={hostId}
-                  onSelect={handleRowSelect}
-                  onDragStart={handleRowDragStart}
-                  onDragEnd={endInternalDrag}
-                  onDoubleClick={handleRowDoubleClick}
-                  onContextMenu={handleRowContextMenu}
-                  onNavigate={handleNavigate}
-                  onPreview={handlePreview}
-                  onOpenEditor={onOpenEditor}
-                  onDownload={handleDownload}
-                  onDeleteItem={setItemToDelete}
-                />
-              ))}
+              {topSpacerHeight > 0 && (
+                <tr style={{ height: `${topSpacerHeight}px` }} aria-hidden>
+                  <td colSpan={7} className="p-0 border-0" />
+                </tr>
+              )}
+              {visibleItems.map((item, localIdx) => {
+                const index = startIndex + localIdx;
+                return (
+                  <SftpFileRow
+                    key={item.path}
+                    item={item}
+                    index={index}
+                    isSelected={selectedPaths.has(item.path)}
+                    dirSizeLoading={dirSizePath === item.path}
+                    dirSize={dirSizes[item.path]}
+                    hostId={hostId}
+                    onSelect={handleRowSelect}
+                    onDragStart={handleRowDragStart}
+                    onDragEnd={endInternalDrag}
+                    onDoubleClick={handleRowDoubleClick}
+                    onContextMenu={handleRowContextMenu}
+                    onNavigate={handleNavigate}
+                    onPreview={handlePreview}
+                    onOpenEditor={onOpenEditor}
+                    onDownload={handleDownload}
+                    onDeleteItem={setItemToDelete}
+                  />
+                );
+              })}
+              {bottomSpacerHeight > 0 && (
+                <tr style={{ height: `${bottomSpacerHeight}px` }} aria-hidden>
+                  <td colSpan={7} className="p-0 border-0" />
+                </tr>
+              )}
             </tbody>
           </table>
         )}

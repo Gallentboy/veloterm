@@ -732,8 +732,11 @@ export function TerminalSession({
       dispose: () => {},
     };
 
+    let cleanupOutputWriter: (() => void) | undefined;
+
     entry.dispose = () => {
       isEntryDisposed = true;
+      cleanupOutputWriter?.();
       hookClearTimers();
       entry.onTerminalIdReady = undefined;
       for (const d of registryDisposers) {
@@ -944,12 +947,61 @@ export function TerminalSession({
     });
 
     // 建立接收后端 `Channel<Vec<u8>>` 输出的字节通道，直接将 `Uint8Array` 写入 xterm。
-    // 智能高亮（ERROR/WARN/成功符/IP/diff）：写入前按行扫描注入 ANSI 着色，
-    // 性能约束见 outputHighlight.ts（超长行/已着色行/超 512KB 块跳过）
+    // 性能优化：
+    // 1. 复用持久单例 TextDecoder 并开启 stream: true，消除每次回调频繁 new 的 GC 压力并防止跨包多字节字符切分乱码；
+    // 2. 突发洪峰流量保护（Flood Protection）：统计 100ms 窗口吞吐，>64KB 时自动 bypass 智能高亮行扫描；
+    // 3. requestAnimationFrame 批量合并写入缓冲，降低密集小包频繁调用 xterm.write 引起的渲染重绘开销。
+    const decoder = new TextDecoder('utf-8', { fatal: false });
+    let pendingWrite = '';
+    let rafHandle: number | null = null;
+    let burstByteCount = 0;
+    let burstWindowStart = performance.now();
+    let isBurstMode = false;
+
+    const flushWrite = () => {
+      rafHandle = null;
+      if (isEntryDisposed || !pendingWrite) return;
+      const toWrite = pendingWrite;
+      pendingWrite = '';
+      term.write(toWrite);
+    };
+
+    const scheduleWrite = (text: string) => {
+      pendingWrite += text;
+      if (pendingWrite.length >= 65536) {
+        if (rafHandle !== null) {
+          cancelAnimationFrame(rafHandle);
+          rafHandle = null;
+        }
+        flushWrite();
+        return;
+      }
+      if (rafHandle === null) {
+        rafHandle = requestAnimationFrame(flushWrite);
+      }
+    };
+
+    cleanupOutputWriter = () => {
+      if (rafHandle !== null) {
+        cancelAnimationFrame(rafHandle);
+        rafHandle = null;
+      }
+      pendingWrite = '';
+    };
+
     const outputChannel = createTerminalByteChannel((bytes: Uint8Array) => {
       if (isEntryDisposed) return;
-      const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-      term.write(highlightOutput(text));
+      const now = performance.now();
+      if (now - burstWindowStart > 100) {
+        isBurstMode = burstByteCount > 64 * 1024;
+        burstByteCount = 0;
+        burstWindowStart = now;
+      }
+      burstByteCount += bytes.length;
+
+      const text = decoder.decode(bytes, { stream: true });
+      const processed = isBurstMode ? text : highlightOutput(text);
+      scheduleWrite(processed);
       // 就绪钩子待发时，每次输出重置静止计时（输出停止 = 首屏完成，可安全注入）
       hookOnOutput();
     });
