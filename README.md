@@ -90,7 +90,7 @@ cargo clippy --workspace --all-targets
 
 ## 打包与发布
 
-正式安装包由 GitHub Actions 出（`.github/workflows/publish.yml`）：**推版本 tag 触发**（`v1.0.1` 或 `1.0.1` 形态；release 分支常规推送不出包）。矩阵四腿：Windows x64（windows-latest，NSIS 安装包）+ Windows ARM64（windows-11-arm，工具链全套同构：MSYS2 CLANGARM64 / vcpkg arm64-windows-static / Npcap SDK 自带 Lib/ARM64）+ macOS（M 芯片 macos-26 出 aarch64 dmg、Intel 芯片 macos-26-intel 出 x86_64 dmg，各自原生 runner；无签名证书，首次打开需右键绕过 Gatekeeper）。产物为 draft release。vcpkg 依赖（OpenSSL 静态库）走 GitHub Packages NuGet 二进制缓存，首次冷编译后续秒级恢复。
+正式安装包由 GitHub Actions 出（`.github/workflows/publish.yml`）：**推版本 tag 触发**（`v1.0.1` 或 `1.0.1` 形态；release 分支常规推送不出包）。矩阵四腿：Windows x64（windows-latest，NSIS 安装包）+ Windows ARM64（windows-11-arm，工具链全套同构：MSYS2 CLANGARM64 / vcpkg arm64-windows-static / Npcap SDK 自带 Lib/ARM64）+ macOS（M 芯片 macos-26 出 aarch64 dmg、Intel 芯片 macos-26-intel 出 x86_64 dmg，各自原生 runner；无签名证书，首次打开需右键绕过 Gatekeeper）。产物发布为 Release（tag 用 GitHub 通用的 `v<version>` 形态，如 `v1.0.3`；触发用的版本 tag 可带或不带 v 前缀）。vcpkg 依赖（OpenSSL 静态库）走 GitHub Packages NuGet 二进制缓存，首次冷编译后续秒级恢复。
 
 主二进制名为 `VeloTerm.exe`（`mainBinaryName` 配置），任务管理器与 `ps` 可按 `VeloTerm` 检索。
 
