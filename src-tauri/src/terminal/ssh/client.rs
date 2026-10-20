@@ -1124,9 +1124,10 @@ impl Connector {
                 let mut round = 0u32;
                 // 过期/改密流程已登记（首次 INFO 后续轮降 DEBUG 防刷屏）
                 let mut expiry_logged = false;
-                // 改密新密码跟踪：New 轮候选 → Retype 一致确认（写库依据）
-                let mut change_new_candidate: Option<String> = None;
-                let mut change_new_verified: Option<String> = None;
+                // 改密新密码跟踪（协议驱动）：收集改密流程中所有 echo=false 的
+                // 非空应答；PAM 只在新密码两次一致时返回 SUCCESS，故成功时
+                // 「最后两条相等」即为新密码（无需识别提示文本语义）
+                let mut secret_answers: Vec<String> = Vec::new();
                 loop {
                     match kb {
                         KeyboardInteractiveAuthResponse::Success => {
@@ -1191,29 +1192,40 @@ impl Connector {
                             let mut responses: Vec<String> = Vec::with_capacity(prompts.len());
                             for p in prompts {
                                 let lp = p.prompt.to_ascii_lowercase();
-                                // 提示类别判定（中英双语 + 容错）：
-                                // - 中文 PAM 文案不固定：「新的密码」「新密码」「新的
-                                //   UNIX 密码」都是新密码轮，不能用连续子串「新密码」
-                                //   匹配（「新的密码」中间夹「的」→ 漏判 → candidate
-                                //   永不设置 → 一致对失败 → 不写库，实测）。
-                                //   改为「新」+「密码」双关键词（顺序无关）。
-                                // - 顺序：retype 必须先于 new 判（「重新输入新的密码」
-                                //   同时含两组关键词）
-                                let is_retype = lp.contains("retype")
+                                // 协议驱动的判定（RFC 4256 的 echo 字段）：
+                                // PAM 提示文本由各 pam_*.so 自由书写、随 locale
+                                // 翻译（pam_unix 一条提示就有几十种语言变体），
+                                // 文本匹配永远追不上。但 echo 是协议层语义——
+                                // echo=false 即「输入不显示」，密码类输入恒为
+                                // false，用户名/OTP 码通常为 true。
+                                //
+                                // 改密流程的结构不变量（比文本可靠）：
+                                //   1. PAM 只在新密码两次一致时才返回 SUCCESS
+                                //   2. 因此「echo=false 应答序列的最后两条相等」
+                                //      就是新密码，无需知道哪条提示叫 new
+                                //   3. 流程中的第一个 echo=false 应答是当前密码
+                                //
+                                // 文本关键词仅作降级兜底：echo 全为 true 的异常
+                                // 模块（少见）仍能靠它识别改密步骤。
+                                let text_is_retype = lp.contains("retype")
                                     || lp.contains("re-enter")
                                     || lp.contains("重新输入")
                                     || lp.contains("再次输入");
-                                let is_current = lp.contains("current")
+                                let text_is_current = lp.contains("current")
                                     || lp.contains("当前")
                                     || lp.contains("原来");
-                                let is_new = !is_retype
+                                let text_is_new = !text_is_retype
                                     && (lp.contains("new password")
                                         || lp.contains("new unix password")
                                         || (lp.contains('新') && lp.contains("密码")));
-                                let is_change_step = is_current || is_new || is_retype;
+                                let text_is_change_step =
+                                    text_is_current || text_is_new || text_is_retype;
+                                // 是否为「需要用户输入的改密步骤」：协议信号优先
+                                let is_secret = !p.echo;
+                                let is_change_step = text_is_change_step
+                                    || (is_secret && (expiry_logged || round > 1));
                                 // 普通认证提示（Password:，未进入改密流程）→
-                                // 自动填保存的密码；改密流程步骤（Current/New/
-                                // Retype）→ 终端显示提示等用户输入
+                                // 自动填保存的密码；改密流程步骤 → 终端等用户输入
                                 if !is_change_step && !expiry_logged {
                                     responses.push(password.to_string());
                                     continue;
@@ -1221,34 +1233,12 @@ impl Connector {
                                 let answer = self.ask_in_terminal(&p.prompt).await;
                                 match answer {
                                     Some(a) => {
-                                        // 改密各轮跟踪 New/Retype 一致对（写库依据）
-                                        if is_current {
-                                            // log::info!(
-                                            //     "[SSH-PASSWD-CHANGE] session={} input current={:?} \\
-                                            //      (verification mode: log-only)",
-                                            //     self.id, a
-                                            // );
-                                        } else if is_retype {
-                                            // log::info!(
-                                            //     "[SSH-PASSWD-CHANGE] session={} input retype={:?} \\
-                                            //      (verification mode: log-only)",
-                                            //     self.id, a
-                                            // );
-                                            // 双保险一致性：PAM 侧也校验，
-                                            // 不一致时 PAM 会拒绝重来
-                                            if change_new_candidate.as_deref()
-                                                == Some(a.as_str())
-                                                && !a.is_empty()
-                                            {
-                                                change_new_verified = Some(a.clone());
-                                            }
-                                        } else if is_new {
-                                            // log::info!(
-                                            //     "[SSH-PASSWD-CHANGE] session={} input new={:?} \\
-                                            //      (verification mode: log-only)",
-                                            //     self.id, a
-                                            // );
-                                            change_new_candidate = Some(a.clone());
+                                        // 协议驱动收集：改密流程中所有 echo=false
+                                        // 的非空应答按序入列；文本命中只用于把
+                                        // 明确的 new/retype 也纳入（echo=true 的
+                                        // 异常模块兜底）
+                                        if (is_secret || text_is_change_step) && !a.is_empty() {
+                                            secret_answers.push(a.clone());
                                         }
                                         responses.push(a);
                                     }
@@ -1269,10 +1259,20 @@ impl Connector {
                     }
                 }
                 if kbdint_worked {
-                    // 认证内改密成功（PAM 全链验证通过才返回 Success）：
-                    // 新密码 100% 可靠（我们 setanswer 发出的 + New/Retype
-                    // 双一致确认）→ 自动回写主机库保存的密码
-                    if let Some(new_pw) = &change_new_verified {
+                    // 认证内改密成功（PAM 全链验证通过才返回 Success）。
+                    // 新密码取协议驱动收集的序列尾部：PAM 只在新密码两次一致时
+                    // 才 SUCCESS，故最后两条相等且非空即可确认（不看提示文本）
+                    let verified_new_password: Option<String> = {
+                        let n = secret_answers.len();
+                        if n >= 2 {
+                            let last = &secret_answers[n - 1];
+                            let prev = &secret_answers[n - 2];
+                            (!last.is_empty() && last == prev).then(|| last.clone())
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(new_pw) = &verified_new_password {
                         // 调试期明文日志（含新密码）：默认注释，排查时取消注释
                         // log::info!(
                         //     "[SSH-PASSWD-CHANGE] session={} CONFIRMED: \\
