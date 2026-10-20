@@ -1293,11 +1293,13 @@ impl Connector {
                             // （仅 debug2 日志），但终端用户连续看到三个 Password:
                             // 而不知道前一次已失败，观感像卡住——补一条与原生命令
                             // 行 ssh 输出同义的提示。
+                            // 不带前导 \r\n：上一轮 ask_in_terminal 在无回显模式下
+                            // 读完行已写过换行，再加一个会产生空行。
                             let _ = self
                                 .tx
                                 .send(RCEvent::Output(
                                     1,
-                                    bytes::Bytes::from("\r\nPermission denied, please try again.\r\n"),
+                                    bytes::Bytes::from("Permission denied, please try again.\r\n"),
                                 ))
                                 .await;
                             // 新一轮：清空本轮的应答收集。**不再重置
