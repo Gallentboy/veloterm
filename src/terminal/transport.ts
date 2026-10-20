@@ -528,9 +528,32 @@ export class TauriChannelTerminalTransport implements ITerminalTransport {
   }
 
   async write({ id, data }: TerminalWriteParams): Promise<void> {
+    // 性能优化：将 Uint8Array 编码为紧凑 Base64 字符串而非 Array.from 的巨型 number[] 数组，
+    // 消除 V8 为每个字节分配浮点数对象的堆内存暴增与庞大 JSON 序列化开销
+    const CHUNK_SIZE = 0x8000;
+    let base64 = '';
+    if (data.length < CHUNK_SIZE) {
+      let binary = '';
+      for (let i = 0; i < data.length; i++) {
+        binary += String.fromCharCode(data[i]);
+      }
+      base64 = btoa(binary);
+    } else {
+      const slices: string[] = [];
+      for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+        slices.push(
+          String.fromCharCode.apply(
+            null,
+            data.subarray(i, i + CHUNK_SIZE) as unknown as number[],
+          ),
+        );
+      }
+      base64 = btoa(slices.join(''));
+    }
+
     await invoke('terminal_write', {
       id,
-      data: Array.from(data),
+      data: base64,
     });
   }
 
