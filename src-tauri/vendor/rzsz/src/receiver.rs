@@ -1,9 +1,9 @@
 //! ZModem receiver implementation.
 //! Equivalent to the wcreceive/tryz/rzfile flow in lrz.c.
 
+// unix 分支用 OsStrExt 从原始字节构造路径；非 unix 走 UTF-8 折损成 String
+#[cfg(unix)]
 use std::ffi::OsStr;
-#[cfg(not(unix))]
-use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Write, Seek, SeekFrom, BufWriter};
 use std::path::{Path, PathBuf};
@@ -323,11 +323,13 @@ pub fn receive_files<R: TimeoutRead, W: Write>(
             use std::os::unix::ffi::OsStrExt;
             Path::new(OsStr::from_bytes(&file_info.name))
         };
-        // 非 unix：先绑定 OsString 再加长生命周期——直接
-        // Path::new(&OsString::from(..)) 会让临时值在语句结束即释放、
-        // 后续 join 借用悬垂（Windows 编译实测 E0716）
+        // 非 unix：先绑定再加长生命周期——Path::new 返回借用，右值临时
+        // 字符串会在语句结束即释放、后续 join 借用悬垂（Windows 编译实测
+        // E0716）。此处用 String（路径已经是 UTF-8 折损后的文本，无需
+        // OsString 包装；GBK 等非 UTF-8 文件名的损失发生在 from_utf8_lossy，
+        // 与容器类型无关）
         #[cfg(not(unix))]
-        let name_owned = OsString::from(String::from_utf8_lossy(&file_info.name).into_owned());
+        let name_owned = String::from_utf8_lossy(&file_info.name).into_owned();
         #[cfg(not(unix))]
         let name = Path::new(&name_owned);
 
