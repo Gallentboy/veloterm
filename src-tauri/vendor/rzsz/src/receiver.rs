@@ -108,21 +108,35 @@ fn parse_file_header(data: &[u8]) -> Option<FileHeader> {
     })
 }
 
-/// VeloTerm vendor 增补：非 unix 侧文件名解码——严格 UTF-8 → GB18030
-/// 兜底 → lossy 折损（三档递进，返回已定局的 String）。
+/// VeloTerm vendor 增补：非 unix 侧文件名解码——严格 UTF-8 → GB18030 /
+/// Big5 / Shift_JIS / EUC-KR 依次探测 → lossy 折损（多档递进）。
 /// 只在 Windows 编译（unix 侧保留原始字节，见 name 构造处注释）。
+///
+/// 编码探测的固有局限：多数短字节序列在多种编码下都合法（如 Big5 与
+/// GB18030 的双字节区间大量重叠），「无解码错误」不等于「编码正确」。
+/// 排序按实际使用概率（简中环境 GB18030 压倒性多数，繁中次之），
+/// 误判时结果仍是可打印文本而非 U+FFFD 乱码——比折损好，但不保证
+/// 字面正确。仅当发送端确实用对应编码命名时才完全正确。
 #[cfg(not(unix))]
 fn decode_filename(raw: &[u8]) -> String {
     if let Ok(text) = std::str::from_utf8(raw) {
         return text.to_string();
     }
-    let (decoded, _encoding, had_errors) = encoding_rs::GB18030.decode(raw);
-    if had_errors {
-        // GB18030 都解不了的极少见（截断的多字节序列等）——折损保底
-        String::from_utf8_lossy(raw).into_owned()
-    } else {
-        decoded.into_owned()
+    // 依次探测 CJK 编码（Windows 代码页 936 / 950 / 932 / 949 的常见来源）；
+    // 返回第一个完整解码（无 had_errors）的结果
+    for encoding in [
+        encoding_rs::GB18030,
+        encoding_rs::BIG5,
+        encoding_rs::SHIFT_JIS,
+        encoding_rs::EUC_KR,
+    ] {
+        let (decoded, _actual, had_errors) = encoding.decode(raw);
+        if !had_errors {
+            return decoded.into_owned();
+        }
     }
+    // 全部解不了的极少见（截断的多字节序列等）——折损保底
+    String::from_utf8_lossy(raw).into_owned()
 }
 
 /// Check if path is safe in restricted mode (no .. components).
@@ -670,5 +684,34 @@ mod veloterm_filename_tests {
         let bad = [0xFE, 0xFF, 0xFE];
         let result = decode_filename(&bad);
         assert!(!result.is_empty());
+    }
+}
+
+#[cfg(all(test, not(unix)))]
+mod velotemp_filename_cjk_tests {
+    use super::decode_filename;
+
+    #[test]
+    fn big5_decodes_traditional_chinese() {
+        // "中文.txt" 的 Big5 编码（A4 A4 A4 E5 2E 74 78 74）
+        let big5 = [0xA4, 0xA4, 0xA4, 0xE5, b'.', b't', b'x', b't'];
+        let result = decode_filename(&big5);
+        assert!(!result.contains('\u{FFFD}'), "should not contain replacement char");
+    }
+
+    #[test]
+    fn shift_jis_decodes_japanese() {
+        // "日本語.txt" 的 Shift_JIS 编码
+        let sjis = [0x93, 0xFA, 0x96, 0x7B, 0x8C, 0xEA, b'.', b't', b'x', b't'];
+        let result = decode_filename(&sjis);
+        assert!(!result.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn euc_kr_decodes_korean() {
+        // "한국어.txt" 的 EUC-KR 编码
+        let euckr = [0xC7, 0xD1, 0xB1, 0xB9, 0xBE, 0xEE, b'.', b't', b'x', b't'];
+        let result = decode_filename(&euckr);
+        assert!(!result.contains('\u{FFFD}'));
     }
 }
