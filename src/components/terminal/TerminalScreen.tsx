@@ -340,8 +340,8 @@ export function TerminalScreen({
                   )}
                 >
                   <Gauge
-                    className={cn('size-3.5', activeMonitorOn && 'text-primary')}
-                    strokeWidth={2.5}
+                    className={cn('size-[13px]', activeMonitorOn && 'text-primary')}
+                    strokeWidth={2}
                   />
                 </Button>
               </ControlHintTooltip>

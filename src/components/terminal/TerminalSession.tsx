@@ -18,6 +18,8 @@ import { formatPathsForTerminal, type TerminalPathStyle } from '@/lib/shellPath'
 import { cn } from '@/lib/utils';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { useDropTarget } from '@/hooks/useDropTarget';
+import { highlightOutput, registerOutputLinkProvider } from '@/terminal/outputHighlight';
+import { restoreSessionSnapshot, saveSessionSnapshot } from '@/terminal/sessionSnapshot';
 import { TerminalSearchBar } from '@/components/terminal/TerminalSearchBar';
 import { TerminalResourceBar } from '@/components/terminal/TerminalResourceBar';
 import { loadHostStore, resolveJumpHostChain } from '@/hosts/storage';
@@ -698,6 +700,13 @@ export function TerminalSession({
     term.loadAddon(searchAddon);
     term.open(hostEl);
 
+    // IP/URL 可点击链接（悬停下划线由 xterm 自带，随 term.dispose 一并释放）
+    registerOutputLinkProvider(term);
+
+    // 重连 remount 时恢复上一实例的滚动缓冲（快照在 registry.release →
+    // entry.dispose 时存入；首次挂载无快照，此处 no-op）
+    restoreSessionSnapshot(sessionId, term);
+
     const entry: TerminalSessionRegistryEntry = {
       key: sessionId,
       term,
@@ -737,6 +746,9 @@ export function TerminalSession({
       if (entry.terminalId !== null) {
         void transport.dispose({ id: entry.terminalId });
       }
+      // 重连（release → remount）前保留滚动缓冲；关闭标签页同样会走到
+      // 这里存一份，由 sessionSnapshot 的容量上限兜底淘汰
+      saveSessionSnapshot(sessionId, term);
       try {
         term.dispose();
       } catch (error) {
@@ -931,10 +943,13 @@ export function TerminalSession({
       attributeFilter: ['class'],
     });
 
-    // 建立接收后端 `Channel<Vec<u8>>` 输出的字节通道，直接将 `Uint8Array` 写入 xterm
+    // 建立接收后端 `Channel<Vec<u8>>` 输出的字节通道，直接将 `Uint8Array` 写入 xterm。
+    // 智能高亮（ERROR/WARN/成功符/IP/diff）：写入前按行扫描注入 ANSI 着色，
+    // 性能约束见 outputHighlight.ts（超长行/已着色行/超 512KB 块跳过）
     const outputChannel = createTerminalByteChannel((bytes: Uint8Array) => {
       if (isEntryDisposed) return;
-      term.write(bytes);
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      term.write(highlightOutput(text));
       // 就绪钩子待发时，每次输出重置静止计时（输出停止 = 首屏完成，可安全注入）
       hookOnOutput();
     });
