@@ -1179,8 +1179,8 @@ impl Connector {
                             // 用户知道这次登录未经密码校验。
                             if round == 0 {
                                 log::warn!(
-                                    "[SSH {}] keyboard-interactive 未经任何提示即 Success：\
-                                     密码未被服务器校验（典型为密码过期，改密被推迟到 shell 内 passwd）",
+                                    "[SSH {}] kbd-int succeeded without prompts: \
+                                     password not verified (likely expired; change deferred to shell passwd)",
                                     self.id
                                 );
                                 let notice = "\r\n\x1b[93m[提示] 服务器未校验密码即放行（密码可能已过期）。\
@@ -1207,13 +1207,16 @@ impl Connector {
                             {
                                 match crate::db::global_pool() {
                                     Some(pool) => {
-                                        match crate::db::update_host_password(
-                                            &pool, host_id, entered,
+                                        match crate::db::update_host_password_with_source(
+                                            &pool,
+                                            host_id,
+                                            entered,
+                                            "user-input",
                                         ) {
                                             Ok(true) => {
                                                 log::info!(
-                                                    "[SSH {}] 用户手输密码通过认证，\
-                                                     已更新主机库 hosts.id={}（原保存密码错误）",
+                                                    "[SSH {}] user-entered password accepted, \
+                                                     host {} password updated",
                                                     self.id,
                                                     host_id
                                                 );
@@ -1230,20 +1233,20 @@ impl Connector {
                                                     );
                                                 }
                                             }
-                                            Ok(false) => log::info!(
-                                                "[SSH {}] 主机 {} 非密码认证，跳过回写",
+                                            Ok(false) => log::debug!(
+                                                "[SSH {}] host {} is not password-auth, skip update",
                                                 self.id,
                                                 host_id
                                             ),
                                             Err(e) => log::warn!(
-                                                "[SSH {}] 回写手输密码失败: {}",
+                                                "[SSH {}] failed to save user-entered password: {}",
                                                 self.id,
                                                 e
                                             ),
                                         }
                                     }
                                     None => log::warn!(
-                                        "[SSH {}] DB pool 不可用，手输密码未保存",
+                                        "[SSH {}] db pool unavailable, password not saved",
                                         self.id
                                     ),
                                 }
@@ -1263,15 +1266,18 @@ impl Connector {
                             // 推迟到 shell 内 passwd，出现「Current 输错也能进 shell」。
                             kbdint_attempts += 1;
                             if kbdint_attempts >= KBDINT_MAX_ATTEMPTS {
+                                // 只在最终放弃时打一条（重试过程不刷屏：服务器
+                                // 拒绝保存密码时每轮都会 FAILURE，逐轮 INFO 会
+                                // 瞬间打出 4 条同样的日志）
                                 log::warn!(
-                                    "[SSH {}] kbd-int 已失败 {} 轮，停止重试",
+                                    "[SSH {}] kbd-int failed {} times, giving up",
                                     self.id,
                                     kbdint_attempts
                                 );
                                 break;
                             }
-                            log::info!(
-                                "[SSH {}] kbd-int 认证失败，重新发起（第 {} 次）",
+                            log::debug!(
+                                "[SSH {}] kbd-int retry {}",
                                 self.id,
                                 kbdint_attempts + 1
                             );
@@ -1331,7 +1337,7 @@ impl Connector {
                             // - 应答推进循环直到 SUCCESS/FAILURE（改密在认证内完成）
                             if round >= 20 {
                                 log::warn!(
-                                    "[SSH {}] kbd-int 轮次超上限（{}），中止回落 password",
+                                    "[SSH {}] kbd-int exceeded {} rounds, aborting",
                                     self.id, round
                                 );
                                 break;
@@ -1434,7 +1440,7 @@ impl Connector {
                                     None => {
                                         // 超时/用户无输入：空应答继续（PAM 拒绝后重试）
                                         log::warn!(
-                                            "[SSH {}] kbd-int 终端输入超时/取消",
+                                            "[SSH {}] kbd-int input timeout/cancelled",
                                             self.id
                                         );
                                         responses.push(String::new());
@@ -1486,9 +1492,7 @@ impl Connector {
                                     ) {
                                         Ok(true) => {
                                             log::info!(
-                                                "[SSH-PASSWD-CHANGE] session={} \
-                                                 DB-UPDATED: hosts.id={} password saved \
-                                                 (automatic, verified via kbd-int)",
+                                                "[SSH {}] password changed, host {} updated",
                                                 self.id, host_id
                                             );
                                             // 比对打印（验证期用，已确认落库正确）
@@ -1511,29 +1515,24 @@ impl Connector {
                                                 );
                                             }
                                         }
-                                        Ok(false) => log::info!(
-                                            "[SSH-PASSWD-CHANGE] session={} \\
-                                             DB-SKIP: hosts.id={} not password-auth \\
-                                             or missing (no update)",
+                                        Ok(false) => log::debug!(
+                                            "[SSH {}] host {} not password-auth, skip",
                                             self.id, host_id
                                         ),
                                         Err(e) => log::warn!(
-                                            "[SSH-PASSWD-CHANGE] session={} \\
-                                             DB-UPDATE failed: {}",
+                                            "[SSH {}] password update failed: {}",
                                             self.id, e
                                         ),
                                     }
                                 }
                                 None => log::warn!(
-                                    "[SSH-PASSWD-CHANGE] session={} DB pool \\
-                                     unavailable, password not saved",
+                                    "[SSH {}] db pool unavailable, password not saved",
                                     self.id
                                 ),
                             }
                         } else {
-                            log::info!(
-                                "[SSH-PASSWD-CHANGE] session={} no host_id \\
-                                 (temporary connection), password not saved",
+                            log::debug!(
+                                "[SSH {}] no host_id, password not saved",
                                 self.id
                             );
                         }
@@ -1545,12 +1544,13 @@ impl Connector {
                 // 试过并失败，再走 password 必然同样失败，只会白等一次服务器
                 // PAM 校验（pam_unix 哈希刻意慢，实测 ~3.2s/次），故直接跳过。
                 if kbdint_attempts > 0 {
-                    log::info!(
-                        "[SSH {}] kbd-int 已用保存密码失败过，跳过 password 回落（避免重复等待）",
+                    log::debug!(
+                        "[SSH {}] kbd-int already failed with saved password, \
+                         skipping password fallback",
                         self.id
                     );
                     return Err(ConnectionError::Authentication(
-                        "kbd-int 已用保存密码失败过，跳过 password 回落".to_string(),
+                        "keyboard-interactive rejected the saved password".to_string(),
                     ));
                 }
                 let response = session
