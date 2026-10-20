@@ -227,11 +227,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: app-v__VERSION__
+          # Release tag 用 v<version>（GitHub 通用规范；此前是 tauri-action
+          # 默认模板 app-v__VERSION__，页面上的 tag 徽标显示成 app-v1.0.3）
+          tagName: v__VERSION__
           releaseName: 'VeloTerm v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: false
           prerelease: false
+          # 本应用不使用 Tauri 自动更新（tauri.conf.json 无 updater 配置）：
+          # 关掉 updater 产物生成，否则 macOS 腿会上传 .app.tar.gz 差分包
+          # （用户下载页出现两个无用资产）
+          includeUpdaterJson: false
           args: ${{ matrix.args }}
 
       # 安装包内容核验：断言全部六个 FFI DLL 落在 lib/ 子目录、nmap-data/ 与
@@ -385,7 +391,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  # 等应用 release（tauri-action 的 app-v<version> 草稿）产出后，把四个中继
+  # 等应用 release（tauri-action 的 v<version> release）产出后，把四个中继
   # 二进制挂到同一 Releases 页面。应用侧失败则本 job 跳过（needs 短路）。
   relay-release-attach:
     permissions:
@@ -404,7 +410,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VER=$(node -p "require('./package.json').version")
-          TAG="app-v${VER}"
+          TAG="v${VER}"
           # tauri-action 产出的是 draft release（tag 未落地），按 tag_name 在 releases 列表里找
           RID=$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
             -q ".[] | select(.tag_name == \"${TAG}\") | .id" | head -1)
