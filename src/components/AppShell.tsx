@@ -13,6 +13,7 @@ import { EditorScreen } from '@/components/editor/EditorScreen';
 import { FilesScreen } from '@/components/files/FilesScreen';
 import { GroupsScreen } from '@/components/hosts/GroupsScreen';
 import { HostsScreen } from '@/components/hosts/HostsScreen';
+import { CommandHistoryScreen } from '@/components/history/CommandHistoryScreen';
 import { RelaysScreen } from '@/components/relays/RelaysScreen';
 import { ZkScreen } from '@/components/zk/ZkScreen';
 import { ZkHostsScreen } from '@/components/zkhosts/ZkHostsScreen';
@@ -552,6 +553,8 @@ export function AppShell() {
                   <CommandsScreen />
                 ) : page === 'relays' ? (
                   <RelaysScreen />
+                ) : page === 'history' ? (
+                  <CommandHistoryScreen />
                 ) : page === 'zkhosts' ? (
                   <ZkHostsScreen
                     onConnectHost={(host) => {

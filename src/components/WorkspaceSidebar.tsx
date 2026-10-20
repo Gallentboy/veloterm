@@ -1,4 +1,4 @@
-import { Boxes, Command, Database, FileCode, FolderSync, FolderTree, House, Network, Server, Settings, Terminal, Waypoints } from 'lucide-react';
+import { Boxes, Command, Database, FileCode, FolderSync, FolderTree, History, House, Network, Server, Settings, Terminal, Waypoints } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -12,7 +12,7 @@ import {
   SIDEBAR_VISIBILITY_EVENT,
 } from '@/services/sidebarVisibility';
 
-export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'commands' | 'zk' | 'zkhosts' | 'relays' | 'grpc' | 'settings';
+export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'commands' | 'zk' | 'zkhosts' | 'relays' | 'history' | 'grpc' | 'settings';
 
 /** 侧栏导航项（settings 固定展示，不参与可见性配置）。设置页的菜单展示
  *  区块与此清单同源（同一导出），勾选状态经 kv + 事件实时联动。 */
@@ -23,6 +23,7 @@ export const SIDEBAR_NAV_ITEMS: Array<{ page: Page; icon: LucideIcon; navKey: st
   { page: 'files', icon: FolderSync, navKey: 'nav.files' },
   { page: 'hosts', icon: Server, navKey: 'nav.hosts' },
   { page: 'relays', icon: Waypoints, navKey: 'nav.relays' },
+  { page: 'history', icon: History, navKey: 'nav.history' },
   { page: 'grpc', icon: Network, navKey: 'nav.grpc' },
   { page: 'groups', icon: FolderTree, navKey: 'nav.groups' },
   { page: 'commands', icon: Command, navKey: 'nav.commands' },
