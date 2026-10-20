@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -1562,6 +1562,8 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
 }
 
 /// 在单个 SQLCipher 事务内原子保存 `groups`、`hosts`、`host_groups` 并同步镜像至 `sessions` 表。
+/// 性能优化：采用增量 Diff + UPSERT 机制替代旧版的清空重插反模式，
+/// 仅删除已移除项、按 ID 冲突增量更新现有项，保护 SQLite B-Tree 页面连续性并避免全表抖动与数据库碎片膨胀。
 pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), String> {
     let mut conn = pool
         .get()
@@ -1570,28 +1572,39 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
         .transaction()
         .map_err(|e| format!("failed to begin transaction: {e}"))?;
 
-    tx.execute("DELETE FROM host_groups", [])
-        .map_err(|e| format!("failed to clear host_groups: {e}"))?;
-    tx.execute("DELETE FROM hosts", [])
-        .map_err(|e| format!("failed to clear hosts: {e}"))?;
-    tx.execute("DELETE FROM groups", [])
-        .map_err(|e| format!("failed to clear groups: {e}"))?;
-    tx.execute("DELETE FROM sessions", [])
-        .map_err(|e| format!("failed to clear sessions: {e}"))?;
-
-    let group_name_by_id: HashMap<usize, String> = store
-        .groups
-        .iter()
-        .map(|g| (g.id, g.name.clone()))
-        .collect();
-
+    // ── 1. 分组 (groups) 增量同步 ──
+    let incoming_group_ids: HashSet<usize> = store.groups.iter().map(|g| g.id).collect();
     {
+        let mut stmt_existing_groups = tx
+            .prepare("SELECT id FROM groups")
+            .map_err(|e| format!("failed to prepare existing groups query: {e}"))?;
+        let existing_group_ids: HashSet<usize> = stmt_existing_groups
+            .query_map([], |row| row.get(0))
+            .map_err(|e| format!("failed to query existing groups: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // 仅删除已从前端移除的分组
+        let mut stmt_del_group = tx
+            .prepare("DELETE FROM groups WHERE id = ?1")
+            .map_err(|e| format!("failed to prepare delete group statement: {e}"))?;
+        for gid in existing_group_ids.difference(&incoming_group_ids) {
+            stmt_del_group
+                .execute(params![gid])
+                .map_err(|e| format!("failed to delete removed group {gid}: {e}"))?;
+        }
+
+        // UPSERT 现有或新增分组
         let mut stmt_group = tx
             .prepare(
                 "INSERT INTO groups (id, parent_id, name, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5)",
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET
+                   parent_id = excluded.parent_id,
+                   name = excluded.name,
+                   updated_at = excluded.updated_at",
             )
-            .map_err(|e| format!("failed to prepare group insert: {e}"))?;
+            .map_err(|e| format!("failed to prepare group upsert: {e}"))?;
 
         for group in &store.groups {
             stmt_group
@@ -1602,21 +1615,80 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                     group.created_at,
                     group.updated_at
                 ])
-                .map_err(|e| format!("failed to insert group {}: {e}", group.id))?;
+                .map_err(|e| format!("failed to upsert group {}: {e}", group.id))?;
         }
     }
 
+    let group_name_by_id: HashMap<usize, String> = store
+        .groups
+        .iter()
+        .map(|g| (g.id, g.name.clone()))
+        .collect();
+
+    // ── 2. 主机 (hosts) 及其关联表增量同步 ──
+    let incoming_host_ids: HashSet<usize> = store.hosts.iter().map(|h| h.id).collect();
     {
+        let mut stmt_existing_hosts = tx
+            .prepare("SELECT id FROM hosts")
+            .map_err(|e| format!("failed to prepare existing hosts query: {e}"))?;
+        let existing_host_ids: HashSet<usize> = stmt_existing_hosts
+            .query_map([], |row| row.get(0))
+            .map_err(|e| format!("failed to query existing hosts: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // 仅删除已从前端移除的主机及其在关联表中的孤儿行
+        let mut stmt_del_host_groups = tx
+            .prepare("DELETE FROM host_groups WHERE host_id = ?1")
+            .map_err(|e| format!("failed to prepare delete host_groups: {e}"))?;
+        let mut stmt_del_session = tx
+            .prepare("DELETE FROM sessions WHERE id = ?1")
+            .map_err(|e| format!("failed to prepare delete session: {e}"))?;
+        let mut stmt_del_host = tx
+            .prepare("DELETE FROM hosts WHERE id = ?1")
+            .map_err(|e| format!("failed to prepare delete host: {e}"))?;
+
+        for hid in existing_host_ids.difference(&incoming_host_ids) {
+            stmt_del_host_groups
+                .execute(params![hid])
+                .map_err(|e| format!("failed to delete removed host_groups for host {hid}: {e}"))?;
+            stmt_del_session
+                .execute(params![hid])
+                .map_err(|e| format!("failed to delete removed session for host {hid}: {e}"))?;
+            stmt_del_host
+                .execute(params![hid])
+                .map_err(|e| format!("failed to delete removed host {hid}: {e}"))?;
+        }
+
+        // UPSERT 现有或新增主机
         let mut stmt_host = tx
             .prepare(
                 "INSERT INTO hosts (
-          id, name, host, port, username, auth_json, jump_host_id,
-          host_key_verification, allow_insecure_algos, ready_command_id,
-          relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint, relay_id,
-          created_at, updated_at
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                  id, name, host, port, username, auth_json, jump_host_id,
+                  host_key_verification, allow_insecure_algos, ready_command_id,
+                  relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint, relay_id,
+                  created_at, updated_at
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+               ON CONFLICT(id) DO UPDATE SET
+                  name = excluded.name,
+                  host = excluded.host,
+                  port = excluded.port,
+                  username = excluded.username,
+                  auth_json = excluded.auth_json,
+                  jump_host_id = excluded.jump_host_id,
+                  host_key_verification = excluded.host_key_verification,
+                  allow_insecure_algos = excluded.allow_insecure_algos,
+                  ready_command_id = excluded.ready_command_id,
+                  relay_host = excluded.relay_host,
+                  relay_port = excluded.relay_port,
+                  relay_transport = excluded.relay_transport,
+                  relay_key_id = excluded.relay_key_id,
+                  relay_secret = excluded.relay_secret,
+                  cert_fingerprint = excluded.cert_fingerprint,
+                  relay_id = excluded.relay_id,
+                  updated_at = excluded.updated_at",
             )
-            .map_err(|e| format!("failed to prepare host insert: {e}"))?;
+            .map_err(|e| format!("failed to prepare host upsert: {e}"))?;
 
         let mut stmt_host_group = tx
             .prepare("INSERT OR IGNORE INTO host_groups (host_id, group_id) VALUES (?1, ?2)")
@@ -1625,9 +1697,17 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
         let mut stmt_session = tx
             .prepare(
                 "INSERT INTO sessions (id, name, host, port, username, auth_type, group_name, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+               ON CONFLICT(id) DO UPDATE SET
+                  name = excluded.name,
+                  host = excluded.host,
+                  port = excluded.port,
+                  username = excluded.username,
+                  auth_type = excluded.auth_type,
+                  group_name = excluded.group_name,
+                  updated_at = excluded.updated_at",
             )
-            .map_err(|e| format!("failed to prepare session insert: {e}"))?;
+            .map_err(|e| format!("failed to prepare session upsert: {e}"))?;
 
         for host in &store.hosts {
             let auth_json = serde_json::to_string(&host.auth)
@@ -1661,7 +1741,12 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                     host.created_at,
                     host.updated_at,
                 ])
-                .map_err(|e| format!("failed to insert host {}: {e}", host.id))?;
+                .map_err(|e| format!("failed to upsert host {}: {e}", host.id))?;
+
+            // 局部刷新单主机的 group 关系
+            stmt_del_host_groups
+                .execute(params![host.id])
+                .map_err(|e| format!("failed to clear host_groups for host {}: {e}", host.id))?;
 
             for &gid in &host.group_ids {
                 if group_name_by_id.contains_key(&gid) {

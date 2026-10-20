@@ -33,9 +33,17 @@ export interface CommandRecord {
   updatedAt: number;
 }
 
-/** 全字段模糊搜索（空 keyword 返回全量） */
-export function listCommands(keyword?: string): Promise<CommandRecord[]> {
-  return invoke<CommandRecord[]>('command_list', { keyword: keyword ?? null });
+/** 全字段模糊搜索（空 keyword 返回全量，支持 limit / offset 分页） */
+export function listCommands(
+  keyword?: string,
+  limit?: number,
+  offset?: number,
+): Promise<CommandRecord[]> {
+  return invoke<CommandRecord[]>('command_list', {
+    keyword: keyword ?? null,
+    limit: limit ?? null,
+    offset: offset ?? null,
+  });
 }
 
 export function saveCommand(record: CommandRecord): Promise<CommandRecord> {

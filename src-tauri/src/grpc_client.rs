@@ -8,12 +8,14 @@
 //! metadata。反射协议的六个消息手写 prost 结构体（tonic 无 protoc 的代码生成
 //! 路径，build 期零外部工具依赖）。
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use futures::StreamExt;
 use prost::Message as _;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
 // ── 反射协议消息（grpc/reflection/v1alpha/server_reflection.proto 手写；
 //    v1 与 v1alpha 消息线格式同构，共用一套结构体，仅服务全名不同）──
@@ -158,7 +160,7 @@ pub struct GrpcCallRequest {
 
 /// 内部 TLS 材料（由库中的 GrpcTlsProfileRecord 转换，或测试直接构造）：
 /// 信任根、客户端身份（mTLS）、SNI 域名全部可选组合。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 struct TlsMaterial {
     /// 信任的自定义 CA（PEM）；None = 系统根证书
     ca_pem: Option<String>,
@@ -561,13 +563,48 @@ async fn call_grpc_unary(
         .map_err(|_| format!("gRPC 调用超时（超过 {}ms）", timeout.as_millis()))?
 }
 
-// ── 连接构造（调用与巡检命令共用）──
+// ── 连接构造（调用与巡检命令共用，支持 Channel 缓存池复用）──
 
-/// 建立到 target 的 gRPC 客户端（明文或 TLS 材料），含 Buffer 的 ready() 语义。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct GrpcChannelKey {
+    target: String,
+    tls: Option<TlsMaterial>,
+}
+
+type ChannelPool = RwLock<HashMap<GrpcChannelKey, tonic::transport::Channel>>;
+
+fn get_channel_pool() -> &'static ChannelPool {
+    static POOL: OnceLock<ChannelPool> = OnceLock::new();
+    POOL.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// 建立到 target 的 gRPC 客户端（明文或 TLS 材料），含 Channel 缓存池复用与 Buffer 的 ready() 语义。
 async fn open_grpc_client(
     target: &str,
     tls: Option<TlsMaterial>,
 ) -> Result<GrpcClient, String> {
+    let key = GrpcChannelKey {
+        target: target.trim().to_string(),
+        tls: tls.clone(),
+    };
+
+    // 1. 优先尝试从连接池复用既有的 HTTP/2 Channel（避免重复 TCP 握手与 TLS 协商延迟）
+    let cached_channel = {
+        let pool = get_channel_pool().read().await;
+        pool.get(&key).cloned()
+    };
+
+    if let Some(channel) = cached_channel {
+        let mut grpc = tonic::client::Grpc::new(channel);
+        if grpc.ready().await.is_ok() {
+            return Ok(grpc);
+        }
+        // 若就绪失败（服务端断开或重启），从池中移除已失效连接
+        let mut pool = get_channel_pool().write().await;
+        pool.remove(&key);
+    }
+
+    // 2. 缓存未命中或失效时，重新建立连接
     let scheme = if tls.is_some() { "https" } else { "http" };
     let uri: http::Uri = format!("{scheme}://{target}/")
         .parse()
@@ -604,6 +641,16 @@ async fn open_grpc_client(
         .connect()
         .await
         .map_err(|e| format!("连接 {target} 失败: {e}"))?;
+
+    // 存入 Channel 连接池（容量上限 64）
+    {
+        let mut pool = get_channel_pool().write().await;
+        if pool.len() >= 64 {
+            pool.clear();
+        }
+        pool.insert(key, channel.clone());
+    }
+
     let mut grpc = tonic::client::Grpc::new(channel);
     // Channel 内部是 tower Buffer：必须先 ready() 才能 call（codegen 生成的客户端
     // 同样会先 await ready；跳过会触发 Buffer 的 send_item/poll_reserve 断言 panic）
