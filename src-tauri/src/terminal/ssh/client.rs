@@ -1130,10 +1130,11 @@ impl Connector {
                 let mut secret_answers: Vec<String> = Vec::new();
                 // 普通密码提示只自动填一次（见下方 prompt 循环注释）
                 let mut plain_password_filled = false;
-                // kbd-int 整体失败重试计数（对齐 OpenSSH number_of_password_prompts
-                // 默认 3）：密码过期时 Current 输错 → 服务器 FAILURE → 重新发起一轮
+                // kbd-int 整体失败重试计数（对齐 OpenSSH sshconnect2.c：
+                // `if (attempt_kbdint++ >= number_of_password_prompts) return 0;`
+                // ——后置递增，默认值 3，实际是「初始 1 次 + 重试 3 次 = 4 次」）
                 let mut kbdint_attempts = 0u32;
-                const KBDINT_MAX_ATTEMPTS: u32 = 3;
+                const KBDINT_MAX_ATTEMPTS: u32 = 4;
                 loop {
                     match kb {
                         KeyboardInteractiveAuthResponse::Success => {
