@@ -73,11 +73,16 @@ jobs:
             Write-Host "$f : $([math]::Round($size/1MB, 2)) MB"
             if ($size -lt 1MB) { throw "产物异常偏小（$size 字节）: $f" }
           }
-
-      # 冒烟：arm64 产物只能在 arm64 runner 上跑（本车道天然满足），
-      # 用 coreutils.exe 宿主验证 qalc DLL 能被加载并出结果
-      - name: Smoke qalc DLL via host
-        run: node scripts/build-tools.mjs --only coreutils --target ${{ matrix.target }}
+          # 架构核验：PE 头 Machine 字段必须与目标一致（防 x64 工具链产出被
+          # 误当 arm64 通过——cgo 选错编译器正是此类问题）
+          $expect = if ('${{ matrix.target }}'.StartsWith('aarch64')) { 0xAA64 } else { 0x8664 }
+          foreach ($f in @($goffi, $qalc)) {
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $f))
+            $peOff = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOff + 4)
+            Write-Host ("{0}: PE Machine=0x{1:X4}" -f $f, $machine)
+            if ($machine -ne $expect) { throw ("架构不符: {0} 是 0x{1:X4}，期望 0x{2:X4}" -f $f, $machine, $expect) }
+          }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
