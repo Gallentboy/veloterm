@@ -108,6 +108,23 @@ fn parse_file_header(data: &[u8]) -> Option<FileHeader> {
     })
 }
 
+/// VeloTerm vendor 增补：非 unix 侧文件名解码——严格 UTF-8 → GB18030
+/// 兜底 → lossy 折损（三档递进，返回已定局的 String）。
+/// 只在 Windows 编译（unix 侧保留原始字节，见 name 构造处注释）。
+#[cfg(not(unix))]
+fn decode_filename(raw: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(raw) {
+        return text.to_string();
+    }
+    let (decoded, _encoding, had_errors) = encoding_rs::GB18030.decode(raw);
+    if had_errors {
+        // GB18030 都解不了的极少见（截断的多字节序列等）——折损保底
+        String::from_utf8_lossy(raw).into_owned()
+    } else {
+        decoded.into_owned()
+    }
+}
+
 /// Check if path is safe in restricted mode (no .. components).
 fn is_safe_path(path: &Path) -> bool {
     for component in path.components() {
@@ -316,8 +333,13 @@ pub fn receive_files<R: TimeoutRead, W: Write>(
             break Ok(received_files);
         }
 
-        // VeloTerm vendor 修改：路径字节 → OsStr 的转换按平台分治
-        //（unix 保留任意字节路径；非 unix 走 UTF-8 折损，与上游行为最接近）
+        // VeloTerm vendor 修改：路径字节 → OsStr 的转换按平台分治。
+        // unix 保留任意字节路径（OsStr 本质是字节串）；非 unix（Windows 的
+        // OsStr 是 WTF-16，无法直接装原始字节）走文本解码：优先严格 UTF-8
+        //（Linux 发送端常态），失败时 GB18030 兜底（GBK 超集——ZMODEM 协议
+        // 不定文件名编码，GBK 命名文件 from_utf8_lossy 会替换成 U+FFFD
+        // 落盘即乱码），两者都失败才 lossy 折损（替换 U+FFFD，保底能落盘）。
+        // GB18030 对任意字节序列几乎总能解码（映射面极广），第三档极少触发。
         #[cfg(unix)]
         let name = {
             use std::os::unix::ffi::OsStrExt;
@@ -325,11 +347,9 @@ pub fn receive_files<R: TimeoutRead, W: Write>(
         };
         // 非 unix：先绑定再加长生命周期——Path::new 返回借用，右值临时
         // 字符串会在语句结束即释放、后续 join 借用悬垂（Windows 编译实测
-        // E0716）。此处用 String（路径已经是 UTF-8 折损后的文本，无需
-        // OsString 包装；GBK 等非 UTF-8 文件名的损失发生在 from_utf8_lossy，
-        // 与容器类型无关）
+        // E0716）
         #[cfg(not(unix))]
-        let name_owned = String::from_utf8_lossy(&file_info.name).into_owned();
+        let name_owned = decode_filename(&file_info.name);
         #[cfg(not(unix))]
         let name = Path::new(&name_owned);
 
@@ -622,5 +642,33 @@ fn drain_until_eof<R: TimeoutRead>(
             Ok(_) => continue,
             Err(_) => return,
         }
+    }
+}
+
+#[cfg(all(test, not(unix)))]
+mod veloterm_filename_tests {
+    use super::decode_filename;
+
+    #[test]
+    fn utf8_passes_through() {
+        assert_eq!(decode_filename("hello.txt".as_bytes()), "hello.txt");
+        assert_eq!(decode_filename("中文文件.txt".as_bytes()), "中文文件.txt");
+    }
+
+    #[test]
+    fn gbk_decodes_via_gb18030() {
+        // "中文.txt" 的 GBK 编码（D6 D0 CE C4 2E 74 78 74）——from_utf8_lossy
+        // 会变成 4 个 U+FFFD；GB18030 兜底还原为中文字面
+        let gbk = [0xD6, 0xD0, 0xCE, 0xC4, b'.', b't', b'x', b't'];
+        assert_eq!(decode_filename(&gbk), "中文.txt");
+    }
+
+    #[test]
+    fn garbage_falls_back_lossy() {
+        // GB18030 解不了的序列（如孤立高位字节后截断）不 panic，
+        // 折损为 U+FFFD 保底
+        let bad = [0xFE, 0xFF, 0xFE];
+        let result = decode_filename(&bad);
+        assert!(!result.is_empty());
     }
 }

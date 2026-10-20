@@ -10,3 +10,8 @@ repository = "https://github.com/kookob/rzsz"
 # 上游 v0.1.5（commit dbccc0f）+ 本地修补清单见本目录 README.md。
 [dependencies]
 log = "0.4"
+# VeloTerm vendor 增补：Windows 接收侧文件名 GB18030（GBK 超集）兜底解码
+# ——ZMODEM 协议不定文件名编码，Linux 发 GBK 命名文件时 from_utf8_lossy
+# 会把字节替换成 U+FFFD（落盘即 �）。encoding_rs 0.8 已在 lock（reqwest
+# 传递依赖），加直接依赖零新增编译
+encoding_rs = "0.8"
