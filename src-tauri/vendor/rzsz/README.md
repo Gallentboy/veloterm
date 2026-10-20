@@ -4,6 +4,27 @@ A modern Rust rewrite of the classic [lrzsz](https://ohse.de/uwe/software/lrzsz.
 
 **[中文文档](README_CN.md)**
 
+<!-- VeloTerm vendor 增补（非上游内容）：
+
+## 接收端文件名解码（Windows 中文文件名支持）
+
+非 unix 侧（Windows 的 OsStr 是 WTF-16，无法直接装原始字节）接收文件名
+按三档递进解码（`decode_filename`，receiver.rs）：
+
+1. 严格 UTF-8（Linux 发送端常态）→ 直接使用
+2. GB18030 兜底（GBK 超集）——ZMODEM 协议不定文件名编码，GBK 命名
+   文件经 from_utf8_lossy 会替换成 U+FFFD 落盘即乱码；引入 encoding_rs
+   （0.8 已在 lock，reqwest 传递依赖，零新增编译）做兜底解码
+3. lossy 折损（GB18030 也解不了的截断序列，替换 U+FFFD 保底）
+
+unix 侧不受影响：OsStr 本质是字节串，`OsStr::from_bytes` 原样保留
+原始字节（上游行为）。
+
+## VeloTerm vendor 修补清单
+
+详见本仓库中文说明或 git log 中标注 VeloTerm vendor 的提交。
+-->
+
 ## Features
 
 - **Single binary** — One `zz` binary (449KB static), all commands via symlinks
