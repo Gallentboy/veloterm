@@ -1,0 +1,90 @@
+# 目标（单一）：Windows 双架构 goffi + qalc 快速验证车道。
+#
+# 为什么单独一条：publish 四腿全量要十几分钟，而 Windows 侧近期的问题全部
+# 集中在两段——goffi（cgo 编译器选择：arm64 必须用 CLANGARM64 clang，不能用
+# PATH 上的 x64 gcc）与 qalc（autotools/libtool 对 CC 路径反斜杠的处理）。
+# 本车道只跑这两段 + 产物存在性断言，两架构并行，2~3 分钟出结论。
+#
+# 触发：推 tag（验证完删除）——
+#   git tag test_winseg && git push origin test_winseg
+#   git push origin :refs/tags/test_winseg
+# 也支持 workflow_dispatch 手动触发。
+name: 'test-win-segments'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_winseg*'
+
+jobs:
+  build-segments:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            msys_arch: x86_64
+            artifact: win-segments-x64
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            msys_arch: clang-aarch64
+            artifact: win-segments-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: stable
+
+      # 与 publish 同源的 MSYS2 包集：x86_64 走 MinGW64（gcc），arm64 走
+      # CLANGARM64（clang + gcc-compat 提供 gcc/g++ 兼容名）
+      - name: Install MSYS2 packages
+        shell: pwsh
+        run: |
+          $pkgs = if ('${{ matrix.msys_arch }}' -eq 'x86_64') {
+            'make gettext mingw-w64-x86_64-gcc mingw-w64-x86_64-pkg-config mingw-w64-x86_64-libxml2 mingw-w64-x86_64-gmp mingw-w64-x86_64-mpfr'
+          } else {
+            'make gettext mingw-w64-clang-aarch64-gcc-compat mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-pkg-config mingw-w64-clang-aarch64-libxml2 mingw-w64-clang-aarch64-gmp mingw-w64-clang-aarch64-mpfr'
+          }
+          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm $pkgs"
+
+      # 两段依次构建：goffi 验 cgo 编译器选择，qalc 验 autotools 工具链
+      - name: Build goffi segment
+        run: node scripts/build-tools.mjs --only goffi --target ${{ matrix.target }}
+
+      - name: Build qalc segment
+        run: node scripts/build-tools.mjs --only qalc --target ${{ matrix.target }}
+
+      # 产物断言：DLL 存在且非空（体积下限粗筛——空壳或链接失败会明显偏小）
+      - name: Assert artifacts
+        shell: pwsh
+        run: |
+          $goffi = 'src-tauri/binaries/veloterm_goffi.dll'
+          $qalc  = 'src-tauri/binaries/qalcffi.dll'
+          foreach ($f in @($goffi, $qalc)) {
+            if (-not (Test-Path $f)) { throw "缺少产物: $f" }
+            $size = (Get-Item $f).Length
+            Write-Host "$f : $([math]::Round($size/1MB, 2)) MB"
+            if ($size -lt 1MB) { throw "产物异常偏小（$size 字节）: $f" }
+          }
+
+      # 冒烟：arm64 产物只能在 arm64 runner 上跑（本车道天然满足），
+      # 用 coreutils.exe 宿主验证 qalc DLL 能被加载并出结果
+      - name: Smoke qalc DLL via host
+        run: node scripts/build-tools.mjs --only coreutils --target ${{ matrix.target }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            src-tauri/binaries/veloterm_goffi.dll
+            src-tauri/binaries/qalcffi.dll
+          if-no-files-found: error
+          retention-days: 7
