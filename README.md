@@ -90,7 +90,7 @@ cargo clippy --workspace --all-targets
 
 ## 打包与发布
 
-正式 Windows 安装包由 GitHub Actions 出（`.github/workflows/publish.yml`）：**推版本 tag 触发**（`v1.0.1` 或 `1.0.1` 形态；release 分支常规推送不出包），windows-latest runner 上构建（coreutils 二进制 → Tauri NSIS 安装包），产物为 draft release。vcpkg 依赖（OpenSSL 静态库）走 GitHub Packages NuGet 二进制缓存，首次冷编译后续秒级恢复。
+正式安装包由 GitHub Actions 出（`.github/workflows/publish.yml`）：**推版本 tag 触发**（`v1.0.1` 或 `1.0.1` 形态；release 分支常规推送不出包）。矩阵三腿：Windows x64（windows-latest，NSIS 安装包）+ Windows ARM64（windows-11-arm，工具链全套同构：MSYS2 CLANGARM64 / vcpkg arm64-windows-static / Npcap SDK 自带 Lib/ARM64）+ macOS（macos-latest 出 universal dmg，arm64 + x86_64 单包通吃；无签名证书，首次打开需右键绕过 Gatekeeper）。产物为 draft release。vcpkg 依赖（OpenSSL 静态库）走 GitHub Packages NuGet 二进制缓存，首次冷编译后续秒级恢复。
 
 主二进制名为 `VeloTerm.exe`（`mainBinaryName` 配置），任务管理器与 `ps` 可按 `VeloTerm` 检索。
 
