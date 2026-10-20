@@ -18,7 +18,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
@@ -49,7 +49,11 @@ import {
   type RemoteFileItem,
 } from '@/services/sftpService';
 import { loadRemoteContent } from '@/editor/contentLoader';
-import { SftpFilePreviewModal } from '@/components/files/SftpFilePreviewModal';
+const SftpFilePreviewModal = lazy(() =>
+  import('@/components/files/SftpFilePreviewModal').then((m) => ({
+    default: m.SftpFilePreviewModal,
+  })),
+);
 import { SftpFilePropsDialog } from '@/components/files/SftpFilePropsDialog';
 import { sendToTerminal } from '@/services/aiTerminalTools';
 import { formatPathForTerminal } from '@/lib/shellPath';
@@ -173,6 +177,187 @@ function formatModifiedTime(timestampSec: number): string {
     minute: '2-digit',
   });
 }
+
+interface SftpFileRowProps {
+  item: RemoteFileItem;
+  index: number;
+  isSelected: boolean;
+  dirSizeLoading: boolean;
+  dirSize: number | undefined;
+  hostId: number;
+  onSelect: (event: ReactMouseEvent<HTMLTableRowElement>, item: RemoteFileItem, index: number) => void;
+  onDragStart: (item: RemoteFileItem, index: number, isSelected: boolean) => void;
+  onDragEnd: () => void;
+  onDoubleClick: (item: RemoteFileItem) => void;
+  onContextMenu: (event: ReactMouseEvent, item: RemoteFileItem) => void;
+  onNavigate: (path: string) => void;
+  onPreview: (item: RemoteFileItem) => void;
+  onOpenEditor?: (file: { hostId: number; remotePath: string }) => void;
+  onDownload: (item: RemoteFileItem) => void;
+  onDeleteItem: (item: RemoteFileItem) => void;
+}
+
+const SftpFileRow = memo(function SftpFileRow({
+  item,
+  index,
+  isSelected,
+  dirSizeLoading,
+  dirSize,
+  hostId,
+  onSelect,
+  onDragStart,
+  onDragEnd,
+  onDoubleClick,
+  onContextMenu,
+  onNavigate,
+  onPreview,
+  onOpenEditor,
+  onDownload,
+  onDeleteItem,
+}: SftpFileRowProps) {
+  const { t } = useTranslation();
+  const visuals = getFileItemVisuals(item);
+
+  return (
+    <tr
+      key={item.path}
+      draggable
+      onClick={(event) => onSelect(event, item, index)}
+      onDragStart={() => onDragStart(item, index, isSelected)}
+      onDragEnd={onDragEnd}
+      onDoubleClick={() => onDoubleClick(item)}
+      onContextMenu={(event) => onContextMenu(event, item)}
+      className={cn(
+        'transition-colors cursor-pointer group',
+        isSelected ? 'bg-selected' : 'hover:bg-surface/40',
+      )}
+    >
+      <td className="py-1.5 pl-4 pr-2 font-medium">
+        <div className="flex items-center gap-2">
+          {item.is_dir ? (
+            <Folder className={cn('size-4 shrink-0', visuals.iconClass)} />
+          ) : (
+            <File className={cn('size-4 shrink-0', visuals.iconClass)} />
+          )}
+          <span className={cn('truncate max-w-[260px] md:max-w-md', visuals.colorClass)}>
+            {item.name}
+          </span>
+        </div>
+      </td>
+      <td className="py-1.5 px-2 font-mono text-foreground-subtle">
+        {item.is_dir
+          ? dirSizeLoading
+            ? (
+                <Loader2 className="inline size-3.5 animate-spin text-foreground-subtlest" />
+              )
+            : dirSize != null
+              ? formatBytes(dirSize)
+              : '-'
+          : formatBytes(Number(item.size))}
+      </td>
+      <td className="py-1.5 px-2 font-mono text-foreground-subtle">
+        {formatPermissions(item.permissions, item.is_dir, item.is_symlink)}
+      </td>
+      <td className="py-1.5 px-2 font-mono text-foreground-subtle truncate max-w-[100px]">
+        {item.owner || '-'}
+      </td>
+      <td className="py-1.5 px-2 font-mono text-foreground-subtle truncate max-w-[100px]">
+        {item.group || '-'}
+      </td>
+      <td className="py-1.5 px-2 text-foreground-subtle">
+        {formatModifiedTime(item.modified_at)}
+      </td>
+      <td className="py-1.5 pl-2 pr-4 text-right">
+        <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+          {item.is_dir ? (
+            <Tooltip content={t('files.tooltips.enterDir')} side="top">
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNavigate(item.path);
+                }}
+                className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
+                aria-label={t('files.enterDir')}
+              >
+                <FolderOpen className="size-3.5" />
+              </Button>
+            </Tooltip>
+          ) : (
+            <>
+              {item.editable ? (
+                <Tooltip content={t('files.tooltips.preview')} side="top">
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPreview(item);
+                    }}
+                    className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
+                    aria-label={t('files.preview')}
+                  >
+                    <Eye className="size-3.5" />
+                  </Button>
+                </Tooltip>
+              ) : null}
+              {item.editable && onOpenEditor ? (
+                <Tooltip content={t('files.tooltips.edit')} side="top">
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenEditor({ hostId, remotePath: item.path });
+                    }}
+                    className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
+                    aria-label={t('files.edit')}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                </Tooltip>
+              ) : null}
+              <Tooltip content={t('files.tooltips.download')} side="top">
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onDownload(item);
+                  }}
+                  className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
+                  aria-label={t('files.download')}
+                >
+                  <Download className="size-3.5" />
+                </Button>
+              </Tooltip>
+            </>
+          )}
+          <Tooltip content={t('files.tooltips.delete')} side="top">
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeleteItem(item);
+              }}
+              className="size-6 rounded-md text-foreground-subtle hover:text-destructive hover:bg-destructive/10 active:bg-destructive/20"
+              aria-label={t('files.delete')}
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </Tooltip>
+        </div>
+      </td>
+    </tr>
+  );
+});
 
 /** SFTP 字体缩放范围（无级平滑，倍率作用于 --ui-font-size 基准 14px） */
 const SFTP_FONT_SCALE_MIN = 0.5;
@@ -769,34 +954,87 @@ export function SftpSessionView({
   };
 
   // 行点击：多选状态机（Ctrl/⌘ 切换、Shift 范围、单击单选）；双击打开不受影响
-  const handleRowSelect = (
-    event: ReactMouseEvent<HTMLTableRowElement>,
-    item: RemoteFileItem,
-    index: number,
-  ) => {
-    if (event.button !== 0) return;
-    if (event.metaKey || event.ctrlKey) {
-      setSelectedPaths((prev) => {
-        const next = new Set(prev);
-        if (next.has(item.path)) {
-          next.delete(item.path);
-        } else {
-          next.add(item.path);
-        }
-        return next;
-      });
+  const handleRowSelect = useCallback(
+    (
+      event: ReactMouseEvent<HTMLTableRowElement>,
+      item: RemoteFileItem,
+      index: number,
+    ) => {
+      if (event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey) {
+        setSelectedPaths((prev) => {
+          const next = new Set(prev);
+          if (next.has(item.path)) {
+            next.delete(item.path);
+          } else {
+            next.add(item.path);
+          }
+          return next;
+        });
+        selectionAnchorRef.current = index;
+        return;
+      }
+      if (event.shiftKey && selectionAnchorRef.current != null) {
+        const from = Math.min(selectionAnchorRef.current, index);
+        const to = Math.max(selectionAnchorRef.current, index);
+        setSelectedPaths(new Set(items.slice(from, to + 1).map((row) => row.path)));
+        return;
+      }
+      setSelectedPaths(new Set([item.path]));
       selectionAnchorRef.current = index;
-      return;
-    }
-    if (event.shiftKey && selectionAnchorRef.current != null) {
-      const from = Math.min(selectionAnchorRef.current, index);
-      const to = Math.max(selectionAnchorRef.current, index);
-      setSelectedPaths(new Set(items.slice(from, to + 1).map((row) => row.path)));
-      return;
-    }
-    setSelectedPaths(new Set([item.path]));
-    selectionAnchorRef.current = index;
-  };
+    },
+    [items],
+  );
+
+  const handleRowDragStart = useCallback(
+    (item: RemoteFileItem, index: number, isSelected: boolean) => {
+      const dragged: SftpItemEntry[] = isSelected
+        ? items
+            .filter((row) => selectedPaths.has(row.path))
+            .map((row) => ({
+              path: row.path,
+              name: row.name,
+              isDir: row.is_dir,
+            }))
+        : [
+            {
+              path: item.path,
+              name: item.name,
+              isDir: item.is_dir,
+            },
+          ];
+      if (!isSelected) {
+        setSelectedPaths(new Set([item.path]));
+        selectionAnchorRef.current = index;
+      }
+      beginInternalDrag('sftp-item', { sessionId, items: dragged });
+    },
+    [items, selectedPaths, sessionId],
+  );
+
+  const handleRowDoubleClick = useCallback(
+    (item: RemoteFileItem) => {
+      if (item.is_dir) {
+        handleNavigate(item.path);
+      } else if (item.editable && onOpenEditor) {
+        onOpenEditor({ hostId, remotePath: item.path });
+      }
+    },
+    [handleNavigate, hostId, onOpenEditor],
+  );
+
+  const handleRowContextMenu = useCallback(
+    (event: ReactMouseEvent, item: RemoteFileItem) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setFileMenu({
+        x: Math.min(event.clientX, window.innerWidth - 180),
+        y: Math.min(event.clientY, window.innerHeight - 150),
+        item,
+      });
+    },
+    [],
+  );
 
   // ===== 面板间拖拽复制：整个面板作为放置目标 =====
   // 拖放事件流见 services/dragDropService（原生接管后页内 HTML5 drop 不再触发，
@@ -1053,188 +1291,27 @@ export function SftpSessionView({
               </tr>
             </thead>
             <tbody className="divide-y divide-border/30">
-              {items.map((item, index) => {
-                const visuals = getFileItemVisuals(item);
-                const isSelected = selectedPaths.has(item.path);
-                return (
-                  <tr
-                    key={item.path}
-                    draggable
-                    onClick={(event) => handleRowSelect(event, item, index)}
-                    onDragStart={() => {
-                      // 多选拖拽：拖起的行在选区内 → 整个选区都是载荷；否则仅拖
-                      // 该行（并把选区重置为它，与常见文件管理器一致）。目录也允许
-                      // 拖起，由放置端校验拒绝并给出明确提示；载荷经统一拖放总线
-                      // 登记（原生接管后页内 drop 不再携带 dataTransfer）
-                      const dragged: SftpItemEntry[] = isSelected
-                        ? items
-                            .filter((row) => selectedPaths.has(row.path))
-                            .map((row) => ({
-                              path: row.path,
-                              name: row.name,
-                              isDir: row.is_dir,
-                            }))
-                        : [
-                            {
-                              path: item.path,
-                              name: item.name,
-                              isDir: item.is_dir,
-                            },
-                          ];
-                      if (!isSelected) {
-                        setSelectedPaths(new Set([item.path]));
-                        selectionAnchorRef.current = index;
-                      }
-                      beginInternalDrag('sftp-item', { sessionId, items: dragged });
-                    }}
-                    onDragEnd={endInternalDrag}
-                    onDoubleClick={() => {
-                      if (item.is_dir) {
-                        handleNavigate(item.path);
-                      } else if (item.editable && onOpenEditor) {
-                        onOpenEditor({ hostId, remotePath: item.path });
-                      }
-                    }}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setFileMenu({
-                        x: Math.min(event.clientX, window.innerWidth - 180),
-                        y: Math.min(event.clientY, window.innerHeight - 150),
-                        item,
-                      });
-                    }}
-                    className={cn(
-                      'transition-colors cursor-pointer group',
-                      isSelected ? 'bg-selected' : 'hover:bg-surface/40',
-                    )}
-                  >
-                    <td className="py-1.5 pl-4 pr-2 font-medium">
-                      <div className="flex items-center gap-2">
-                        {item.is_dir ? (
-                          <Folder className={cn('size-4 shrink-0', visuals.iconClass)} />
-                        ) : (
-                          <File className={cn('size-4 shrink-0', visuals.iconClass)} />
-                        )}
-                        <span className={cn('truncate max-w-[260px] md:max-w-md', visuals.colorClass)}>
-                          {item.name}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-1.5 px-2 font-mono text-foreground-subtle">
-                      {item.is_dir
-                        ? dirSizePath === item.path
-                          ? (
-                              <Loader2 className="inline size-3.5 animate-spin text-foreground-subtlest" />
-                            )
-                          : dirSizes[item.path] != null
-                            ? formatBytes(dirSizes[item.path])
-                            : '-'
-                        : formatBytes(Number(item.size))}
-                    </td>
-                    <td className="py-1.5 px-2 font-mono text-foreground-subtle">
-                      {formatPermissions(item.permissions, item.is_dir, item.is_symlink)}
-                    </td>
-                    <td className="py-1.5 px-2 font-mono text-foreground-subtle truncate max-w-[100px]">
-                      {item.owner || '-'}
-                    </td>
-                    <td className="py-1.5 px-2 font-mono text-foreground-subtle truncate max-w-[100px]">
-                      {item.group || '-'}
-                    </td>
-                    <td className="py-1.5 px-2 text-foreground-subtle">
-                      {formatModifiedTime(item.modified_at)}
-                    </td>
-                    <td className="py-1.5 pl-2 pr-4 text-right">
-                      <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-                        {item.is_dir ? (
-                          <Tooltip content={t('files.tooltips.enterDir')} side="top">
-                            <Button
-                              type="button"
-                              size="icon-xs"
-                              variant="ghost"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleNavigate(item.path);
-                              }}
-                              className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
-                              aria-label={t('files.enterDir')}
-                            >
-                              <FolderOpen className="size-3.5" />
-                            </Button>
-                          </Tooltip>
-                        ) : (
-                          <>
-                            {item.editable ? (
-                              <Tooltip content={t('files.tooltips.preview')} side="top">
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handlePreview(item);
-                                  }}
-                                  className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
-                                  aria-label={t('files.preview')}
-                                >
-                                  <Eye className="size-3.5" />
-                                </Button>
-                              </Tooltip>
-                            ) : null}
-                            {item.editable && onOpenEditor ? (
-                              <Tooltip content={t('files.tooltips.edit')} side="top">
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onOpenEditor({ hostId, remotePath: item.path });
-                                  }}
-                                  className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
-                                  aria-label={t('files.edit')}
-                                >
-                                  <Pencil className="size-3.5" />
-                                </Button>
-                              </Tooltip>
-                            ) : null}
-                            <Tooltip content={t('files.tooltips.download')} side="top">
-                              <Button
-                                type="button"
-                                size="icon-xs"
-                                variant="ghost"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void handleDownload(item);
-                                }}
-                                className="size-6 rounded-md text-foreground-subtle hover:text-foreground hover:bg-hover active:bg-hover/80"
-                                aria-label={t('files.download')}
-                              >
-                                <Download className="size-3.5" />
-                              </Button>
-                            </Tooltip>
-                          </>
-                        )}
-                        <Tooltip content={t('files.tooltips.delete')} side="top">
-                          <Button
-                            type="button"
-                            size="icon-xs"
-                            variant="ghost"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setItemToDelete(item);
-                            }}
-                            className="size-6 rounded-md text-foreground-subtle hover:text-destructive hover:bg-destructive/10 active:bg-destructive/20"
-                            aria-label={t('files.delete')}
-                          >
-                            <Trash2 className="size-3.5" />
-                          </Button>
-                        </Tooltip>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+              {items.map((item, index) => (
+                <SftpFileRow
+                  key={item.path}
+                  item={item}
+                  index={index}
+                  isSelected={selectedPaths.has(item.path)}
+                  dirSizeLoading={dirSizePath === item.path}
+                  dirSize={dirSizes[item.path]}
+                  hostId={hostId}
+                  onSelect={handleRowSelect}
+                  onDragStart={handleRowDragStart}
+                  onDragEnd={endInternalDrag}
+                  onDoubleClick={handleRowDoubleClick}
+                  onContextMenu={handleRowContextMenu}
+                  onNavigate={handleNavigate}
+                  onPreview={handlePreview}
+                  onOpenEditor={onOpenEditor}
+                  onDownload={handleDownload}
+                  onDeleteItem={setItemToDelete}
+                />
+              ))}
             </tbody>
           </table>
         )}
@@ -1715,16 +1792,18 @@ export function SftpSessionView({
 
       {/* 文件预览弹窗：Monaco 承载，默认只读，可切换编辑并保存（脏态关闭需确认） */}
       {preview ? (
-        <SftpFilePreviewModal
-          hostId={hostId}
-          fileName={preview.name}
-          remotePath={preview.path}
-          onClose={() => setPreview(null)}
-          onSaved={() => {
-            // 保存成功：刷新目录列表（size/mtime 列随之更新）
-            void loadDirectory(currentPath);
-          }}
-        />
+        <Suspense fallback={null}>
+          <SftpFilePreviewModal
+            hostId={hostId}
+            fileName={preview.name}
+            remotePath={preview.path}
+            onClose={() => setPreview(null)}
+            onSaved={() => {
+              // 保存成功：刷新目录列表（size/mtime 列随之更新）
+              void loadDirectory(currentPath);
+            }}
+          />
+        </Suspense>
       ) : null}
 
       {/* 文件属性弹窗：权限九宫格/预设/八进制联动/特殊位/属主属组/递归；应用后刷新目录 */}

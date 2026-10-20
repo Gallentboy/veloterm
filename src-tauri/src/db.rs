@@ -125,7 +125,10 @@ struct SqlCipherConnectionCustomizer {
 impl CustomizeConnection<rusqlite::Connection, rusqlite::Error> for SqlCipherConnectionCustomizer {
     fn on_acquire(&self, conn: &mut rusqlite::Connection) -> Result<(), rusqlite::Error> {
         conn.pragma_update(None, "key", &self.master_key)?;
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 5000;",
+        )?;
         Ok(())
     }
 }
@@ -163,6 +166,14 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
     let key_for_init = master_key.to_owned();
     let manager = SqliteConnectionManager::file(db_path).with_init(move |conn| {
         conn.pragma_update(None, "key", &key_for_init)?;
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 5000;
+             PRAGMA temp_store = MEMORY;
+             PRAGMA cache_size = -2000;",
+        )?;
         Ok(())
     });
 
@@ -1574,94 +1585,112 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
         .map(|g| (g.id, g.name.clone()))
         .collect();
 
-    for group in &store.groups {
-        tx.execute(
-            "INSERT INTO groups (id, parent_id, name, created_at, updated_at)
+    {
+        let mut stmt_group = tx
+            .prepare(
+                "INSERT INTO groups (id, parent_id, name, created_at, updated_at)
        VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                group.id,
-                group.parent_id,
-                &group.name,
-                group.created_at,
-                group.updated_at
-            ],
-        )
-        .map_err(|e| format!("failed to insert group {}: {e}", group.id))?;
+            )
+            .map_err(|e| format!("failed to prepare group insert: {e}"))?;
+
+        for group in &store.groups {
+            stmt_group
+                .execute(params![
+                    group.id,
+                    group.parent_id,
+                    &group.name,
+                    group.created_at,
+                    group.updated_at
+                ])
+                .map_err(|e| format!("failed to insert group {}: {e}", group.id))?;
+        }
     }
 
-    for host in &store.hosts {
-        let auth_json = serde_json::to_string(&host.auth)
-            .map_err(|e| format!("failed to serialize host auth: {e}"))?;
-        let verification_str = verification_mode_to_str(host.host_key_verification);
-        let allow_insecure_int = if host.allow_insecure_algos {
-            1i64
-        } else {
-            0i64
-        };
-
-        tx.execute(
-            "INSERT INTO hosts (
+    {
+        let mut stmt_host = tx
+            .prepare(
+                "INSERT INTO hosts (
           id, name, host, port, username, auth_json, jump_host_id,
           host_key_verification, allow_insecure_algos, ready_command_id,
           relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint, relay_id,
           created_at, updated_at
        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
-            params![
-                host.id,
-                &host.name,
-                &host.host,
-                i64::from(host.port),
-                &host.username,
-                &auth_json,
-                host.jump_host_id,
-                verification_str,
-                allow_insecure_int,
-                host.ready_command_id,
-                host.relay.as_ref().map(|r| r.host.clone()),
-                host.relay.as_ref().map(|r| i64::from(r.port)),
-                host.relay.as_ref().map(|r| relay_transport_to_str(r.transport)),
-                host.relay.as_ref().map(|r| i64::from(r.key_id)),
-                host.relay.as_ref().map(|r| r.secret.clone()),
-                host.relay.as_ref().and_then(|r| r.cert_fingerprint.clone()),
-                host.relay_id,
-                host.created_at,
-                host.updated_at,
-            ],
-        )
-        .map_err(|e| format!("failed to insert host {}: {e}", host.id))?;
+            )
+            .map_err(|e| format!("failed to prepare host insert: {e}"))?;
 
-        for &gid in &host.group_ids {
-            if group_name_by_id.contains_key(&gid) {
-                tx.execute(
-                    "INSERT OR IGNORE INTO host_groups (host_id, group_id) VALUES (?1, ?2)",
-                    params![host.id, gid],
-                )
-                .map_err(|e| format!("failed to insert host_group ({}, {}): {e}", host.id, gid))?;
-            }
-        }
+        let mut stmt_host_group = tx
+            .prepare("INSERT OR IGNORE INTO host_groups (host_id, group_id) VALUES (?1, ?2)")
+            .map_err(|e| format!("failed to prepare host_group insert: {e}"))?;
 
-        let primary_group_name = host
-            .group_ids
-            .first()
-            .and_then(|gid| group_name_by_id.get(gid))
-            .cloned();
-
-        tx.execute(
-      "INSERT INTO sessions (id, name, host, port, username, auth_type, group_name, created_at, updated_at)
+        let mut stmt_session = tx
+            .prepare(
+                "INSERT INTO sessions (id, name, host, port, username, auth_type, group_name, created_at, updated_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-      params![
-        host.id,
-        &host.name,
-        &host.host,
-        i64::from(host.port),
-        &host.username,
-        auth_method_str(&host.auth),
-        primary_group_name,
-        host.created_at,
-        host.updated_at,
-      ],
-    )
-    .map_err(|e| format!("failed to mirror host {} into sessions: {e}", host.id))?;
+            )
+            .map_err(|e| format!("failed to prepare session insert: {e}"))?;
+
+        for host in &store.hosts {
+            let auth_json = serde_json::to_string(&host.auth)
+                .map_err(|e| format!("failed to serialize host auth: {e}"))?;
+            let verification_str = verification_mode_to_str(host.host_key_verification);
+            let allow_insecure_int = if host.allow_insecure_algos {
+                1i64
+            } else {
+                0i64
+            };
+
+            stmt_host
+                .execute(params![
+                    host.id,
+                    &host.name,
+                    &host.host,
+                    i64::from(host.port),
+                    &host.username,
+                    &auth_json,
+                    host.jump_host_id,
+                    verification_str,
+                    allow_insecure_int,
+                    host.ready_command_id,
+                    host.relay.as_ref().map(|r| r.host.clone()),
+                    host.relay.as_ref().map(|r| i64::from(r.port)),
+                    host.relay.as_ref().map(|r| relay_transport_to_str(r.transport)),
+                    host.relay.as_ref().map(|r| i64::from(r.key_id)),
+                    host.relay.as_ref().map(|r| r.secret.clone()),
+                    host.relay.as_ref().and_then(|r| r.cert_fingerprint.clone()),
+                    host.relay_id,
+                    host.created_at,
+                    host.updated_at,
+                ])
+                .map_err(|e| format!("failed to insert host {}: {e}", host.id))?;
+
+            for &gid in &host.group_ids {
+                if group_name_by_id.contains_key(&gid) {
+                    stmt_host_group
+                        .execute(params![host.id, gid])
+                        .map_err(|e| format!("failed to insert host_group ({}, {}): {e}", host.id, gid))?;
+                }
+            }
+
+            let primary_group_name = host
+                .group_ids
+                .first()
+                .and_then(|gid| group_name_by_id.get(gid))
+                .cloned();
+
+            stmt_session
+                .execute(params![
+                    host.id,
+                    &host.name,
+                    &host.host,
+                    i64::from(host.port),
+                    &host.username,
+                    auth_method_str(&host.auth),
+                    primary_group_name,
+                    host.created_at,
+                    host.updated_at,
+                ])
+                .map_err(|e| format!("failed to mirror host {} into sessions: {e}", host.id))?;
+        }
     }
 
     tx.commit()
