@@ -394,8 +394,10 @@ impl LocalPtySession {
                     match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            let chunk = buf.get(..n).map(|slice| slice.to_vec());
-                            if chunk.is_none_or(|data| on_output.send(data).is_err()) {
+                            let mut data = buf[..n].to_vec();
+                            // 命令历史采集（旁路剥离：本地 shell 注入的 OSC 7777 同样截获）
+                            crate::terminal::command_history::tap_output(id as i64, None, &mut data);
+                            if !data.is_empty() && on_output.send(data).is_err() {
                                 break;
                             }
                         }
@@ -416,6 +418,7 @@ impl LocalPtySession {
                 };
 
                 on_session_closed(id);
+                crate::terminal::command_history::end_session(id as i64);
                 // 仅当进程自发退出（而非前端主动调用 terminal_dispose 销毁）时才向前端发送 on_exit
                 if !reader_closed_flag.load(Ordering::SeqCst) {
                     let _ = on_exit.send(exit_code);
