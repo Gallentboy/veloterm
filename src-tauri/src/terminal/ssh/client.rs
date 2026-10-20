@@ -1053,11 +1053,15 @@ impl Connector {
 
     /// 终端内询问（标准 ssh 行为复刻）：提示写到终端显示，等待用户在
     /// 该终端输入一行（回车提交）。输入不回显（PAM echo=0，同 ssh 客户端）。
-    async fn ask_in_terminal(&self, prompt: &str) -> Option<String> {
-        // 提示显示到终端（原色，与 shell 内 passwd 提示一致的观感：
-        // 光标当前位置直接输出提示 + 末尾空格等待输入；换行由 instructions
-        // 尾部或上一输入的回车回显提供——此处再带前导换行会出现双换行空行）
-        let line = format!("{} ", prompt.trim());
+    /// 终端内问答（复刻 OpenSSH readpassphrase 语义）。
+    ///
+    /// `echo = false`：密码类输入，不回显；`echo = true`：回显用户输入
+    /// （用户名/验证码等，OpenSSH 用 RP_ECHO）。
+    async fn ask_in_terminal(&self, prompt: &str, echo: bool) -> Option<String> {
+        // 提示显示到终端。OpenSSH 的 read_passphrase 在开屏前先写一个 '\r'
+        // （readpass.c:160 "ensure that show the prompt at the beginning of the
+        // line"），随后 readpassphrase 写 prompt 原文。这里保持同序：\r + prompt。
+        let line = format!("\r{}", prompt);
         let _ = self
             .tx
             .send(RCEvent::Output(1, bytes::Bytes::from(line)))
@@ -1065,7 +1069,7 @@ impl Connector {
         // 注册输入等待
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         *AUTH_INPUT_WAITER.lock().unwrap() = Some(tx);
-        // 拼行直到回车（处理退格；无回显）。内层 break 需传出结果
+        // 拼行直到回车。echo=true 时把可打印字符回显到终端（同 tty ECHO 语义）。
         let mut buf: Vec<u8> = Vec::new();
         let mut done: Option<Option<String>> = None;
         while done.is_none() {
@@ -1074,19 +1078,38 @@ impl Connector {
                     for b in bytes {
                         if b == b'\r' || b == b'\n' {
                             let text = String::from_utf8_lossy(&buf).into_owned();
-                            // 回显换行：输入无回显，但回车后光标需移到新行，
-                            // 否则后续输出（下一提示/登录 banner）紧贴提示行
-                            let _ = self
-                                .tx
-                                .send(RCEvent::Output(1, bytes::Bytes::from("\r\n")))
-                                .await;
+                            // readpassphrase 在关闭回显时于读完行后写一个 '\n'
+                            // （readpassphrase.c:166 `write(output, "\n", 1)`）；
+                            // 开着回显时 tty 已随回车回显换行，不再补。
+                            if !echo {
+                                let _ = self
+                                    .tx
+                                    .send(RCEvent::Output(1, bytes::Bytes::from("\r\n")))
+                                    .await;
+                            }
                             done = Some(Some(text));
                             break;
                         }
                         if b == 0x7f || b == 0x08 {
                             buf.pop();
+                            if echo {
+                                // 回显退格：退格 + 空格 + 退格
+                                let _ = self
+                                    .tx
+                                    .send(RCEvent::Output(
+                                        1,
+                                        bytes::Bytes::from("\x08 \x08"),
+                                    ))
+                                    .await;
+                            }
                         } else {
                             buf.push(b);
+                            if echo {
+                                let _ = self
+                                    .tx
+                                    .send(RCEvent::Output(1, bytes::Bytes::from(vec![b])))
+                                    .await;
+                            }
                         }
                     }
                 }
@@ -1204,7 +1227,7 @@ impl Connector {
                                 .await?;
                         }
                         KeyboardInteractiveAuthResponse::InfoRequest {
-                            name: _name,
+                            name,
                             instructions,
                             ref prompts,
                         } => {
@@ -1245,11 +1268,28 @@ impl Connector {
                                 );
                                 break;
                             }
-                            if !instructions.is_empty() {
-                                let info = format!("{}\r\n", instructions.trim());
+                            // 复刻 sshconnect2.c::input_userauth_info_req 的输出顺序：
+                            //   if (name 非空) fputs(name, stderr);
+                            //   if (inst 非空) fputs(inst, stderr);
+                            // 两处都是 addnl = (末字符 != '\n') 时才补一个 '\n'——
+                            // 服务器已带换行时不重复补（此前无条件补 \r\n 会多空行）。
+                            let write_block = |text: &str| {
+                                if text.is_empty() {
+                                    return None;
+                                }
+                                let needs_nl = !text.ends_with('\n');
+                                Some(format!("{text}{}", if needs_nl { "\r\n" } else { "" }))
+                            };
+                            if let Some(block) = write_block(&name) {
                                 let _ = self
                                     .tx
-                                    .send(RCEvent::Output(1, bytes::Bytes::from(info)))
+                                    .send(RCEvent::Output(1, bytes::Bytes::from(block)))
+                                    .await;
+                            }
+                            if let Some(block) = write_block(&instructions) {
+                                let _ = self
+                                    .tx
+                                    .send(RCEvent::Output(1, bytes::Bytes::from(block)))
                                     .await;
                             }
                             let mut responses: Vec<String> = Vec::with_capacity(prompts.len());
@@ -1301,7 +1341,7 @@ impl Connector {
                                     responses.push(password.to_string());
                                     continue;
                                 }
-                                let answer = self.ask_in_terminal(&p.prompt).await;
+                                let answer = self.ask_in_terminal(&p.prompt, p.echo).await;
                                 match answer {
                                     Some(a) => {
                                         // 只收集**改密链**的应答（current/new/retype）。
