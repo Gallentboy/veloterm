@@ -314,6 +314,21 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           UNIQUE(host_id, username)
       );
 
+      -- 主机密码历史：每次自动/手动更新保存密码前，把**被替换掉的旧密码**
+      -- 连同修改时间记一条，供「改错了找回上一个密码」。与 hosts 表同级加密
+      -- （同一 SQLCipher 库），保留条数由写入侧限制（每主机最多 20 条）。
+      CREATE TABLE IF NOT EXISTS host_password_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          host_id INTEGER NOT NULL,
+          password TEXT NOT NULL,
+          -- 该密码被替换的时刻（unix 毫秒）
+          replaced_at INTEGER NOT NULL,
+          -- 来源：kbd-int-change（认证内改密）/ user-input（手输通过认证）
+          source TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_host_password_history_host
+          ON host_password_history(host_id, replaced_at DESC);
+
       CREATE TABLE IF NOT EXISTS grpc_tls_profiles (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           server_name TEXT NOT NULL UNIQUE,
@@ -1095,6 +1110,20 @@ pub fn update_host_password(
     host_id: usize,
     new_password: &str,
 ) -> Result<bool, String> {
+    update_host_password_with_source(pool, host_id, new_password, "kbd-int-change")
+}
+
+/// 更新保存密码并在历史表留档被替换的旧密码。
+///
+/// `source`：`kbd-int-change`（认证内改密）或 `user-input`（手输密码通过认证）。
+/// 历史留档发生在 UPDATE 之前（旧值只在更新前可得），失败不阻断主流程——
+/// 找回密码是辅助能力，不能因为历史写入失败而影响登录密码更新。
+pub fn update_host_password_with_source(
+    pool: &DbPool,
+    host_id: usize,
+    new_password: &str,
+    source: &str,
+) -> Result<bool, String> {
     let conn = pool
         .get()
         .map_err(|e| format!("failed to get db connection: {e}"))?;
@@ -1110,15 +1139,37 @@ pub fn update_host_password(
     };
     let mut auth: SSHTargetAuth = serde_json::from_str(&auth_json)
         .map_err(|e| format!("failed to parse auth_json: {e}"))?;
-    match &mut auth {
+    let old_password = match &mut auth {
         SSHTargetAuth::Password { password } => {
+            let old = password.clone();
             *password = new_password.to_string();
+            old
         }
         _ => return Ok(false), // Key/Agent：密码改密流程不适用，不动
-    }
+    };
     let new_json = serde_json::to_string(&auth)
         .map_err(|e| format!("failed to serialize auth: {e}"))?;
     let now = now_timestamp_ms();
+    // 历史留档：把即将被替换的旧密码记一条（旧值 == 新值时不记，避免噪声）。
+    // 失败只告警不阻断——找回密码是辅助能力，不能影响主流程的密码更新。
+    if !old_password.is_empty() && old_password != new_password {
+        if let Err(e) = conn.execute(
+            "INSERT INTO host_password_history (host_id, password, replaced_at, source)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![host_id as i64, old_password, now, source],
+        ) {
+            log::warn!("[DB] 密码历史写入失败（不影响本次更新）: {e}");
+        } else {
+            // 每主机最多保留 20 条，超出按时间淘汰最旧的
+            let _ = conn.execute(
+                "DELETE FROM host_password_history WHERE host_id = ?1 AND id NOT IN (
+                     SELECT id FROM host_password_history WHERE host_id = ?1
+                     ORDER BY replaced_at DESC, id DESC LIMIT 20
+                 )",
+                params![host_id as i64],
+            );
+        }
+    }
     let changed = conn
         .execute(
             "UPDATE hosts SET auth_json = ?1, updated_at = ?2 WHERE id = ?3",

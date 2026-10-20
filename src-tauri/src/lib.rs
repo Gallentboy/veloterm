@@ -9,6 +9,7 @@ pub mod editor_storage;
 pub mod grpc_client;
 pub mod grpc_describe;
 pub mod grpc_tls;
+pub mod host_password_history;
 pub mod lifecycle;
 pub mod logging;
 pub mod port_forward;
@@ -91,6 +92,8 @@ pub fn run() {
             relays::relay_save,
             relays::relay_delete,
             relays::relay_test,
+            host_password_history::host_password_history_list,
+            host_password_history::host_password_history_clear,
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,
             zk_hosts::zk_host_delete,
