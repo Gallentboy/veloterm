@@ -1130,6 +1130,10 @@ impl Connector {
                 let mut secret_answers: Vec<String> = Vec::new();
                 // 普通密码提示只自动填一次（见下方 prompt 循环注释）
                 let mut plain_password_filled = false;
+                // kbd-int 整体失败重试计数（对齐 OpenSSH number_of_password_prompts
+                // 默认 3）：密码过期时 Current 输错 → 服务器 FAILURE → 重新发起一轮
+                let mut kbdint_attempts = 0u32;
+                const KBDINT_MAX_ATTEMPTS: u32 = 3;
                 loop {
                     match kb {
                         KeyboardInteractiveAuthResponse::Success => {
@@ -1163,7 +1167,41 @@ impl Connector {
                             kbdint_worked = true;
                             break;
                         }
-                        KeyboardInteractiveAuthResponse::Failure { .. } => break, // 服务器不支持 kbd-int
+                        KeyboardInteractiveAuthResponse::Failure { .. } => {
+                            // 复刻 OpenSSH sshconnect2.c：kbd-int 失败**不是**终止
+                            // 认证，而是由 input_userauth_failure → userauth() 重新
+                            // 发起一轮（attempt_kbdint 计数上限 number_of_password_prompts，
+                            // 默认 3）。密码过期场景下用户在 Current password 输错，
+                            // 服务器回 FAILURE，标准 ssh 会重新发一轮 Password: 让用户
+                            // 重试（实测：Password: → Current password: 输错 →
+                            // 又回到 Password:）。
+                            // 此前这里直接 break 回落 password 认证，于是服务器把改密
+                            // 推迟到 shell 内 passwd，出现「Current 输错也能进 shell」。
+                            kbdint_attempts += 1;
+                            if kbdint_attempts >= KBDINT_MAX_ATTEMPTS {
+                                log::warn!(
+                                    "[SSH {}] kbd-int 已失败 {} 轮，停止重试",
+                                    self.id,
+                                    kbdint_attempts
+                                );
+                                break;
+                            }
+                            log::info!(
+                                "[SSH {}] kbd-int 认证失败，重新发起（第 {} 次）",
+                                self.id,
+                                kbdint_attempts + 1
+                            );
+                            // 新一轮：清空本轮的应答收集与首轮自动填标记
+                            secret_answers.clear();
+                            plain_password_filled = false;
+                            round = 0;
+                            kb = session
+                                .authenticate_keyboard_interactive_start(
+                                    username.to_string(),
+                                    None,
+                                )
+                                .await?;
+                        }
                         KeyboardInteractiveAuthResponse::InfoRequest {
                             name: _name,
                             instructions,
