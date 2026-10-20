@@ -41,15 +41,15 @@ jobs:
             nsis_arch: arm64
             args: '--target aarch64-pc-windows-msvc'
           # macOS：两腿分开出包（arm64 / x86_64 各一个 dmg），各自用对应芯片的
-          # 原生 runner（M 芯片 macos-latest / Intel 芯片 macos-15-intel），无交叉
-          # 编译环节。externalBin 只在 tauri.windows.conf.json（Tauri 平台约定
-          # 自动合并），mac 腿零工具链依赖。无签名证书，产出未签名 dmg
-          # （首次打开需右键绕 Gatekeeper）
-          - platform: 'macos-latest'
+          # 原生 runner（M 芯片 macos-26 / Intel 芯片 macos-26-intel，均取最新
+          # 世代镜像），无交叉编译环节。externalBin 只在 tauri.windows.conf.json
+          # （Tauri 平台约定自动合并），mac 腿零工具链依赖。无签名证书，产出
+          # 未签名 dmg（首次打开需右键绕 Gatekeeper）
+          - platform: 'macos-26'
             rust_target: aarch64-apple-darwin
             rust_targets: aarch64-apple-darwin
             args: '--target aarch64-apple-darwin'
-          - platform: 'macos-15-intel'
+          - platform: 'macos-26-intel'
             rust_target: x86_64-apple-darwin
             rust_targets: x86_64-apple-darwin
             args: '--target x86_64-apple-darwin'
