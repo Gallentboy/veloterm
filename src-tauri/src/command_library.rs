@@ -94,6 +94,26 @@ pub struct CommandRecord {
 
 fn ensure_table(pool: &DbPool) -> Result<(), String> {
     let conn = pool.get().map_err(|e| e.to_string())?;
+
+    // 性能优化：快速校验 commands 表是否已存在且架构完整（具备 platforms 列），
+    // 命中即直接短路返回，彻底消除每次查询重复触发 DDL 扫描与 schema ALTER 锁开销
+    let is_ready: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='commands'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+
+    if is_ready {
+        let has_platforms: bool = conn
+            .query_row("SELECT platforms FROM commands LIMIT 0", [], |_| Ok(true))
+            .is_ok();
+        if has_platforms {
+            return Ok(());
+        }
+    }
+
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS commands (
         id             INTEGER PRIMARY KEY,
@@ -195,20 +215,33 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<CommandRecord> {
 
 // ─────────────────────── Tauri 命令 ───────────────────────
 
-/// 全字段模糊搜索；keyword 为 None/空时返回全量。
+/// 全字段模糊搜索；keyword 为 None/空时返回全量。支持可选 limit / offset 分页。
 /// 排序：is_pinned DESC → usage_count DESC → last_used_at DESC
 ///（核心与 Tauri 包装分离，供命令与测试共用）
-fn list_records(pool: &DbPool, keyword: Option<&str>) -> Result<Vec<CommandRecord>, String> {
+fn list_records(
+    pool: &DbPool,
+    keyword: Option<&str>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Vec<CommandRecord>, String> {
     ensure_table(pool)?;
     let conn = pool.get().map_err(|e| e.to_string())?;
 
+    let pagination_clause = match (limit, offset) {
+        (Some(l), Some(o)) => format!(" LIMIT {l} OFFSET {o}"),
+        (Some(l), None) => format!(" LIMIT {l}"),
+        (None, Some(o)) => format!(" LIMIT -1 OFFSET {o}"),
+        (None, None) => String::new(),
+    };
+
     let kw = keyword.unwrap_or_default().trim();
     if kw.is_empty() {
+        let sql = format!(
+            "SELECT * FROM commands
+             ORDER BY is_pinned DESC, usage_count DESC, COALESCE(last_used_at, 0) DESC{pagination_clause}"
+        );
         let mut stmt = conn
-            .prepare(
-                "SELECT * FROM commands
-         ORDER BY is_pinned DESC, usage_count DESC, COALESCE(last_used_at, 0) DESC",
-            )
+            .prepare(&sql)
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], row_to_record)
@@ -219,13 +252,14 @@ fn list_records(pool: &DbPool, keyword: Option<&str>) -> Result<Vec<CommandRecor
     }
 
     let pattern = format!("%{kw}%");
+    let sql = format!(
+        "SELECT * FROM commands
+         WHERE title LIKE ?1 OR command LIKE ?1 OR description LIKE ?1
+            OR purpose LIKE ?1 OR category LIKE ?1 OR tags LIKE ?1
+         ORDER BY is_pinned DESC, usage_count DESC, COALESCE(last_used_at, 0) DESC{pagination_clause}"
+    );
     let mut stmt = conn
-        .prepare(
-            "SELECT * FROM commands
-       WHERE title LIKE ?1 OR command LIKE ?1 OR description LIKE ?1
-          OR purpose LIKE ?1 OR category LIKE ?1 OR tags LIKE ?1
-       ORDER BY is_pinned DESC, usage_count DESC, COALESCE(last_used_at, 0) DESC",
-        )
+        .prepare(&sql)
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([&pattern], row_to_record)
@@ -237,9 +271,11 @@ fn list_records(pool: &DbPool, keyword: Option<&str>) -> Result<Vec<CommandRecor
 #[tauri::command]
 pub fn command_list(
     keyword: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
     state: State<'_, DbPool>,
 ) -> Result<Vec<CommandRecord>, String> {
-    list_records(&state, keyword.as_deref())
+    list_records(&state, keyword.as_deref(), limit, offset)
 }
 
 /// 获取下一个可用 id（新记录前端传 0，后端分配）
@@ -449,7 +485,7 @@ pub fn command_used(id: usize, state: State<'_, DbPool>) -> Result<(), String> {
 /// JSON 全量导出
 #[tauri::command]
 pub fn command_export(state: State<'_, DbPool>) -> Result<String, String> {
-    let all = command_list(None, state)?;
+    let all = list_records(&state, None, None, None)?;
     serde_json::to_string_pretty(&all).map_err(|e| e.to_string())
 }
 
@@ -1406,7 +1442,7 @@ mod tests {
         record.platforms = vec!["linux".to_string()];
         save_command_impl(&mut record, &pool).expect("save should succeed");
 
-        let all = list_records(&pool, None).expect("list should succeed");
+        let all = list_records(&pool, None, None, None).expect("list should succeed");
         let saved = all.iter().find(|r| r.title == "仅 Linux 命令").expect("saved row");
         assert_eq!(saved.platforms, vec!["linux".to_string()]);
 
@@ -1414,9 +1450,26 @@ mod tests {
         let mut updated = saved.clone();
         updated.platforms = vec!["mac".into(), "win".into()];
         save_command_impl(&mut updated, &pool).expect("update should succeed");
-        let all = list_records(&pool, None).expect("list should succeed");
+        let all = list_records(&pool, None, None, None).expect("list should succeed");
         let saved = all.iter().find(|r| r.title == "仅 Linux 命令").expect("updated row");
         assert_eq!(saved.platforms, vec!["win".to_string(), "mac".to_string()]);
+    }
+
+    #[test]
+    fn list_records_pagination_smoke() {
+        let pool = test_pool();
+        ensure_table(&pool).expect("ensure_table should succeed");
+        for i in 1..=5 {
+            let mut record = blank_record(&format!("cmd-{i}"), "echo test");
+            save_command_impl(&mut record, &pool).expect("save should succeed");
+        }
+        let page1 = list_records(&pool, None, Some(2), Some(0)).expect("page1");
+        assert_eq!(page1.len(), 2);
+        let page2 = list_records(&pool, None, Some(2), Some(2)).expect("page2");
+        assert_eq!(page2.len(), 2);
+        let page3 = list_records(&pool, None, Some(2), Some(4)).expect("page3");
+        assert_eq!(page3.len(), 1);
+        assert_ne!(page1[0].id, page2[0].id);
     }
 
     #[test]
