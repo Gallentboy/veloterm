@@ -323,9 +323,13 @@ pub fn receive_files<R: TimeoutRead, W: Write>(
             use std::os::unix::ffi::OsStrExt;
             Path::new(OsStr::from_bytes(&file_info.name))
         };
+        // 非 unix：先绑定 OsString 再加长生命周期——直接
+        // Path::new(&OsString::from(..)) 会让临时值在语句结束即释放、
+        // 后续 join 借用悬垂（Windows 编译实测 E0716）
         #[cfg(not(unix))]
-        let name =
-            Path::new(&OsString::from(String::from_utf8_lossy(&file_info.name).into_owned()));
+        let name_owned = OsString::from(String::from_utf8_lossy(&file_info.name).into_owned());
+        #[cfg(not(unix))]
+        let name = Path::new(&name_owned);
 
         // Security: check path in restricted mode
         let file_path = if config.junk_path {
