@@ -1,13 +1,18 @@
 import { AlertTriangle, FileCode, RotateCw } from 'lucide-react';
-import { memo, useCallback, useEffect, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EditorTabBar } from '@/components/editor/EditorTabBar';
-import { MonacoDocumentCard } from '@/components/editor/MonacoDocumentCard';
 import { Button } from '@/components/ui/button';
 import { useEditorStore } from '@/editor/EditorProvider';
 import type { EditorFileDescriptor } from '@/editor/types';
 
-const MemoizedMonacoDocumentCard = memo(MonacoDocumentCard);
+const MemoizedMonacoDocumentCard = memo(
+  lazy(() =>
+    import('@/components/editor/MonacoDocumentCard').then((m) => ({
+      default: m.MonacoDocumentCard,
+    })),
+  ),
+);
 
 /** 状态栏右侧状态文本（dirty 前加 ●） */
 function EditorStatusText({ status }: { status: EditorFileDescriptor['status'] }) {
@@ -179,18 +184,20 @@ export function EditorScreen() {
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-hidden p-3 pt-2">
-          <MemoizedMonacoDocumentCard
-            key={file.id}
-            file={file}
-            content={content}
-            viewState={viewState}
-            diffRemoteContent={diffRemoteContent}
-            readOnly={readOnly}
-            onContentChange={handleContentChangeForActive}
-            onSaveRequest={handleSaveRequestForActive}
-            onViewStateChange={handleViewStateChangeById}
-            onCursorChange={handleCursorChange}
-          />
+          <Suspense fallback={<div className="h-full w-full" />}>
+            <MemoizedMonacoDocumentCard
+              key={file.id}
+              file={file}
+              content={content}
+              viewState={viewState}
+              diffRemoteContent={diffRemoteContent}
+              readOnly={readOnly}
+              onContentChange={handleContentChangeForActive}
+              onSaveRequest={handleSaveRequestForActive}
+              onViewStateChange={handleViewStateChangeById}
+              onCursorChange={handleCursorChange}
+            />
+          </Suspense>
         </div>
       )}
 
