@@ -10,3 +10,4 @@
 //!
 //! 无任何 .bat 转发，不依赖 Git Bash / MSYS2。
 pub mod hardlinks;
+pub mod jq;

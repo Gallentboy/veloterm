@@ -61,3 +61,7 @@ src-tauri/vim-build/
 # 本地第三方源码目录（如 warpgate）：内容不进库；曾被 git add 误记为无 .gitmodules
 # 的 gitlink（幽灵 submodule），actions/checkout 清理时报 fatal: No url found
 thirdpart/
+# 测试数据目录（大文件/生成样本不进库）
+testdata/
+src-tauri/testdata/
+!src-tauri/testdata/sample.jxl

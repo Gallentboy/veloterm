@@ -147,15 +147,17 @@ pub fn run() {
             sftp::commands::sftp_list_users_groups,
             sftp::commands::sftp_exec_available,
             sftp::commands::sftp_copy_file,
-            sftp::file_ops::sftp_read_file,
-            sftp::file_ops::sftp_sudo_read,
+	            sftp::file_ops::sftp_read_file,
+	            sftp::file_ops::sftp_read_file_hex,
+	            sftp::file_ops::sftp_sudo_read,
             sftp::file_ops::sftp_sudo_write,
             sftp::file_ops::sftp_write_file,
             editor_storage::editor_load_state,
-            editor_storage::editor_save_panel_state,
-            editor_storage::editor_save_draft,
-            editor_storage::editor_delete_draft,
-        ])
+	            editor_storage::editor_save_panel_state,
+	            editor_storage::editor_save_draft,
+	            editor_storage::editor_delete_draft,
+	            tools::jq::execute_jq_filter,
+	        ])
         .on_menu_event(|app, event| {
             if event.id().as_ref() == "veloterm-about" {
                 about::show_about(app);

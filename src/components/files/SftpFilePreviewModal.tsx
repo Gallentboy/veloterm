@@ -1,15 +1,20 @@
-import { AlertCircle, Eye, Loader2, Pencil, PencilOff, Save, X } from 'lucide-react';
+import { AlertCircle, Binary, BookOpen, Code2, Eye, FileJson, Loader2, Pencil, PencilOff, Save, Table, X } from 'lucide-react';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as monaco from 'monaco-editor';
 import { Button } from '@/components/ui/button';
 import { PdfRemotePreview } from '@/components/files/PdfRemotePreview';
 import { ImageRemotePreview } from '@/components/files/ImageRemotePreview';
+import { MarkdownPreview } from '@/components/files/MarkdownPreview';
+import { CsvPreview } from '@/components/files/CsvPreview';
+import { JsonPreview } from '@/components/files/JsonPreview';
+import { HexPreview } from '@/components/files/HexPreview';
 import { isPreviewableImage } from '@/services/imagePreviewService';
 import { loadRemoteContent, loadRemoteContentSudo, saveRemoteContent, saveRemoteContentSudo } from '@/editor/contentLoader';
 import { resolveLanguageId } from '@/editor/languageMap';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
+import { cn } from '@/lib/utils';
 
 /**
  * SFTP 文件预览弹窗：Monaco 承载，默认只读，可一键切换编辑并保存回远端。
@@ -72,8 +77,24 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
   const isPdf = /\.pdf$/i.test(fileName);
   /** 图片走独立预览分支（原生直传 / 后端转码，不加载 Monaco） */
   const isImage = isPreviewableImage(fileName);
+  /** Markdown 文件支持富文本渲染视图与源码视图切换 */
+  const isMarkdown = /\.(md|markdown|mdown|mkd)$/i.test(fileName);
+  /** CSV/TSV 表格文件支持结构化虚拟滚动表格与源码视图切换 */
+  const isCsv = /\.(csv|tsv)$/i.test(fileName);
+  /** JSON/JSONL 结构化数据支持树状展示与内置 jq 过滤 */
+  const isJson = /\.(json|jsonl)$/i.test(fileName);
+  /** 具备专用预览渲染器的文本类型（Markdown / CSV / TSV / JSON） */
+  const hasCustomPreview = isMarkdown || isCsv || isJson;
   /** 非文本分支（PDF / 图片）：跳过 Monaco 内容加载与编辑按钮 */
   const isBinaryPreview = isPdf || isImage;
+
+  /** 检测到非文本文件时自动置为 true 并切到 Hex 模式 */
+  const [isBinaryFile, setIsBinaryFile] = useState(false);
+
+  /** 预览模式：结构化文本默认进入专用渲染，其余文件进入 Monaco 源码视图 */
+  const [viewMode, setViewMode] = useState<'preview' | 'source' | 'hex'>(
+    hasCustomPreview ? 'preview' : 'source',
+  );
 
   /** 远端内容基线：加载时初始化、保存成功后推进（编辑器内容不回写此状态） */
   const [baseline, setBaseline] = useState<string | null>(null);
@@ -124,7 +145,15 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
         }
       } catch (err) {
         if (!cancelled) {
-          setLoadError(err instanceof Error ? err.message : String(err));
+          const errMsg = err instanceof Error ? err.message : String(err);
+          // 二进制文件嗅探拦截：自动降级切入 Hex 十六进制查看器，不报红报错
+          if (/NOT_TEXT|不是可编辑的文本文件/i.test(errMsg)) {
+            setIsBinaryFile(true);
+            setViewMode('hex');
+            setLoadError(null);
+          } else {
+            setLoadError(errMsg);
+          }
         }
       }
     })();
@@ -292,8 +321,18 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
     editorRef.current?.updateOptions({ readOnly: !editing || saving });
   }, [editing, saving]);
 
+  /* —— 视图切换或进入编辑态时触发 Monaco 自适应重新排版 —— */
+  useEffect(() => {
+    if (viewMode === 'source' || editing) {
+      requestAnimationFrame(() => {
+        editorRef.current?.layout();
+      });
+    }
+  }, [viewMode, editing]);
+
   const switchToEdit = useCallback(() => {
     setPendingDiscard(null);
+    setViewMode('source');
     setEditing(true);
     // 切编辑态后聚焦（readOnly 解除在 effect 中，晚一帧再聚焦）
     requestAnimationFrame(() => editorRef.current?.focus());
@@ -366,7 +405,79 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            {isBinaryPreview ? null : !editing ? (
+            {/* 只读模式下的多视图切换器（专用结构视图 / Monaco 源码 / Hex 十六进制） */}
+            {!editing && !isBinaryPreview && (baseline !== null || isBinaryFile) ? (
+              <div className="flex items-center rounded-lg border border-border/70 bg-surface/50 p-0.5 text-ui-xs mr-1">
+                {hasCustomPreview && !isBinaryFile ? (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('preview')}
+                    className={cn(
+                      'flex items-center gap-1 rounded-md px-2 py-0.5 transition-colors',
+                      viewMode === 'preview'
+                        ? 'bg-selected text-foreground font-medium shadow-xs'
+                        : 'text-foreground-subtle hover:text-foreground',
+                    )}
+                    title={
+                      isCsv
+                        ? t('files.previewTable')
+                        : isJson
+                        ? t('files.previewJson')
+                        : t('files.previewRendered')
+                    }
+                  >
+                    {isCsv ? (
+                      <Table className="size-3" />
+                    ) : isJson ? (
+                      <FileJson className="size-3" />
+                    ) : (
+                      <BookOpen className="size-3" />
+                    )}
+                    <span>
+                      {isCsv
+                        ? t('files.previewTable')
+                        : isJson
+                        ? t('files.previewJson')
+                        : t('files.previewRendered')}
+                    </span>
+                  </button>
+                ) : null}
+
+                {!isBinaryFile ? (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('source')}
+                    className={cn(
+                      'flex items-center gap-1 rounded-md px-2 py-0.5 transition-colors',
+                      viewMode === 'source'
+                        ? 'bg-selected text-foreground font-medium shadow-xs'
+                        : 'text-foreground-subtle hover:text-foreground',
+                    )}
+                    title={t('files.previewSource')}
+                  >
+                    <Code2 className="size-3" />
+                    <span>{t('files.previewSource')}</span>
+                  </button>
+                ) : null}
+
+                <button
+                  type="button"
+                  onClick={() => setViewMode('hex')}
+                  className={cn(
+                    'flex items-center gap-1 rounded-md px-2 py-0.5 transition-colors',
+                    viewMode === 'hex'
+                      ? 'bg-selected text-foreground font-medium shadow-xs'
+                      : 'text-foreground-subtle hover:text-foreground',
+                  )}
+                  title={t('files.previewHex')}
+                >
+                  <Binary className="size-3" />
+                  <span>{t('files.previewHex')}</span>
+                </button>
+              </div>
+            ) : null}
+
+            {isBinaryPreview || isBinaryFile ? null : !editing ? (
               <Button type="button" size="sm" variant="ghost" onClick={switchToEdit}>
                 <Pencil className="size-3" />
                 <span>{t('common.edit')}</span>
@@ -424,8 +535,32 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
             </Suspense>
           ) : (
             <>
-              <div ref={containerRef} className="h-full w-full" />
-              {baseline === null && !loadError ? (
+              {isMarkdown && viewMode === 'preview' && !editing && baseline !== null ? (
+                <MarkdownPreview content={baseline} />
+              ) : null}
+              {isCsv && viewMode === 'preview' && !editing && baseline !== null ? (
+                <CsvPreview content={baseline} fileName={fileName} />
+              ) : null}
+              {isJson && viewMode === 'preview' && !editing && baseline !== null ? (
+                <JsonPreview content={baseline} fileName={fileName} />
+              ) : null}
+              {viewMode === 'hex' && !editing ? (
+                <HexPreview
+                  initialContent={baseline ?? undefined}
+                  hostId={hostId}
+                  remotePath={remotePath}
+                />
+              ) : null}
+              <div
+                ref={containerRef}
+                className={cn(
+                  'h-full w-full',
+                  (hasCustomPreview && viewMode === 'preview') || viewMode === 'hex'
+                    ? 'hidden'
+                    : 'block',
+                )}
+              />
+              {baseline === null && !loadError && !isBinaryFile ? (
                 <div className="absolute inset-0 flex items-center justify-center bg-popover">
                   <Loader2 className="size-5 animate-spin text-foreground-subtle" />
                 </div>

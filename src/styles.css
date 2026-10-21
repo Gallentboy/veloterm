@@ -397,6 +397,70 @@ body {
   animation: about-card-out 220ms ease-in both;
 }
 
+/*
+ * highlight.js 代码高亮样式映射 —— 与 VeloTerm 终端主题光谱（浅色/深色）统一。
+ * 作用于 rehype-highlight 生成的代码块 token。
+ */
+.hljs {
+  color: var(--color-foreground);
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in,
+.hljs-name,
+.hljs-tag {
+  color: var(--color-terminal-magenta);
+  font-weight: 500;
+}
+
+.hljs-string,
+.hljs-title,
+.hljs-section,
+.hljs-attribute,
+.hljs-literal,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-addition {
+  color: var(--color-terminal-green);
+}
+
+.hljs-comment,
+.hljs-quote,
+.hljs-deletion,
+.hljs-meta {
+  color: var(--color-foreground-subtle);
+  font-style: italic;
+}
+
+.hljs-number,
+.hljs-regexp,
+.hljs-link {
+  color: var(--color-terminal-cyan);
+}
+
+.hljs-function,
+.hljs-title.function_,
+.hljs-subst {
+  color: var(--color-terminal-yellow);
+}
+
+.hljs-variable,
+.hljs-attr,
+.hljs-params {
+  color: var(--color-foreground);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 700;
+}
+
+
 /* 页内指针拖拽进行中（设置页菜单宫格排序等）：全局强制抓取手光标。
    !important 压过一切元素级 cursor（类级 cursor-pointer 等） */
 body.veloterm-pointer-dragging,
