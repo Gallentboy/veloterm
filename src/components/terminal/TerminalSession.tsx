@@ -774,12 +774,10 @@ export function TerminalSession({
         oscTracker.inCommand = true;
         oscTracker.commandStartX = buffer.cursorX;
         oscTracker.commandStartY = buffer.cursorY + buffer.baseY;
-        return true;
       } else if (code === 'C' || code === 'D' || code === 'A') {
         oscTracker.inCommand = false;
-        return true;
       }
-      return false;
+      return true;
     });
     registryDisposers.push(osc133Disposer);
 
