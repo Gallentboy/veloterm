@@ -1169,6 +1169,9 @@ impl Connector {
                 // 服务器在 FAILURE 里给出的剩余认证方法（最终失败时按 OpenSSH
                 // 的「Permission denied (method1,method2)」格式呈现）
                 let mut last_remaining_methods: Option<String> = None;
+                // 上一轮 kbd-int 失败过（下一轮 InfoRequest 到达时先打
+                // 「Permission denied, please try again.」再显示提示）
+                let mut kbdint_failed_once = false;
                 loop {
                     match kb {
                         KeyboardInteractiveAuthResponse::Success => {
@@ -1258,11 +1261,26 @@ impl Connector {
                             break;
                         }
                         KeyboardInteractiveAuthResponse::Failure {
-                            remaining_methods, ..
+                            remaining_methods,
+                            ..
                         } => {
-                            // 记录服务器允许的剩余方法，供最终失败时按 OpenSSH
-                            // 格式打印「Permission denied (method1,method2)」
-                            last_remaining_methods = Some(format!("{remaining_methods:?}"));
+                            // 记录服务器允许的剩余方法（转可读字符串，供最终
+                            // 失败时按 OpenSSH 格式「Permission denied (m1,m2)」
+                            // 呈现——MethodSet 的 Debug 是 "MethodSet([PublicKey])"
+                            // 不是用户可读形态）
+                            let methods: Vec<&str> = remaining_methods
+                                .iter()
+                                .map(<&str>::from)
+                                .collect();
+                            let methods_str = methods.join(",");
+                            log::debug!(
+                                "[SSH {}] kbd-int attempt {} failed, \
+                                 server offers: [{}]",
+                                self.id,
+                                kbdint_attempts + 1,
+                                methods_str
+                            );
+                            last_remaining_methods = Some(methods_str);
                             // 复刻 OpenSSH sshconnect2.c：kbd-int 失败**不是**终止
                             // 认证，而是由 input_userauth_failure → userauth() 重新
                             // 发起一轮（attempt_kbdint 计数上限 number_of_password_prompts，
@@ -1285,23 +1303,11 @@ impl Connector {
                                 break;
                             }
                             log::debug!(
-                                "[SSH {}] kbd-int retry {}",
+                                "[SSH {}] kbd-int attempt {}/{}: retrying",
                                 self.id,
-                                kbdint_attempts + 1
+                                kbdint_attempts + 1,
+                                KBDINT_MAX_ATTEMPTS
                             );
-                            // 重试前给用户一条可见提示。OpenSSH 在此处是静默的
-                            // （仅 debug2 日志），但终端用户连续看到三个 Password:
-                            // 而不知道前一次已失败，观感像卡住——补一条与原生命令
-                            // 行 ssh 输出同义的提示。
-                            // 不带前导 \r\n：上一轮 ask_in_terminal 在无回显模式下
-                            // 读完行已写过换行，再加一个会产生空行。
-                            let _ = self
-                                .tx
-                                .send(RCEvent::Output(
-                                    1,
-                                    bytes::Bytes::from("Permission denied, please try again.\r\n"),
-                                ))
-                                .await;
                             // 新一轮：清空本轮的应答收集。**不再重置
                             // plain_password_filled**——保存的密码只在第一次尝试时
                             // 自动填一次：若它错了，重试时再填同一个错密码只会让
@@ -1309,6 +1315,11 @@ impl Connector {
                             // 防暴力破解），4 次 kbd-int + 1 次 password 回落累计
                             // 5s+ 才报错（实测体感）。保持 filled=true 后，重试轮
                             // 会显示 Password: 等用户输入，失败也能立刻让用户改。
+                            // 「Permission denied, please try again.」不在重试前打：
+                            // 服务器可能直接回 FAILURE 不发 prompt，重试循环跑完
+                            // 报错的速度快于终端渲染，提示会乱序到断开消息后面
+                            // （实测）——改到下一轮 InfoRequest 到达时才打。
+                            kbdint_failed_once = true;
                             secret_answers.clear();
                             // 手输密码也清：失败轮的值未通过服务器验证，不能留作
                             // 写库依据（下一轮用户重新输入的才是有效的）
@@ -1327,6 +1338,36 @@ impl Connector {
                             ref prompts,
                         } => {
                             round += 1;
+                            log::debug!(
+                                "[SSH {}] kbd-int round {}: {} prompt(s), \
+                                 name={:?} instructions={:?}",
+                                self.id,
+                                round,
+                                prompts.len(),
+                                if name.is_empty() { "-" } else { &name },
+                                if instructions.is_empty() { "-" } else { &instructions }
+                            );
+                            log::trace!(
+                                "[SSH {}] kbd-int round {} prompts: {:?}",
+                                self.id,
+                                round,
+                                prompts.iter().map(|p| (&p.prompt, p.echo)).collect::<Vec<_>>()
+                            );
+                            // 失败后的重试轮：服务器重新发了提示（用户这次能输入）。
+                            // 此时才打「上一次失败」——重试前打会在服务器立即
+                            // 拒绝（不发 prompt）时乱序到断开消息后面
+                            if kbdint_failed_once {
+                                kbdint_failed_once = false;
+                                let _ = self
+                                    .tx
+                                    .send(RCEvent::Output(
+                                        1,
+                                        bytes::Bytes::from(
+                                            "Permission denied, please try again.\r\n",
+                                        ),
+                                    ))
+                                    .await;
+                            }
                             let prompt_texts: Vec<&str> =
                                 prompts.iter().map(|p| p.prompt.as_str()).collect();
                             let lower_all = prompt_texts
@@ -1433,12 +1474,35 @@ impl Connector {
                                 // 若用它做判据则第一轮 Password: 既不自动填也不问用户。
                                 if !text_is_change_step && !plain_password_filled {
                                     plain_password_filled = true;
+                                    log::debug!(
+                                        "[SSH {}] kbd-int round {}: auto-filling \
+                                         saved password for {:?}",
+                                        self.id,
+                                        round,
+                                        p.prompt
+                                    );
                                     responses.push(password.to_string());
                                     continue;
                                 }
+                                log::debug!(
+                                    "[SSH {}] kbd-int round {}: asking user \
+                                     for {:?} (echo={})",
+                                    self.id,
+                                    round,
+                                    p.prompt,
+                                    p.echo
+                                );
                                 let answer = self.ask_in_terminal(&p.prompt, p.echo).await;
                                 match answer {
                                     Some(a) => {
+                                        log::debug!(
+                                            "[SSH {}] kbd-int round {}: got user input \
+                                             for {:?} ({} bytes)",
+                                            self.id,
+                                            round,
+                                            p.prompt,
+                                            a.len()
+                                        );
                                         // 只收集**改密链**的应答（current/new/retype）。
                                         // 不能用 (is_secret || text_is_change_step)：
                                         // 第一轮的普通 Password: 也是 echo=false，
@@ -1468,6 +1532,12 @@ impl Connector {
                                     }
                                 }
                             }
+                            log::trace!(
+                                "[SSH {}] kbd-int round {}: sending {} response(s)",
+                                self.id,
+                                round,
+                                responses.len()
+                            );
                             kb = session
                                 .authenticate_keyboard_interactive_respond(responses)
                                 .await?;
@@ -1580,6 +1650,7 @@ impl Connector {
                         "Permission denied ({methods})."
                     )));
                 }
+                log::debug!("[SSH {}] falling back to password auth", self.id);
                 let response = session
                     .authenticate_password(username.to_string(), password)
                     .await?;
