@@ -14,6 +14,16 @@ VeloTerm 是快速、精致的跨平台桌面终端（Tauri 2 + React 19），�
 | 命令历史 | 每条执行命令自动入库（命令 + 主机 + 时间 + 退出码）；被动采集——shell 片段（bash/zsh/fish）由用户自注入服务器 rc 文件或就绪钩子、应用只识别不入侵；按主机/仅本地/只看失败检索，按范围清空 |
 | 内置工具链（仅 Windows） | 单一 `coreutils.exe` 多呼叫二进制 + NTFS 硬链接短名入口（`ls` `grep` `rg` `awk` `bat` `bc` `jq` `yq` `qalc` `nmap` `ncat` `nping` `zoxide` `fzf` `dog` `vim` `onefetch` … 130 个命令），BusyBox 模式零拷贝分发 |
 
+## 安装与内网分发提示（Windows）
+
+安装包从 [Releases](https://github.com/Gallentboy/veloterm/releases) 下载，未做代码签名：联网机器首次双击可能出现 SmartScreen「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」即可；**离线机器会先等云端信誉查询超时（表现为卡很久）才弹出该提示**。提前去掉网络标记（Mark of the Web）可完全绕过这项检查：
+
+- 右键安装包 → 属性 → 「常规」选项卡底部勾选**「解除锁定」**（仅带网络标记的文件才显示这一行）；
+- 或 PowerShell：`Unblock-File "<安装包路径>"`；整个目录批量处理：`Get-ChildItem "<目录>" -Recurse -File | Unblock-File`；
+- 检查文件是否带标记：`Get-Item "<文件>" -Stream Zone.Identifier`（报错「找不到流」= 无标记，不会触发 SmartScreen）。
+
+**内网/离线分发**（如分卷压缩传出后解压使用）：7-Zip 21.07+ / WinRAR 6.11+ 解压时会把压缩包自带的网络标记**传播给解压出的文件**，离线机器上解压出的安装包照样触发云端等待——对解压目录批量 `Unblock-File`（命令见上）。经企业 IM / 网盘客户端 / 内网共享直接传输的文件通常不带标记、不触发。公司管控机器（VDI / 域环境）上若双击仍长时间无响应，多为终端安全软件（EDR）自己的云端信誉查询，需 IT 加白名单，与安装包无关。
+
 ## 环境要求
 
 - Node.js ≥ 22、pnpm ≥ 11、Rust stable（edition 2024，rustc ≥ 1.90）
