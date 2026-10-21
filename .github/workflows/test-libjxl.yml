@@ -1,0 +1,117 @@
+# 目标（单一）：Windows 双架构 libjxl（JPEG XL 解码库）构建车道。
+#
+# 为什么需要：图片预览的 .jxl 格式经 jpegxl-rs 绑定 libjxl。macOS 走 Homebrew
+# 的系统库；Windows 无系统级分发渠道，且 libjxl 官方只发 x64 预编译包——
+# ARM64 必须自己编译。本车道用 vcpkg 在两种 Windows runner 上各编一份。
+#
+# 产物：jxl-{x64,arm64}.dll（+ 其依赖的 dll），上传 artifact 供下载后放入
+# src-tauri/vendor/libjxl/ 随包分发（命名约定见该目录 README）。
+#
+# 关键选择：
+# - **dynamic triplet**（x64-windows / arm64-windows）：jpegxl-rs 运行时
+#   dlopen 动态库，静态库形态不适用。
+# - 关闭 tools feature：只要解码库，不需要 cjxl/djxl 可执行文件，也就不引入
+#   giflib/libjpeg-turbo/libpng/zlib 四个额外依赖（port 的 tools 特性才需要）。
+# - vcpkg 走 GitHub Packages NuGet 二进制缓存（与 publish 同源），首次冷编译
+#   后续秒级恢复；highway/brotli/lcms 三个依赖也会被缓存。
+#
+# 触发：推 tag（验证完删除）——
+#   git tag test_libjxl && git push origin test_libjxl
+#   git push origin :refs/tags/test_libjxl
+# 也支持 workflow_dispatch 手动触发。
+name: 'test-libjxl'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_libjxl*'
+
+jobs:
+  build-libjxl:
+    permissions:
+      contents: read
+      # vcpkg 二进制缓存推送/拉取 GitHub Packages（NuGet feed）所需
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            triplet: x64-windows
+            arch: x64
+          - runner: windows-11-arm
+            triplet: arm64-windows
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      USERNAME: Gallentboy
+      FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
+      VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
+    steps:
+      - uses: actions/checkout@v7
+
+      # vcpkg 二进制缓存走 GitHub Packages（与 publish.yml 同款步骤）
+      - name: Add NuGet source for vcpkg binary cache
+        shell: pwsh
+        run: |
+          $vcpkgExe = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" } else { "C:\vcpkg\vcpkg.exe" }
+          $nuget = (& $vcpkgExe fetch nuget | Select-Object -Last 1)
+          & $nuget sources add `
+            -Source "$env:FEED_URL" `
+            -StorePasswordInClearText `
+            -Name GitHubPackages `
+            -UserName "$env:USERNAME" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
+
+      # 装 libjxl 动态库（不含 tools 特性 → 只编解码库本体 + 三个必需依赖）
+      - name: Install libjxl via vcpkg
+        shell: pwsh
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          git config --global --add safe.directory "$vcpkgRoot"
+          git -C "$vcpkgRoot" fetch origin master
+          if ($LASTEXITCODE -ne 0) { Write-Host "git fetch 补历史失败（exit $LASTEXITCODE），继续安装" }
+          # --x-install-root 固定装进 classic 目录（与 publish 的 OpenSSL 同约定）
+          & "$vcpkgRoot\vcpkg.exe" install "libjxl:${{ matrix.triplet }}" "--x-install-root=$vcpkgRoot\installed"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install 失败" }
+
+      # 收集 DLL：libjxl 本体 + 它依赖的 highway/brotli/lcms 运行时
+      - name: Collect DLLs
+        shell: pwsh
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
+          $binDir = "$vcpkgRoot\installed\${{ matrix.triplet }}\bin"
+          if (-not (Test-Path $binDir)) { throw "缺少产物目录: $binDir" }
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Get-ChildItem $binDir -Filter *.dll | ForEach-Object {
+            Write-Host "collect: $($_.Name) ($([math]::Round($_.Length/1KB)) KB)"
+            Copy-Item $_.FullName "out/${{ matrix.arch }}_$($_.Name)"
+          }
+          # 断言：jxl 本体必须在（不同版本的 DLL 名可能带版本号，用前缀匹配）
+          $jxl = Get-ChildItem out -Filter "*jxl*.dll"
+          if (-not $jxl) { throw "未找到 jxl DLL（实际产物：$((Get-ChildItem out).Name -join ', ')）" }
+          Write-Host "=== 产物清单 ==="
+          Get-ChildItem out | ForEach-Object { Write-Host "  $($_.Name)" }
+
+      # 架构核验：PE 头 Machine 字段（0x8664=x64 / 0xAA64=ARM64）
+      - name: Assert architecture
+        shell: pwsh
+        run: |
+          $expect = if ('${{ matrix.arch }}' -eq 'arm64') { 0xAA64 } else { 0x8664 }
+          Get-ChildItem out -Filter *.dll | ForEach-Object {
+            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+            $peOff = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOff + 4)
+            Write-Host ("{0}: PE Machine=0x{1:X4}" -f $_.Name, $machine)
+            if ($machine -ne $expect) { throw ("架构不符: {0} 是 0x{1:X4}，期望 0x{2:X4}" -f $_.Name, $machine, $expect) }
+          }
+
+      - name: Upload libjxl DLLs
+        uses: actions/upload-artifact@v7
+        with:
+          name: libjxl-${{ matrix.arch }}
+          path: out/*.dll
+          if-no-files-found: error
+          retention-days: 30
