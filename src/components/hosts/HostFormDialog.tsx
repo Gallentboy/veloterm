@@ -19,6 +19,7 @@ import type {
   AuthConfig,
   AuthMethod,
   GroupNode,
+  HostEnvironmentLevel,
   HostNode,
   PasswdPrompts,
   RelayTransport,
@@ -43,6 +44,10 @@ export interface HostFormResult {
   allowInsecureAlgos: boolean;
   /** 终端就绪钩子：会话建立后自动执行的命令库命令 id；null = 未启用 */
   readyCommandId: number | null;
+  /** 环境级别：dev 开发 / test 测试 / staging 预发 / prod 生产 */
+  envLevel: HostEnvironmentLevel;
+  /** 是否开启危险命令拦截护盾 */
+  safetyGuardEnabled: boolean;
   /** passwd 改密提示词配置（严格匹配用）；undefined = 未配置（用内置默认模式）。
  *  显式携带该键（而非省略）：编辑保存时 updateHost 的展开合并才能清掉旧值 */
   passwdPrompts: PasswdPrompts | undefined;
@@ -381,6 +386,10 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
     node?.allowInsecureAlgos ?? false,
   );
   const [groupIds, setGroupIds] = useState<number[]>(node?.groupIds ?? []);
+  const [envLevel, setEnvLevel] = useState<HostEnvironmentLevel>(node?.envLevel ?? 'dev');
+  const [safetyGuardEnabled, setSafetyGuardEnabled] = useState<boolean>(
+    node?.safetyGuardEnabled ?? true,
+  );
   const [error, setError] = useState<string | null>(null);
   // 密码历史弹层：仅编辑已存在主机时可用（新主机还没有可查的 host id）
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -509,6 +518,8 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
         hostKeyVerification,
         allowInsecureAlgos,
         readyCommandId: validReadyCommandId,
+        envLevel,
+        safetyGuardEnabled,
         passwdPrompts,
         groupIds: validGroupIds,
       });
@@ -1053,6 +1064,55 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
                 <p className="text-ui-sm text-foreground-subtlest">{t('hosts.form.noGroups')}</p>
               )}
             </FormField>
+            <FormField label={t('hosts.form.envLevel', '环境级别')}>
+              <SelectMenu
+                aria-label={t('hosts.form.envLevel', '环境级别')}
+                value={envLevel}
+                onChange={(next) => setEnvLevel(next as HostEnvironmentLevel)}
+                options={[
+                  {
+                    value: 'dev',
+                    label: t('hosts.form.envDev', '开发环境 (Dev)'),
+                    description: t('hosts.form.envDevDesc', '普通开发调试机器，安全策略最宽松'),
+                  },
+                  {
+                    value: 'test',
+                    label: t('hosts.form.envTest', '测试环境 (Test)'),
+                    description: t('hosts.form.envTestDesc', '集成测试机，不阻断常规命令'),
+                  },
+                  {
+                    value: 'staging',
+                    label: t('hosts.form.envStaging', '预发环境 (Staging)'),
+                    description: t('hosts.form.envStagingDesc', '准生产环境，启用橙色警示与高危阻断'),
+                  },
+                  {
+                    value: 'prod',
+                    label: t('hosts.form.envProd', '生产环境 (Prod) 🔥'),
+                    description: t('hosts.form.envProdDesc', '线上真实服务器，红边框强提醒与高危命令强阻断'),
+                  },
+                ]}
+              />
+            </FormField>
+
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/80 bg-surface/30 p-2.5 transition-colors hover:bg-surface/60">
+              <input
+                type="checkbox"
+                checked={safetyGuardEnabled}
+                onChange={(e) => setSafetyGuardEnabled(e.target.checked)}
+                className="mt-0.5 accent-red-500"
+              />
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5 select-none">
+                <span className="text-ui-sm font-medium text-foreground">
+                  {t('hosts.form.safetyGuardEnable', '启用危险命令拦截护盾')}
+                </span>
+                <span className="text-ui-xs text-foreground-subtlest">
+                  {t(
+                    'hosts.form.safetyGuardHint',
+                    '在预发/生产环境下敲入或粘贴 rm -rf /、关机重启、删库等高危操作时强阻断并弹窗二次确认',
+                  )}
+                </span>
+              </div>
+            </label>
           </div>
         </div>
 

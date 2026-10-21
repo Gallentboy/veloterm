@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
 import { MarqueeText } from '@/components/ui/MarqueeText';
+import { loadHostStore } from '@/hosts/storage';
 import { cn } from '@/lib/utils';
 import type { TerminalSessionDescriptor } from '@/terminal/terminalPanelState';
 
@@ -38,6 +39,11 @@ export function TerminalTabTrigger({
   const inputRef = useRef<HTMLInputElement>(null);
   // Esc 取消标记：取消后紧随的失焦不应再提交（每次进入编辑时复位）
   const cancelledRef = useRef(false);
+
+  const envLevel =
+    session.hostId != null
+      ? loadHostStore().hosts.find((h) => h.id === session.hostId)?.envLevel
+      : undefined;
 
   useEffect(() => {
     if (isEditing) {
@@ -108,6 +114,15 @@ export function TerminalTabTrigger({
       ) : (
         <SquareTerminal className="size-3.5 shrink-0 text-foreground-subtle" />
       )}
+      {envLevel === 'prod' ? (
+        <span className="shrink-0 px-1 py-0.2 rounded font-mono text-[9px] font-bold uppercase bg-red-500/20 text-red-500 border border-red-500/30">
+          PROD
+        </span>
+      ) : envLevel === 'staging' ? (
+        <span className="shrink-0 px-1 py-0.2 rounded font-mono text-[9px] font-bold uppercase bg-amber-500/20 text-amber-500 border border-amber-500/30">
+          STAGE
+        </span>
+      ) : null}
       {isEditing ? (
         <input
           ref={inputRef}

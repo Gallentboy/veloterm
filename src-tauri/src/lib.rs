@@ -18,6 +18,7 @@ pub mod logging;
 pub mod pdf;
 pub mod port_forward;
 pub mod relays;
+pub mod safety_guard;
 pub mod sftp;
 pub mod sqlite_viewer;
 pub mod terminal;
@@ -111,6 +112,7 @@ pub fn run() {
             sqlite_viewer::read_sqlite_metadata,
             sqlite_viewer::query_sqlite_data,
             bash_analysis::analyze_bash_document,
+            safety_guard::inspect_command_safety,
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,
             zk_hosts::zk_host_delete,
