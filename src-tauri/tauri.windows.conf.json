@@ -26,7 +26,8 @@
       "binaries/nmap-data": "nmap-data",
       "binaries/ca-bundle.crt": "ca-bundle.crt",
       "binaries/vim64.dll": "lib/vim64.dll",
-      "binaries/vim-runtime": "vim-runtime"
+      "binaries/vim-runtime": "vim-runtime",
+      "binaries/pdfium": "pdfium"
     },
     "targets": ["nsis"],
     "windows": {
