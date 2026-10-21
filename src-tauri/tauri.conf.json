@@ -31,7 +31,10 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$TEMP/veloterm_pdf_*"]
+        "scope": [
+          "$TEMP/veloterm_pdf_*",
+          "$TEMP/veloterm_img_*"
+        ]
       }
     }
   },
