@@ -309,10 +309,11 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
     ensureExtendedLanguages(monaco);
     ensureBashCompletion(monaco);
 
-    // 内容嗅探：conf 系文件实为 nginx 时切 nginx（高亮/补全/hover）
+    // 内容/路径嗅探：conf 族或无扩展名文件实为 nginx 时切 nginx（/nginx/ 路径
+    // 直判 + 顶层块/指令形态嗅探，见 languageMap.ts）
     const model = monaco.editor.createModel(
       initial,
-      resolveLanguageIdWithContent(fileName, initial),
+      resolveLanguageIdWithContent(fileName, initial, remotePath),
     );
     registerBashHostModel(model, hostId);
     const editor = monaco.editor.create(container, {
