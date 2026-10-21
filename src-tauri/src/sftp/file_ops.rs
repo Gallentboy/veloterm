@@ -351,6 +351,159 @@ pub async fn sftp_read_file_hex(
     })
 }
 
+/// 大日志文件智能 Tail 模式返回载荷
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SftpFileTailContent {
+    pub total_size: u64,
+    pub start_offset: u64,
+    pub end_offset: u64,
+    pub content: String,
+}
+
+/// 读取文件末尾 N 字节（默认 256KB），智能剥离首行残截，秒开超大日志
+#[tauri::command]
+pub async fn sftp_read_file_tail(
+    host_id: i64,
+    remote_path: String,
+    max_bytes: Option<u64>,
+    state: State<'_, SftpState>,
+) -> Result<SftpFileTailContent, String> {
+    use std::io::SeekFrom;
+    use tokio::io::AsyncSeekExt;
+
+    let session_key = host_id.to_string();
+    let client = get_or_connect_sftp(&state, &session_key).await?;
+
+    let meta = client
+        .metadata(&remote_path)
+        .await
+        .map_err(|e| format!("Failed to stat remote file '{remote_path}': {}", sftp_error_message(e)))?;
+    let total_size = meta.len();
+
+    let mut remote_file = client
+        .open(&remote_path)
+        .await
+        .map_err(|e| format!("Failed to open remote file '{remote_path}': {}", sftp_error_message(e)))?;
+
+    // 默认读取末尾 256KB，单次上限 2MB
+    let want_len = max_bytes.unwrap_or(256 * 1024).min(2 * 1024 * 1024);
+    let mut start_offset = total_size.saturating_sub(want_len);
+
+    if start_offset > 0 {
+        remote_file
+            .seek(SeekFrom::Start(start_offset))
+            .await
+            .map_err(|e| format!("Failed to seek remote file: {}", dedup_sftp_status_text(&e.to_string())))?;
+    }
+
+    let mut buf = Vec::with_capacity((total_size - start_offset).min(want_len) as usize);
+    let mut chunk = vec![0u8; 64 * 1024];
+    while buf.len() < want_len as usize {
+        let n = remote_file
+            .read(&mut chunk)
+            .await
+            .map_err(|e| format!("Failed to read remote file: {}", dedup_sftp_status_text(&e.to_string())))?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(chunk.get(..n).unwrap_or_default());
+    }
+    let _ = remote_file.close().await;
+
+    let end_offset = start_offset + buf.len() as u64;
+
+    // 如果是从中间截断，找到第一个换行符将半行丢弃，保证首行日志完整
+    let valid_bytes = if start_offset > 0 {
+        if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            start_offset += (pos + 1) as u64;
+            buf.get(pos + 1..).unwrap_or_default()
+        } else {
+            &buf[..]
+        }
+    } else {
+        &buf[..]
+    };
+
+    let content = String::from_utf8_lossy(valid_bytes).to_string();
+
+    Ok(SftpFileTailContent {
+        total_size,
+        start_offset,
+        end_offset,
+        content,
+    })
+}
+
+/// 读取文件指定偏移区间的内容（用于 Tail 模式向前读历史或向后追加新日志）
+#[tauri::command]
+pub async fn sftp_read_file_range(
+    host_id: i64,
+    remote_path: String,
+    offset: u64,
+    length: Option<u32>,
+    state: State<'_, SftpState>,
+) -> Result<SftpFileTailContent, String> {
+    use std::io::SeekFrom;
+    use tokio::io::AsyncSeekExt;
+
+    let session_key = host_id.to_string();
+    let client = get_or_connect_sftp(&state, &session_key).await?;
+
+    let meta = client
+        .metadata(&remote_path)
+        .await
+        .map_err(|e| format!("Failed to stat remote file '{remote_path}': {}", sftp_error_message(e)))?;
+    let total_size = meta.len();
+
+    if offset >= total_size {
+        return Ok(SftpFileTailContent {
+            total_size,
+            start_offset: offset,
+            end_offset: offset,
+            content: String::new(),
+        });
+    }
+
+    let mut remote_file = client
+        .open(&remote_path)
+        .await
+        .map_err(|e| format!("Failed to open remote file '{remote_path}': {}", sftp_error_message(e)))?;
+
+    if offset > 0 {
+        remote_file
+            .seek(SeekFrom::Start(offset))
+            .await
+            .map_err(|e| format!("Failed to seek remote file: {}", dedup_sftp_status_text(&e.to_string())))?;
+    }
+
+    let want_len = (length.unwrap_or(256 * 1024) as usize).min(2 * 1024 * 1024);
+    let mut buf = Vec::with_capacity(want_len);
+    let mut chunk = vec![0u8; 64 * 1024];
+
+    while buf.len() < want_len {
+        let n = remote_file
+            .read(&mut chunk)
+            .await
+            .map_err(|e| format!("Failed to read remote file: {}", dedup_sftp_status_text(&e.to_string())))?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(chunk.get(..n).unwrap_or_default());
+    }
+    let _ = remote_file.close().await;
+
+    let end_offset = offset + buf.len() as u64;
+    let content = String::from_utf8_lossy(&buf).to_string();
+
+    Ok(SftpFileTailContent {
+        total_size,
+        start_offset: offset,
+        end_offset,
+        content,
+    })
+}
+
 /* ─────────────────── sudo 提权读写（Permission denied 的编辑/预览兜底） ───────────────────
  *
  * 场景：登录用户对目标文件无读/写权限（root 属主的配置文件等）。读走

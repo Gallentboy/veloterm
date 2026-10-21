@@ -1,4 +1,4 @@
-import { AlertCircle, Binary, BookOpen, Code2, Eye, FileJson, Loader2, Pencil, PencilOff, Save, Table, X } from 'lucide-react';
+import { AlertCircle, Binary, BookOpen, Code2, Eye, FileJson, Loader2, Pencil, PencilOff, Save, ScrollText, Table, X } from 'lucide-react';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as monaco from 'monaco-editor';
@@ -9,6 +9,8 @@ import { MarkdownPreview } from '@/components/files/MarkdownPreview';
 import { CsvPreview } from '@/components/files/CsvPreview';
 import { JsonPreview } from '@/components/files/JsonPreview';
 import { HexPreview } from '@/components/files/HexPreview';
+import { LogViewer } from '@/components/files/LogViewer';
+import { ExcelRemotePreview } from '@/components/files/ExcelRemotePreview';
 import { isPreviewableImage } from '@/services/imagePreviewService';
 import { loadRemoteContent, loadRemoteContentSudo, saveRemoteContent, saveRemoteContentSudo } from '@/editor/contentLoader';
 import { resolveLanguageId } from '@/editor/languageMap';
@@ -83,17 +85,21 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
   const isCsv = /\.(csv|tsv)$/i.test(fileName);
   /** JSON/JSONL 结构化数据支持树状展示与内置 jq 过滤 */
   const isJson = /\.(json|jsonl)$/i.test(fileName);
-  /** 具备专用预览渲染器的文本类型（Markdown / CSV / TSV / JSON） */
-  const hasCustomPreview = isMarkdown || isCsv || isJson;
-  /** 非文本分支（PDF / 图片）：跳过 Monaco 内容加载与编辑按钮 */
-  const isBinaryPreview = isPdf || isImage;
+  /** 日志文件（.log/.out/.err）支持智能 Tail 模式、日志级别高亮与实时追随 */
+  const isLog = /\.(log|out|err|trace)(\.\d+)?$/i.test(fileName);
+  /** Excel 工作簿（.xlsx/.xls/.xlsb/.ods）走 calamine 解析与多 Sheet 预览 */
+  const isExcel = /\.(xlsx|xls|xlsb|ods)$/i.test(fileName);
+  /** 具备专用预览渲染器的文本类型（Markdown / CSV / TSV / JSON / Log） */
+  const hasCustomPreview = isMarkdown || isCsv || isJson || isLog;
+  /** 非纯文本/独立渲染分支（PDF / 图片 / Excel）：跳过 Monaco 内容加载与编辑按钮 */
+  const isBinaryPreview = isPdf || isImage || isExcel;
 
   /** 检测到非文本文件时自动置为 true 并切到 Hex 模式 */
   const [isBinaryFile, setIsBinaryFile] = useState(false);
 
   /** 预览模式：结构化文本默认进入专用渲染，其余文件进入 Monaco 源码视图 */
-  const [viewMode, setViewMode] = useState<'preview' | 'source' | 'hex'>(
-    hasCustomPreview ? 'preview' : 'source',
+  const [viewMode, setViewMode] = useState<'preview' | 'source' | 'hex' | 'log'>(
+    isLog ? 'log' : hasCustomPreview ? 'preview' : 'source',
   );
 
   /** 远端内容基线：加载时初始化、保存成功后推进（编辑器内容不回写此状态） */
@@ -406,9 +412,24 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {/* 只读模式下的多视图切换器（专用结构视图 / Monaco 源码 / Hex 十六进制） */}
-            {!editing && !isBinaryPreview && (baseline !== null || isBinaryFile) ? (
+            {!editing && !isBinaryPreview && (baseline !== null || isBinaryFile || isLog) ? (
               <div className="flex items-center rounded-lg border border-border/70 bg-surface/50 p-0.5 text-ui-xs mr-1">
-                {hasCustomPreview && !isBinaryFile ? (
+                {isLog ? (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('log')}
+                    className={cn(
+                      'flex items-center gap-1 rounded-md px-2 py-0.5 transition-colors',
+                      viewMode === 'log'
+                        ? 'bg-selected text-foreground font-medium shadow-xs'
+                        : 'text-foreground-subtle hover:text-foreground',
+                    )}
+                    title={t('files.previewLog')}
+                  >
+                    <ScrollText className="size-3 text-terminal-green" />
+                    <span>{t('files.previewLog')}</span>
+                  </button>
+                ) : hasCustomPreview && !isBinaryFile ? (
                   <button
                     type="button"
                     onClick={() => setViewMode('preview')}
@@ -533,6 +554,11 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
             <Suspense fallback={null}>
               <ImageRemotePreview sessionId={sessionId} remotePath={remotePath} />
             </Suspense>
+          ) : isExcel && sessionId ? (
+            // Excel：后端 calamine 解析，多 Sheet 切换 + 虚拟滚动表格（见 ExcelRemotePreview）
+            <Suspense fallback={null}>
+              <ExcelRemotePreview sessionId={sessionId} remotePath={remotePath} fileName={fileName} />
+            </Suspense>
           ) : (
             <>
               {isMarkdown && viewMode === 'preview' && !editing && baseline !== null ? (
@@ -543,6 +569,13 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
               ) : null}
               {isJson && viewMode === 'preview' && !editing && baseline !== null ? (
                 <JsonPreview content={baseline} fileName={fileName} />
+              ) : null}
+              {viewMode === 'log' && !editing ? (
+                <LogViewer
+                  initialContent={baseline ?? undefined}
+                  hostId={hostId}
+                  remotePath={remotePath}
+                />
               ) : null}
               {viewMode === 'hex' && !editing ? (
                 <HexPreview
@@ -555,12 +588,12 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
                 ref={containerRef}
                 className={cn(
                   'h-full w-full',
-                  (hasCustomPreview && viewMode === 'preview') || viewMode === 'hex'
+                  (hasCustomPreview && viewMode === 'preview') || viewMode === 'hex' || viewMode === 'log'
                     ? 'hidden'
                     : 'block',
                 )}
               />
-              {baseline === null && !loadError && !isBinaryFile ? (
+              {baseline === null && !loadError && !isBinaryFile && !isLog ? (
                 <div className="absolute inset-0 flex items-center justify-center bg-popover">
                   <Loader2 className="size-5 animate-spin text-foreground-subtle" />
                 </div>
