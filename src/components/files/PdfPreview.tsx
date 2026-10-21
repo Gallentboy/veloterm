@@ -187,8 +187,8 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
               }}
               placeholder="1"
               aria-label={t('pdf.jumpToPage')}
-              // 宽度按总页数位数动态给（最少 2 个字符宽）
-              style={{ width: `${Math.max(2, String(pageCount).length)}ch` }}
+              // 宽度按总页数位数动态给，再放宽 4 倍留出点击与输入余量
+              style={{ width: `${Math.max(2, String(pageCount).length) * 4}ch` }}
               className="h-6 rounded-md border border-border bg-input px-1.5 text-center font-mono text-ui-xs text-foreground outline-none transition-colors placeholder:text-foreground-subtlest focus:border-border-hover"
             />
             {/* 后缀（中文「页」/ 英文空）——空串时不渲染，避免多余空格 */}
