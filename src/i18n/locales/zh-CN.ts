@@ -414,6 +414,14 @@ export default {
     // 断开态不再有 DOM 横幅：断开信息与重连快捷键提示由 TerminalSession 直接写进
     // xterm 终端缓冲（文案硬编码在组件内，与终端输出同生命周周期）
   },
+  pdf: {
+    loading: '加载中…',
+    pageIndicator: '第 {{current}} / {{total}} 页',
+    prevPage: '上一页',
+    nextPage: '下一页',
+    retry: '重试',
+    pageAlt: '第 {{page}} 页',
+  },
   files: {
     title: '文件管理',
     hint: 'SFTP 远程文件管理',

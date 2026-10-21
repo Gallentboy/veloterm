@@ -12,6 +12,7 @@ pub mod grpc_tls;
 pub mod host_password_history;
 pub mod lifecycle;
 pub mod logging;
+pub mod pdf;
 pub mod port_forward;
 pub mod relays;
 pub mod sftp;
@@ -94,6 +95,7 @@ pub fn run() {
             relays::relay_test,
             host_password_history::host_password_history_list,
             host_password_history::host_password_history_clear,
+            pdf::render_pdf_page,
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,
             zk_hosts::zk_host_delete,

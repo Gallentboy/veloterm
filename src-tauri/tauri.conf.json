@@ -28,7 +28,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$TEMP/veloterm_pdf_*"]
+      }
     }
   },
   "bundle": {
@@ -42,6 +46,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "vendor/pdfium/libpdfium-arm64.dylib": "pdfium/libpdfium-arm64.dylib",
+      "vendor/pdfium/libpdfium-x64.dylib": "pdfium/libpdfium-x64.dylib",
+      "vendor/pdfium/pdfium-arm64.dll": "pdfium/pdfium-arm64.dll",
+      "vendor/pdfium/pdfium-x64.dll": "pdfium/pdfium-x64.dll"
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

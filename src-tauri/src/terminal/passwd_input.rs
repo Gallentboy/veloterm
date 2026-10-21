@@ -7,7 +7,7 @@
 //! ## 提示词匹配：两级策略
 //!
 //! 1. **用户配置**（优先）：主机编辑页可配三条精确提示词，程序严格按配置
-//!       匹配。准确度高——用户从实际终端复制粘贴提示词原文，无误命中。
+//!    匹配。准确度高——用户从实际终端复制粘贴提示词原文，无误命中。
 //! 2. **内置默认**（兜底）：未配置时用内置的常见模式（contains 匹配），
 //!    覆盖英文/中文主流 PAM 发行版。准确度较低（可能被含密码字样的普通
 //!    输出误触发），仅在未配置时生效。
@@ -51,6 +51,7 @@ enum Await {
     Retype,
 }
 
+#[derive(Default)]
 struct SessionState {
     await_kind: Option<Await>,
     buf: Vec<u8>,
@@ -107,7 +108,7 @@ impl PasswdInputLog {
         output_channel: Option<tauri::ipc::Channel<Vec<u8>>>,
     ) {
         let mut map = self.sessions.lock().unwrap();
-        let sc = map.entry(terminal_id).or_insert_with(SessionState::default);
+        let sc = map.entry(terminal_id).or_default();
         sc.host_id = host_id;
         sc.app_handle = app_handle;
         sc.output_channel = output_channel;
@@ -125,7 +126,7 @@ impl PasswdInputLog {
         let mut map = self.sessions.lock().unwrap();
         let sc = map
             .entry(terminal_id)
-            .or_insert_with(SessionState::default);
+            .or_default();
         sc.scan.extend_from_slice(chunk);
         if sc.scan.len() > SCAN_WINDOW {
             let overflow = sc.scan.len() - SCAN_WINDOW;
@@ -211,12 +212,14 @@ impl PasswdInputLog {
                         Some(Await::Retype) => {
                             sc.new_entries.push(line.clone());
                             // Retype 提交即判定：new==retype 且非空 → 回写
+                            // （get 而非索引：仓库 deny indexing_slicing）
                             let n = sc.new_entries.len();
-                            if n >= 2 {
-                                let prev = sc.new_entries[n - 2].clone();
-                                if prev == line && !line.is_empty() {
-                                    self.try_write_password(terminal_id, sc, &line);
-                                }
+                            if n >= 2
+                                && let Some(prev) = sc.new_entries.get(n - 2)
+                                && *prev == line
+                                && !line.is_empty()
+                            {
+                                self.try_write_password(terminal_id, sc, &line);
                             }
                         }
                         None => {}
@@ -287,24 +290,6 @@ impl PasswdInputLog {
     /// 清理（会话关闭）
     pub fn cleanup(&self, terminal_id: usize) {
         self.sessions.lock().unwrap().remove(&terminal_id);
-    }
-}
-
-impl Default for SessionState {
-    fn default() -> Self {
-        Self {
-            await_kind: None,
-            buf: Vec::new(),
-            scan: Vec::new(),
-            new_entries: Vec::new(),
-            current_entry: None,
-            host_id: None,
-            custom_prompts: None,
-            written: false,
-            app_handle: None,
-            output_channel: None,
-            detected_prompt_text: String::new(),
-        }
     }
 }
 
