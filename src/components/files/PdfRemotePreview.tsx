@@ -123,6 +123,12 @@ export function PdfRemotePreview({ sessionId, remotePath }: PdfRemotePreviewProp
     );
   }
 
-  // parsing / ready：交给 PdfPreview（它内部有首帧 Loading 与翻页反馈）
-  return localPath ? <PdfPreview pdfPath={localPath} /> : null;
+  // parsing / ready：交给 PdfPreview（它内部有首帧 Loading 与翻页反馈）。
+  // 必须包一层 h-full：PdfPreview 根元素是 flex-1，需要父级是定高 flex 容器
+  // 才能拿到受限高度——否则高度随内容撑开，内部 overflow-auto 永不触发滚动条。
+  return localPath ? (
+    <div className="flex h-full min-h-0 flex-col">
+      <PdfPreview pdfPath={localPath} />
+    </div>
+  ) : null;
 }

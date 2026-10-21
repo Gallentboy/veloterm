@@ -161,45 +161,104 @@ fn lib_file_name() -> &'static str {
 
 /// 解析 PDFium 动态库的绝对路径。
 ///
-/// 查找顺序（命中即返回）：
-/// 1. Tauri `resource_dir`（打包后资源随包，见 tauri.windows.conf.json 的
-///    bundle.resources 映射；mac 走 Tauri 默认 resources 目录）
-/// 2. 可执行文件同级的 `pdfium/` 子目录（手工部署）
-/// 3. 编译期 vendor 路径（开发期 `cargo run` / `tauri dev` 直接命中仓库文件）
+/// **debug / release 两种查找策略**：
+///
+/// - **debug（开发期）**：直接用仓库 `vendor/pdfium/` 下的源码树文件。开发时
+///   只改代码不改库，固定路径最省心，也不受 target/debug 下资源拷贝的影响。
+/// - **release（发布）**：按各平台第三方库的标准位置查找——
+///   macOS：App Bundle 的 `Contents/Frameworks/`（Tauri 打包 resources 的落点）
+///   → `Contents/Resources/` → `/usr/local/lib` → `/opt/homebrew/lib`
+///   （Intel Mac 常见前缀）→ 可执行文件同级；
+///   Windows：可执行文件同级 → 同级 `lib/`（本项目 DLL 统一约定）→ resources。
+///
+/// 两条路径都保留 resource_dir 兜底（Tauri 资源映射位置可能随配置变化）。
 fn resolve_pdfium_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    use tauri::Manager;
     let name = lib_file_name();
 
-    // 1. 打包资源目录（Tauri 2：resource_dir 下的相对路径由 resources 映射决定）
-    if let Ok(dir) = app.path().resource_dir() {
-        for candidate in [dir.join("pdfium").join(name), dir.join(name)] {
-            if candidate.is_file() {
-                return Ok(candidate);
-            }
-        }
-    }
-
-    // 2. 可执行文件同级（便携部署 / 手工拷库）
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(parent) = exe.parent()
+    // ── debug：固定用源码树 vendor 目录 ──
+    #[cfg(debug_assertions)]
     {
-        for candidate in [parent.join("pdfium").join(name), parent.join(name)] {
-            if candidate.is_file() {
-                return Ok(candidate);
+        let _ = app; // debug 分支不需要 AppHandle
+        let dev_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("vendor")
+            .join("pdfium")
+            .join(name);
+        return if dev_path.is_file() {
+            Ok(dev_path)
+        } else {
+            Err(format!(
+                "未找到 PDFium 动态库（debug 模式查找 {}）。\
+                 请确认 vendor/pdfium/ 下存在对应架构的库文件",
+                dev_path.display()
+            ))
+        };
+    }
+
+    // ── release：按平台标准路径查找 ──
+    #[cfg(not(debug_assertions))]
+    {
+        use tauri::Manager;
+        let mut tried: Vec<PathBuf> = Vec::new();
+
+        #[cfg(target_os = "macos")]
+        {
+            // App Bundle：可执行文件在 Contents/MacOS/，Frameworks 与 Resources 是同级
+            if let Ok(exe) = std::env::current_exe()
+                && let Some(contents) = exe.parent().and_then(|p| p.parent())
+            {
+                for dir in [contents.join("Frameworks"), contents.join("Resources")] {
+                    for candidate in [dir.join(name), dir.join("pdfium").join(name)] {
+                        if candidate.is_file() {
+                            return Ok(candidate);
+                        }
+                        tried.push(candidate);
+                    }
+                }
+            }
+            // 系统/包管理器标准前缀（用户自行安装 PDFium 的场景）
+            for dir in ["/usr/local/lib", "/opt/homebrew/lib", "/usr/lib"] {
+                let candidate = Path::new(dir).join(name);
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
+                tried.push(candidate);
             }
         }
-    }
 
-    // 3. 编译期 vendor 路径（开发期）
-    let dev_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor").join("pdfium").join(name);
-    if dev_path.is_file() {
-        return Ok(dev_path);
-    }
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(exe) = std::env::current_exe()
+                && let Some(parent) = exe.parent()
+            {
+                // 本项目约定：随包 DLL 统一放安装根 lib/ 子目录
+                for candidate in [parent.join(name), parent.join("lib").join(name)] {
+                    if candidate.is_file() {
+                        return Ok(candidate);
+                    }
+                    tried.push(candidate);
+                }
+            }
+        }
 
-    Err(format!(
-        "未找到 PDFium 动态库 {name}（已查找：resource_dir、可执行文件同级、{}）",
-        dev_path.display()
-    ))
+        // Tauri resources 兜底（映射位置可能随配置调整）
+        if let Ok(dir) = app.path().resource_dir() {
+            for candidate in [dir.join("pdfium").join(name), dir.join(name)] {
+                if candidate.is_file() {
+                    return Ok(candidate);
+                }
+                tried.push(candidate);
+            }
+        }
+
+        Err(format!(
+            "未找到 PDFium 动态库 {name}（release 模式已查找：{}）",
+            tried
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join("、")
+        ))
+    }
 }
 
 /// 进程级 Pdfium 单例。
