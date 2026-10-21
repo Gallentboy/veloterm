@@ -133,6 +133,7 @@ pub struct PdfPageImage {
 }
 
 /// 当前平台对应的 vendor 库文件名
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
 fn lib_file_name() -> &'static str {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
@@ -172,6 +173,7 @@ fn lib_file_name() -> &'static str {
 ///   Windows：可执行文件同级 → 同级 `lib/`（本项目 DLL 统一约定）→ resources。
 ///
 /// 两条路径都保留 resource_dir 兜底（Tauri 资源映射位置可能随配置变化）。
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
 fn resolve_pdfium_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let name = lib_file_name();
 
@@ -289,6 +291,20 @@ fn with_pdfium<R>(
     }
 }
 
+/// 绑定 PDFium（按平台分流）。
+///
+/// - macOS Apple Silicon：静态链接形态（build.rs 已把 libpdfium.a + libcxx +
+///   libcxxabi 链进二进制），直接取静态绑定，无需任何库文件路径。
+/// - 其他平台：动态加载 vendor 下的 dylib/dll。
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn bind_pdfium(_app: &tauri::AppHandle) -> Result<Pdfium, String> {
+    let bindings = Pdfium::bind_to_statically_linked_library()
+        .map_err(|e| format!("初始化静态链接的 PDFium 失败: {e}"))?;
+    log::info!("[PDF] PDFium statically linked");
+    Ok(Pdfium::new(bindings))
+}
+
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
 fn bind_pdfium(app: &tauri::AppHandle) -> Result<Pdfium, String> {
     let path = resolve_pdfium_path(app)?;
     let bindings = Pdfium::bind_to_library(&path)
@@ -408,6 +424,8 @@ fn short_hash(input: &str) -> String {
 mod tests {
     use super::*;
 
+    /// 动态加载平台的库文件名（静态链接的 mac arm64 没有这个函数）
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     #[test]
     fn lib_file_name_is_platform_specific() {
         let name = lib_file_name();

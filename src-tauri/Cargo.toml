@@ -115,13 +115,25 @@ prost-types = "0.13"
 prost-reflect = { version = "0.15", features = ["serde"] }
 http = "1"
 # PDF 预览：PDFium（Chromium 同款 C++ 渲染引擎）经 pdfium-render 绑定。
-# 库文件随仓库 vendor/pdfium/ 提供（mac arm64/x64、win arm64/x64 四份），
-# 运行期按平台+架构动态加载（见 pdf.rs 的库定位逻辑）。image 负责 PNG 编码，
-# once_cell 做 Pdfium 实例的进程级缓存（初始化有成本，且 Pdfium 非 Send/Sync
-# 需按线程复用——见 pdf.rs 的 thread_local 说明）。
-pdfium-render = "0.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
 once_cell = "1"
+
+# **PDFium 链接形态按平台分流**：
+# - macOS Apple Silicon（aarch64）：**静态链接** vendor/pdfium/libpdfium.a
+#   （含 Chromium 自编 libcxx.a/libcxxabi.a，__Cr namespace 与系统 C++ 库
+#   互不兼容，必须一起链）。静态化的收益是免去 dylib 的代码签名要求
+#   （macOS ARM64 会拒绝加载未签名/仅 linker-signed 的第三方 dylib）。
+# - 其他平台（Windows 全架构、macOS Intel）：**动态加载**对应 dylib/dll，
+#   运行期按路径 dlopen（见 pdf.rs）。
+#
+# pdfium-render 的 `static` feature 是编译期全局开关（启用后
+# bind_to_library 动态 API 直接不存在），因此用 target-specific 依赖实现：
+# 同一份源码在不同目标上编出不同的绑定形态。
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+pdfium-render = { version = "0.9", features = ["static"] }
+
+[target.'cfg(not(all(target_os = "macos", target_arch = "aarch64")))'.dependencies]
+pdfium-render = "0.9"
 
 # ── 已迁出的依赖 ──
 # 全部内置命令行工具（uutils/coreutils 全集 + grep/sed/findutils/diffutils/
