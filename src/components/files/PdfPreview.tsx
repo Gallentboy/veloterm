@@ -48,8 +48,13 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [loading, setLoading] = useState(true);
-  /** 跳页输入框的临时值（空 = 显示当前页占位） */
-  const [jumpInput, setJumpInput] = useState('');
+  /**
+   * 跳页输入草稿：`null` = 跟随当前页码显示（翻页时自动同步）；
+   * 字符串 = 用户正在编辑（不被打断）。
+   */
+  const [jumpDraft, setJumpDraft] = useState<string | null>(null);
+  /** 输入框实际显示值：未编辑时始终是当前页码 */
+  const jumpValue = jumpDraft ?? String(pageIndex + 1);
   const [error, setError] = useState<string | null>(null);
 
   /** 请求代次：只有最新代次的响应才被采纳 */
@@ -132,17 +137,17 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
   const canNext = pageCount != null && pageIndex < pageCount - 1;
 
   /**
-   * 跳页输入提交：接受 1 基页码，越界钳制到 [1, pageCount]。
-   * 非数字或空输入直接还原为当前页（不做任何跳转）。
+   * 跳页提交：接受 1 基页码，越界钳制到 [1, pageCount]（goToPage 内部处理）。
+   * 提交后清空草稿 → 输入框回到「跟随当前页」状态。
    */
   const commitJump = useCallback(() => {
-    const raw = jumpInput.trim();
-    setJumpInput('');
+    const raw = jumpDraft?.trim() ?? '';
+    setJumpDraft(null);
     if (!raw || pageCount == null) return;
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed)) return;
     goToPage(parsed - 1);
-  }, [jumpInput, pageCount, goToPage]);
+  }, [jumpDraft, pageCount, goToPage]);
 
   return (
     <div
@@ -164,26 +169,25 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
               min={1}
               max={pageCount}
               step={1}
-              value={jumpInput}
+              value={jumpValue}
               onChange={(e) => {
-                // number 输入框的 value 已是数字串；空串允许（便于重新输入）。
-                // 越界值在 blur/回车时由 commitJump 钳制，输入过程中不打断用户
-                // （即时改写 value 会让上下按钮连点体验变差）。
-                setJumpInput(e.target.value);
+                // 记录草稿（不即时钳制：改写 value 会打断上下按钮连点）。
+                // 越界值在回车/失焦时由 commitJump 经 goToPage 钳制。
+                setJumpDraft(e.target.value);
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
                   commitJump();
                 } else if (e.key === 'Escape') {
-                  setJumpInput('');
+                  setJumpDraft(null);
                   e.currentTarget.blur();
                 }
               }}
               onBlur={() => {
-                if (jumpInput) commitJump();
+                // 有草稿才提交；无草稿（跟随态）失焦不做事
+                if (jumpDraft !== null) commitJump();
               }}
-              placeholder="1"
               aria-label={t('pdf.jumpToPage')}
               // 宽度按总页数位数动态给，再放宽 4 倍留出点击与输入余量；
               // 额外留 1.5ch 给右侧原生的上下微调按钮
