@@ -85,7 +85,13 @@ pub fn analyze_command_safety(script: &str) -> SafetyInspectResult {
         return SafetyInspectResult::safe();
     }
 
-    // 0. 特殊快速检测：Fork 炸弹（AST 解析可能会将其拆解为函数，直接文本模式最稳妥）
+    // 0. 特殊快速检测：
+    // - 注释行直接放行（在 Bash 语法中整行注释不执行任何指令）
+    if trimmed.starts_with('#') {
+        return SafetyInspectResult::safe();
+    }
+
+    // - Fork 炸弹（AST 解析可能会将其拆解为函数，直接文本模式最稳妥）
     if trimmed.contains(":(){ :|:& };:") || trimmed.contains(":(){:|:&};:") {
         return SafetyInspectResult {
             level: DangerLevel::Critical,
@@ -97,7 +103,106 @@ pub fn analyze_command_safety(script: &str) -> SafetyInspectResult {
         };
     }
 
-    // 1. 使用 tree-sitter-bash 构建 AST
+    // 1. Rust 剥离 Shell Prompt 提示符（消除 # 注释误判及 $ / % 语法解析异常）
+    let cleaned = strip_shell_prompt(trimmed);
+
+    // 2. 将清洗后的命令构建 AST 并进行规则评估
+    let ast_res = inspect_ast(cleaned);
+    if ast_res.level != DangerLevel::Safe {
+        return ast_res;
+    }
+
+    // 3. 方案 3：全量 AST 候选段滑动探测（Sliding Window Scanner）
+    // 应对未识别的奇异自定义主题（如零标点 "my-custom-prompt rm -rf /"）
+    if let Some(candidate_res) = scan_ast_candidates(trimmed) {
+        return candidate_res;
+    }
+
+    SafetyInspectResult::safe()
+}
+
+/// 剥离终端 Shell Prompt 提示符前缀。
+/// 包含传统 Unix 符号（#、$、%、>）与现代主题终止符（❯、➜、»、λ、▶、→、›、⚡ 等），
+/// 结合引号扫描保护，确保不会误伤字符串内部的字符（如 echo "hello # world"）。
+pub fn strip_shell_prompt(line: &str) -> &str {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return "";
+    }
+
+    let bytes = trimmed.as_bytes();
+    let len = bytes.len();
+
+    // 引号状态扫描：单引号、双引号、反引号内部不作为提示符切分点
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut in_quote = vec![false; len];
+
+    let mut prev_byte = 0u8;
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'"' && !in_single && prev_byte != b'\\' {
+            in_double = !in_double;
+        } else if b == b'\'' && !in_double {
+            in_single = !in_single;
+        } else if b == b'`' && !in_single && prev_byte != b'\\' {
+            in_backtick = !in_backtick;
+        }
+        if let Some(slot) = in_quote.get_mut(i) {
+            *slot = in_single || in_double || in_backtick;
+        }
+        prev_byte = b;
+    }
+
+    // 从后往前逆向寻找最近的有效 Prompt 终止符
+    for (byte_idx, ch) in trimmed.char_indices().rev() {
+        if in_quote.get(byte_idx).copied().unwrap_or(false) {
+            continue;
+        }
+        // 如果是 '#' 且位于行首，这是以 # 开头的纯注释而非提示符终止符
+        if ch == '#' && byte_idx == 0 {
+            continue;
+        }
+        if is_prompt_terminator(ch) {
+            let next_idx = byte_idx + ch.len_utf8();
+            // 终止符后面通常必须跟着空白字符
+            if bytes.get(next_idx).is_some_and(|b| b.is_ascii_whitespace())
+                && let Some(candidate) = trimmed.get(next_idx..)
+            {
+                let cleaned = candidate.trim_start();
+                if !cleaned.is_empty() {
+                    return cleaned;
+                }
+            }
+        }
+    }
+
+    // 辅助规则：识别 "): "、"]: "
+    if let Some(pos) = trimmed.rfind("]: ")
+        && !in_quote.get(pos).copied().unwrap_or(false)
+        && let Some(candidate) = trimmed.get(pos + 3..)
+    {
+        return candidate.trim_start();
+    }
+    if let Some(pos) = trimmed.rfind("): ")
+        && !in_quote.get(pos).copied().unwrap_or(false)
+        && let Some(candidate) = trimmed.get(pos + 3..)
+    {
+        return candidate.trim_start();
+    }
+
+    trimmed
+}
+
+fn is_prompt_terminator(ch: char) -> bool {
+    matches!(
+        ch,
+        '#' | '$' | '%' | '>' | '❯' | '➜' | '»' | 'λ' | '▶' | '→' | '›' | '﹥' | '⚡' | '✗' | '✔' | '✓' | '✘'
+    )
+}
+
+/// 解析指定脚本并在 AST 语法树上评估危险规则
+fn inspect_ast(script: &str) -> SafetyInspectResult {
     let mut parser = Parser::new();
     if parser.set_language(&tree_sitter_bash::LANGUAGE.into()).is_err() {
         return SafetyInspectResult::safe();
@@ -110,11 +215,11 @@ pub fn analyze_command_safety(script: &str) -> SafetyInspectResult {
     let source = script.as_bytes();
     let root = tree.root_node();
 
-    // 2. 收集所有处于调用位置的可执行命令
+    // 收集所有处于调用位置的可执行命令
     let mut commands = Vec::new();
     collect_commands(root, source, &mut commands);
 
-    // 3. 逐个命令评估规则，保留最高危险级别
+    // 逐个命令评估规则，保留最高危险级别
     let mut highest_result = SafetyInspectResult::safe();
 
     for cmd in commands {
@@ -123,19 +228,9 @@ pub fn analyze_command_safety(script: &str) -> SafetyInspectResult {
         {
             highest_result = res;
             if highest_result.level == DangerLevel::Critical {
-                // 遇到 Critical 级，无需继续遍历
                 break;
             }
         }
-    }
-
-    // 方案 3：全量 AST 候选段滑动探测（Sliding Window Scanner）
-    // 如果常规 AST 遍历未检出（可能由于未识别的 Prompt 污染前缀导致结构错位），
-    // 启用滑动窗口定位敏感词作为候选子串起点，二次 AST 解析判定。
-    if highest_result.level == DangerLevel::Safe
-        && let Some(candidate_res) = scan_ast_candidates(trimmed, &tree)
-    {
-        return candidate_res;
     }
 
     highest_result
@@ -148,7 +243,12 @@ const SENSITIVE_COMMAND_TRIGGERS: &[&str] = &[
 ];
 
 /// 方案 3：全量 AST 候选段滑动探测
-fn scan_ast_candidates(script: &str, tree: &tree_sitter::Tree) -> Option<SafetyInspectResult> {
+fn scan_ast_candidates(script: &str) -> Option<SafetyInspectResult> {
+    let mut parser = Parser::new();
+    if parser.set_language(&tree_sitter_bash::LANGUAGE.into()).is_err() {
+        return None;
+    }
+    let tree = parser.parse(script, None)?;
     let root = tree.root_node();
 
     for trigger in SENSITIVE_COMMAND_TRIGGERS {
@@ -599,5 +699,45 @@ mod tests {
         // 字符串字面量保护：即便包含高危词，只要在引号内就绝不误报
         let cmd3 = "my-weird-prompt echo 'rm -rf /'";
         assert_eq!(analyze_command_safety(cmd3).level, DangerLevel::Safe);
+    }
+
+    #[test]
+    fn test_strip_shell_prompt_and_real_terminals() {
+        // 1. strip_shell_prompt 单元功能验证
+        assert_eq!(strip_shell_prompt("[root@fa3cec97e2e2 ~]# rm -rf /"), "rm -rf /");
+        assert_eq!(strip_shell_prompt("ubuntu@ip-172-31-0-1:~$ sudo rm -rf /"), "sudo rm -rf /");
+        assert_eq!(strip_shell_prompt("macbook% reboot"), "reboot");
+        assert_eq!(strip_shell_prompt("starship ❯ rm -rf /"), "rm -rf /");
+        assert_eq!(strip_shell_prompt("agnoster ➜ init 0"), "init 0");
+        assert_eq!(strip_shell_prompt("pure λ kill -9 1"), "kill -9 1");
+        assert_eq!(strip_shell_prompt("(my-venv) [user@host project]$ reboot"), "reboot");
+
+        // 2. 引号保护：字符串内部的 # / $ 决不能被剥离
+        assert_eq!(
+            strip_shell_prompt(r#"echo "hello # world""#),
+            r#"echo "hello # world""#
+        );
+
+        // 3. 全链路安全分析验证（前端完全不剥离，直接扔整行原始终端文本）
+        assert_eq!(
+            analyze_command_safety("[root@fa3cec97e2e2 ~]# rm -rf /").level,
+            DangerLevel::Critical
+        );
+        assert_eq!(
+            analyze_command_safety("ubuntu@ip-172-31-0-1:~$ sudo rm -rf /*").level,
+            DangerLevel::Critical
+        );
+        assert_eq!(
+            analyze_command_safety("macbook% reboot").level,
+            DangerLevel::High
+        );
+        assert_eq!(
+            analyze_command_safety("starship-theme ❯ mkfs.ext4 /dev/sdb1").level,
+            DangerLevel::Critical
+        );
+        assert_eq!(
+            analyze_command_safety(r#"echo "[root@localhost ~]# rm -rf /""#).level,
+            DangerLevel::Safe
+        );
     }
 }
