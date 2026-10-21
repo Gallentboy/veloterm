@@ -422,6 +422,9 @@ export default {
     nextPage: 'Next',
     retry: 'Retry',
     pageAlt: 'Page {{page}}',
+    jumpToPage: 'Jump to page (type a number and press Enter)',
+    jumpTo: 'Go to',
+    jumpToSuffix: '',
   },
   files: {
     title: 'Files',

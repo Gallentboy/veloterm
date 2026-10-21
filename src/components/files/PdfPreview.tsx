@@ -149,16 +149,30 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
       className={cn('flex min-h-0 flex-1 flex-col', className)}
       style={RESET_FONT_SCALE_STYLE}
     >
-      {/* 工具栏三段布局：左右等宽占位让跳页输入框严格居中，不受翻页按钮宽度影响 */}
+      {/* 工具栏：左页码（固定宽度不随缩放/内容变）｜中间跳页输入（严格居中）｜右翻页按钮 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1.5">
-        <div className="flex-1" />
+        <div className="flex flex-1 items-center">
+          <span className="font-mono text-ui-xs text-foreground-subtle select-none">
+            {pageCount != null ? `${pageIndex + 1} / ${pageCount}` : t('pdf.loading')}
+          </span>
+        </div>
         {pageCount != null ? (
-          <span className="flex items-center gap-1.5 text-ui-sm text-foreground-subtle select-none">
+          <label className="flex items-center gap-1.5 text-ui-sm text-foreground-subtle select-none">
+            <span>{t('pdf.jumpTo')}</span>
             <input
               type="text"
               inputMode="numeric"
               value={jumpInput}
-              onChange={(e) => setJumpInput(e.target.value.replace(/[^\d]/g, ''))}
+              onChange={(e) => {
+                // 只保留数字，并即时钳制到 [1, pageCount]（空串允许，便于重新输入）
+                const digits = e.target.value.replace(/[^\d]/g, '');
+                if (!digits) {
+                  setJumpInput('');
+                  return;
+                }
+                const n = Number.parseInt(digits, 10);
+                setJumpInput(String(Math.min(Math.max(1, n), pageCount)));
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
@@ -171,16 +185,17 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
               onBlur={() => {
                 if (jumpInput) commitJump();
               }}
-              placeholder={String(pageIndex + 1)}
+              placeholder="1"
               aria-label={t('pdf.jumpToPage')}
               // 宽度按总页数位数动态给（最少 2 个字符宽）
               style={{ width: `${Math.max(2, String(pageCount).length)}ch` }}
               className="h-6 rounded-md border border-border bg-input px-1.5 text-center font-mono text-ui-xs text-foreground outline-none transition-colors placeholder:text-foreground-subtlest focus:border-border-hover"
             />
-            <span>/ {pageCount}</span>
-          </span>
+            {/* 后缀（中文「页」/ 英文空）——空串时不渲染，避免多余空格 */}
+            {t('pdf.jumpToSuffix') ? <span>{t('pdf.jumpToSuffix')}</span> : null}
+          </label>
         ) : (
-          <span className="text-ui-sm text-foreground-subtle select-none">{t('pdf.loading')}</span>
+          <span className="flex-1" />
         )}
         <div className="flex flex-1 items-center justify-end gap-2">
           <Button
