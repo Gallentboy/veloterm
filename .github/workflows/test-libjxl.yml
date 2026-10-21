@@ -81,7 +81,9 @@ jobs:
           & "$vcpkgRoot\vcpkg.exe" install "libjxl:${{ matrix.triplet }}" "--x-install-root=$vcpkgRoot\installed"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install 失败" }
 
-      # 收集 DLL：libjxl 本体 + 它依赖的 highway/brotli/lcms 运行时
+      # 收集 DLL：libjxl 本体 + 它依赖的 highway/brotli/lcms 运行时。
+      # 保留原始文件名（vcpkg 产物的真实名字），不做架构前缀重命名——
+      # 重命名放到「放入 vendor 时」按 README 约定做，压缩包里保持原样便于核对。
       - name: Collect DLLs
         shell: pwsh
         run: |
@@ -91,7 +93,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path out | Out-Null
           Get-ChildItem $binDir -Filter *.dll | ForEach-Object {
             Write-Host "collect: $($_.Name) ($([math]::Round($_.Length/1KB)) KB)"
-            Copy-Item $_.FullName "out/${{ matrix.arch }}_$($_.Name)"
+            Copy-Item $_.FullName "out/$($_.Name)"
           }
           # 断言：jxl 本体必须在（不同版本的 DLL 名可能带版本号，用前缀匹配）
           $jxl = Get-ChildItem out -Filter "*jxl*.dll"
@@ -112,10 +114,26 @@ jobs:
             if ($machine -ne $expect) { throw ("架构不符: {0} 是 0x{1:X4}，期望 0x{2:X4}" -f $_.Name, $machine, $expect) }
           }
 
-      - name: Upload libjxl DLLs
+      # 打包成单个 zip 上传：vcpkg 的 bin/ 下不止 jxl 本体，还有它依赖的
+      # highway/brotli/lcms 运行时——必须全部带上，否则宿主加载 jxl 时会
+      # 因缺依赖 DLL 而失败。压缩后单文件下载，解压即用。
+      - name: Package DLLs into zip
+        shell: pwsh
+        run: |
+          $zip = "libjxl-${{ matrix.arch }}.zip"
+          Compress-Archive -Path out/* -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "打包完成: $zip ($([math]::Round((Get-Item $zip).Length/1KB)) KB)"
+          # 清单随包留档，解压后可直接核对内容
+          Get-ChildItem out | ForEach-Object { "$($_.Name)`t$($_.Length)" } |
+            Set-Content -Path "libjxl-${{ matrix.arch }}-manifest.txt" -Encoding utf8
+          Get-Content "libjxl-${{ matrix.arch }}-manifest.txt" | ForEach-Object { Write-Host "  $_" }
+
+      - name: Upload libjxl DLL bundle
         uses: actions/upload-artifact@v7
         with:
           name: libjxl-${{ matrix.arch }}
-          path: out/*.dll
+          path: |
+            libjxl-${{ matrix.arch }}.zip
+            libjxl-${{ matrix.arch }}-manifest.txt
           if-no-files-found: error
           retention-days: 30
