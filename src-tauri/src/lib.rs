@@ -97,6 +97,7 @@ pub fn run() {
             host_password_history::host_password_history_clear,
             pdf::render_pdf_page,
             pdf::pdf_temp_path,
+            pdf::prepare_image_preview,
             pdf::release_pdf_temp_files,
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,

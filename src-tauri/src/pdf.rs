@@ -102,21 +102,139 @@ pub fn cleanup_all_temp_files() {
     }
 }
 
-/// 生成下载用的本地临时路径并登记（前端下载远端 PDF 时调用）。
+/// 生成下载用的本地临时路径并登记（前端下载远端 PDF/图片时调用）。
 ///
 /// 只负责分配路径与登记，实际下载由既有的 `sftp_download_file` 完成
 /// （它已有进度 Channel、取消、续传）。
+///
+/// `kind`：文件名前缀，用于区分 PDF 源文件（`pdf_src`）与图片源文件（`img_src`）。
 #[tauri::command]
-pub fn pdf_temp_path(file_name: String) -> Result<String, String> {
+pub fn pdf_temp_path(file_name: String, kind: Option<String>) -> Result<String, String> {
     // 只取文件名部分，防止前端传入带目录分隔符的路径逃逸出临时目录
     let safe_name = Path::new(&file_name)
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| "无效的文件名".to_string())?;
-    let path = std::env::temp_dir().join(format!("veloterm_pdf_src_{safe_name}"));
+    let prefix = match kind.as_deref() {
+        Some("img") => "veloterm_img_src",
+        _ => "veloterm_pdf_src",
+    };
+    let path = std::env::temp_dir().join(format!("{prefix}_{safe_name}"));
     register_temp_file(&path);
     Ok(path.to_string_lossy().into_owned())
+}
+
+/// 图片转码结果
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImagePreviewResult {
+    /// 可直接给 `<img src>` 的临时文件路径（原生支持的格式原样返回源文件）
+    pub path: String,
+    /// 是否经过后端转码（false = 浏览器原生可显示，直接用的源文件）
+    pub converted: bool,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// 浏览器原生支持的图片扩展名（WebKit / WebView2 均可直接渲染）。
+///
+/// 这些格式**不转码**——直接返回源文件路径，由 WebView 原生解码
+/// （GPU 加速、流式读取，比后端解码再编码 PNG 快得多，也不占 Rust 内存）。
+const NATIVE_IMAGE_EXTS: &[&str] = &[
+    "png", "jpg", "jpeg", "jfif", "pjpeg", "pjp", "gif", "webp", "svg", "bmp", "ico", "avif",
+    "apng",
+];
+
+/// 已知但当前无法支持的格式（给出明确原因，而不是笼统的「不支持」）
+fn unsupported_reason(ext: &str) -> Option<&'static str> {
+    match ext {
+        "heic" | "heif" => Some("HEIC/HEIF 需要 libheif 解码器（当前构建未启用）"),
+        "jxl" => Some("JPEG XL 需要 libjxl 解码器（当前构建未启用）"),
+        "jp2" | "j2k" | "jpf" | "jpx" => Some("JPEG 2000 需要 openjpeg 解码器（当前构建未启用）"),
+        "psd" | "psb" => Some("Photoshop 文档（PSD）暂不支持"),
+        "cr2" | "cr3" | "nef" | "arw" | "dng" | "orf" | "raf" | "rw2" => {
+            Some("相机 RAW 格式需要 libraw（当前构建未启用）")
+        }
+        _ => None,
+    }
+}
+
+/// 准备图片预览：原生格式直传，其余用 image crate 转码为 PNG。
+///
+/// 返回可直接给 `<img src>` 的本地路径（前端用 convertFileSrc 转 asset:// URL）。
+/// 临时文件登记在 PDF_TEMP_FILES 里，由 `release_pdf_temp_files` 统一清理。
+#[tauri::command]
+pub async fn prepare_image_preview(source_path: String) -> Result<ImagePreviewResult, String> {
+    let src = PathBuf::from(&source_path);
+    if !src.is_file() {
+        return Err(format!("图片文件不存在: {source_path}"));
+    }
+    let ext = src
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    // 原生支持：不转码，直接返回源文件（WebView 自己解码，最快）
+    if NATIVE_IMAGE_EXTS.contains(&ext.as_str()) {
+        // 仍读取尺寸供前端占位（避免加载时布局抖动）；读失败不影响预览
+        let (width, height) = tokio::task::spawn_blocking({
+            let p = src.clone();
+            move || image::image_dimensions(&p).unwrap_or((0, 0))
+        })
+        .await
+        .unwrap_or((0, 0));
+        return Ok(ImagePreviewResult {
+            path: source_path,
+            converted: false,
+            width,
+            height,
+        });
+    }
+
+    // 明确不支持的格式：给出具体原因
+    if let Some(reason) = unsupported_reason(&ext) {
+        return Err(format!("无法预览 .{ext} 图片：{reason}"));
+    }
+
+    // 其余交给 image crate 解码；它自己按魔数嗅探格式，扩展名只用于报错信息
+    let out_path = std::env::temp_dir().join(format!(
+        "veloterm_img_{}_preview.png",
+        short_hash(&source_path)
+    ));
+    let result = tokio::task::spawn_blocking({
+        let src = src.clone();
+        let out = out_path.clone();
+        move || -> Result<(u32, u32), String> {
+            let img = image::open(&src).map_err(|e| {
+                format!(
+                    "解码失败（.{}）：{e}。该格式可能不在支持列表内（支持：TIFF/TGA/DDS/HDR/EXR/PNM/QOI 等）",
+                    src.extension().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default()
+                )
+            })?;
+            let (w, h) = (img.width(), img.height());
+            img.save_with_format(&out, image::ImageFormat::Png)
+                .map_err(|e| format!("保存 PNG 失败: {e}"))?;
+            Ok((w, h))
+        }
+    })
+    .await
+    .map_err(|e| format!("图片转码任务异常: {e}"))??;
+
+    register_temp_file(&out_path);
+    log::debug!(
+        "[Image] converted {} -> {} ({}x{})",
+        source_path,
+        out_path.display(),
+        result.0,
+        result.1
+    );
+    Ok(ImagePreviewResult {
+        path: out_path.to_string_lossy().into_owned(),
+        converted: true,
+        width: result.0,
+        height: result.1,
+    })
 }
 
 /// 单页渲染结果

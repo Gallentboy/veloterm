@@ -414,6 +414,15 @@ export default {
     // 断开态不再有 DOM 横幅：断开信息与重连快捷键提示由 TerminalSession 直接写进
     // xterm 终端缓冲（文案硬编码在组件内，与终端输出同生命周周期）
   },
+  image: {
+    downloading: '正在下载图片… {{percent}}% {{size}}',
+    loading: '正在加载…',
+    alt: '图片预览',
+    zoomIn: '放大',
+    zoomOut: '缩小',
+    fitWidth: '适应宽度',
+    actualSize: '原始大小',
+  },
   pdf: {
     rendering: '正在渲染…',
     downloading: '正在下载 PDF… {{percent}}% {{size}}',

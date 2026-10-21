@@ -414,6 +414,15 @@ export default {
     // No DOM banner for disconnect state: the notice and reconnect shortcut hint are
     // written straight into the xterm buffer by TerminalSession (hardcoded there)
   },
+  image: {
+    downloading: 'Downloading image… {{percent}}% {{size}}',
+    loading: 'Loading…',
+    alt: 'Image preview',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    fitWidth: 'Fit width',
+    actualSize: 'Actual size',
+  },
   pdf: {
     rendering: 'Rendering…',
     downloading: 'Downloading PDF… {{percent}}% {{size}}',

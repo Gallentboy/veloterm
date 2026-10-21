@@ -114,8 +114,28 @@ prost = "0.13"
 prost-types = "0.13"
 prost-reflect = { version = "0.15", features = ["serde"] }
 http = "1"
-# PDF 预览：PDFium（Chromium 同款 C++ 渲染引擎）经 pdfium-render 绑定。
-image = { version = "0.25", default-features = false, features = ["png"] }
+# PDF 预览 + 图片转码：PDFium（Chromium 同款 C++ 渲染引擎）经 pdfium-render 绑定。
+# image 启用全部纯 Rust 解码格式（png/jpeg/gif/webp/bmp/ico/tiff/tga/dds/hdr/
+# exr/pnm/qoi/farbfeld/avif），用于「浏览器不原生支持的图片格式」后端转 PNG。
+# 不支持的（heic/heif 需 libheif、raw 需 libraw、jxl 需 libjxl、jp2 需 openjpeg）
+# 会在错误信息里明确说明。
+image = { version = "0.25", default-features = false, features = [
+  "png",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "ico",
+  "tiff",
+  "tga",
+  "dds",
+  "hdr",
+  "exr",
+  "pnm",
+  "qoi",
+  "ff",
+  "avif",
+] }
 once_cell = "1"
 
 # **PDFium 链接形态按平台分流**：

@@ -49,6 +49,7 @@ import {
   type RemoteFileItem,
 } from '@/services/sftpService';
 import { loadRemoteContent } from '@/editor/contentLoader';
+import { isPreviewableImage } from '@/services/imagePreviewService';
 const SftpFilePreviewModal = lazy(() =>
   import('@/components/files/SftpFilePreviewModal').then((m) => ({
     default: m.SftpFilePreviewModal,
@@ -125,7 +126,7 @@ const CODE_CONFIG_EXTS = new Set([
  * （走 PDFium 渲染分支），故这里额外放行 .pdf。
  */
 function canPreview(item: { name: string; editable?: boolean }): boolean {
-  return Boolean(item.editable) || /\.pdf$/i.test(item.name);
+  return Boolean(item.editable) || /\.pdf$/i.test(item.name) || isPreviewableImage(item.name);
 }
 
 function getFileItemVisuals(item: RemoteFileItem) {
