@@ -6,12 +6,12 @@
 //! 的 PDF 多为文档阅读，一次渲染一页足够。
 //!
 //! ## 线程模型（关键约束）
-//! `pdfium_render::Pdfium` **不是 `Send`/`Sync`**——PDFium 内部有大量线程局部
-//! 状态与全局单例，跨线程传递会导致 UB。因此：
-//! - `Pdfium` 实例放在 **thread_local**，每个执行渲染的线程各自持有
-//! - 渲染任务跑在 `spawn_blocking`（阻塞线程池），池内线程数量有限且会被复用，
-//!   thread_local 因此不会无限增长
-//! - 命令本身是 `async`，PDFium 的重活不占 tokio worker
+//! - `Pdfium` 是进程级单例（`LazyLock<Mutex<Option<...>>>`）。**不能用
+//!   thread_local**：pdfium-render 的 bindings 存在库内部全局 `OnceCell`，
+//!   `bind_to_library` 第二次调用直接返回 `PdfiumLibraryBindingsAlreadyInitialized`
+//!   ——渲染跑在 spawn_blocking 上会换线程，每线程各绑一次就炸。
+//! - `Pdfium` 本身 `Send + Sync`（0.9 内置 thread_safe feature），进程级共享安全。
+//! - 渲染任务跑在 `spawn_blocking`（阻塞线程池），PDFium 的重活不占 tokio worker。
 //!
 //! ## 库定位
 //! vendor/pdfium/ 下有四份预编译库（按平台+架构命名），运行期按需选择：
@@ -202,29 +202,32 @@ fn resolve_pdfium_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     ))
 }
 
-thread_local! {
-    /// 每线程一个 Pdfium 实例（Pdfium 非 Send/Sync，不能跨线程共享）。
-    /// 绑定失败时缓存错误字符串，避免每次渲染重复尝试绑定大库。
-    static PDFIUM: std::cell::RefCell<Option<Result<Pdfium, String>>> =
-        const { std::cell::RefCell::new(None) };
-}
+/// 进程级 Pdfium 单例。
+///
+/// **不能用 thread_local**：pdfium-render 的 bindings 存在库内部的全局
+/// `OnceCell`，`bind_to_library` 第二次调用直接返回
+/// `PdfiumLibraryBindingsAlreadyInitialized`（实测：spawn_blocking 换线程后
+/// 每线程各绑一次 → 除第一个线程外全失败）。
+///
+/// 好在 `Pdfium` 本身是 `Send + Sync`（pdfium-render 0.9 内置 `thread_safe`
+/// feature，bindings 走 `ThreadSafePdfiumBindings`），可以安全地进程级共享。
+static PDFIUM: LazyLock<Mutex<Option<Result<Pdfium, String>>>> =
+    LazyLock::new(|| Mutex::new(None));
 
-/// 在当前线程取（或初始化）Pdfium 实例。
+/// 取（或初始化）进程级 Pdfium 实例。
 fn with_pdfium<R>(
     app: &tauri::AppHandle,
     f: impl FnOnce(&Pdfium) -> Result<R, String>,
 ) -> Result<R, String> {
-    PDFIUM.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        if slot.is_none() {
-            *slot = Some(bind_pdfium(app));
-        }
-        match slot.as_ref() {
-            Some(Ok(pdfium)) => f(pdfium),
-            Some(Err(e)) => Err(e.clone()),
-            None => Err("PDFium 初始化状态异常".to_string()),
-        }
-    })
+    let mut slot = PDFIUM.lock().map_err(|_| "PDFium 状态锁损坏".to_string())?;
+    if slot.is_none() {
+        *slot = Some(bind_pdfium(app));
+    }
+    match slot.as_ref() {
+        Some(Ok(pdfium)) => f(pdfium),
+        Some(Err(e)) => Err(e.clone()),
+        None => Err("PDFium 初始化状态异常".to_string()),
+    }
 }
 
 fn bind_pdfium(app: &tauri::AppHandle) -> Result<Pdfium, String> {
