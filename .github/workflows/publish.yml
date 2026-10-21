@@ -29,32 +29,30 @@ jobs:
             # NSIS 安装包文件名中的架构段（x64 / arm64）
             nsis_arch: x64
             args: '--target x86_64-pc-windows-msvc --config src-tauri/tauri.windows-x64.conf.json'
-          # ── 临时：只构建 win64 单腿（libjxl 运行期加载改造的 Windows 实机验证期），
-          #    其余三腿注释保留，恢复时去掉行首 "# " 即可 ──
           # Windows ARM64（aarch64 原生 runner，relay 车道已验证可用）：
           # 工具链全套同构——MSYS2 换 CLANGARM64 环境（gcc/g++ 由 gcc-compat
           # 包提供兼容名）、vcpkg 换 arm64-windows-static、vim nmake CPU=ARM64、
           # nmap cmake -A ARM64（Npcap SDK 1.16 自带 Lib/ARM64）、GOAMD64 不适用
-          # - platform: 'windows-11-arm'
-          #   rust_target: aarch64-pc-windows-msvc
-          #   rust_targets: aarch64-pc-windows-msvc
-          #   vcpkg_triplet: arm64-windows-static
-          #   msys_arch: clang-aarch64
-          #   nsis_arch: arm64
-          #   args: '--target aarch64-pc-windows-msvc --config src-tauri/tauri.windows-arm64.conf.json'
+          - platform: 'windows-11-arm'
+            rust_target: aarch64-pc-windows-msvc
+            rust_targets: aarch64-pc-windows-msvc
+            vcpkg_triplet: arm64-windows-static
+            msys_arch: clang-aarch64
+            nsis_arch: arm64
+            args: '--target aarch64-pc-windows-msvc --config src-tauri/tauri.windows-arm64.conf.json'
           # macOS：两腿分开出包（arm64 / x86_64 各一个 dmg），各自用对应芯片的
           # 原生 runner（M 芯片 macos-26 / Intel 芯片 macos-26-intel，均取最新
           # 世代镜像），无交叉编译环节。externalBin 只在 tauri.windows.conf.json
           # （Tauri 平台约定自动合并），mac 腿零工具链依赖。无签名证书，产出
           # 未签名 dmg（首次打开需右键绕 Gatekeeper）
-          # - platform: 'macos-26'
-          #   rust_target: aarch64-apple-darwin
-          #   rust_targets: aarch64-apple-darwin
-          #   args: '--target aarch64-apple-darwin --config src-tauri/tauri.macos-arm64.conf.json'
-          # - platform: 'macos-26-intel'
-          #   rust_target: x86_64-apple-darwin
-          #   rust_targets: x86_64-apple-darwin
-          #   args: '--target x86_64-apple-darwin --config src-tauri/tauri.macos-x64.conf.json'
+          - platform: 'macos-26'
+            rust_target: aarch64-apple-darwin
+            rust_targets: aarch64-apple-darwin
+            args: '--target aarch64-apple-darwin --config src-tauri/tauri.macos-arm64.conf.json'
+          - platform: 'macos-26-intel'
+            rust_target: x86_64-apple-darwin
+            rust_targets: x86_64-apple-darwin
+            args: '--target x86_64-apple-darwin --config src-tauri/tauri.macos-x64.conf.json'
 
     runs-on: ${{ matrix.platform }}
     env:
