@@ -1232,9 +1232,9 @@ impl Connector {
                                         // SSH 服务端风格提示（无颜色，纯文本）：
                                         // 按会话语言适配——提示词含 CJK 即中文
                                         let notice = if session_is_chinese {
-                                            "\r\n密码已自动保存到主机配置。"
+                                            "密码已自动保存到主机配置。\r\n"
                                         } else {
-                                            "\r\nPassword saved to host settings."
+                                            "Password saved to host settings.\r\n"
                                         };
                                         let _ = self
                                             .tx
@@ -1637,9 +1637,9 @@ impl Connector {
                                         self.id, host_id
                                     );
                                     let notice = if session_is_chinese {
-                                        "\r\n密码已自动保存到主机配置。"
+                                        "密码已自动保存到主机配置。\r\n"
                                     } else {
-                                        "\r\nPassword saved to host settings."
+                                        "Password saved to host settings.\r\n"
                                     };
                                     let _ = self
                                         .tx
@@ -1706,7 +1706,7 @@ impl Connector {
                             .send(RCEvent::Output(
                                 1,
                                 bytes::Bytes::from(
-                                    "\r\nPermission denied, please try again.\r\n",
+                                    "Permission denied, please try again.\r\n",
                                 ),
                             ))
                             .await;
@@ -1751,9 +1751,9 @@ impl Connector {
                                         host_id
                                     );
                                     let notice = if session_is_chinese {
-                                        "\r\n密码已自动保存到主机配置。"
+                                        "密码已自动保存到主机配置。\r\n"
                                     } else {
-                                        "\r\nPassword saved to host settings."
+                                        "Password saved to host settings.\r\n"
                                     };
                                     let _ = self
                                         .tx
