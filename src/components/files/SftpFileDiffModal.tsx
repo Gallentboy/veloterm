@@ -133,9 +133,9 @@ export const SftpFileDiffModal = memo(function SftpFileDiffModal({
     });
     diffEditorRef.current = diffEditor;
 
-    // 内容嗅探：conf 系文件实为 nginx 时切 nginx（高亮/补全/hover）
-    const originalLang = resolveLanguageIdWithContent(origTarget.name, origContent);
-    const modifiedLang = resolveLanguageIdWithContent(modTarget.name, modContent);
+    // 内容/路径嗅探：conf 族或无扩展名文件实为 nginx 时切 nginx（同预览弹窗）
+    const originalLang = resolveLanguageIdWithContent(origTarget.name, origContent, origTarget.path);
+    const modifiedLang = resolveLanguageIdWithContent(modTarget.name, modContent, modTarget.path);
 
     const originalModel = monaco.editor.createModel(origContent, originalLang);
     const modifiedModel = monaco.editor.createModel(modContent, modifiedLang);

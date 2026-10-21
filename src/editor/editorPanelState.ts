@@ -170,6 +170,31 @@ export function setStatus(
   };
 }
 
+/**
+ * 内容就绪后的语言升级（文件名判不准、内容/路径判得准的场景——如 yh.conf
+ * 实为 nginx 配置）：addFile 按文件名一锤定音，拉取到内容后由 Provider 调
+ * resolveLanguageIdWithContent 重判并落回 descriptor（跨会话恢复一致，
+ * MonacoDocumentCard.getFileModel 已有 languageId 变化即 setModelLanguage
+ * 的同步逻辑）。幂等：语言相同则原样返回。
+ */
+export function updateFileLanguage(
+  state: EditorPanelState,
+  fileId: number,
+  languageId: string,
+): EditorPanelState {
+  const file = state.files[fileId];
+  if (!file || file.languageId === languageId) {
+    return state;
+  }
+  return {
+    ...state,
+    files: {
+      ...state.files,
+      [fileId]: { ...file, languageId },
+    },
+  };
+}
+
 /** 把指定主机的全部非 loading 文件置为 offline（断线事件用） */
 export function markHostOffline(state: EditorPanelState, hostId: number): EditorPanelState {
   let next = state;

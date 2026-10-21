@@ -10,6 +10,7 @@ import {
   type RefObject,
 } from 'react';
 import { computeBaseHash, loadRemoteContent, saveRemoteContent } from '@/editor/contentLoader';
+import { resolveLanguageIdWithContent } from '@/editor/languageMap';
 import {
   activateFile as activateFileState,
   addFile,
@@ -20,6 +21,7 @@ import {
   removeFile,
   restoreEditorPanelState,
   setStatus,
+  updateFileLanguage,
   type EditorPanelState,
 } from '@/editor/editorPanelState';
 import { editorStorage } from '@/services/editorStorage';
@@ -185,6 +187,28 @@ export function EditorProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
+   * 内容就绪后的一次性语言升级：addFile 按文件名判语言（yh.conf → ini），
+   * 内容到位后按内容+路径重判（实为 nginx 则升级 descriptor——getFileModel
+   * 监听 languageId 变化自动 setModelLanguage）。幂等：结果相同不更新。
+   */
+  const maybeUpgradeLanguage = useCallback(
+    (id: number, content: string) => {
+      const file = panelStateRef.current.files[id];
+      if (!file) {
+        return;
+      }
+      const upgraded = resolveLanguageIdWithContent(file.fileName, content, file.remotePath);
+      if (upgraded !== file.languageId) {
+        logEditorTrace(
+          `language upgrade id=${id} ${file.languageId} -> ${upgraded} (${file.remotePath})`,
+        );
+        applyPanelState((current) => updateFileLanguage(current, id, upgraded));
+      }
+    },
+    [applyPanelState],
+  );
+
+  /**
    * 拉取远端内容并按草稿情况落状态：
    * - 草稿存在且 baseHash 与远端一致 → 用草稿，dirty；
    * - 草稿存在但 hash 不符 → 本地草稿为当前内容、远端内容暂存，conflict；
@@ -225,6 +249,8 @@ export function EditorProvider({ children }: { children: ReactNode }) {
           updateConflictRemotes((map) => map.delete(id));
           applyPanelState((current) => setStatus(current, id, 'clean', remoteHash));
         }
+        // 内容就绪后的语言升级（三分支同接：草稿/冲突分支的内容同样代表文件形态）
+        maybeUpgradeLanguage(id, contentsRef.current.get(id) ?? result.content);
         updateLoadErrors((map) => map.delete(id));
       } catch (error) {
         logEditorTrace(`fetch failed id=${id}: ${String(error)}`);
@@ -241,7 +267,7 @@ export function EditorProvider({ children }: { children: ReactNode }) {
         fetchInFlightRef.current.delete(id);
       }
     },
-    [applyPanelState, updateConflictRemotes, updateContents],
+    [applyPanelState, maybeUpgradeLanguage, updateConflictRemotes, updateContents],
   );
 
   // 面板结构持久化（防抖）：files / activeFileId 变化后落快照
