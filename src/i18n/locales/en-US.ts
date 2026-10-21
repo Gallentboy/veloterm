@@ -414,6 +414,14 @@ export default {
     // No DOM banner for disconnect state: the notice and reconnect shortcut hint are
     // written straight into the xterm buffer by TerminalSession (hardcoded there)
   },
+  pdf: {
+    loading: 'Loading…',
+    pageIndicator: 'Page {{current}} / {{total}}',
+    prevPage: 'Previous',
+    nextPage: 'Next',
+    retry: 'Retry',
+    pageAlt: 'Page {{page}}',
+  },
   files: {
     title: 'Files',
     hint: 'SFTP File Manager',
