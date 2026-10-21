@@ -86,7 +86,7 @@ impl SshTerminalSession {
                 id,
                 lifecycle_host_id,
                 prompts,
-                app_handle.as_ref().map(|h| h.clone()),
+                app_handle.clone(),
                 Some(on_output.clone()),
             );
         }
@@ -237,7 +237,19 @@ impl SshTerminalSession {
                         );
                     }
                     RCEvent::Output(channel_id, data) if channel_id == shell_channel_id => {
-                        if !shell_ready_emitted {
+                        // 改密提示词扫描（旁路：不影响透传字节）。**必须放在
+                        // shell-ready 判断之前**——判断依据就是它维护的等待态。
+                        crate::terminal::passwd_input::PasswdInputLog::global()
+                            .feed_output(id, &data);
+                        // shell-ready 只在「真的可以输入命令」时才发：
+                        // 密码过期时服务器的首个输出是 passwd 的
+                        // `(current) UNIX password:` 提示，此时若立刻发
+                        // ShellReady，就绪钩子会把钩子命令当成密码敲进去
+                        // （实测：用户无法输入密码，改密失败）。
+                        if !shell_ready_emitted
+                            && !crate::terminal::passwd_input::PasswdInputLog::global()
+                                .is_awaiting_password(id)
+                        {
                             shell_ready_emitted = true;
                             emit(LifecycleKind::ShellReady, None, None);
                         }
@@ -262,9 +274,7 @@ impl SshTerminalSession {
                                 zmodem_detector.reset();
                             }
                         }
-                        // 改密提示词扫描（旁路：不影响透传字节）
-                        crate::terminal::passwd_input::PasswdInputLog::global()
-                            .feed_output(id, &data);
+                        // （改密提示词扫描已在分支开头执行，见上）
                         // 未命中：探测（命中则建桥、启动传输任务）
                         let detection = zmodem_detector.feed(&data);
                         if matches!(detection, crate::terminal::zmodem::Detection::Swallow) {

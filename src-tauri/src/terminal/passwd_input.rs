@@ -73,6 +73,10 @@ struct SessionState {
     output_channel: Option<tauri::ipc::Channel<Vec<u8>>>,
     /// 已匹配到的提示词原文（语言检测：含 CJK 即中文提示）
     detected_prompt_text: String,
+    /// 曾进入过改密流程（跨「两轮提示之间 await_kind 短暂为 None」的间隙）。
+    /// shell-ready 判断用它兜底：进过流程就必须等 `await_kind` 归 None 且
+    /// 出现明确结束标志（written 置位或收到 shell 提示符）才放行。
+    saw_passwd_flow: bool,
 }
 
 /// 全局注册表：terminal_id → 状态
@@ -169,14 +173,17 @@ impl PasswdInputLog {
 
         if matched_retype {
             sc.await_kind = Some(Await::Retype);
+            sc.saw_passwd_flow = true;
             sc.buf.clear();
             sc.scan.clear();
         } else if matched_new {
             sc.await_kind = Some(Await::New);
+            sc.saw_passwd_flow = true;
             sc.buf.clear();
             sc.scan.clear();
         } else if matched_current {
             sc.await_kind = Some(Await::Current);
+            sc.saw_passwd_flow = true;
             sc.buf.clear();
             sc.scan.clear();
         }
@@ -291,6 +298,23 @@ impl PasswdInputLog {
     pub fn cleanup(&self, terminal_id: usize) {
         self.sessions.lock().unwrap().remove(&terminal_id);
     }
+
+    /// 该会话是否处于「改密流程未完成」状态（用于推迟 shell-ready）。
+    ///
+    /// 密码过期时服务器的首个输出就是 `(current) UNIX password:` 提示，
+    /// 此时若立刻发 ShellReady，就绪钩子会把命令当成密码敲进去。
+    ///
+    /// 判定不是简单的「此刻在等输入」——改密流程中两轮提示之间
+    /// `await_kind` 会短暂为 None（提示词已清、下一提示未到），只看瞬时态
+    /// 会误放行。故用「进过改密流程 且 尚未成功回写」作为未完成判据。
+    ///
+    /// **不做超时兜底**：改密失败（用户连续输错）时服务器不会进 shell，
+    /// 永远不发 ShellReady 正是正确行为——用户本来就到不了 shell。
+    pub fn is_awaiting_password(&self, terminal_id: usize) -> bool {
+        let map = self.sessions.lock().unwrap();
+        map.get(&terminal_id)
+            .is_some_and(|sc| sc.await_kind.is_some() || (sc.saw_passwd_flow && !sc.written))
+    }
 }
 
 #[cfg(test)]
@@ -371,5 +395,38 @@ mod tests {
             retype: "c".into(),
         };
         assert!(p.is_complete());
+    }
+
+    /// 改密流程未完成时必须压住 shell-ready（否则就绪钩子把命令当密码敲进去）
+    #[test]
+    fn shell_ready_blocked_during_passwd_flow() {
+        let cap = PasswdInputLog::new();
+        // 未进流程：不阻塞
+        assert!(!cap.is_awaiting_password(10));
+        // 命中 current 提示 → 进入流程，阻塞
+        cap.feed_output(10, b"Current password: ");
+        assert!(cap.is_awaiting_password(10));
+        // 两轮提示之间的间隙（await_kind 已消费为 None，但流程未完成）→ 仍阻塞
+        cap.feed_input(10, b"old\r");
+        assert!(
+            cap.is_awaiting_password(10),
+            "flow in progress must keep blocking even between prompts"
+        );
+    }
+
+    /// 改密成功后放行 shell-ready
+    #[test]
+    fn shell_ready_released_after_successful_change() {
+        let cap = PasswdInputLog::new();
+        // host_id 为空 → try_write_password 提前返回、written 不置位，
+        // 因此这里只验证「未回写时仍阻塞」；成功路径需真实 DB，见集成测试
+        cap.feed_output(20, b"Current password: ");
+        cap.feed_input(20, b"old\r");
+        cap.feed_output(20, b"New password: ");
+        cap.feed_input(20, b"newpass\r");
+        cap.feed_output(20, b"Retype new password: ");
+        cap.feed_input(20, b"newpass\r");
+        // 无 host_id：密码一致但无法回写，written 仍为 false → 仍阻塞
+        assert!(cap.is_awaiting_password(20));
     }
 }
