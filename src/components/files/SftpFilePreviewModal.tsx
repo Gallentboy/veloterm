@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import * as monaco from 'monaco-editor';
 import { Button } from '@/components/ui/button';
 import { PdfRemotePreview } from '@/components/files/PdfRemotePreview';
+import { ImageRemotePreview } from '@/components/files/ImageRemotePreview';
+import { isPreviewableImage } from '@/services/imagePreviewService';
 import { loadRemoteContent, loadRemoteContentSudo, saveRemoteContent, saveRemoteContentSudo } from '@/editor/contentLoader';
 import { resolveLanguageId } from '@/editor/languageMap';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
@@ -68,6 +70,10 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
 
   /** PDF 文件走独立渲染分支（不加载 Monaco） */
   const isPdf = /\.pdf$/i.test(fileName);
+  /** 图片走独立预览分支（原生直传 / 后端转码，不加载 Monaco） */
+  const isImage = isPreviewableImage(fileName);
+  /** 非文本分支（PDF / 图片）：跳过 Monaco 内容加载与编辑按钮 */
+  const isBinaryPreview = isPdf || isImage;
 
   /** 远端内容基线：加载时初始化、保存成功后推进（编辑器内容不回写此状态） */
   const [baseline, setBaseline] = useState<string | null>(null);
@@ -105,8 +111,8 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
 
   /* —— 内容加载（打开时一次） —— */
   useEffect(() => {
-    // PDF 走独立渲染分支（PdfRemotePreview），不加载 Monaco 文本内容
-    if (isPdf) return;
+    // PDF / 图片走独立渲染分支，不加载 Monaco 文本内容
+    if (isBinaryPreview) return;
     let cancelled = false;
     (async () => {
       try {
@@ -125,7 +131,7 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [hostId, remotePath, isPdf]);
+  }, [hostId, remotePath, isBinaryPreview]);
 
   /* —— sudo 前缀码 → i18n 文案（REMOTE: 原样透出服务器输出尾部） —— */
   const mapSudoError = useCallback(
@@ -360,7 +366,7 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            {isPdf ? null : !editing ? (
+            {isBinaryPreview ? null : !editing ? (
               <Button type="button" size="sm" variant="ghost" onClick={switchToEdit}>
                 <Pencil className="size-3" />
                 <span>{t('common.edit')}</span>
@@ -411,6 +417,11 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
             <Suspense fallback={null}>
               <PdfRemotePreview sessionId={sessionId} remotePath={remotePath} />
             </Suspense>
+          ) : isImage && sessionId ? (
+            // 图片：下载 → 原生直传或后端转码 → <img>（缩放与滚动见 ImagePreview）
+            <Suspense fallback={null}>
+              <ImageRemotePreview sessionId={sessionId} remotePath={remotePath} />
+            </Suspense>
           ) : (
             <>
               <div ref={containerRef} className="h-full w-full" />
@@ -421,7 +432,7 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
               ) : null}
             </>
           )}
-          {!isPdf && loadError ? (
+          {!isBinaryPreview && loadError ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-popover px-6 text-center">
               <AlertCircle className="size-6 text-warning" />
               <p className="max-w-full break-all text-ui-sm text-foreground-subtle">{loadError}</p>
