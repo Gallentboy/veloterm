@@ -68,6 +68,10 @@ jobs:
       # 装 libjxl 动态库（不含 tools 特性 → 只编解码库本体 + 三个必需依赖）
       - name: Install libjxl via vcpkg
         shell: pwsh
+        env:
+          # 只编 release 配置：跳过 debug 产物（体积减半、构建时间显著缩短）。
+          # 与 publish.yml 的 OpenSSL 安装同约定。
+          VCPKG_BUILD_TYPE: release
         run: |
           $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { $env:VCPKG_INSTALLATION_ROOT } else { "C:\vcpkg" }
           git config --global --add safe.directory "$vcpkgRoot"
