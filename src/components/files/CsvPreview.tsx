@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Check, Search, X } from 'lucide-react';
-import { memo, useCallback, useDeferredValue, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useDeferredValue, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { CellTooltipPortal, useCellTooltip } from '@/components/files/CellTooltip';
 import { cn } from '@/lib/utils';
 
 export interface CsvPreviewProps {
@@ -181,9 +182,18 @@ export const CsvPreview = memo(function CsvPreview({
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(500);
 
+  // 自定义单元格 Tooltip（Portal 到 document.body，非原生，支持视口自适应与复制）
+  const {
+    activeAnchor,
+    handleCellMouseEnter,
+    handleCellMouseLeave,
+    handleContainerScroll,
+  } = useCellTooltip();
+
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     setScrollTop(e.currentTarget.scrollTop);
-  }, []);
+    handleContainerScroll();
+  }, [handleContainerScroll]);
 
   const totalRows = processedRows.length;
   const totalHeight = totalRows * ROW_HEIGHT;
@@ -296,6 +306,8 @@ export const CsvPreview = memo(function CsvPreview({
                   <th
                     key={colIdx}
                     onClick={() => toggleSort(colIdx)}
+                    onMouseEnter={(e) => handleCellMouseEnter(e, header)}
+                    onMouseLeave={handleCellMouseLeave}
                     className="cursor-pointer border-b border-r border-border/60 px-3 py-2 text-left font-semibold text-foreground transition-colors hover:bg-hover select-none last:border-r-0"
                   >
                     <div className="flex items-center justify-between gap-1.5">
@@ -340,8 +352,9 @@ export const CsvPreview = memo(function CsvPreview({
                   {row.map((cell, colIdx) => (
                     <td
                       key={colIdx}
+                      onMouseEnter={(e) => handleCellMouseEnter(e, cell)}
+                      onMouseLeave={handleCellMouseLeave}
                       className="max-w-xs truncate border-r border-border/30 px-3 text-foreground last:border-r-0"
-                      title={cell}
                     >
                       {cell}
                     </td>
@@ -375,6 +388,9 @@ export const CsvPreview = memo(function CsvPreview({
           </div>
         ) : null}
       </div>
+
+      {/* 共享非原生单元格浮动 Tooltip */}
+      <CellTooltipPortal anchor={activeAnchor} />
     </div>
   );
 });

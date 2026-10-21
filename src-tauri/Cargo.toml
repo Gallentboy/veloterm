@@ -114,6 +114,8 @@ prost = "0.13"
 prost-types = "0.13"
 prost-reflect = { version = "0.15", features = ["serde"] }
 http = "1"
+# Excel 表格预览（xlsx/xls/xlsb/ods）：calamine 纯 Rust 解析引擎（零外部 C 依赖）
+calamine = "0.37"
 # PDF 预览 + 图片转码：PDFium（Chromium 同款 C++ 渲染引擎）经 pdfium-render 绑定。
 # image 启用全部纯 Rust 解码格式（png/jpeg/gif/webp/bmp/ico/tiff/tga/dds/hdr/
 # exr/pnm/qoi/farbfeld/avif），用于「浏览器不原生支持的图片格式」后端转 PNG。

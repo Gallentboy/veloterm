@@ -6,6 +6,7 @@ pub mod commands;
 pub mod common;
 pub mod db;
 pub mod editor_storage;
+pub mod excel;
 pub mod grpc_client;
 pub mod grpc_describe;
 pub mod grpc_tls;
@@ -96,9 +97,11 @@ pub fn run() {
             host_password_history::host_password_history_list,
             host_password_history::host_password_history_clear,
             pdf::render_pdf_page,
-            pdf::pdf_temp_path,
-            pdf::prepare_image_preview,
-            pdf::release_pdf_temp_files,
+	            pdf::pdf_temp_path,
+	            pdf::prepare_image_preview,
+	            pdf::release_pdf_temp_files,
+	            excel::read_excel_workbook,
+	            excel::read_excel_sheet_data,
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,
             zk_hosts::zk_host_delete,
@@ -147,9 +150,11 @@ pub fn run() {
             sftp::commands::sftp_list_users_groups,
             sftp::commands::sftp_exec_available,
             sftp::commands::sftp_copy_file,
-	            sftp::file_ops::sftp_read_file,
-	            sftp::file_ops::sftp_read_file_hex,
-	            sftp::file_ops::sftp_sudo_read,
+		            sftp::file_ops::sftp_read_file,
+		            sftp::file_ops::sftp_read_file_hex,
+		            sftp::file_ops::sftp_read_file_tail,
+		            sftp::file_ops::sftp_read_file_range,
+		            sftp::file_ops::sftp_sudo_read,
             sftp::file_ops::sftp_sudo_write,
             sftp::file_ops::sftp_write_file,
             editor_storage::editor_load_state,
