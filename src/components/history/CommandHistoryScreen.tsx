@@ -35,13 +35,14 @@ const COPY_RESET_MS = 1500;
 const HOST_FILTER_ALL = 'all';
 const HOST_FILTER_LOCAL = 'local';
 
-/** 启用采集引导：三段 shell 片段（与后端 OSC 7777 解析器协议逐字对应，一字不能改） */
+/** 启用采集引导：三段 shell 片段（与后端 OSC 7777 解析器与 OSC 133 语义化规范对应，支持命令采集与事前精准防护） */
 const SNIPPETS: Array<{ shell: 'bash' | 'zsh' | 'fish'; code: string }> = [
   {
     shell: 'bash',
-    code: `# VeloTerm 命令历史采集（粘贴到 ~/.bashrc；幂等，可重复粘贴）
+    code: `# VeloTerm 命令采集与 OSC 133 语义化防护（粘贴到 ~/.bashrc；幂等，可重复粘贴）
 __veloterm_report() {
   local rc=$? line cmd enc
+  printf '\\033]133;D;%s\\033\\\\\\033]133;A\\033\\\\' "$rc"
   if [[ -n \${__veloterm_skip:-} ]]; then __veloterm_skip=; return; fi
   line=$(HISTTIMEFORMAT= history 1)
   line="\${line#"\${line%%[! ]*}"}"
@@ -52,14 +53,18 @@ __veloterm_report() {
   enc=\${enc//$'\\n'/%0A}; enc=\${enc//$'\\r'/%0D}
   printf '\\033]7777;cmd;%s;%s\\033\\\\' "$rc" "$enc"
 }
-case ";\${PROMPT_COMMAND:-};" in *";__veloterm_report;"*) ;; *) PROMPT_COMMAND="__veloterm_report\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac
+__veloterm_ps1_hook() {
+  [[ "$PS1" == *"]133;B"* ]] || PS1="$PS1\\[\\033]133;B\\033\\\\\\]"
+}
+case ";\${PROMPT_COMMAND:-};" in *";__veloterm_report;"*) ;; *) PROMPT_COMMAND="__veloterm_report;__veloterm_ps1_hook\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac
 __veloterm_skip=1`,
   },
   {
     shell: 'zsh',
-    code: `# VeloTerm 命令历史采集（粘贴到 ~/.zshrc；幂等，可重复粘贴）
+    code: `# VeloTerm 命令采集与 OSC 133 语义化防护（粘贴到 ~/.zshrc；幂等，可重复粘贴）
 __veloterm_report() {
   local rc=$? cmd enc
+  printf '\\033]133;D;%s\\033\\\\\\033]133;A\\033\\\\' "$rc"
   if [[ -n \${__veloterm_skip:-} ]]; then __veloterm_skip=; return; fi
   cmd=\${history[\${#history}]}
   [[ -n $cmd ]] || return
@@ -67,18 +72,26 @@ __veloterm_report() {
   enc=\${enc//$'\\n'/%0A}; enc=\${enc//$'\\r'/%0D}
   printf '\\033]7777;cmd;%s;%s\\033\\\\' "$rc" "$enc"
 }
-(( \${precmd_functions[(Ie)__veloterm_report]} )) || precmd_functions+=(__veloterm_report)
+__veloterm_preexec() {
+  printf '\\033]133;C\\033\\\\'
+}
+__veloterm_ps1_hook() {
+  [[ "$PS1" == *"]133;B"* ]] || PS1="$PS1%{\\033]133;B\\033\\\\%}"
+}
+(( \${precmd_functions[(Ie)__veloterm_report]} )) || precmd_functions+=(__veloterm_report __veloterm_ps1_hook)
+(( \${preexec_functions[(Ie)__veloterm_preexec]} )) || preexec_functions+=(__veloterm_preexec)
 __veloterm_skip=1`,
   },
   {
     shell: 'fish',
-    code: `# VeloTerm 命令历史采集（粘贴到 ~/.config/fish/config.fish；幂等）
+    code: `# VeloTerm 命令采集与 OSC 133 语义化防护（粘贴到 ~/.config/fish/config.fish；幂等）
 function __veloterm_report --on-event fish_prompt
+    set -l rc $status
+    printf '\\e]133;D;%s\\e\\\\\\e]133;A\\e\\\\' $rc
     if set -q __veloterm_skip
         set -e __veloterm_skip
         return
     end
-    set -l rc $status
     set -l cmd $history[1]
     test -n "$cmd"; or return
     set -l enc (string replace -a -- '%' '%25' $cmd | string collect)
@@ -88,6 +101,16 @@ function __veloterm_report --on-event fish_prompt
     set enc (string replace -a -- \\n '%0A' $enc | string collect)
     set enc (string replace -a -- \\r '%0D' $enc | string collect)
     printf '\\e]7777;cmd;%s;%s\\e\\\\' $rc "$enc"
+end
+function __veloterm_preexec --on-event fish_preexec
+    printf '\\e]133;C\\e\\\\'
+end
+if not functions -q __veloterm_fish_prompt_orig
+    functions -c fish_prompt __veloterm_fish_prompt_orig
+    function fish_prompt
+        __veloterm_fish_prompt_orig
+        printf '\\e]133;B\\e\\\\'
+    end
 end
 set -g __veloterm_skip 1`,
   },

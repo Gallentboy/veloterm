@@ -67,19 +67,29 @@ pub struct ParsedCommand {
 
 /// 检查整段脚本/命令行的安全性。
 /// 仅当 `host_env` 为 `"prod"` 或 `"staging"` 时做高危阻断；非生产环境直接返回 Safe。
+/// `is_clean`: 若为 true（来自 OSC 133 语义化坐标精准切片），跳过 Prompt 剥离与滑动探测，直飞 AST 语法树。
 #[tauri::command]
-pub fn inspect_command_safety(command: String, host_env: String) -> SafetyInspectResult {
+pub fn inspect_command_safety(
+    command: String,
+    host_env: String,
+    is_clean: Option<bool>,
+) -> SafetyInspectResult {
     // 仅在预发或生产环境启用强拦截；dev/test 直接放行
     let is_production_like = matches!(host_env.trim().to_lowercase().as_str(), "prod" | "production" | "staging");
     if !is_production_like {
         return SafetyInspectResult::safe();
     }
 
-    analyze_command_safety(&command)
+    analyze_command_safety_ext(&command, is_clean.unwrap_or(false))
 }
 
 /// 纯文本安全分析核心函数
 pub fn analyze_command_safety(script: &str) -> SafetyInspectResult {
+    analyze_command_safety_ext(script, false)
+}
+
+/// 纯文本安全分析扩展函数，支持 `is_clean` 标志位
+pub fn analyze_command_safety_ext(script: &str, is_clean: bool) -> SafetyInspectResult {
     let trimmed = script.trim();
     if trimmed.is_empty() {
         return SafetyInspectResult::safe();
@@ -103,16 +113,23 @@ pub fn analyze_command_safety(script: &str) -> SafetyInspectResult {
         };
     }
 
-    // 1. Rust 剥离 Shell Prompt 提示符（消除 # 注释误判及 $ / % 语法解析异常）
+    // 1. 若来自 OSC 133 语义化精准切片，已被终端坐标完全隔离为纯净命令行，
+    // 不需要走 strip_shell_prompt 与滑动窗口探测，直接直飞 AST 语法树！
+    if is_clean {
+        return inspect_ast(trimmed);
+    }
+
+    // 2. 未配置 OSC 133 时的 Fallback 链路：
+    // 启发式剥离 Shell Prompt 提示符（消除 # 注释误判及 $ / % 语法解析异常）
     let cleaned = strip_shell_prompt(trimmed);
 
-    // 2. 将清洗后的命令构建 AST 并进行规则评估
+    // 将清洗后的命令构建 AST 并进行规则评估
     let ast_res = inspect_ast(cleaned);
     if ast_res.level != DangerLevel::Safe {
         return ast_res;
     }
 
-    // 3. 方案 3：全量 AST 候选段滑动探测（Sliding Window Scanner）
+    // 3. 方案 3：全量 AST 候选段滑动探测（Sliding Window Scanner）兜底
     // 应对未识别的奇异自定义主题（如零标点 "my-custom-prompt rm -rf /"）
     if let Some(candidate_res) = scan_ast_candidates(trimmed) {
         return candidate_res;
@@ -737,6 +754,19 @@ mod tests {
         );
         assert_eq!(
             analyze_command_safety(r#"echo "[root@localhost ~]# rm -rf /""#).level,
+            DangerLevel::Safe
+        );
+    }
+
+    #[test]
+    fn test_is_clean_flag_bypasses_prompt_strip() {
+        // OSC 133 精确命令模式：is_clean 为 true 时直飞语法树
+        assert_eq!(
+            analyze_command_safety_ext("rm -rf /", true).level,
+            DangerLevel::Critical
+        );
+        assert_eq!(
+            analyze_command_safety_ext("echo 'hello world'", true).level,
             DangerLevel::Safe
         );
     }
