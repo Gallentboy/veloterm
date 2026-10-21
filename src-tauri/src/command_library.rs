@@ -1469,7 +1469,10 @@ mod tests {
         assert_eq!(page2.len(), 2);
         let page3 = list_records(&pool, None, Some(2), Some(4)).expect("page3");
         assert_eq!(page3.len(), 1);
-        assert_ne!(page1[0].id, page2[0].id);
+        // save 顺序不保证 rowid 先后，但分页结果内互不相交
+        let id1 = page1.first().map(|r| r.id);
+        let id2 = page2.first().map(|r| r.id);
+        assert_ne!(id1, id2);
     }
 
     #[test]

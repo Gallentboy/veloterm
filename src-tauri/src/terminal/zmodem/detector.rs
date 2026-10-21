@@ -85,25 +85,24 @@ impl ZmodemDetector {
             // `rz\r**\x18B000000000`：公告在前、ZRQINIT 帧在后。若在公告上
             // 抢先命中就会把 sz 误判成上传（实测踩坑）。方向只认协议帧类型。
             if let Some(pos) = find_subslice(&self.tail, HEX_PREFIX) {
-                let after = &self.tail[pos + HEX_PREFIX.len()..];
-                if after.len() >= 2 {
-                    let hi = hex_val(after[0]);
-                    let lo = hex_val(after[1]);
-                    if let (Some(hi), Some(lo)) = (hi, lo) {
-                        let frame_type = (hi << 4) | lo;
-                        let prefix = self.tail.clone();
-                        self.tail.clear();
-                        // 只认入口帧：0 = ZRQINIT（sz 下载）、1 = ZRINIT（rz 上传）。
-                        // 其他类型（ZFIN=08 收尾、ZFILE=04 传输中等）是既有会话
-                        // 的信号，不触发新传输——实测上传完成后服务器 lrz 发的
-                        // ZFIN 被「非 01 即 Sz」误判为下载，弹了假保存框。
-                        return match frame_type {
-                            0 => Detection::Sz { prefix },
-                            1 => Detection::Rz { prefix },
-                            // 收尾/进行中帧：吞掉（透传会进 bash 被当命令执行）
-                            _ => Detection::Swallow,
-                        };
-                    }
+                let after = self.tail.get(pos + HEX_PREFIX.len()..).unwrap_or(&[]);
+                if let (Some(hi), Some(lo)) = (
+                    after.first().copied().and_then(hex_val),
+                    after.get(1).copied().and_then(hex_val),
+                ) {
+                    let frame_type = (hi << 4) | lo;
+                    let prefix = self.tail.clone();
+                    self.tail.clear();
+                    // 只认入口帧：0 = ZRQINIT（sz 下载）、1 = ZRINIT（rz 上传）。
+                    // 其他类型（ZFIN=08 收尾、ZFILE=04 传输中等）是既有会话
+                    // 的信号，不触发新传输——实测上传完成后服务器 lrz 发的
+                    // ZFIN 被「非 01 即 Sz」误判为下载，弹了假保存框。
+                    return match frame_type {
+                        0 => Detection::Sz { prefix },
+                        1 => Detection::Rz { prefix },
+                        // 收尾/进行中帧：吞掉（透传会进 bash 被当命令执行）
+                        _ => Detection::Swallow,
+                    };
                 }
             }
 
@@ -148,7 +147,8 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
     }
-    (0..=haystack.len() - needle.len()).find(|&i| &haystack[i..i + needle.len()] == needle)
+    (0..=haystack.len() - needle.len())
+        .find(|&i| haystack.get(i..i + needle.len()).is_some_and(|w| w == needle))
 }
 
 /// 单个 hex 字符值
@@ -238,12 +238,14 @@ mod tests {
         let mut d = ZmodemDetector::new();
         // 终端回显命令 + 服务器帧（实测形态）
         assert_eq!(d.feed(b"[root@CPZX-WH zy]# rz\r\n"), Detection::None);
-        match d.feed(REAL_RZ_FRAME) {
-            Detection::Rz { prefix } => {
-                // prefix 是命中瞬间的 tail（含 `**\x18B01` 判定前缀）
-                assert!(prefix.windows(4).any(|w| w == b"**\x18B"), "prefix: {prefix:?}");
-            }
-            other => panic!("expected Rz (ZRQINIT=upload), got {other:?}"),
+        let fed = d.feed(REAL_RZ_FRAME);
+        assert!(
+            matches!(fed, Detection::Rz { .. }),
+            "expected Rz (ZRQINIT=upload), got {fed:?}"
+        );
+        if let Detection::Rz { prefix } = fed {
+            // prefix 是命中瞬间的 tail（含 `**\x18B01` 判定前缀）
+            assert!(prefix.windows(4).any(|w| w == b"**\x18B"), "prefix: {prefix:?}");
         }
     }
 
@@ -280,10 +282,11 @@ mod tests {
     fn sz_with_leading_rz_announce_is_download() {
         let mut d = ZmodemDetector::new();
         // 公告 + 帧在同一 chunk（真实形态）
-        match d.feed(b"rz\r**\x18B000000000") {
-            Detection::Sz { .. } => {}
-            other => panic!("expected Sz (ZRQINIT=download), got {other:?}"),
-        }
+        let fed = d.feed(b"rz\r**\x18B000000000");
+        assert!(
+            matches!(fed, Detection::Sz { .. }),
+            "expected Sz (ZRQINIT=download), got {fed:?}"
+        );
     }
 
     /// 公告单独到达时不得命中（否则会把随后的 sz 误判为上传）

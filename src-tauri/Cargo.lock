@@ -265,6 +265,7 @@ dependencies = [
  "http-body-util",
  "image",
  "jpegxl-rs",
+ "jpegxl-sys",
  "libc",
  "log",
  "once_cell",
@@ -6728,8 +6729,6 @@ dependencies = [
 [[package]]
 name = "jpegxl-rs"
 version = "0.13.1+libjxl-0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4765e0b2640b6a752acb6d9ea4050934b0f325e1cffcd242a18639f96f39348"
 dependencies = [
  "bon",
  "byteorder",
@@ -6741,10 +6740,8 @@ dependencies = [
 [[package]]
 name = "jpegxl-sys"
 version = "0.12.1+libjxl-0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00cb4f7ffb45ee4327e9ec6ca1a732f3abef470ee008f7d4be3afb414075cd7d"
 dependencies = [
- "pkg-config",
+ "libloading 0.8.9",
 ]
 
 [[package]]

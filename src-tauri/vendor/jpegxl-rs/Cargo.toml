@@ -1,0 +1,65 @@
+# veloterm vendor 修补版：零源码改动，仅清单调整（见 ../jpegxl-sys/README.md
+# 「本地修补」）。原清单见 Cargo.toml.orig。改动：jpegxl-sys 依赖改回树内
+# path（registry 发布时被规范化成了 crates.io 版本号）；去掉 dev-dependencies
+# 与 bench 目标（上游测试不随本工程跑，且其 image <0.25.9 的 dev 约束与
+# 本工程锁定的 0.25.10 冲突）；[lints] 去除（跟随根工作区配置）。
+
+[package]
+edition = "2021"
+rust-version = "1.85.0"
+name = "jpegxl-rs"
+version = "0.13.1+libjxl-0.11.2"
+# benches/ 保留上游源码但不参与构建（bench 目标与 dev-deps 已随补丁移除）
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Safe Rust wrapper for JPEG XL reference implementation"
+readme = "README.md"
+keywords = [
+    "jpeg-xl",
+    "jxl",
+]
+categories = [
+    "api-bindings",
+    "encoding",
+    "multimedia::images",
+]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/inflation/jpegxl-rs"
+
+[features]
+default = ["image"]
+image = ["dep:image"]
+
+[lib]
+name = "jpegxl_rs"
+path = "src/lib.rs"
+bench = false
+
+[dependencies.bon]
+version = "3.8.2"
+
+[dependencies.byteorder]
+version = "1.5.0"
+
+[dependencies.half]
+version = "2.7.1"
+
+[dependencies.image]
+version = "0.25,<0.25.9"
+optional = true
+default-features = false
+
+[dependencies.jpegxl-sys]
+version = "0.12.1"
+path = "../jpegxl-sys"
+default-features = false
+
+[dependencies.thiserror]
+version = "2.0.18"
+
+# 上游源码带 cfg(coverage_nightly) 属性（仅在 nightly coverage 构建生效），
+# 稳定工具链会报 unexpected_cfgs——本工程不跑 coverage，直接放行。
+[lints.rust]
+unexpected_cfgs = "allow"

@@ -159,6 +159,84 @@ fn unsupported_reason(ext: &str) -> Option<&'static str> {
     }
 }
 
+// ===== JPEG XL：libjxl 运行期加载（pdfium 同型） =====
+//
+// jpegxl-rs / jpegxl-sys 是树内 vendor 的修补版（见 vendor/jpegxl-sys/README.md）：
+// 上游在 build.rs 里用 pkg-config 做链接期动态链接，构建机没有 libjxl（或没有
+// pkg-config，如 Windows runner）时直接 panic；链接期依赖还意味着进程启动时
+// 必须找到库文件，用户机器缺库会拖死整个应用。修补版改为 bind_to_library
+// 运行期加载——缺库只影响 .jxl 预览这一个功能。
+
+/// libjxl 绑定状态（进程内一次；失败原因缓存，避免每次预览重复打日志）。
+static JXL_BIND: LazyLock<Result<(), String>> = LazyLock::new(|| {
+    for path in jxl_lib_candidates() {
+        if !path.is_file() {
+            continue;
+        }
+        // bind_to_library 同样进程内缓存首次结果：命中存在的文件后无论成败
+        // 都以它为准（例如架构不符的 DLL 会在此报出具体原因）
+        return match jpegxl_sys::bind_to_library(&path) {
+            Ok(()) => {
+                log::debug!("[JXL] libjxl loaded from {}", path.display());
+                Ok(())
+            }
+            Err(e) => Err(format!("加载 libjxl 失败（{e}）")),
+        };
+    }
+    let tried = jxl_lib_candidates()
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join("、");
+    Err(format!("未找到 libjxl 动态库（已查找：{tried}）"))
+});
+
+/// libjxl 候选路径（与 PDFium 的 resolve_pdfium_path 同一套查找逻辑）。
+///
+/// - Windows 开发期：源码树 `vendor/libjxl/{x64,arm64}/`（8 个 DLL 同目录，
+///   依赖经 LOAD_WITH_ALTERED_SEARCH_PATH 从该目录解析，见 jpegxl-sys 补丁）；
+/// - Windows 发布：安装根 `libjxl/` 子目录（tauri 资源映射）→ exe 同级；
+/// - macOS：Homebrew 前缀（Intel 的 /usr/local 与 Apple Silicon 的 /opt/homebrew；
+///   **不随包分发**——未装 jpeg-xl 的机器 .jxl 预览给出可诊断提示，其余功能无感）。
+fn jxl_lib_candidates() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        #[cfg(target_arch = "x86_64")]
+        const ARCH_DIR: &str = "x64";
+        #[cfg(target_arch = "aarch64")]
+        const ARCH_DIR: &str = "arm64";
+
+        let mut candidates = Vec::new();
+        #[cfg(debug_assertions)]
+        candidates.push(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("vendor")
+                .join("libjxl")
+                .join(ARCH_DIR)
+                .join("jxl.dll"),
+        );
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            // 发布形态：随包 DLL 统一放安装根 libjxl/ 子目录（资源映射目标）
+            candidates.push(dir.join("libjxl").join("jxl.dll"));
+            // 平铺兜底（开发者手工拷贝等场景）
+            candidates.push(dir.join("jxl.dll"));
+        }
+        candidates
+    }
+    #[cfg(not(windows))]
+    {
+        [
+            "/opt/homebrew/lib/libjxl.dylib",
+            "/usr/local/lib/libjxl.dylib",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect()
+    }
+}
+
 /// JPEG XL 解码：jpegxl-rs（libjxl 绑定）→ RGBA8 缓冲 → image 的 RgbaImage。
 ///
 /// **为什么不用 jpegxl-rs 的 `image` feature**：它要求 image `^0.25,<0.25.9`，
@@ -170,6 +248,9 @@ fn unsupported_reason(ext: &str) -> Option<&'static str> {
 fn decode_jxl_to_rgba(
     src: &Path,
 ) -> Result<(image::DynamicImage, u32, u32), String> {
+    // 先绑定 libjxl（进程内一次）：未装/缺 DLL 时在此给出可诊断错误，
+    // 不会 panic（jpegxl-sys 的包装函数仅在未绑定时被直接调用才会 panic）
+    JXL_BIND.as_ref().map_err(String::clone)?;
     let bytes = std::fs::read(src).map_err(|e| format!("读取 JXL 文件失败: {e}"))?;
     let (metadata, pixels) = jpegxl_rs::decoder_builder()
         .build()
@@ -635,12 +716,54 @@ fn short_hash(input: &str) -> String {
 mod tests {
     use super::*;
 
-    /// JXL 解码器能初始化 = libjxl 动态库加载成功（本机 brew 安装的 0.12）
+    /// libjxl 运行期绑定可用（本机 brew 安装的 0.12 与绑定 0.11.2 ABI 兼容）。
+    ///
+    /// 无候选库的机器（未装 brew jpeg-xl 的 mac、未放 vendor DLL 的 Windows）
+    /// 跳过而不是失败：libjxl 是可选增强，缺库只影响 .jxl 预览。
     #[test]
-    fn jxl_decoder_initializes() {
-        // build() 会加载 libjxl 并创建解码器实例；失败说明动态库缺失/版本不兼容
+    fn jxl_library_binds_when_present() {
+        let has_candidate = jxl_lib_candidates().iter().any(|p| p.is_file());
+        if !has_candidate {
+            eprintln!("跳过：本机无 libjxl 候选（brew jpeg-xl / vendor DLL）");
+            return;
+        }
+        let bound = JXL_BIND.as_ref().map_err(String::clone);
+        assert!(bound.is_ok(), "libjxl 绑定失败: {:?}", bound.err());
+        // 绑定成功后走一次真实解码器构建，验证符号解析整链路
         let decoder = jpegxl_rs::decoder_builder().build();
-        assert!(decoder.is_ok(), "libjxl 加载失败: {:?}", decoder.err());
+        assert!(decoder.is_ok(), "JXL 解码器构建失败: {:?}", decoder.err());
+    }
+
+    /// 端到端 JXL 解码：4×4 无损样本（cjxl -q 100 生成，testdata/sample.jxl）
+    /// → RGBA 尺寸与角点像素断言。锁「运行期绑定 → 符号解析 → 解码循环 →
+    /// 像素组装」整链路；无 libjxl 的机器跳过（同上）。
+    #[test]
+    fn jxl_decodes_sample_end_to_end() {
+        if !jxl_lib_candidates().iter().any(|p| p.is_file()) {
+            eprintln!("跳过：本机无 libjxl 候选（brew jpeg-xl / vendor DLL）");
+            return;
+        }
+        let sample = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata")
+            .join("sample.jxl");
+        let decoded = decode_jxl_to_rgba(&sample);
+        assert!(
+            decoded.is_ok(),
+            "JXL 样本解码失败: {:?}",
+            decoded.as_ref().err()
+        );
+        let (img, w, h) = match decoded {
+            Ok(v) => v,
+            // 上面的 assert 已拦住失败分支，这里只是让类型收敛
+            Err(_) => return,
+        };
+        assert_eq!((w, h), (4, 4));
+        let rgba = img.to_rgba8();
+        // 左上角 (0,0,0)，右上 (255,0,127)，左下 (0,255,127)，右下 (255,255,255)
+        assert_eq!(rgba.get_pixel(0, 0), &image::Rgba([0, 0, 0, 255]));
+        assert_eq!(rgba.get_pixel(3, 0), &image::Rgba([255, 0, 127, 255]));
+        assert_eq!(rgba.get_pixel(0, 3), &image::Rgba([0, 255, 127, 255]));
+        assert_eq!(rgba.get_pixel(3, 3), &image::Rgba([255, 255, 255, 255]));
     }
 
     /// 库文件名：开发期带架构后缀，随包用标准名（静态链接的 mac arm64 无此函数）

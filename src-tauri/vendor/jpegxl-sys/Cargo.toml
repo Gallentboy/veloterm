@@ -1,0 +1,33 @@
+# veloterm vendor 修补版：runtime-loading 分支（见本树 README.md「本地修补」）
+# 原清单见 Cargo.toml.orig。改动：去掉 build.rs/links/pkg-config/jpegxl-src
+# （不再有链接期依赖），加 libloading（运行期按路径加载 libjxl）；
+# dev-dependencies 与 [lints] 一并去除（本树不跑上游测试，lint 配置见根工作区）。
+
+[package]
+edition = "2021"
+rust-version = "1.85.0"
+name = "jpegxl-sys"
+version = "0.12.1+libjxl-0.11.2"
+description = "Rust wrapper for JPEG XL reference implementation"
+readme = "README.md"
+keywords = [
+    "jpeg-xl",
+    "jxl",
+]
+categories = [
+    "external-ffi-bindings",
+    "encoding",
+    "multimedia::images",
+]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/inflation/jpegxl-rs"
+
+[lib]
+name = "jpegxl_sys"
+path = "src/lib.rs"
+
+[features]
+default = []
+
+[dependencies.libloading]
+version = "0.8"

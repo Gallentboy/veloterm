@@ -1,8 +1,9 @@
 # vendor/libjxl — Windows 端 libjxl 动态库（随包分发）
 
-JPEG XL 解码（图片预览的 `.jxl` 格式）通过 `jpegxl-rs` 绑定 libjxl。
-macOS 走 Homebrew 安装的系统库（`brew install jpeg-xl`）；Windows 没有系统级
-分发渠道，需要把 DLL 放进本目录随安装包分发。
+JPEG XL 解码（图片预览的 `.jxl` 格式）经树内 vendor 的 `jpegxl-rs` / `jpegxl-sys`
+（运行期加载分支，见 `../jpegxl-sys/README.md`「本地修补」）绑定 libjxl。
+macOS 走 Homebrew 系统库（`brew install jpeg-xl`），不随包分发、缺库只影响
+`.jxl` 预览；Windows 无系统级分发渠道，DLL 需放进本目录随安装包分发。
 
 ## 产物来源
 
@@ -20,31 +21,35 @@ macOS 走 Homebrew 安装的系统库（`brew install jpeg-xl`）；Windows 没�
 
 ```
 vendor/libjxl/
-├── x64/      ← 解压 libjxl-x64.zip 的全部内容
-├── arm64/    ← 解压 libjxl-arm64.zip 的全部内容
+├── x64/      ← libjxl-x64.zip 的全部内容（jxl/jxl_cms/jxl_threads/hwy/lcms2-2/brotli×3）
+├── arm64/    ← libjxl-arm64.zip 的全部内容
 └── README.md
 ```
 
-**为什么必须全部 DLL**：libjxl 本体依赖 `highway` / `brotli` / `lcms` 的运行时
-DLL，只拷 `jxl.dll` 会导致宿主加载失败（缺依赖模块）。
+**为什么必须全部 DLL**：`jxl.dll` 依赖 `hwy` / `brotli` / `lcms` 的运行时 DLL，
+只拷 jxl.dll 会在加载时报缺依赖模块（`jxl_threads.dll` 严格说非必需——当前
+解码路径未用 parallel runner，符号表按模块惰性解析，但同批产物一并保留省心）。
 
-## 打包方式
+## 打包与加载
 
-构建脚本（`scripts/build-tools.mjs`）按 target 把对应架构子目录的全部 DLL
-复制到 `src-tauri/binaries/libjxl/`，再由架构专用的 Tauri 配置映射进安装包
-（`tauri.windows-x64.conf.json` / `tauri.windows-arm64.conf.json`）。
+DLL 是预编译资产、无现场构建步骤（不占 build-tools 段）：架构专用的 Tauri
+配置直接映射源码树（`tauri.windows-x64.conf.json` / `tauri.windows-arm64.conf.json`
+的 `vendor/libjxl/{x64,arm64} → libjxl`），安装后落在安装根 `libjxl/` 子目录。
 
-运行期由 `jpegxl-rs` 自己按 DLL 搜索路径加载——**DLL 需放在宿主 exe
-（`coreutils.exe`）同目录或同目录的 `libjxl/` 子目录**，与 PDFium 的
-`lib/`、`pdfium/` 布局约定一致。
+运行期由 app 侧 `pdf.rs` 的 `JXL_BIND` 按候选路径调
+`jpegxl_sys::bind_to_library`：开发期命中本目录、发布期命中安装根 `libjxl/`。
+Windows 侧用 `LOAD_WITH_ALTERED_SEARCH_PATH` 加载，`jxl.dll` 的依赖优先从
+`jxl.dll` 自身目录解析——这就是 DLL 放子目录也能找到依赖的原因。
 
 ## 版本约束
 
-`jpegxl-rs 0.13.1` 绑定 **libjxl 0.11.2** 的 ABI；vcpkg 当前 port 是 **0.12.0**。
-实测 macOS 上 0.12 能正常加载（ABI 兼容），Windows 亦按此假设，车道跑通后
-需在真机/CI 验证 `.jxl` 预览可用。
+`jpegxl-sys 0.12.1`（树内）绑定 **libjxl 0.11.2** 的 ABI；vcpkg port 与 brew
+当前都是 **0.12.0**。macOS 上 0.12 已实测通过（含 4×4 样本端到端解码测试，
+`src-tauri/testdata/sample.jxl`）；Windows 侧同版本产物，ABI 同理兼容，
+`.jxl` 预览的最终确认依赖 Windows 真机/CI 回归（test-commands 车道）。
 
-## 当前状态
+## 升级
 
-- macOS：已可用（依赖 `brew install jpeg-xl`，不走本目录）
-- Windows：**待放入 DLL**。未放入时 `.jxl` 预览会报「初始化 JXL 解码器失败」
+换 `vendor/jpegxl-rs` + `vendor/jpegxl-sys` 源码并重放补丁（见 sys 树 README）
++ vcpkg port 升版时重跑 test-libjxl 车道换本目录 DLL + 复核 `testdata` 样本
+仍能解码。
