@@ -28,6 +28,7 @@ import { CastPlayerModal } from '@/components/terminal/CastPlayerModal';
 import { SafetyGuardModal } from '@/components/terminal/SafetyGuardModal';
 import {
   SafetyInputTracker,
+  extractCommandLineFromTerminal,
   inspectCommandSafety,
   type SafetyInspectResult,
 } from '@/services/safetyGuardService';
@@ -1162,22 +1163,30 @@ export function TerminalSession({
           term.onData((data) => {
             const rawBytes = encodeTerminalInput(data);
             if (isSafetyShieldEnabled) {
-              const res = safetyTrackerRef.current.feed(data);
-              if (res.isEnter && res.commandToInspect) {
-                // 生产/预发高危拦截检查：扣留回车，异步裁决
-                void inspectCommandSafety(res.commandToInspect, envLevel).then((inspectRes) => {
-                  if (inspectRes.level !== 'safe') {
-                    setSafetyModal({
-                      isOpen: true,
-                      command: res.commandToInspect!,
-                      inspectResult: inspectRes,
-                      pendingBytes: rawBytes,
-                    });
-                  } else {
-                    writeInputAndMirror(rawBytes);
-                  }
-                });
-                return;
+              const isEnterHit = data.includes('\r') || data.includes('\n');
+              if (isEnterHit) {
+                // 生产/预发高危拦截检查：优先从真实屏幕行提取（涵盖按⬆️调历史命令、Tab补全、光标编辑等场景）
+                const screenCmd = extractCommandLineFromTerminal(term);
+                const trackerCmd = safetyTrackerRef.current.feed(data).commandToInspect;
+                const cmdToInspect = screenCmd || trackerCmd;
+
+                if (cmdToInspect) {
+                  void inspectCommandSafety(cmdToInspect, envLevel).then((inspectRes) => {
+                    if (inspectRes.level !== 'safe') {
+                      setSafetyModal({
+                        isOpen: true,
+                        command: cmdToInspect,
+                        inspectResult: inspectRes,
+                        pendingBytes: rawBytes,
+                      });
+                    } else {
+                      writeInputAndMirror(rawBytes);
+                    }
+                  });
+                  return;
+                }
+              } else {
+                safetyTrackerRef.current.feed(data);
               }
             }
             writeInputAndMirror(rawBytes);
