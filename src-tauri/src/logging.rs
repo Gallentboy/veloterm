@@ -154,25 +154,19 @@ pub fn get_log_file_path(app: AppHandle) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    /// 时间戳形态必须是 `[YYYY-MM-DD][HH:MM:SS.mmm]`（本地时区 + 毫秒）。
+    /// 时间戳形态必须是 `YYYY-MM-DD HH:MM:SS.mmm`（本地时区 + 毫秒）。
     #[test]
     fn local_timestamp_carries_milliseconds() {
         let stamp = format_local_timestamp();
 
-        // `split_once("][")` 会把分隔符本身吃掉，所以 date_part 不含尾部 `]`
+        // `split_once(' ')` 把日期与时间分开（空格分隔，无括号）
         // 注意：本项目 `clippy::panic = "deny"`，测试里也一律用 `expect` 而非 `panic!`
-        let (date_part, rest) = stamp
-            .split_once("][")
-            .expect("timestamp must be `[date][time]`");
-        let time_part = rest.strip_suffix(']').expect("timestamp must end with `]`");
+        let (date_part, time_part) =
+            stamp.split_once(' ').expect("timestamp must be `date time`");
 
-        assert!(
-            date_part.starts_with('['),
-            "date part must start with `[`: {stamp}"
-        );
         assert_eq!(
             date_part.len(),
-            "[YYYY-MM-DD".len(),
+            "YYYY-MM-DD".len(),
             "unexpected date part: {stamp}"
         );
         assert_eq!(

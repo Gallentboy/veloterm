@@ -746,6 +746,14 @@ export default {
     clearConfirm: 'Clear all password history for this host? This cannot be undone.',
     clearFailed: 'Failed to clear password history',
   },
+  passwdPrompts: {
+    sectionTitle: 'Password Prompt Configuration',
+    hint: 'Prompts used to detect the in-shell passwd flow: strict matching is enabled only when all three are filled in. Copy the exact prompt text from a real terminal; leave unconfigured to use the built-in default patterns.',
+    current: 'Current password prompt',
+    new: 'New password prompt',
+    retype: 'Retype password prompt',
+    perLine: 'One per line, any match counts',
+  },
   groups: {
     title: 'Groups',
     newGroup: 'New Group',

@@ -64,6 +64,33 @@ impl SshTerminalSession {
         let shell_channel_id: usize = 1;
         let known_hosts = KnownHosts::global();
 
+        // shell 内 passwd 改密检测的会话配置：注入 host_id 归因与用户配置的
+        // 提示词（从主机库读，仅密码认证的主机有意义）
+        {
+            let prompts = lifecycle_host_id
+                .and_then(|hid| {
+                    let pool = crate::db::global_pool()?;
+                    let conn = pool.get().ok()?;
+                    let json: Option<String> = conn
+                        .query_row(
+                            "SELECT passwd_prompts FROM hosts WHERE id = ?1",
+                            rusqlite::params![hid as i64],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                        .flatten();
+                    json.and_then(|j| serde_json::from_str(&j).ok())
+                })
+                .unwrap_or_default();
+            crate::terminal::passwd_input::PasswdInputLog::global().configure_session(
+                id,
+                lifecycle_host_id,
+                prompts,
+                app_handle.as_ref().map(|h| h.clone()),
+                Some(on_output.clone()),
+            );
+        }
+
         let RemoteClientHandles {
             mut event_rx,
             command_tx,

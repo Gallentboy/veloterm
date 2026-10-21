@@ -1166,6 +1166,8 @@ impl Connector {
                 // ——后置递增，默认值 3，实际是「初始 1 次 + 重试 3 次 = 4 次」）
                 let mut kbdint_attempts = 0u32;
                 const KBDINT_MAX_ATTEMPTS: u32 = 4;
+                // 会话语言（提示词含 CJK 即中文；「密码已保存」提示按此适配）
+                let mut session_is_chinese = false;
                 // 服务器在 FAILURE 里给出的剩余认证方法（最终失败时按 OpenSSH
                 // 的「Permission denied (method1,method2)」格式呈现）
                 let mut last_remaining_methods: Option<String> = None;
@@ -1211,49 +1213,42 @@ impl Connector {
                                 && entered != password
                                 && let Some(host_id) = self.host_id
                             {
-                                match crate::db::global_pool() {
-                                    Some(pool) => {
-                                        match crate::db::update_host_password_with_source(
-                                            &pool,
-                                            host_id,
-                                            entered,
-                                            "user-input",
-                                        ) {
-                                            Ok(true) => {
-                                                log::info!(
-                                                    "[SSH {}] user-entered password accepted, \
-                                                     host {} password updated",
-                                                    self.id,
-                                                    host_id
-                                                );
-                                                // 前端同步：广播密码已更新，让 dbStorage
-                                                // 重拉 bootstrap 并刷新内存/React 状态，
-                                                // 否则主机编辑页仍显示旧密码（同改密路径）
-                                                use tauri::Emitter;
-                                                if let Some(app) = self.app_handle.as_ref() {
-                                                    let _ = app.emit(
-                                                        "host-password-updated",
-                                                        serde_json::json!({
-                                                            "hostId": host_id
-                                                        }),
-                                                    );
-                                                }
-                                            }
-                                            Ok(false) => log::debug!(
-                                                "[SSH {}] host {} is not password-auth, skip update",
-                                                self.id,
-                                                host_id
-                                            ),
-                                            Err(e) => log::warn!(
-                                                "[SSH {}] failed to save user-entered password: {}",
-                                                self.id,
-                                                e
-                                            ),
-                                        }
+                                match crate::db::change_host_password(
+                                    host_id,
+                                    entered,
+                                    "user-input",
+                                    self.app_handle.as_ref(),
+                                ) {
+                                    Ok(true) => {
+                                        log::info!(
+                                            "[SSH {}] user-entered password accepted, host {} updated",
+                                            self.id,
+                                            host_id
+                                        );
+                                        // SSH 服务端风格提示（无颜色，纯文本）：
+                                        // 按会话语言适配——提示词含 CJK 即中文
+                                        let notice = if session_is_chinese {
+                                            "\r\n密码已自动保存到主机配置。"
+                                        } else {
+                                            "\r\nPassword saved to host settings."
+                                        };
+                                        let _ = self
+                                            .tx
+                                            .send(RCEvent::Output(
+                                                1,
+                                                bytes::Bytes::from(notice),
+                                            ))
+                                            .await;
                                     }
-                                    None => log::warn!(
-                                        "[SSH {}] db pool unavailable, password not saved",
-                                        self.id
+                                    Ok(false) => log::debug!(
+                                        "[SSH {}] host {} is not password-auth, skip update",
+                                        self.id,
+                                        host_id
+                                    ),
+                                    Err(e) => log::warn!(
+                                        "[SSH {}] failed to save user-entered password: {}",
+                                        self.id,
+                                        e
                                     ),
                                 }
                             }
@@ -1388,6 +1383,15 @@ impl Connector {
                             }
                             let prompt_texts: Vec<&str> =
                                 prompts.iter().map(|p| p.prompt.as_str()).collect();
+                            // 语言检测：任一提示或 instructions 含 CJK 即标记中文
+                            // （「密码已保存」终端提示按此适配）
+                            if !session_is_chinese {
+                                let all_text =
+                                    format!("{} {}", instructions, prompt_texts.join(" "));
+                                session_is_chinese = all_text
+                                    .chars()
+                                    .any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c));
+                            }
                             let lower_all = prompt_texts
                                 .iter()
                                 .map(|p| p.to_ascii_lowercase())
@@ -1594,49 +1598,37 @@ impl Connector {
                         //     self.id, new_pw
                         // );
                         if let Some(host_id) = self.host_id {
-                            match crate::db::global_pool() {
-                                Some(pool) => {
-                                    match crate::db::update_host_password(
-                                        &pool, host_id, new_pw,
-                                    ) {
-                                        Ok(true) => {
-                                            log::info!(
-                                                "[SSH {}] password changed, host {} updated",
-                                                self.id, host_id
-                                            );
-                                            // 比对打印（验证期用，已确认落库正确）
-                                            // 默认注释，排查时取消注释即可
-                                            // log::info!(
-                                            //     "[SSH-PASSWD-CHANGE] session={} \
-                                            //      DB-SAVED-PASSWORD={:?}",
-                                            //     self.id, new_pw
-                                            // );
-                                            // 通知前端刷新内存 host store：前端建
-                                            // 会话用内存副本，不刷新会继续用旧密码
-                                            //（实测：DB 已更新但新会话被拒）
-                                            use tauri::Emitter;
-                                            if let Some(app) = self.app_handle.as_ref() {
-                                                let _ = app.emit(
-                                                    "host-password-updated",
-                                                    serde_json::json!({
-                                                        "hostId": host_id
-                                                    }),
-                                                );
-                                            }
-                                        }
-                                        Ok(false) => log::debug!(
-                                            "[SSH {}] host {} not password-auth, skip",
-                                            self.id, host_id
-                                        ),
-                                        Err(e) => log::warn!(
-                                            "[SSH {}] password update failed: {}",
-                                            self.id, e
-                                        ),
-                                    }
+                            match crate::db::change_host_password(
+                                host_id,
+                                new_pw,
+                                "kbd-int-change",
+                                self.app_handle.as_ref(),
+                            ) {
+                                Ok(true) => {
+                                    log::info!(
+                                        "[SSH {}] password changed, host {} updated",
+                                        self.id, host_id
+                                    );
+                                    let notice = if session_is_chinese {
+                                        "\r\n密码已自动保存到主机配置。"
+                                    } else {
+                                        "\r\nPassword saved to host settings."
+                                    };
+                                    let _ = self
+                                        .tx
+                                        .send(RCEvent::Output(
+                                            1,
+                                            bytes::Bytes::from(notice),
+                                        ))
+                                        .await;
                                 }
-                                None => log::warn!(
-                                    "[SSH {}] db pool unavailable, password not saved",
-                                    self.id
+                                Ok(false) => log::debug!(
+                                    "[SSH {}] host {} not password-auth, skip",
+                                    self.id, host_id
+                                ),
+                                Err(e) => log::warn!(
+                                    "[SSH {}] password update failed: {}",
+                                    self.id, e
                                 ),
                             }
                         } else {

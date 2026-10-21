@@ -85,6 +85,11 @@ pub struct HostRecord {
     pub relay_id: Option<usize>,
     #[serde(default)]
     pub group_ids: Vec<usize>,
+    /// shell 内 passwd 改密提示词配置（JSON：{current,new,retype}）。
+    /// 三条都非空时 passwd_input 用配置严格匹配（准确度高），
+    /// 否则 fallback 内置默认模式。null = 未配置。
+    #[serde(default)]
+    pub passwd_prompts: Option<crate::terminal::passwd_input::PasswdPrompts>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -232,6 +237,7 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           relay_key_id INTEGER,
           relay_secret TEXT,
           relay_target TEXT,
+          passwd_prompts TEXT,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
       );
@@ -376,6 +382,7 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
         "relay_target TEXT",
         "cert_fingerprint TEXT",
         "relay_id INTEGER",
+        "passwd_prompts TEXT",
     ] {
         let sql = format!("ALTER TABLE hosts ADD COLUMN {col_def}");
         if let Err(e) = conn.execute_batch(&sql)
@@ -1113,6 +1120,40 @@ pub fn update_host_password(
     update_host_password_with_source(pool, host_id, new_password, "kbd-int-change")
 }
 
+/// 密码变更的**唯一入口**：写历史 + 更新密码 + 发事件，三步一条龙。
+///
+/// 所有触发密码变更的路径（kbd-int 改密 / kbd-int 手输 / shell-passwd /
+/// 将来的手动更新）都应调这个方法，不要各自重复实现三步逻辑。
+///
+/// - `source`：`kbd-int-change` / `user-input` / `shell-passwd`（写入历史表）
+/// - `app_handle`：有值时成功后 emit `host-password-updated`（前端刷新内存态）
+///
+/// 返回 `Ok(true)` = 密码实际变更；`Ok(false)` = 主机不存在或非密码认证（静默跳过）
+pub fn change_host_password(
+    host_id: usize,
+    new_password: &str,
+    source: &str,
+    app_handle: Option<&tauri::AppHandle>,
+) -> Result<bool, String> {
+    let pool = global_pool().ok_or("db pool unavailable")?;
+    let updated = update_host_password_with_source(&pool, host_id, new_password, source)?;
+    if updated {
+        log::info!(
+            "[DB] host {} password updated (source: {})",
+            host_id,
+            source
+        );
+        if let Some(app) = app_handle {
+            use tauri::Emitter;
+            let _ = app.emit(
+                "host-password-updated",
+                serde_json::json!({ "hostId": host_id }),
+            );
+        }
+    }
+    Ok(updated)
+}
+
 /// 更新保存密码并在历史表留档被替换的旧密码。
 ///
 /// `source`：`kbd-int-change`（认证内改密）或 `user-input`（手输密码通过认证）。
@@ -1459,6 +1500,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
             "SELECT id, name, host, port, username, auth_json, jump_host_id,
               host_key_verification, allow_insecure_algos, ready_command_id,
               relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint, relay_id,
+              passwd_prompts,
               created_at, updated_at
        FROM hosts
        ORDER BY id ASC",
@@ -1494,9 +1536,12 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 ready_command_id: row.get(9)?,
                 relay,
                 relay_id,
+                passwd_prompts: row
+                    .get::<_, Option<String>>(17)?
+                    .and_then(|j| serde_json::from_str(&j).ok()),
                 group_ids: groups_by_host.remove(&id).unwrap_or_default(),
-                created_at: row.get(17)?,
-                updated_at: row.get(18)?,
+                created_at: row.get(18)?,
+                updated_at: row.get(19)?,
             })
         })
         .map_err(|e| format!("failed to query hosts: {e}"))?;
@@ -1598,6 +1643,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 ready_command_id: None,
                 relay: None,
                 relay_id: None,
+                passwd_prompts: None,
                 group_ids,
                 created_at,
                 updated_at,
@@ -1718,8 +1764,9 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                   id, name, host, port, username, auth_json, jump_host_id,
                   host_key_verification, allow_insecure_algos, ready_command_id,
                   relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint, relay_id,
+                  passwd_prompts,
                   created_at, updated_at
-               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
                ON CONFLICT(id) DO UPDATE SET
                   name = excluded.name,
                   host = excluded.host,
@@ -1737,6 +1784,7 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                   relay_secret = excluded.relay_secret,
                   cert_fingerprint = excluded.cert_fingerprint,
                   relay_id = excluded.relay_id,
+                  passwd_prompts = excluded.passwd_prompts,
                   updated_at = excluded.updated_at",
             )
             .map_err(|e| format!("failed to prepare host upsert: {e}"))?;
@@ -1789,6 +1837,9 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                     host.relay.as_ref().map(|r| r.secret.clone()),
                     host.relay.as_ref().and_then(|r| r.cert_fingerprint.clone()),
                     host.relay_id,
+                    host.passwd_prompts
+                        .as_ref()
+                        .map(|p| serde_json::to_string(p).unwrap_or_default()),
                     host.created_at,
                     host.updated_at,
                 ])
@@ -1933,6 +1984,7 @@ mod tests {
                     ),
                 }),
                 relay_id: Some(1),
+                passwd_prompts: None,
                 group_ids: vec![1],
                 created_at: 200,
                 updated_at: 200,
@@ -1950,6 +2002,7 @@ mod tests {
                 ready_command_id: None,
                 relay: None,
                 relay_id: None,
+                passwd_prompts: None,
                 group_ids: vec![],
                 created_at: 201,
                 updated_at: 201,

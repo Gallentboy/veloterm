@@ -1,4 +1,4 @@
-import { Check, Copy, Eye, EyeOff, History, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, Copy, Eye, EyeOff, History, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -20,6 +20,7 @@ import type {
   AuthMethod,
   GroupNode,
   HostNode,
+  PasswdPrompts,
   RelayTransport,
   SshHostKeyVerificationMode,
   SshRelayEndpoint,
@@ -42,6 +43,9 @@ export interface HostFormResult {
   allowInsecureAlgos: boolean;
   /** 终端就绪钩子：会话建立后自动执行的命令库命令 id；null = 未启用 */
   readyCommandId: number | null;
+  /** passwd 改密提示词配置（严格匹配用）；undefined = 未配置（用内置默认模式）。
+ *  显式携带该键（而非省略）：编辑保存时 updateHost 的展开合并才能清掉旧值 */
+  passwdPrompts: PasswdPrompts | undefined;
   /** 所属分组（可多选） */
   groupIds: number[];
 }
@@ -381,6 +385,17 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
   // 密码历史弹层：仅编辑已存在主机时可用（新主机还没有可查的 host id）
   const [historyOpen, setHistoryOpen] = useState(false);
 
+  // passwd 改密提示词：三条独立编辑（后端判完整性，任一为空即回退内置默认模式）。
+  // 默认收起：属低频高级配置，避免表单过长；仅密码认证方式下显示
+  const [passwdPromptsOpen, setPasswdPromptsOpen] = useState(false);
+  const [passwdPromptCurrent, setPasswdPromptCurrent] = useState(
+    node?.passwdPrompts?.current ?? '',
+  );
+  const [passwdPromptNew, setPasswdPromptNew] = useState(node?.passwdPrompts?.new ?? '');
+  const [passwdPromptRetype, setPasswdPromptRetype] = useState(
+    node?.passwdPrompts?.retype ?? '',
+  );
+
   // 终端就绪钩子：引用命令库主键 id（可下拉选已有，也可内联新建保存后选用）
   const [readyCommandId, setReadyCommandId] = useState<number | null>(
     node?.readyCommandId ?? null,
@@ -469,6 +484,19 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
         certFingerprint: fingerprintRaw || null,
       };
     }
+    // 三条都为空 → 未配置（undefined）；任一非空 → 传完整对象，由后端判断完整性
+    const promptValues = [
+      passwdPromptCurrent.trim(),
+      passwdPromptNew.trim(),
+      passwdPromptRetype.trim(),
+    ] as const;
+    const passwdPrompts: PasswdPrompts | undefined = promptValues.some((value) => value !== '')
+      ? {
+          current: promptValues[0],
+          new: promptValues[1],
+          retype: promptValues[2],
+        }
+      : undefined;
       onSave({
         name: name.trim(),
         host: host.trim(),
@@ -481,6 +509,7 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
         hostKeyVerification,
         allowInsecureAlgos,
         readyCommandId: validReadyCommandId,
+        passwdPrompts,
         groupIds: validGroupIds,
       });
   };
@@ -615,23 +644,79 @@ export function HostFormDialog({ node, isDuplicate = false, hosts, groups, onSav
             </FormField>
 
             {auth.method === 'password' ? (
-              <FormField label={t('hosts.form.password')}>
-                <PasswordInput
-                  value={auth.method === 'password' ? auth.password : ''}
-                  onChange={(e) => setAuth({ method: 'password', password: e.target.value })}
-                  autoComplete="new-password"
-                />
-                {node != null ? (
+              <>
+                <FormField label={t('hosts.form.password')}>
+                  <PasswordInput
+                    value={auth.method === 'password' ? auth.password : ''}
+                    onChange={(e) => setAuth({ method: 'password', password: e.target.value })}
+                    autoComplete="new-password"
+                  />
+                  {node != null ? (
+                    <button
+                      type="button"
+                      onClick={() => setHistoryOpen(true)}
+                      className="inline-flex items-center gap-1 self-start rounded text-ui-xs text-foreground-subtle transition-colors hover:text-foreground"
+                    >
+                      <History className="size-3" />
+                      <span>{t('hostPasswordHistory.entry')}</span>
+                    </button>
+                  ) : null}
+                </FormField>
+
+                {/* 改密提示词配置：可折叠（默认收起），仅密码认证相关 */}
+                <div className="rounded-lg border border-border bg-surface/30">
                   <button
                     type="button"
-                    onClick={() => setHistoryOpen(true)}
-                    className="inline-flex items-center gap-1 self-start rounded text-ui-xs text-foreground-subtle transition-colors hover:text-foreground"
+                    onClick={() => setPasswdPromptsOpen((value) => !value)}
+                    aria-expanded={passwdPromptsOpen}
+                    className="flex w-full cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-surface-hover"
                   >
-                    <History className="size-3" />
-                    <span>{t('hostPasswordHistory.entry')}</span>
+                    <ChevronDown
+                      className={cn(
+                        'size-3.5 shrink-0 text-foreground-subtle transition-transform',
+                        !passwdPromptsOpen && '-rotate-90',
+                      )}
+                    />
+                    <span className="text-ui-sm text-foreground-subtle select-none">
+                      {t('passwdPrompts.sectionTitle')}
+                    </span>
                   </button>
-                ) : null}
-              </FormField>
+                  {passwdPromptsOpen ? (
+                    <div className="flex flex-col gap-3 border-t border-border/50 px-2.5 py-2.5">
+                      <p className="text-ui-xs text-foreground-subtlest select-none">
+                        {t('passwdPrompts.hint')}
+                      </p>
+                      <FormField label={t('passwdPrompts.current')} hint={t('passwdPrompts.perLine')}>
+                        <TextArea
+                          value={passwdPromptCurrent}
+                          onChange={(e) => setPasswdPromptCurrent(e.target.value)}
+                          spellCheck={false}
+                          className="font-mono"
+                          rows={2}
+                        />
+                      </FormField>
+                      <FormField label={t('passwdPrompts.new')} hint={t('passwdPrompts.perLine')}>
+                        <TextArea
+                          value={passwdPromptNew}
+                          onChange={(e) => setPasswdPromptNew(e.target.value)}
+                          spellCheck={false}
+                          className="font-mono"
+                          rows={2}
+                        />
+                      </FormField>
+                      <FormField label={t('passwdPrompts.retype')} hint={t('passwdPrompts.perLine')}>
+                        <TextArea
+                          value={passwdPromptRetype}
+                          onChange={(e) => setPasswdPromptRetype(e.target.value)}
+                          spellCheck={false}
+                          className="font-mono"
+                          rows={2}
+                        />
+                      </FormField>
+                    </div>
+                  ) : null}
+                </div>
+              </>
             ) : null}
 
             {auth.method === 'key' ? (

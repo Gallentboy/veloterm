@@ -39,6 +39,17 @@ export interface SshRelayEndpoint {
   certFingerprint?: string | null;
 }
 
+/** shell 内 passwd 改密提示词配置（对齐后端 `PasswdPrompts`，存 hosts.passwd_prompts JSON 列）。
+ *  三条都非空时启用严格匹配（改密成功后自动回写主机密码），任一为空用内置默认模式 */
+export interface PasswdPrompts {
+  /** 当前密码提示词，如 "(current) UNIX password:" */
+  current: string;
+  /** 新密码提示词，如 "New password:" */
+  new: string;
+  /** 确认新密码提示词，如 "Retype new password:" */
+  retype: string;
+}
+
 export interface GroupNode {
   id: number;
   /** 父分组 id；null 表示根级 */
@@ -68,6 +79,8 @@ export interface HostNode {
   allowInsecureAlgos?: boolean;
   /** 终端就绪钩子：会话建立后自动执行的命令库命令 id；null 或缺省 = 未启用（仅存主键 id，命令被删后钩子静默失效） */
   readyCommandId?: number | null;
+  /** passwd 改密提示词配置（严格匹配用）；null 或缺省 = 未配置（用内置默认模式检测） */
+  passwdPrompts?: PasswdPrompts | null;
   /** 所属分组（多选）；空数组 = 未分组 */
   groupIds: number[];
   createdAt: number;
