@@ -21,6 +21,7 @@ pub mod relays;
 pub mod sftp;
 pub mod sqlite_viewer;
 pub mod terminal;
+pub mod terminal_recording;
 pub mod text_detect;
 pub mod tools;
 pub mod window_state;
@@ -51,6 +52,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             is_apple_silicon,
             about::show_about_window,
+            terminal_recording::export_text_file,
             logging::set_log_level,
             logging::get_current_log_level,
             logging::get_log_file_path,
