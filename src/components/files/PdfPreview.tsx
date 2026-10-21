@@ -227,7 +227,17 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
       {/* 页面区域：图片按自然尺寸显示，超出容器时双向滚动。
           居中用 mx-auto（仅水平）：内容比容器宽时左右都能滚到；垂直方向
           从顶部开始（items-start），图片比容器高时顶部不会被裁。 */}
-      <div className="flex min-h-0 flex-1 items-start overflow-auto bg-background-alt/40 p-4">
+      <div className="relative flex min-h-0 flex-1 items-start overflow-auto bg-background-alt/40 p-4">
+        {/* 加载遮罩：覆盖整个页面区域（不是图片容器——首帧渲染时图片容器
+            尺寸为 0，绝对定位的 spinner 会不可见）。spinner + 文案居中。 */}
+        {loading && !error ? (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background-alt/70">
+            <Loader2 className="size-6 animate-spin text-foreground-subtle" />
+            <span className="text-ui-xs text-foreground-subtlest select-none">
+              {t('pdf.rendering')}
+            </span>
+          </div>
+        ) : null}
         {error ? (
           <div className="m-auto flex flex-col items-center gap-2 py-8">
             <span className="max-w-md text-center text-ui-sm text-destructive">{error}</span>
@@ -242,11 +252,6 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
           </div>
         ) : (
           <div className="relative mx-auto">
-            {loading ? (
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60">
-                <Loader2 className="size-5 animate-spin text-foreground-subtle" />
-              </div>
-            ) : null}
             {imageUrl ? (
               <img
                 src={imageUrl}
