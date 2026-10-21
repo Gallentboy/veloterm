@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
-import { ensureNginxLanguage } from '@/editor/nginxLanguage';
+import { ensureExtendedLanguages } from '@/editor/languages';
 import { ensureBashCompletion, registerBashHostModel } from '@/editor/bashLanguage';
 import type { EditorFileDescriptor, MonacoDocumentCardProps } from '@/editor/types';
 
@@ -119,9 +119,9 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
 
     initMonacoTheme();
     setupMonacoEnvironment();
-    // nginx 语言（高亮/补全/hover）幂等注册；数据懒加载，
-    // 见 nginxLanguage.ts
-    ensureNginxLanguage(monaco);
+    // 自建语言（nginx / dockerfile / compose）幂等注册；
+    // 数据懒加载，见 src/editor/languages.ts
+    ensureExtendedLanguages(monaco);
     // bash 补全（静态词表 + Rust tree-sitter 符号 + 远端命令）幂等注册，
     // 见 bashLanguage.ts
     ensureBashCompletion(monaco);
