@@ -57,12 +57,14 @@ impl SafetyInspectResult {
 /// 解析后的扁平命令结构
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedCommand {
-    /// 真正的可执行命令名（已穿透 sudo/nohup）
+    /// 真正的可执行命令名（已穿透 sudo/nohup，已归一转义与引号拼接）
     pub name: String,
     /// 参数列表（已去除包装选项）
     pub args: Vec<String>,
     /// 原始命令文本切片
     pub raw_text: String,
+    /// 穿透链经过 xargs（`find | xargs rm`：目标来自管道输入，批量删除）
+    pub via_xargs: bool,
 }
 
 /// 检查整段脚本/命令行的安全性。
@@ -114,9 +116,19 @@ pub fn analyze_command_safety_ext(script: &str, is_clean: bool) -> SafetyInspect
     }
 
     // 1. 若来自 OSC 133 语义化精准切片，已被终端坐标完全隔离为纯净命令行，
-    // 不需要走 strip_shell_prompt 与滑动窗口探测，直接直飞 AST 语法树！
+    // 不需要走 strip_shell_prompt，直接进入 AST。**注意**：滑动兜底对两条
+    // 链路一视同仁——精确切片只保证文本干净，不保证 AST 命令名解析完备
+    // （env VAR=1、转义名等穿透失败场景同样存在；历史上 clean 路径跳过
+    // 兜底后 `env VAR=1 rm -rf /` 在此模式漏判）。
     if is_clean {
-        return inspect_ast(trimmed);
+        let ast_res = inspect_ast(trimmed);
+        if ast_res.level != DangerLevel::Safe {
+            return ast_res;
+        }
+        if let Some(candidate_res) = scan_ast_candidates(trimmed) {
+            return candidate_res;
+        }
+        return SafetyInspectResult::safe();
     }
 
     // 2. 未配置 OSC 133 时的 Fallback 链路：
@@ -218,14 +230,31 @@ fn is_prompt_terminator(ch: char) -> bool {
     )
 }
 
+// thread_local 复用 Parser（三处解析点每次新建实例的开销虽小，但高频
+// 回车场景下没必要重复构建；Tree 独立于 Parser，重入解析安全）
+thread_local! {
+    static BASH_PARSER: std::cell::RefCell<Parser> = std::cell::RefCell::new({
+        let mut p = Parser::new();
+        let _ = p.set_language(&tree_sitter_bash::LANGUAGE.into());
+        p
+    });
+}
+
+fn parse_bash(src: &str) -> Option<tree_sitter::Tree> {
+    BASH_PARSER.with(|cell| {
+        let mut parser = cell.borrow_mut();
+        if parser.language().is_none()
+            && parser.set_language(&tree_sitter_bash::LANGUAGE.into()).is_err()
+        {
+            return None;
+        }
+        parser.parse(src, None)
+    })
+}
+
 /// 解析指定脚本并在 AST 语法树上评估危险规则
 fn inspect_ast(script: &str) -> SafetyInspectResult {
-    let mut parser = Parser::new();
-    if parser.set_language(&tree_sitter_bash::LANGUAGE.into()).is_err() {
-        return SafetyInspectResult::safe();
-    }
-
-    let Some(tree) = parser.parse(script, None) else {
+    let Some(tree) = parse_bash(script) else {
         return SafetyInspectResult::safe();
     };
 
@@ -261,11 +290,7 @@ const SENSITIVE_COMMAND_TRIGGERS: &[&str] = &[
 
 /// 方案 3：全量 AST 候选段滑动探测
 fn scan_ast_candidates(script: &str) -> Option<SafetyInspectResult> {
-    let mut parser = Parser::new();
-    if parser.set_language(&tree_sitter_bash::LANGUAGE.into()).is_err() {
-        return None;
-    }
-    let tree = parser.parse(script, None)?;
+    let tree = parse_bash(script)?;
     let root = tree.root_node();
 
     for trigger in SENSITIVE_COMMAND_TRIGGERS {
@@ -299,19 +324,16 @@ fn scan_ast_candidates(script: &str) -> Option<SafetyInspectResult> {
             // 提取从 offset 开始的候选切片
             if let Some(candidate) = script.get(offset..) {
                 let trimmed_candidate = candidate.trim();
-                if trimmed_candidate != script.trim() {
-                    let mut candidate_parser = Parser::new();
-                    if candidate_parser.set_language(&tree_sitter_bash::LANGUAGE.into()).is_ok()
-                        && let Some(c_tree) = candidate_parser.parse(trimmed_candidate, None)
-                    {
-                        let mut c_commands = Vec::new();
-                        collect_commands(c_tree.root_node(), trimmed_candidate.as_bytes(), &mut c_commands);
-                        for cmd in c_commands {
-                            if let Some(res) = evaluate_command(&cmd)
-                                && res.level != DangerLevel::Safe
-                            {
-                                return Some(res);
-                            }
+                if trimmed_candidate != script.trim()
+                    && let Some(c_tree) = parse_bash(trimmed_candidate)
+                {
+                    let mut c_commands = Vec::new();
+                    collect_commands(c_tree.root_node(), trimmed_candidate.as_bytes(), &mut c_commands);
+                    for cmd in c_commands {
+                        if let Some(res) = evaluate_command(&cmd)
+                            && res.level != DangerLevel::Safe
+                        {
+                            return Some(res);
                         }
                     }
                 }
@@ -346,6 +368,45 @@ fn is_offset_in_string_or_comment(node: Node, offset: usize) -> bool {
     false
 }
 
+/// 规范化命令名：剥离转义反斜杠（`\rm` → `rm`）与相邻引号拼接
+/// （`r''m` / `r""m` / `r'm'` → `rm`）。这些写法在 Bash 中执行的是同一
+/// 命令（`\rm` 是绕过 alias 的常见日常写法），静态匹配前必须归一。
+fn normalize_command_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut chars = name.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                // 丢弃反斜杠，保留被转义字符的字面值（转义的引号同样保留）
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            }
+            '\'' | '"' => {
+                let quote = c;
+                for c2 in chars.by_ref() {
+                    if c2 == quote {
+                        break;
+                    }
+                    out.push(c2);
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// 是否为环境变量赋值形态（KEY=VAL，KEY 为合法标识符）。
+/// `env VAR=1 rm ...` / `sudo VAR=1 cmd` 中这类 token 属于包装层参数，
+/// 穿透时需跳过而非当成真实命令。
+fn is_env_assignment(s: &str) -> bool {
+    let Some(eq) = s.find('=') else {
+        return false;
+    };
+    eq > 0 && s[..eq].chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 /// 递归收集 AST 中的所有真实 command 节点
 fn collect_commands(node: Node, source: &[u8], out: &mut Vec<ParsedCommand>) {
     if node.kind() == "command" {
@@ -357,10 +418,7 @@ fn collect_commands(node: Node, source: &[u8], out: &mut Vec<ParsedCommand>) {
                 && let Some(nested_script) = parsed.args.get(c_pos + 1)
             {
                 let mut sub_commands = Vec::new();
-                let mut sub_parser = Parser::new();
-                if sub_parser.set_language(&tree_sitter_bash::LANGUAGE.into()).is_ok()
-                    && let Some(sub_tree) = sub_parser.parse(nested_script, None)
-                {
+                if let Some(sub_tree) = parse_bash(nested_script) {
                     collect_commands(sub_tree.root_node(), nested_script.as_bytes(), &mut sub_commands);
                 }
                 out.extend(sub_commands);
@@ -369,6 +427,37 @@ fn collect_commands(node: Node, source: &[u8], out: &mut Vec<ParsedCommand>) {
             out.push(parsed);
         }
         return;
+    }
+
+    // 管道结构检测：网络拉取器直接管道进裸 shell（curl/wget ... | sh）。
+    // 只认网络源——echo hi | sh 不误报；普通各段命令由下方递归照常收集
+    if node.kind() == "pipeline" {
+        let mut cursor = node.walk();
+        let cmd_children: Vec<Node> = node
+            .children(&mut cursor)
+            .filter(|c| c.kind() == "command")
+            .collect();
+        if cmd_children.len() >= 2
+            && let (Some(first), Some(last)) = (cmd_children.first(), cmd_children.last())
+            && let (Some(f), Some(l)) = (parse_command_node(*first, source), parse_command_node(*last, source))
+        {
+            let is_bare_shell = matches!(
+                normalize_command_name(&l.name).as_str(),
+                "sh" | "bash" | "zsh" | "dash" | "ksh" | "ash"
+            ) && l.args.is_empty();
+            let is_fetcher = matches!(
+                normalize_command_name(&f.name).to_lowercase().as_str(),
+                "curl" | "wget" | "aria2c" | "axel" | "lwp-download" | "youtube-dl"
+            );
+            if is_bare_shell && is_fetcher {
+                out.push(ParsedCommand {
+                    name: "__pipe_remote_shell__".to_string(),
+                    args: Vec::new(),
+                    raw_text: node.utf8_text(source).unwrap_or_default().to_string(),
+                    via_xargs: false,
+                });
+            }
+        }
     }
 
     // 递归子节点
@@ -387,8 +476,9 @@ fn parse_command_node(node: Node, source: &[u8]) -> Option<ParsedCommand> {
 
     for child in node.children(&mut cursor) {
         let kind = child.kind();
-        // 排除重定向、注释等非参数节点
-        if kind.contains("redirect") || kind == "comment" {
+        // 排除重定向、注释、变量赋值前缀（VAR=1 cmd 中的 VAR=1 是环境注入
+        // 而非命令，不跳过会把穿透链断在 "var=1" 上）等非参数节点
+        if kind.contains("redirect") || kind == "comment" || kind == "variable_assignment" {
             continue;
         }
         if let Ok(text) = child.utf8_text(source) {
@@ -405,15 +495,19 @@ fn parse_command_node(node: Node, source: &[u8]) -> Option<ParsedCommand> {
 
     // 穿透包装命令（如 sudo -u root nohup ...）
     let mut idx = 0;
+    let mut via_xargs = false;
     while idx < words.len() {
         let Some(w) = words.get(idx) else { break };
-        let base_name = w.rsplit('/').next().unwrap_or(w);
+        let base_name = normalize_command_name(w.rsplit('/').next().unwrap_or(w));
 
-        if is_wrapper_command(base_name) {
+        if base_name == "xargs" {
+            via_xargs = true;
+        }
+        if is_wrapper_command(&base_name) {
             idx += 1;
-            // 跳过该包装命令的参数（如 sudo 的 -u, -E, -i 等）
+            // 跳过该包装命令的参数（sudo 的 -u/-E/-i、env 的 -i 与 KEY=VAL 等）
             while let Some(opt) = words.get(idx) {
-                if !opt.starts_with('-') {
+                if !opt.starts_with('-') && !is_env_assignment(opt) {
                     break;
                 }
                 let is_opt_with_val = opt == "-u" || opt == "-g";
@@ -427,13 +521,14 @@ fn parse_command_node(node: Node, source: &[u8]) -> Option<ParsedCommand> {
         }
     }
 
-    let real_command = words.get(idx)?.clone();
+    let real_command = normalize_command_name(words.get(idx)?);
     let args = words.get(idx + 1..).map(|s| s.to_vec()).unwrap_or_default();
 
     Some(ParsedCommand {
         name: real_command,
         args,
         raw_text,
+        via_xargs,
     })
 }
 
@@ -499,13 +594,30 @@ fn evaluate_command(cmd: &ParsedCommand) -> Option<SafetyInspectResult> {
         }
     }
 
-    // 2. 磁盘底层格式化与写入：mkfs.*, fdisk, parted, dd of=/dev/sd*
-    if name.starts_with("mkfs") || name == "fdisk" || name == "parted" || name == "sfdisk" {
+    // 1.5 xargs 批量删除：`find /data | xargs rm -rf`——穿透后无目标参数，
+    // 实际删除对象来自管道输入，毁灭性与 rm -rf 相当
+    if cmd.via_xargs && name == "rm" {
+        return Some(SafetyInspectResult {
+            level: DangerLevel::Warning,
+            matched_rule: Some("xargs-rm".to_string()),
+            rule_title: Some("xargs 批量删除".to_string()),
+            explanation: Some("删除目标来自管道输入（如 find | xargs rm），实际影响范围不可静态估量，请确认上游列表".to_string()),
+            offending_command: Some(cmd.raw_text.clone()),
+            require_verification_code: false,
+        });
+    }
+
+    // 2. 磁盘底层格式化与写入：mkfs.*, mke2fs, fdisk, parted, wipefs, blkdiscard,
+    //    shred（仅块设备目标；shred 普通文件是安全删除属正常操作）, dd of=/dev/*
+    if name.starts_with("mkfs")
+        || matches!(name.as_str(), "mke2fs" | "fdisk" | "parted" | "sfdisk" | "wipefs" | "blkdiscard")
+        || (name == "shred" && args.iter().any(|a| a.starts_with("/dev/")))
+    {
         return Some(SafetyInspectResult {
             level: DangerLevel::Critical,
             matched_rule: Some("disk-format".to_string()),
             rule_title: Some("底层磁盘操作与格式化".to_string()),
-            explanation: Some(format!("执行磁盘格式化/分区工具 '{}'，可能破坏分区表并造成全盘数据丢失", name)),
+            explanation: Some(format!("执行磁盘格式化/擦除工具 '{}'，可能破坏分区表并造成全盘数据丢失", name)),
             offending_command: Some(cmd.raw_text.clone()),
             require_verification_code: true,
         });
@@ -514,7 +626,14 @@ fn evaluate_command(cmd: &ParsedCommand) -> Option<SafetyInspectResult> {
     if name == "dd" {
         for arg in args {
             if let Some(dev) = arg.strip_prefix("of=/dev/")
-                && (dev.starts_with("sd") || dev.starts_with("vd") || dev.starts_with("nvme") || dev.starts_with("mapper"))
+                && (dev.starts_with("sd")
+                    || dev.starts_with("vd")
+                    || dev.starts_with("nvme")
+                    || dev.starts_with("mapper")
+                    || dev.starts_with("mmcblk")
+                    || dev.starts_with("xvd")
+                    || dev.starts_with("hd")
+                    || dev.starts_with("disk"))
             {
                 return Some(SafetyInspectResult {
                     level: DangerLevel::Critical,
@@ -528,8 +647,10 @@ fn evaluate_command(cmd: &ParsedCommand) -> Option<SafetyInspectResult> {
         }
     }
 
-    // 3. 根目录权限全量篡改：chmod -R 777 /
-    if (name == "chmod" || name == "chown") && args.iter().any(|a| a.contains('R')) {
+    // 3. 根目录权限全量篡改：chmod -R 777 /（含 --recursive 长选项）
+    if (name == "chmod" || name == "chown")
+        && args.iter().any(|a| a == "--recursive" || a.starts_with('-') && a.contains('R') && !a.starts_with("--"))
+    {
         let targets: Vec<&str> = args.iter().filter(|a| !a.starts_with('-')).map(|s| s.as_str()).collect();
         for target in targets {
             let t = target.trim();
@@ -569,7 +690,20 @@ fn evaluate_command(cmd: &ParsedCommand) -> Option<SafetyInspectResult> {
         });
     }
 
-    // 5. 杀掉 1 号进程：kill -9 1
+    // 5. 杀进程：kill -9 1（init）与 kill -9 -1（向全部进程发 KILL，毁灭性等同 Fork 炸弹）
+    if name == "kill"
+        && args.iter().any(|a| a == "-9" || a == "-KILL" || a == "-kill")
+        && args.iter().any(|a| a == "-1")
+    {
+        return Some(SafetyInspectResult {
+            level: DangerLevel::Critical,
+            matched_rule: Some("kill-all".to_string()),
+            rule_title: Some("强制终止全部进程".to_string()),
+            explanation: Some("kill -9 -1 向系统内所有进程发送 KILL（含 sshd/数据库），后果等同 Fork 炸弹".to_string()),
+            offending_command: Some(cmd.raw_text.clone()),
+            require_verification_code: true,
+        });
+    }
     if name == "kill" && args.iter().any(|a| a == "1") && args.iter().any(|a| a == "-9" || a == "-KILL") {
         return Some(SafetyInspectResult {
             level: DangerLevel::High,
@@ -626,6 +760,19 @@ fn evaluate_command(cmd: &ParsedCommand) -> Option<SafetyInspectResult> {
             matched_rule: Some("systemctl-service-control".to_string()),
             rule_title: Some("停止或重启核心服务".to_string()),
             explanation: Some(format!("将对核心服务 '{}' 执行 {} 操作，可能引起瞬时抖动", service, action)),
+            offending_command: Some(cmd.raw_text.clone()),
+            require_verification_code: false,
+        });
+    }
+
+    // 9. 网络拉取器直接管道进裸 shell：curl/wget ... | sh —— 远程内容直接执行，
+    // 生产环境的经典供应链事故入口（echo hi | sh 等本地源不打扰）
+    if name == "__pipe_remote_shell__" {
+        return Some(SafetyInspectResult {
+            level: DangerLevel::High,
+            matched_rule: Some("pipe-remote-shell".to_string()),
+            rule_title: Some("网络脚本直接管道执行".to_string()),
+            explanation: Some("curl/wget 拉取的内容未经审查直接交给 shell 执行，等同于在生产机运行任意远程代码".to_string()),
             offending_command: Some(cmd.raw_text.clone()),
             require_verification_code: false,
         });
@@ -769,5 +916,93 @@ mod tests {
             analyze_command_safety_ext("echo 'hello world'", true).level,
             DangerLevel::Safe
         );
+    }
+
+    // ── 以下为安全审查修复的回归测试 ──────────────────────────────────
+
+    /// 转义与引号拼接的命令名（\rm / r''m 绕过 alias 的常见写法）必须归一后命中
+    #[test]
+    fn test_escaped_command_names() {
+        assert_eq!(analyze_command_safety("\\rm -rf /").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("r''m -rf /").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("r\"\"m -rf /").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("\\sudo rm -rf /").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("\\reboot").level, DangerLevel::High);
+    }
+
+    /// 环境变量赋值前缀（env VAR=1 cmd / 裸 VAR=1 cmd）不得截断穿透链。
+    /// 关键回归：is_clean 路径曾跳过滑动兜底，env VAR=1 rm -rf / 在该模式漏判
+    #[test]
+    fn test_env_assignment_penetration() {
+        assert_eq!(analyze_command_safety("env VAR=1 rm -rf /").level, DangerLevel::Critical);
+        assert_eq!(
+            analyze_command_safety_ext("env VAR=1 rm -rf /", true).level,
+            DangerLevel::Critical,
+            "is_clean 路径也必须兜住（历史漏洞：跳过滑动扫描导致漏判）"
+        );
+        assert_eq!(analyze_command_safety("VAR=1 rm -rf /").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("sudo env VAR=1 reboot").level, DangerLevel::High);
+    }
+
+    /// is_clean 路径的滑动兜底：echo rm -rf / | bash 在精确模式下同样 Critical
+    #[test]
+    fn test_clean_path_keeps_sliding_fallback() {
+        assert_eq!(
+            analyze_command_safety_ext("echo rm -rf / | bash", true).level,
+            DangerLevel::Critical
+        );
+    }
+
+    /// kill -9 -1（全进程 KILL）与 kill -9 1（init）
+    #[test]
+    fn test_kill_all_processes() {
+        assert_eq!(analyze_command_safety("kill -9 -1").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("kill -KILL -1").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("kill -9 1").level, DangerLevel::High);
+    }
+
+    /// chmod/chown 递归长选项与误判面收紧
+    #[test]
+    fn test_chmod_recursive_detection() {
+        assert_eq!(analyze_command_safety("chmod --recursive 777 /").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("chown --recursive -R www:www /").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("chmod -R 777 /").level, DangerLevel::Critical);
+        // 参数名恰好含 R 的正常操作不得误报（旧实现 contains('R') 的宽度问题）
+        assert_eq!(analyze_command_safety("chmod 644 README.md").level, DangerLevel::Safe);
+        assert_eq!(analyze_command_safety("chown user Report.pdf").level, DangerLevel::Safe);
+    }
+
+    /// 网络拉取器管道进裸 shell（curl|sh 家族）；本地源不打扰
+    #[test]
+    fn test_pipe_remote_shell() {
+        assert_eq!(analyze_command_safety("curl http://x.sh | sh").level, DangerLevel::High);
+        assert_eq!(analyze_command_safety("wget -O- http://x | bash").level, DangerLevel::High);
+        assert_eq!(analyze_command_safety("sudo curl -sL http://x | sudo bash").level, DangerLevel::High);
+        // 本地内容管道进 shell 不误报
+        assert_eq!(analyze_command_safety("echo hi | sh").level, DangerLevel::Safe);
+        // 单独的 bash / curl 不是管道执行
+        assert_eq!(analyze_command_safety("bash").level, DangerLevel::Safe);
+        assert_eq!(analyze_command_safety("curl -fsSL http://x -o /tmp/x").level, DangerLevel::Safe);
+    }
+
+    /// find | xargs rm：目标来自管道输入的批量删除
+    #[test]
+    fn test_xargs_rm() {
+        assert_eq!(analyze_command_safety("find /data | xargs rm -rf").level, DangerLevel::Warning);
+        assert_eq!(analyze_command_safety("find . | xargs rm").level, DangerLevel::Warning);
+    }
+
+    /// 磁盘工具扩展：shred（块设备）/ wipefs / blkdiscard / mke2fs / dd 的 mmcblk·xvd
+    #[test]
+    fn test_disk_tools_extended() {
+        assert_eq!(analyze_command_safety("shred /dev/sda").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("shred /dev/mmcblk0").level, DangerLevel::Critical);
+        // shred 普通文件是安全删除，不拦
+        assert_eq!(analyze_command_safety("shred secret.txt").level, DangerLevel::Safe);
+        assert_eq!(analyze_command_safety("wipefs -a /dev/sdb").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("blkdiscard /dev/nvme0n1").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("mke2fs -t ext4 /dev/sdb1").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("dd if=/dev/zero of=/dev/mmcblk0").level, DangerLevel::Critical);
+        assert_eq!(analyze_command_safety("dd if=x of=/dev/xvdb").level, DangerLevel::Critical);
     }
 }

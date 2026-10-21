@@ -25,6 +25,8 @@ const MAX_ACTIVE_WEBGL_CONTEXTS = 6;
 
 export interface TerminalSessionRegistryEntry {
   key: number;
+  /** 关联的远程主机 id（本地终端为 null）——安全门解析联动目标环境级别用 */
+  hostId?: number | null;
   term: XTerm;
   fitAddon: FitAddon;
   webglAddon: WebglAddon | null;

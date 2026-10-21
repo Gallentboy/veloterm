@@ -270,6 +270,13 @@ export function TerminalSession({
 
   // ── 生产环境安全拦截与视觉护罩 ──
   const safetyTrackerRef = useRef(new SafetyInputTracker());
+  // 安全门：检测中/弹窗中冻结输入排队，杜绝「检测样本 ≠ 实际执行内容」
+  // （旧实现只扣回车，检测/弹窗期间继续敲的字符先进 shell 行缓冲，
+  // 确认后实际执行的命令与弹窗展示的不一致）
+  const safetyGateRef = useRef({ active: false, queue: [] as Uint8Array[] });
+  // 挂载作用域的冲刷/中止动作桥（组件级确认/取消回调经 ref 调用，避免过期闭包）
+  const safetyGateFlushRef = useRef<() => void>(() => {});
+  const safetyGateAbortRef = useRef<() => void>(() => {});
   const osc133TrackerRef = useRef<Osc133TrackerState>({
     hasOsc133: false,
     commandStartX: 0,
@@ -280,13 +287,18 @@ export function TerminalSession({
     isOpen: boolean;
     command: string;
     inspectResult: SafetyInspectResult;
-    pendingBytes: Uint8Array;
+    /** 触发拦截的环境（发起端与联动目标的最严值，弹窗如实展示） */
+    envLevel: 'prod' | 'staging';
   } | null>(null);
 
   const currentHost = hostId != null ? loadHostStore().hosts.find((h) => h.id === hostId) : undefined;
   const envLevel = currentHost?.envLevel ?? 'dev';
   const isSafetyShieldEnabled =
     (currentHost?.safetyGuardEnabled ?? true) && (envLevel === 'prod' || envLevel === 'staging');
+  // 安全门/onData 在挂载时注册一次，闭包不能捕获挂载时的主机快照——
+  // 环境级别/防护开关的实时值经 ref 传递
+  const currentHostRef = useRef(currentHost);
+  currentHostRef.current = currentHost;
 
   const onShellLabelChangeRef = useRef(onShellLabelChange);
   const onSizeChangeRef = useRef(onSizeChange);
@@ -787,6 +799,7 @@ export function TerminalSession({
 
     const entry: TerminalSessionRegistryEntry = {
       key: sessionId,
+      hostId,
       term,
       fitAddon,
       webglAddon: null,
@@ -814,6 +827,9 @@ export function TerminalSession({
 
     entry.dispose = () => {
       isEntryDisposed = true;
+      // 会话销毁：安全门复位，避免冻结队列泄漏到下一个挂载周期
+      safetyGateRef.current.active = false;
+      safetyGateRef.current.queue = [];
       cleanupOutputWriter?.();
       hookClearTimers();
       entry.onTerminalIdReady = undefined;
@@ -887,6 +903,108 @@ export function TerminalSession({
       const targets = broadcastTargetsRef.current;
       if (targets.length > 1 && targets.includes(sessionId)) {
         void mirrorInputToSessions(transport, targets, sessionId, bytes);
+      }
+    };
+
+    // ── 安全门（Safety Gate）：回车扣留 → 双样本检测 → 冻结排队 / 放行 ──
+    // 双样本并检：tracker（本地按键流，同步完整——SSH 回显异步，快速输入时
+    // 屏幕行可能缺尾巴）与 extracted（屏幕行——覆盖 ⬆️ 历史调出 / Tab 补全 /
+    // 行内编辑，tracker 对光标移动一无所知）互补，任一命中即拦；
+    // 环境取发起端与联动目标的最严值：dev 终端镜像到 prod 时，命令必须
+    // 按 prod 规则检测（否则 prod 接收端不经检测直接执行）
+    const flushSafetyGate = () => {
+      const gate = safetyGateRef.current;
+      gate.active = false;
+      const queued = gate.queue;
+      gate.queue = [];
+      for (const chunk of queued) {
+        writeInputAndMirror(chunk);
+      }
+    };
+
+    /** 发起端与联动目标里的最严防护环境（prod > staging；无则 null） */
+    const resolveGuardEnv = (): 'prod' | 'staging' | null => {
+      let level: 'prod' | 'staging' | null = null;
+      const bump = (env: unknown, guardEnabled: unknown) => {
+        if (guardEnabled === false) return;
+        if (env === 'prod') level = 'prod';
+        else if (env === 'staging' && level !== 'prod') level = 'staging';
+      };
+      const host = currentHostRef.current;
+      bump(host?.envLevel, host?.safetyGuardEnabled);
+      for (const sid of broadcastTargetsRef.current) {
+        if (sid === sessionId) continue;
+        const targetHostId = terminalSessionRegistry.get(sid)?.hostId;
+        if (targetHostId == null) continue;
+        const targetHost = loadHostStore().hosts.find((h) => h.id === targetHostId);
+        bump(targetHost?.envLevel, targetHost?.safetyGuardEnabled);
+      }
+      return level;
+    };
+
+    const runSafetyGate = (rawBytes: Uint8Array, data: string) => {
+      const guardEnv = resolveGuardEnv();
+      if (guardEnv === null) {
+        safetyTrackerRef.current.feed(data);
+        writeInputAndMirror(rawBytes);
+        return;
+      }
+      const gate = safetyGateRef.current;
+      gate.active = true;
+      gate.queue = [rawBytes];
+
+      const extracted = extractCommandLineFromTerminal(term, osc133TrackerRef.current);
+      const trackerCmd = safetyTrackerRef.current.feed(data).commandToInspect ?? '';
+      // 双样本去重送检
+      const samples = [...new Set([trackerCmd, extracted.command].map((s) => s.trim()).filter(Boolean))];
+
+      const finish = (hit: SafetyInspectResult | null, sample: string) => {
+        if (hit) {
+          setSafetyModal({
+            isOpen: true,
+            command: sample,
+            inspectResult: hit,
+            envLevel: guardEnv,
+          });
+          // 队列保持冻结，等确认冲刷 / 取消丢弃
+        } else {
+          flushSafetyGate();
+        }
+      };
+
+      if (samples.length === 0) {
+        // 空样本（⬆️⏎ 连按、回显未上屏）：扣住回车短等回显落地后重提一次；
+        // 仍为空则放行——不能永久卡死用户输入。旧实现此处直接放行 = 绕过
+        window.setTimeout(() => {
+          if (!gate.active) return;
+          const retry = extractCommandLineFromTerminal(term, osc133TrackerRef.current).command.trim();
+          if (retry) {
+            void inspectCommandSafety(retry, guardEnv, true)
+              .then((res) => finish(res.level !== 'safe' ? res : null, retry))
+              .catch(() => finish(null, ''));
+          } else {
+            finish(null, '');
+          }
+        }, 150);
+        return;
+      }
+
+      Promise.all(samples.map((s) => inspectCommandSafety(s, guardEnv, extracted.fromOsc133)))
+        .then((results) => {
+          const hitIndex = results.findIndex((r) => r.level !== 'safe');
+          finish(hitIndex >= 0 ? results[hitIndex]! : null, samples[Math.max(hitIndex, 0)] ?? '');
+        })
+        .catch(() => finish(null, ''));
+    };
+
+    safetyGateFlushRef.current = flushSafetyGate;
+    safetyGateAbortRef.current = () => {
+      const gate = safetyGateRef.current;
+      gate.active = false;
+      gate.queue = [];
+      const tid = terminalIdRef.current ?? terminalSessionRegistry.getTerminalId(sessionId);
+      if (tid !== null) {
+        void transport.write({ id: tid, data: new Uint8Array([3]) });
       }
     };
 
@@ -1186,32 +1304,25 @@ export function TerminalSession({
         registryDisposers.push(
           term.onData((data) => {
             const rawBytes = encodeTerminalInput(data);
-            if (isSafetyShieldEnabled) {
-              const isEnterHit = data.includes('\r') || data.includes('\n');
-              if (isEnterHit) {
-                // 生产/预发高危拦截检查：优先从真实屏幕行提取（涵盖按⬆️调历史命令、Tab补全、光标编辑等场景）
-                const extracted = extractCommandLineFromTerminal(term, osc133TrackerRef.current);
-                const trackerCmd = safetyTrackerRef.current.feed(data).commandToInspect;
-                const cmdToInspect = extracted.command || trackerCmd;
+            const isEnterHit = data.includes('\r') || data.includes('\n');
 
-                if (cmdToInspect) {
-                  void inspectCommandSafety(cmdToInspect, envLevel, extracted.fromOsc133).then((inspectRes) => {
-                    if (inspectRes.level !== 'safe') {
-                      setSafetyModal({
-                        isOpen: true,
-                        command: cmdToInspect,
-                        inspectResult: inspectRes,
-                        pendingBytes: rawBytes,
-                      });
-                    } else {
-                      writeInputAndMirror(rawBytes);
-                    }
-                  });
-                  return;
-                }
-              } else {
-                safetyTrackerRef.current.feed(data);
-              }
+            // 安全门激活（检测中/弹窗中）：所有输入排队，保证检测样本与
+            // 实际执行内容严格一致
+            if (safetyGateRef.current.active) {
+              safetyGateRef.current.queue.push(rawBytes);
+              if (!isEnterHit) safetyTrackerRef.current.feed(data);
+              return;
+            }
+
+            if (isEnterHit) {
+              // 发起端或联动目标含 prod/staging 时设门（门内自判，无防护
+              // 环境直接透传；非防护环境的回车也维持 tracker 行状态）
+              runSafetyGate(rawBytes, data);
+              return;
+            }
+
+            if (isSafetyShieldEnabled) {
+              safetyTrackerRef.current.feed(data);
             }
             writeInputAndMirror(rawBytes);
           }),
@@ -1219,7 +1330,18 @@ export function TerminalSession({
 
         registryDisposers.push(
           term.onBinary((binary) => {
-            writeInputAndMirror(encodeBinaryString(binary));
+            const rawBytes = encodeBinaryString(binary);
+            // 含 CR 的二进制粘贴同样过安全门（样本走屏幕提取；tracker 按
+            // 回车消费维持行状态一致）
+            if (safetyGateRef.current.active) {
+              safetyGateRef.current.queue.push(rawBytes);
+              return;
+            }
+            if ((binary.includes('\r') || binary.includes('\n')) && resolveGuardEnv() !== null) {
+              runSafetyGate(rawBytes, '\r');
+              return;
+            }
+            writeInputAndMirror(rawBytes);
           }),
         );
 
@@ -1446,25 +1568,21 @@ export function TerminalSession({
 
   const handleSafetyConfirm = useCallback(() => {
     if (safetyModal) {
-      const tid = terminalIdRef.current ?? terminalSessionRegistry.getTerminalId(sessionId);
-      if (tid !== null) {
-        void transport.write({ id: tid, data: safetyModal.pendingBytes });
-      }
+      // 冲刷冻结队列（被扣的回车 + 门期间排队的输入），经 writeInputAndMirror
+      // 出口 → 联动镜像语义与普通输入一致（旧实现直接写本会话、不镜像）
+      safetyGateFlushRef.current();
       setSafetyModal(null);
       requestFocus();
     }
-  }, [requestFocus, safetyModal, sessionId, transport]);
+  }, [requestFocus, safetyModal]);
 
   const handleSafetyCancel = useCallback(() => {
-    // 发送 0x03 (Ctrl+C) 清理终端当前行
-    const tid = terminalIdRef.current ?? terminalSessionRegistry.getTerminalId(sessionId);
-    if (tid !== null) {
-      void transport.write({ id: tid, data: new Uint8Array([3]) });
-    }
+    // 丢弃冻结队列 + 发 0x03 (Ctrl+C) 清理终端当前行 + 复位 tracker
+    safetyGateAbortRef.current();
     safetyTrackerRef.current.clear();
     setSafetyModal(null);
     requestFocus();
-  }, [requestFocus, sessionId, transport]);
+  }, [requestFocus]);
 
   // 录制计时：每秒从 recorder 取真实经过时间（胶囊展示）
   useEffect(() => {
@@ -1682,7 +1800,7 @@ export function TerminalSession({
           command={safetyModal.command}
           inspectResult={safetyModal.inspectResult}
           hostName={currentHost?.name ?? 'Host'}
-          envLevel={envLevel}
+          envLevel={safetyModal.envLevel}
           onConfirm={handleSafetyConfirm}
           onCancel={handleSafetyCancel}
         />
