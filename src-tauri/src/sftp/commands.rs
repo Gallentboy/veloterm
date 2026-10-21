@@ -1550,6 +1550,37 @@ pub async fn sftp_exec_available(
     Ok(!state.exec_disabled.lock().await.contains(&session_id))
 }
 
+/// 远端命令全集的上限（compgen -c | sort -u 的典型量级为数千条）
+const BASH_REMOTE_COMMANDS_CAP: usize = 8192;
+
+/// Monaco shell 补全的远端命令全集（bash 补全方案 B）：在远端跑
+/// `bash -c 'compgen -c' | sort -u`——与远端 bash Tab 补全同源（PATH 可执行 +
+/// 内建 + alias + shell 函数），契合「编辑的是远端主机的脚本」的语义。
+/// 内层显式调 bash，默认 shell 非 bash 也可用。
+/// 失败即 Err：前端 catch 后静默降级为纯静态候选，不影响主补全；不标记
+/// exec_disabled（远端缺 bash ≠ exec 通道坏，不应连坐禁用其他功能）。
+#[tauri::command]
+pub async fn sftp_bash_remote_commands(
+    session_id: String,
+    state: State<'_, SftpState>,
+) -> Result<Vec<String>, String> {
+    if state.exec_disabled.lock().await.contains(&session_id) {
+        return Err("EXEC_DISABLED".to_string());
+    }
+    let _ = get_or_connect_sftp(&state, &session_id).await?;
+    let Some(ssh) = get_sftp_ssh_handle(&state, &session_id).await else {
+        return Err("EXEC_CHANNEL:SSH 会话不可用".to_string());
+    };
+    let output = sftp_exec_capture(&ssh, "bash -c 'compgen -c' | sort -u", 10).await?;
+    Ok(output
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.contains(char::is_whitespace))
+        .take(BASH_REMOTE_COMMANDS_CAP)
+        .map(str::to_string)
+        .collect())
+}
+
 /// 纯 SFTP 递归删除结果
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

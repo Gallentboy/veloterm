@@ -4,6 +4,7 @@ import * as monaco from 'monaco-editor';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { ensureNginxLanguage } from '@/editor/nginxLanguage';
+import { ensureBashCompletion, registerBashHostModel } from '@/editor/bashLanguage';
 import type { EditorFileDescriptor, MonacoDocumentCardProps } from '@/editor/types';
 
 /**
@@ -32,6 +33,8 @@ function getFileModel(file: EditorFileDescriptor, content: string): monaco.edito
     );
     model = monaco.editor.createModel(content, file.languageId, uri);
     modelCache.set(file.id, model);
+    // 关联远端主机：bash 补全的远端命令全集按 host 取（幂等）
+    registerBashHostModel(model, file.hostId);
   } else if (model.getLanguageId() !== file.languageId) {
     monaco.editor.setModelLanguage(model, file.languageId);
   }
@@ -119,6 +122,9 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
     // nginx 语言（高亮/补全/hover）幂等注册；数据懒加载，
     // 见 nginxLanguage.ts
     ensureNginxLanguage(monaco);
+    // bash 补全（静态词表 + Rust tree-sitter 符号 + 远端命令）幂等注册，
+    // 见 bashLanguage.ts
+    ensureBashCompletion(monaco);
 
     if (isDiff) {
       const diffEditor = monaco.editor.createDiffEditor(container, {
@@ -226,6 +232,7 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
     syncModelContent(modified, file, content);
 
     const original = monaco.editor.createModel(diffRemoteContent, file.languageId);
+    registerBashHostModel(original, file.hostId);
     diffOriginalModelRef.current?.dispose();
     diffOriginalModelRef.current = original;
     diffEditor.setModel({ original, modified });

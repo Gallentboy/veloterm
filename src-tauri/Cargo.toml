@@ -116,6 +116,11 @@ prost-reflect = { version = "0.15", features = ["serde"] }
 http = "1"
 # Excel 表格预览（xlsx/xls/xlsb/ods）：calamine 纯 Rust 解析引擎（零外部 C 依赖）
 calamine = "0.37"
+# bash/shell 脚本分析（Monaco shell 补全的后端半边）：tree-sitter-bash 官方语法
+# crate，parser.c/scanner.cc 构建期 cc 静态编译进二进制（macOS/Windows 全平台
+# 免配置、零动态库；版本与 tree-sitter core 锁同一 0.25 配对，升级同步 bump）
+tree-sitter = "0.25"
+tree-sitter-bash = "0.25"
 # X.509 证书与 SSL 解析器（.crt/.pem/.cer）：纯 Rust RFC 5280 解析器
 x509-parser = "0.18"
 # PDF 预览 + 图片转码：PDFium（Chromium 同款 C++ 渲染引擎）经 pdfium-render 绑定。

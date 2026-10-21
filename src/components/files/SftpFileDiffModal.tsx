@@ -16,6 +16,7 @@ import { resolveLanguageIdWithContent } from '@/editor/languageMap';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme } from '@/editor/monacoTheme';
 import { ensureNginxLanguage } from '@/editor/nginxLanguage';
+import { ensureBashCompletion, registerBashHostModel } from '@/editor/bashLanguage';
 
 export interface SftpDiffFileTarget {
   name: string;
@@ -124,6 +125,7 @@ export const SftpFileDiffModal = memo(function SftpFileDiffModal({
     initMonacoTheme();
     setupMonacoEnvironment();
     ensureNginxLanguage(monaco);
+    ensureBashCompletion(monaco);
 
     const diffEditor = monaco.editor.createDiffEditor(container, {
       ...DIFF_EDITOR_OPTIONS,
@@ -137,6 +139,8 @@ export const SftpFileDiffModal = memo(function SftpFileDiffModal({
 
     const originalModel = monaco.editor.createModel(origContent, originalLang);
     const modifiedModel = monaco.editor.createModel(modContent, modifiedLang);
+    registerBashHostModel(originalModel, hostId);
+    registerBashHostModel(modifiedModel, hostId);
     modelsRef.current = { original: originalModel, modified: modifiedModel };
 
     diffEditor.setModel({
