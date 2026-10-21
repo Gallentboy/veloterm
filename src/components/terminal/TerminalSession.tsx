@@ -25,6 +25,12 @@ import { TerminalSearchBar } from '@/components/terminal/TerminalSearchBar';
 import { TerminalResourceBar } from '@/components/terminal/TerminalResourceBar';
 import { RecordingPill } from '@/components/terminal/RecordingPill';
 import { CastPlayerModal } from '@/components/terminal/CastPlayerModal';
+import { SafetyGuardModal } from '@/components/terminal/SafetyGuardModal';
+import {
+  SafetyInputTracker,
+  inspectCommandSafety,
+  type SafetyInspectResult,
+} from '@/services/safetyGuardService';
 import { loadHostStore, resolveJumpHostChain } from '@/hosts/storage';
 import { formatShellShortLabel } from '@/terminal/terminalPanelState';
 import {
@@ -259,6 +265,20 @@ export function TerminalSession({
   const [recStopped, setRecStopped] = useState(false);
   const [recHasLast, setRecHasLast] = useState(false);
   const [playerRecording, setPlayerRecording] = useState<CastRecording | null>(null);
+
+  // ── 生产环境安全拦截与视觉护罩 ──
+  const safetyTrackerRef = useRef(new SafetyInputTracker());
+  const [safetyModal, setSafetyModal] = useState<{
+    isOpen: boolean;
+    command: string;
+    inspectResult: SafetyInspectResult;
+    pendingBytes: Uint8Array;
+  } | null>(null);
+
+  const currentHost = hostId != null ? loadHostStore().hosts.find((h) => h.id === hostId) : undefined;
+  const envLevel = currentHost?.envLevel ?? 'dev';
+  const isSafetyShieldEnabled =
+    (currentHost?.safetyGuardEnabled ?? true) && (envLevel === 'prod' || envLevel === 'staging');
 
   const onShellLabelChangeRef = useRef(onShellLabelChange);
   const onSizeChangeRef = useRef(onSizeChange);
@@ -1140,7 +1160,27 @@ export function TerminalSession({
         // 走 writeInputAndMirror 统一入口：快捷键拦截路径（Ctrl+C）共用同一逻辑
         registryDisposers.push(
           term.onData((data) => {
-            writeInputAndMirror(encodeTerminalInput(data));
+            const rawBytes = encodeTerminalInput(data);
+            if (isSafetyShieldEnabled) {
+              const res = safetyTrackerRef.current.feed(data);
+              if (res.isEnter && res.commandToInspect) {
+                // 生产/预发高危拦截检查：扣留回车，异步裁决
+                void inspectCommandSafety(res.commandToInspect, envLevel).then((inspectRes) => {
+                  if (inspectRes.level !== 'safe') {
+                    setSafetyModal({
+                      isOpen: true,
+                      command: res.commandToInspect!,
+                      inspectResult: inspectRes,
+                      pendingBytes: rawBytes,
+                    });
+                  } else {
+                    writeInputAndMirror(rawBytes);
+                  }
+                });
+                return;
+              }
+            }
+            writeInputAndMirror(rawBytes);
           }),
         );
 
@@ -1371,6 +1411,28 @@ export function TerminalSession({
 
   const closeStoppedPill = useCallback(() => setRecStopped(false), []);
 
+  const handleSafetyConfirm = useCallback(() => {
+    if (safetyModal) {
+      const tid = terminalIdRef.current ?? terminalSessionRegistry.getTerminalId(sessionId);
+      if (tid !== null) {
+        void transport.write({ id: tid, data: safetyModal.pendingBytes });
+      }
+      setSafetyModal(null);
+      requestFocus();
+    }
+  }, [requestFocus, safetyModal, sessionId, transport]);
+
+  const handleSafetyCancel = useCallback(() => {
+    // 发送 0x03 (Ctrl+C) 清理终端当前行
+    const tid = terminalIdRef.current ?? terminalSessionRegistry.getTerminalId(sessionId);
+    if (tid !== null) {
+      void transport.write({ id: tid, data: new Uint8Array([3]) });
+    }
+    safetyTrackerRef.current.clear();
+    setSafetyModal(null);
+    requestFocus();
+  }, [requestFocus, sessionId, transport]);
+
   // 录制计时：每秒从 recorder 取真实经过时间（胶囊展示）
   useEffect(() => {
     if (!recActive) return;
@@ -1384,8 +1446,17 @@ export function TerminalSession({
     <div
       ref={rootRef}
       onContextMenu={handleContextMenu}
-      className="relative flex h-full min-h-0 w-full flex-col overflow-hidden"
+      className={cn(
+        'relative flex h-full min-h-0 w-full flex-col overflow-hidden',
+        envLevel === 'prod' && 'ring-1 ring-inset ring-red-500/40',
+        envLevel === 'staging' && 'ring-1 ring-inset ring-amber-500/40',
+      )}
     >
+      {envLevel === 'prod' ? (
+        <div className="h-[2px] w-full shrink-0 bg-gradient-to-r from-red-600 via-rose-500 to-red-600 opacity-80" />
+      ) : envLevel === 'staging' ? (
+        <div className="h-[2px] w-full shrink-0 bg-gradient-to-r from-amber-600 via-yellow-500 to-amber-600 opacity-80" />
+      ) : null}
       <div
         ref={containerRef}
         className="terminal-xterm-shell min-h-0 w-full flex-1 overflow-hidden"
@@ -1570,6 +1641,19 @@ export function TerminalSession({
       >
         {Math.round(fontScale * 100)}%
       </div>
+
+      {/* 生产环境高危命令拦截确认浮窗 */}
+      {safetyModal ? (
+        <SafetyGuardModal
+          isOpen={safetyModal.isOpen}
+          command={safetyModal.command}
+          inspectResult={safetyModal.inspectResult}
+          hostName={currentHost?.name ?? 'Host'}
+          envLevel={envLevel}
+          onConfirm={handleSafetyConfirm}
+          onCancel={handleSafetyCancel}
+        />
+      ) : null}
     </div>
   );
 }

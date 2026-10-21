@@ -90,8 +90,22 @@ pub struct HostRecord {
     /// 否则 fallback 内置默认模式。null = 未配置。
     #[serde(default)]
     pub passwd_prompts: Option<crate::terminal::passwd_input::PasswdPrompts>,
+    /// 环境级别：dev 开发 / test 测试 / staging 预发 / prod 生产；缺省为 "dev"
+    #[serde(default = "default_env_level")]
+    pub env_level: String,
+    /// 是否开启生产环境安全防护罩（高危命令拦截）；缺省为 true
+    #[serde(default = "default_true")]
+    pub safety_guard_enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn default_env_level() -> String {
+    "dev".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// 主机与分组完整数据集（与前端 `HostStoreData` v2 对齐）。
@@ -238,6 +252,8 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           relay_secret TEXT,
           relay_target TEXT,
           passwd_prompts TEXT,
+          env_level TEXT NOT NULL DEFAULT 'dev',
+          safety_guard_enabled INTEGER NOT NULL DEFAULT 1,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
       );
@@ -383,6 +399,8 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
         "cert_fingerprint TEXT",
         "relay_id INTEGER",
         "passwd_prompts TEXT",
+        "env_level TEXT DEFAULT 'dev'",
+        "safety_guard_enabled INTEGER DEFAULT 1",
     ] {
         let sql = format!("ALTER TABLE hosts ADD COLUMN {col_def}");
         if let Err(e) = conn.execute_batch(&sql)
@@ -1500,7 +1518,7 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
             "SELECT id, name, host, port, username, auth_json, jump_host_id,
               host_key_verification, allow_insecure_algos, ready_command_id,
               relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint, relay_id,
-              passwd_prompts,
+              passwd_prompts, env_level, safety_guard_enabled,
               created_at, updated_at
        FROM hosts
        ORDER BY id ASC",
@@ -1539,9 +1557,11 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 passwd_prompts: row
                     .get::<_, Option<String>>(17)?
                     .and_then(|j| serde_json::from_str(&j).ok()),
+                env_level: row.get::<_, Option<String>>(18)?.unwrap_or_else(default_env_level),
+                safety_guard_enabled: row.get::<_, Option<i64>>(19)?.map(|v| v != 0).unwrap_or(true),
                 group_ids: groups_by_host.remove(&id).unwrap_or_default(),
-                created_at: row.get(18)?,
-                updated_at: row.get(19)?,
+                created_at: row.get(20)?,
+                updated_at: row.get(21)?,
             })
         })
         .map_err(|e| format!("failed to query hosts: {e}"))?;
@@ -1644,6 +1664,8 @@ pub fn load_host_store(pool: &DbPool) -> Result<HostStorePayload, String> {
                 relay: None,
                 relay_id: None,
                 passwd_prompts: None,
+                env_level: default_env_level(),
+                safety_guard_enabled: true,
                 group_ids,
                 created_at,
                 updated_at,
@@ -1764,9 +1786,9 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                   id, name, host, port, username, auth_json, jump_host_id,
                   host_key_verification, allow_insecure_algos, ready_command_id,
                   relay_host, relay_port, relay_transport, relay_key_id, relay_secret, cert_fingerprint, relay_id,
-                  passwd_prompts,
+                  passwd_prompts, env_level, safety_guard_enabled,
                   created_at, updated_at
-               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
                ON CONFLICT(id) DO UPDATE SET
                   name = excluded.name,
                   host = excluded.host,
@@ -1785,6 +1807,8 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                   cert_fingerprint = excluded.cert_fingerprint,
                   relay_id = excluded.relay_id,
                   passwd_prompts = excluded.passwd_prompts,
+                  env_level = excluded.env_level,
+                  safety_guard_enabled = excluded.safety_guard_enabled,
                   updated_at = excluded.updated_at",
             )
             .map_err(|e| format!("failed to prepare host upsert: {e}"))?;
@@ -1840,6 +1864,8 @@ pub fn save_host_store(pool: &DbPool, store: &HostStorePayload) -> Result<(), St
                     host.passwd_prompts
                         .as_ref()
                         .map(|p| serde_json::to_string(p).unwrap_or_default()),
+                    &host.env_level,
+                    if host.safety_guard_enabled { 1i64 } else { 0i64 },
                     host.created_at,
                     host.updated_at,
                 ])
@@ -1985,6 +2011,8 @@ mod tests {
                 }),
                 relay_id: Some(1),
                 passwd_prompts: None,
+                env_level: "prod".to_string(),
+                safety_guard_enabled: true,
                 group_ids: vec![1],
                 created_at: 200,
                 updated_at: 200,
@@ -2003,6 +2031,8 @@ mod tests {
                 relay: None,
                 relay_id: None,
                 passwd_prompts: None,
+                env_level: "dev".to_string(),
+                safety_guard_enabled: true,
                 group_ids: vec![],
                 created_at: 201,
                 updated_at: 201,

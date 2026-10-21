@@ -20,6 +20,9 @@ export type AuthMethod = AuthConfig['method'];
 /** 主机公钥校验策略（对齐后端 `SshHostKeyVerificationMode`） */
 export type SshHostKeyVerificationMode = 'auto_accept' | 'auto_reject' | 'ignore';
 
+/** 主机/分组所属的环境级别：开发 / 测试 / 预发 / 生产 */
+export type HostEnvironmentLevel = 'dev' | 'test' | 'staging' | 'prod';
+
 /** 中继入站传输类型（对齐后端 `RelayTransport`，veloterm_relay 的监听协议） */
 export type RelayTransport = 'tcp' | 'ws' | 'quic';
 
@@ -81,6 +84,10 @@ export interface HostNode {
   readyCommandId?: number | null;
   /** passwd 改密提示词配置（严格匹配用）；null 或缺省 = 未配置（用内置默认模式检测） */
   passwdPrompts?: PasswdPrompts | null;
+  /** 环境级别：dev 开发 / test 测试 / staging 预发 / prod 生产；缺省为 'dev' */
+  envLevel?: HostEnvironmentLevel;
+  /** 是否开启危险命令拦截防护罩；缺省为 true（仅在 staging/prod 触发） */
+  safetyGuardEnabled?: boolean;
   /** 所属分组（多选）；空数组 = 未分组 */
   groupIds: number[];
   createdAt: number;

@@ -22,7 +22,7 @@
 | 前端类型 | `pnpm run typecheck` | 零错误 |
 | 前端构建 | `pnpm run build` | 成功 |
 | Rust 编译 | `cargo check --workspace --all-targets`（在 `src-tauri/`） | 零错误 |
-| Rust 测试 | `cargo test --workspace` | 全绿（app 210 + coreutils 54 + tools-catalog 1 为当前基线） |
+| Rust 测试 | `cargo test --workspace` | 全绿（app 218 + coreutils 54 + tools-catalog 1 为当前基线） |
 | Lint | `cargo clippy --workspace --all-targets` | 自有代码零警告 |
 
 冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑（jq-app / bc-app 同此约定）。
@@ -108,6 +108,7 @@ PDF 与图片预览的原生引擎是 **app crate** 的依赖（不进 coreutils
 - **拖放一律走统一管线**（`services/dragDropService.ts` + `hooks/useDropTarget.ts`）：两平台 `dragDropEnabled: true`（原生接管，携带文件绝对路径），wry 会整体接管 WebView 的 DnD——页内 HTML5 dragover/drop **不再触发**，页内拖拽（SFTP 面板互拷、Tab 分栏）同样必须走该管线（dragstart 时 `beginInternalDrag` 存载荷，Drop 按坐标命中注册目标），**严禁新增依赖 HTML5 dataTransfer 读取的 drop 处理**。终端拖入文件 → 路径按目标 shell 格式化（`lib/shellPath.ts`：Windows 按需双引号 / POSIX 反斜杠转义）后 `term.paste` 写入。终端复制/粘贴快捷键：macOS ⌘C/⌘V；Windows Ctrl+Shift+C/V 且裸 Ctrl+V 亦粘贴、Ctrl+C 有选区时复制（conhost/Windows Terminal 语义），右键菜单项带键位指示。
 - **SSH 旁路采集一律走独立 exec 通道**（`RCCommand::ExecCapture` → `TerminalBackendSession::exec_capture`，实现见 `terminal/resource_monitor.rs`）：资源监控等只读探测不得占用交互 shell 通道、不得污染终端输出流；CPU% 与网络速率用**客户端差分**（每会话基线存 Rust 侧，轮询间隔即采样窗，dispose 时 `forget_baseline` 清理、超 60s 基线自动作废）。前端资源条（`TerminalResourceBar`）仅标签页模式当前可见 SSH 会话渲染（九宫格自动隐藏）、2s setTimeout 链轮询、容器查询按宽度逐级展开指标（延迟/CPU/内存/磁盘 → 网络 → SWAP → GB 明细 → 发行版）。
 - **终端会话录制是 Asciinema v2 (.cast) 的纯前端旁路形态**（`src/terminal/castRecorder.ts` + `castPlayer.ts` + `castExport.ts` + `RecordingPill.tsx` + `CastPlayerModal.tsx`）：录制挂点在 TerminalSession 的 `outputChannel` 回调里取 **`decoder.decode` 之后、`highlightOutput` 之前**的原始文本（高亮会注入 ANSI 颜色码，录进去污染回放保真）；只录 `"o"`（输出）与 `"r"`（resize，挂 `queueTerminalResize` 去重），不录 `"i"`（终端不回显密码，输出流天然不含敏感键入）；ZMODEM 传输期跳过采集（二进制协议帧回放即乱码，时间轴照走）；断开提示等客户端装饰走直写 `term.write` 不经管道，天然不入录。录制器实例存 castRecorder 模块级 Map（跨组件重挂载/切页存活），会话销毁在 `entry.dispose` 清理；停止后成品留存到下次录制，右键菜单可「回放上次录制」。空闲不做录制端压缩（保真），跳空闲在回放端（距下一事件超 2s 整段直跳）。导出走 Rust `export_text_file`（rfd 保存对话框 + 写盘，`command_export_file` 同惯例）：.cast 为 JSON Lines 原文（可直接上传 asciinema.org / 官方 CLI 播放），.log 为剥 ANSI（OSC 优先匹配的正则）纯文本。回放器复用 xterm.js 只读实例（尺寸取 header，`"r"` 按序 resize），RAF 帧调度 + 0.5/1/2/4× 变速 + 进度条 seek（reset 后全量重建）+ 空格切换（焦点在按钮/输入框时交给原生）。UI：左上角 REC 胶囊（红点 animate-pulse + 计时；搜索栏在右上、ZMODEM 提示在顶部居中）+ 操作面板（useAnchoredPanel portal 弹层规范），右键菜单开始/停止项。
+- **生产环境防护罩 & 危险命令拦截是「前端扣留交互 + 后端 AST 精准判定」的前后端协同形态**（Rust `src-tauri/src/safety_guard.rs` + 前端 `SafetyGuardModal.tsx` / `safetyGuardService.ts` / `TerminalSession.tsx`）：后端基于 `tree-sitter-bash` 构建 AST，提取真实 command 节点（穿透 sudo/nohup/env/doas/builtin 等包装，递归分析 bash -c 内嵌脚本），精确排除字符串字面量（`echo "rm -rf /"` 不误报）与注释；分级判定 Critical（`rm -rf /`、`mkfs`、`dd` 块设备覆写、`chmod 777 /`、Fork 炸弹）、High（关机重启、`kill -9 1`、`redis flushall`、防火墙清空）、Warning 与 Safe；前端在用户键入回车（`\r`）或多行粘贴时，仅对 staging/prod 环境的会话扣留 `\r` 并调用 `inspect_command_safety` 异步裁决，安全则平滑补发 `\r`，高危则弹出 `SafetyGuardModal` 阻断确认（Critical 强制校验确认词，取消发送 `0x03` Ctrl+C 清行并复位）；生产机顶栏带警戒条纹与红边框、Tab 带 PROD/STAGE 胶囊 Badge。主机表新增 `env_level` / `safety_guard_enabled` 字段并支持持久化。
 
 ### 存储
 
