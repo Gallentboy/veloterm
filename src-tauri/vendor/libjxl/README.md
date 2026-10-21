@@ -34,10 +34,11 @@ vendor/libjxl/
 
 DLL 是预编译资产、无现场构建步骤（不占 build-tools 段）：架构专用的 Tauri
 配置直接映射源码树（`tauri.windows-x64.conf.json` / `tauri.windows-arm64.conf.json`
-的 `vendor/libjxl/{x64,arm64} → libjxl`），安装后落在安装根 `libjxl/` 子目录。
+的 `vendor/libjxl/{x64,arm64} → lib`），安装后与其他随包 DLL 一起落在安装根
+`lib/` 子目录。
 
 运行期由 app 侧 `pdf.rs` 的 `JXL_BIND` 按候选路径调
-`jpegxl_sys::bind_to_library`：开发期命中本目录、发布期命中安装根 `libjxl/`。
+`jpegxl_sys::bind_to_library`：开发期命中本目录、发布期命中安装根 `lib/`。
 Windows 侧用 `LOAD_WITH_ALTERED_SEARCH_PATH` 加载，`jxl.dll` 的依赖优先从
 `jxl.dll` 自身目录解析——这就是 DLL 放子目录也能找到依赖的原因。
 

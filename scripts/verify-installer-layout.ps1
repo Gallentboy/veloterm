@@ -36,9 +36,11 @@ $Installer = (Resolve-Path $Installer).Path
 Say '=== verify-installer-layout ==='
 Say ("installer : {0} ({1:N1} MB)" -f $Installer, ((Get-Item $Installer).Length / 1MB))
 
-# 期望：DLL 在 lib/ 下；nmap-data/、vim-runtime/ 与 ncat 的证书束仍平铺在安装根；
-# 预览引擎的动态库按架构专属 overlay 映射（pdfium/ 与 libjxl/ 子目录——
-# 映射笔误只有解包真实安装包才能发现，同 lib/ 的六条）
+# 期望：随包 DLL 统一在 lib/ 下（FFI 家族 + 预览引擎的 pdfium/libjxl）；
+# nmap-data/、vim-runtime/ 与 ncat 的证书束仍平铺在安装根；
+# libjxl 全家桶（jxl 本体 + jxl_cms + 依赖运行时 hwy/brotli×3/lcms2-2；
+# jxl_threads 未用 parallel runner 也随包，同批产物一并断言）——
+# 映射笔误只有解包真实安装包才能发现，同 lib/ 其余各条
 $expectedLib = @(
     'lib/veloterm_goffi.dll',
     'lib/qalcffi.dll',
@@ -46,20 +48,23 @@ $expectedLib = @(
     'lib/ncatffi.dll',
     'lib/npingffi.dll',
     'lib/vim64.dll',
-    'pdfium/pdfium.dll',
-    # libjxl 全家桶：jxl 本体 + jxl_cms + 依赖运行时（hwy/brotli×3/lcms2-2；
-    # jxl_threads 未用 parallel runner 也随包，同批产物一并断言）
-    'libjxl/jxl.dll',
-    'libjxl/jxl_cms.dll',
-    'libjxl/jxl_threads.dll',
-    'libjxl/hwy.dll',
-    'libjxl/lcms2-2.dll',
-    'libjxl/brotlicommon.dll',
-    'libjxl/brotlidec.dll',
-    'libjxl/brotlienc.dll')
+    'lib/pdfium.dll',
+    'lib/jxl.dll',
+    'lib/jxl_cms.dll',
+    'lib/jxl_threads.dll',
+    'lib/hwy.dll',
+    'lib/lcms2-2.dll',
+    'lib/brotlicommon.dll',
+    'lib/brotlidec.dll',
+    'lib/brotlienc.dll')
 $expectedRoot = @('coreutils.exe', 'nmap-data', 'ca-bundle.crt', 'vim-runtime')
-# 旧的平铺位置不该再出现（本轮起 DLL 统一进 lib/）
-$forbiddenRoot = @('veloterm_goffi.dll', 'qalcffi.dll', 'nmapffi.dll', 'ncatffi.dll', 'npingffi.dll', 'vim64.dll')
+# 旧的平铺位置不该再出现（DLL 统一进 lib/；pdfium 也不允许残留独立的
+# pdfium/ 子目录布局里的平铺形态）
+$forbiddenRoot = @(
+    'veloterm_goffi.dll', 'qalcffi.dll', 'nmapffi.dll', 'ncatffi.dll', 'npingffi.dll', 'vim64.dll',
+    'pdfium.dll',
+    'jxl.dll', 'jxl_cms.dll', 'jxl_threads.dll', 'hwy.dll', 'lcms2-2.dll',
+    'brotlicommon.dll', 'brotlidec.dll', 'brotlienc.dll')
 
 # 定位 7z（windows-latest 预装；缺失则告警跳过）
 $sevenZip = $null
