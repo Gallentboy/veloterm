@@ -422,6 +422,9 @@ export default {
     nextPage: '下一页',
     retry: '重试',
     pageAlt: '第 {{page}} 页',
+    jumpToPage: '跳转到指定页（输入页码后回车）',
+    jumpTo: '跳转至',
+    jumpToSuffix: '页',
   },
   files: {
     title: '文件管理',
