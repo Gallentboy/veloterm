@@ -332,8 +332,9 @@ export function ensureNginxLanguage(monaco: typeof MonacoNs): void {
             detail: entry.detail,
             documentation: { value: entry.documentation },
             insertText: entry.name,
-            insertTextRules:
-              monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            // 不设 insertTextRules：保持纯文本插入（对齐上游 PlainText）。
+            // InsertAsSnippet 会把 $arg_name 的 $ 当 snippet 变量占位符，
+            // 未定义变量解析为空串 → 选中变量回车后什么都不插入
             range: replace,
           });
         }
