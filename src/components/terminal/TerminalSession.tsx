@@ -2,7 +2,7 @@ import { listen } from '@tauri-apps/api/event';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { Terminal as XTerm, type IDisposable } from '@xterm/xterm';
-import { ClipboardPaste, Copy, Eraser, Type } from 'lucide-react';
+import { Circle, CircleStop, ClipboardPaste, Copy, Eraser, MonitorPlay, Type } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -23,6 +23,8 @@ import { onSshKind } from '@/services/sshLifecycle';
 import { restoreSessionSnapshot, saveSessionSnapshot } from '@/terminal/sessionSnapshot';
 import { TerminalSearchBar } from '@/components/terminal/TerminalSearchBar';
 import { TerminalResourceBar } from '@/components/terminal/TerminalResourceBar';
+import { RecordingPill } from '@/components/terminal/RecordingPill';
+import { CastPlayerModal } from '@/components/terminal/CastPlayerModal';
 import { loadHostStore, resolveJumpHostChain } from '@/hosts/storage';
 import { formatShellShortLabel } from '@/terminal/terminalPanelState';
 import {
@@ -38,6 +40,15 @@ import {
   encodeBinaryString,
   encodeTerminalInput,
 } from '@/terminal/transport';
+import {
+  dropCastSession,
+  getActiveRecorder,
+  getLastRecording,
+  startCastRecording,
+  stopCastRecording,
+  type CastRecording,
+} from '@/terminal/castRecorder';
+import { exportCastFile, exportLogFile } from '@/terminal/castExport';
 import type { ITerminalTransport, TerminalSize } from '@/terminal/types';
 
 const DEFAULT_TERMINAL_FONT_FAMILY =
@@ -240,6 +251,15 @@ export function TerminalSession({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchAddonRef = useRef<SearchAddon | null>(null);
 
+  // ── 终端录制（Asciinema v2 .cast）──
+  // 录制器实例存模块级 Map（castRecorder.ts），跨重挂载存活；这里只持 UI 状态。
+  // recStopped：停止后胶囊以「已停止」形态保留为操作面板锚点，面板关闭即复位。
+  const [recActive, setRecActive] = useState(false);
+  const [recElapsedMs, setRecElapsedMs] = useState(0);
+  const [recStopped, setRecStopped] = useState(false);
+  const [recHasLast, setRecHasLast] = useState(false);
+  const [playerRecording, setPlayerRecording] = useState<CastRecording | null>(null);
+
   const onShellLabelChangeRef = useRef(onShellLabelChange);
   const onSizeChangeRef = useRef(onSizeChange);
   const onRendererStatusChangeRef = useRef(onRendererStatusChange);
@@ -304,6 +324,8 @@ export function TerminalSession({
   const queueTerminalResize = useCallback(
     (size: TerminalSize) => {
       onSizeChangeRef.current?.(sessionId, size);
+      // 录制旁路：真实 resize 落定后记 "r" 事件（与上次相同尺寸在 recorder 内去重）
+      getActiveRecorder(sessionId)?.feedResize(size.cols, size.rows);
       const lastSentSize = lastSentTerminalSizeRef.current;
       const pendingSize = pendingTerminalSizeRef.current;
       if (
@@ -750,6 +772,8 @@ export function TerminalSession({
       cleanupOutputWriter?.();
       hookClearTimers();
       entry.onTerminalIdReady = undefined;
+      // 会话真正销毁：清理录制器与上次成品（重挂载路径不会到这里）
+      dropCastSession(sessionId);
       for (const d of registryDisposers) {
         try {
           d.dispose();
@@ -1011,6 +1035,12 @@ export function TerminalSession({
       burstByteCount += bytes.length;
 
       const text = decoder.decode(bytes, { stream: true });
+      // 录制旁路：取「高亮注入前」的原始文本（highlightOutput 会注入 ANSI 颜色码，
+      // 录进去会污染回放保真）；ZMODEM 传输期跳过（二进制协议帧回放即乱码）
+      const recorder = getActiveRecorder(sessionId);
+      if (recorder && !zmodemLockRef.current) {
+        recorder.feedOutput(text);
+      }
       const processed = isBurstMode ? text : highlightOutput(text);
       scheduleWrite(processed);
       // 就绪钩子待发时，每次输出重置静止计时（输出停止 = 首屏完成，可安全注入）
@@ -1290,6 +1320,66 @@ export function TerminalSession({
     requestFocus();
   };
 
+  // ── 终端录制（Asciinema v2）：右键菜单开关，胶囊与操作面板见 RecordingPill ──
+
+  const recordingTitle = useCallback((): string => {
+    if (hostId != null) {
+      const host = loadHostStore().hosts.find((h) => h.id === hostId);
+      if (host) return `${host.username || 'root'}@${host.host}`;
+    }
+    return 'local';
+  }, [hostId]);
+
+  const startRecording = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return;
+    if (startCastRecording(sessionId, term.cols, term.rows, recordingTitle())) {
+      setRecActive(true);
+      setRecStopped(false);
+      setRecHasLast(false);
+      setRecElapsedMs(0);
+    }
+  }, [recordingTitle, sessionId]);
+
+  /** 停止录制；返回成品（在录返回新成品，否则回落上次成品） */
+  const stopRecording = useCallback((): CastRecording | null => {
+    const rec = stopCastRecording(sessionId);
+    if (rec) {
+      setRecActive(false);
+      setRecStopped(true);
+      setRecHasLast(true);
+      setRecElapsedMs(0);
+      return rec;
+    }
+    return getLastRecording(sessionId);
+  }, [sessionId]);
+
+  const openRecordingPreview = useCallback(() => {
+    const rec = stopRecording();
+    if (rec) setPlayerRecording(rec);
+  }, [stopRecording]);
+
+  const handleExportCast = useCallback(() => {
+    const rec = stopRecording();
+    if (rec) void exportCastFile(rec);
+  }, [stopRecording]);
+
+  const handleExportLog = useCallback(() => {
+    const rec = stopRecording();
+    if (rec) void exportLogFile(rec);
+  }, [stopRecording]);
+
+  const closeStoppedPill = useCallback(() => setRecStopped(false), []);
+
+  // 录制计时：每秒从 recorder 取真实经过时间（胶囊展示）
+  useEffect(() => {
+    if (!recActive) return;
+    const timer = window.setInterval(() => {
+      setRecElapsedMs(getActiveRecorder(sessionId)?.elapsedMs() ?? 0);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [recActive, sessionId]);
+
   return (
     <div
       ref={rootRef}
@@ -1394,6 +1484,51 @@ export function TerminalSession({
               {Math.round(fontScale * 100)}%
             </span>
           </button>
+          <div className="my-1 h-px bg-border/60" />
+          {recActive ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeContextMenu();
+                stopRecording();
+                requestFocus();
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+            >
+              <CircleStop className="size-3.5 text-red-500" />
+              <span>{t('terminal.recording.stop')}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeContextMenu();
+                startRecording();
+                requestFocus();
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+            >
+              <Circle className="size-3.5" />
+              <span>{t('terminal.recording.start')}</span>
+            </button>
+          )}
+          {recHasLast ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                closeContextMenu();
+                const rec = stopRecording();
+                if (rec) setPlayerRecording(rec);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+            >
+              <MonitorPlay className="size-3.5" />
+              <span>{t('terminal.recording.replayLast')}</span>
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -1403,6 +1538,25 @@ export function TerminalSession({
           searchAddon={searchAddonRef.current}
           visible={isSearchOpen}
           onClose={() => setIsSearchOpen(false)}
+        />
+      ) : null}
+
+      {/* 终端录制：胶囊（录制中红点计时 / 已停止作为操作面板锚点）+ 回放弹窗 */}
+      {recActive || recStopped ? (
+        <RecordingPill
+          active={recActive}
+          elapsedMs={recElapsedMs}
+          onPreview={openRecordingPreview}
+          onExportCast={handleExportCast}
+          onExportLog={handleExportLog}
+          onResume={() => undefined}
+          onIdleClose={closeStoppedPill}
+        />
+      ) : null}
+      {playerRecording ? (
+        <CastPlayerModal
+          recording={playerRecording}
+          onClose={() => setPlayerRecording(null)}
         />
       ) : null}
 
