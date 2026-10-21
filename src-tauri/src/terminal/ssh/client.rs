@@ -1264,6 +1264,24 @@ impl Connector {
                             remaining_methods,
                             ..
                         } => {
+                            // 服务器不支持 kbd-int（remaining_methods 不含
+                            // KeyboardInteractive）→ 不重试、不计入失败计数，
+                            // 直接回落 password。这台服务器的 sshd_config 关闭了
+                            // KbdInteractiveAuthentication（或等价配置），首次
+                            // 请求即被拒绝且从未发过 InfoRequest——此前不区分
+                            // 「不支持」与「密码错」，4 次空重试后触发
+                            // 「跳过 password 回落」，导致本来能 password 认证
+                            // 成功的服务器直接报 Permission denied（实测）
+                            if !remaining_methods
+                                .contains(&russh::MethodKind::KeyboardInteractive)
+                            {
+                                log::debug!(
+                                    "[SSH {}] server does not offer keyboard-interactive, \
+                                     falling back to password auth",
+                                    self.id
+                                );
+                                break;
+                            }
                             // 记录服务器允许的剩余方法（转可读字符串，供最终
                             // 失败时按 OpenSSH 格式「Permission denied (m1,m2)」
                             // 呈现——MethodSet 的 Debug 是 "MethodSet([PublicKey])"
