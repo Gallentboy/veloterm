@@ -147,10 +147,12 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
         </Button>
       </div>
 
-      {/* 页面区域 */}
-      <div className="flex min-h-0 flex-1 items-start justify-center overflow-auto bg-background-alt/40 p-4">
+      {/* 页面区域：图片按自然尺寸显示，超出容器时双向滚动。
+          居中用子元素的 m-auto 而非容器的 justify-center——后者在内容
+          超出时会把左侧裁掉且无法滚动到（flex 居中溢出问题的经典坑）。 */}
+      <div className="flex min-h-0 flex-1 items-start overflow-auto bg-background-alt/40 p-4">
         {error ? (
-          <div className="flex flex-col items-center gap-2 py-8">
+          <div className="m-auto flex flex-col items-center gap-2 py-8">
             <span className="max-w-md text-center text-ui-sm text-destructive">{error}</span>
             <Button
               variant="outline"
@@ -162,7 +164,7 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
             </Button>
           </div>
         ) : (
-          <div className="relative">
+          <div className="relative m-auto">
             {loading ? (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60">
                 <Loader2 className="size-5 animate-spin text-foreground-subtle" />
@@ -175,7 +177,10 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
                 // 用后端返回的真实像素尺寸占位，避免加载过程中布局抖动
                 width={imageSize?.width}
                 height={imageSize?.height}
-                className="max-w-full rounded-md border border-border/60 bg-white shadow-sm"
+                // 不设 max-w-full：按 1600px 自然尺寸渲染，超出容器时由外层
+                // overflow-auto 出滚动条（PDF 阅读需要能看清细节，压缩到容器
+                // 宽度会让小字号不可读）
+                className="shrink-0 rounded-md border border-border/60 bg-white shadow-sm"
                 draggable={false}
               />
             ) : null}
