@@ -129,7 +129,104 @@ pub fn analyze_command_safety(script: &str) -> SafetyInspectResult {
         }
     }
 
+    // 方案 3：全量 AST 候选段滑动探测（Sliding Window Scanner）
+    // 如果常规 AST 遍历未检出（可能由于未识别的 Prompt 污染前缀导致结构错位），
+    // 启用滑动窗口定位敏感词作为候选子串起点，二次 AST 解析判定。
+    if highest_result.level == DangerLevel::Safe
+        && let Some(candidate_res) = scan_ast_candidates(trimmed, &tree)
+    {
+        return candidate_res;
+    }
+
     highest_result
+}
+
+const SENSITIVE_COMMAND_TRIGGERS: &[&str] = &[
+    "rm", "sudo", "mkfs", "fdisk", "parted", "sfdisk", "dd",
+    "reboot", "shutdown", "poweroff", "halt", "init", "kill",
+    "redis-cli", "iptables", "ufw", "systemctl", "chmod", "chown",
+];
+
+/// 方案 3：全量 AST 候选段滑动探测
+fn scan_ast_candidates(script: &str, tree: &tree_sitter::Tree) -> Option<SafetyInspectResult> {
+    let root = tree.root_node();
+
+    for trigger in SENSITIVE_COMMAND_TRIGGERS {
+        let mut search_from = 0;
+        while let Some(rel_idx) = script.get(search_from..).and_then(|s| s.find(trigger)) {
+            let offset = search_from + rel_idx;
+            search_from = offset + trigger.len();
+
+            // 检查该敏感词是否是独立词法边界
+            let is_start_boundary = offset == 0
+                || script
+                    .as_bytes()
+                    .get(offset.saturating_sub(1))
+                    .is_some_and(|&b| b.is_ascii_whitespace() || b == b';' || b == b'&' || b == b'|' || b == b'>' || b == b'#' || b == b'$');
+            let next_offset = offset + trigger.len();
+            let is_end_boundary = next_offset >= script.len()
+                || script
+                    .as_bytes()
+                    .get(next_offset)
+                    .is_some_and(|&b| b.is_ascii_whitespace() || b == b';' || b == b'&' || b == b'|');
+
+            if !is_start_boundary || !is_end_boundary {
+                continue;
+            }
+
+            // 检查该 offset 是否处于字符串字面量 (string / raw_string) 或注释 (comment) 内
+            if is_offset_in_string_or_comment(root, offset) {
+                continue;
+            }
+
+            // 提取从 offset 开始的候选切片
+            if let Some(candidate) = script.get(offset..) {
+                let trimmed_candidate = candidate.trim();
+                if trimmed_candidate != script.trim() {
+                    let mut candidate_parser = Parser::new();
+                    if candidate_parser.set_language(&tree_sitter_bash::LANGUAGE.into()).is_ok()
+                        && let Some(c_tree) = candidate_parser.parse(trimmed_candidate, None)
+                    {
+                        let mut c_commands = Vec::new();
+                        collect_commands(c_tree.root_node(), trimmed_candidate.as_bytes(), &mut c_commands);
+                        for cmd in c_commands {
+                            if let Some(res) = evaluate_command(&cmd)
+                                && res.level != DangerLevel::Safe
+                            {
+                                return Some(res);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// 检查给定字节偏移量在语法树中是否位于字符串字面量或注释内部
+fn is_offset_in_string_or_comment(node: Node, offset: usize) -> bool {
+    let start = node.start_byte();
+    let end = node.end_byte();
+
+    if offset < start || offset >= end {
+        return false;
+    }
+
+    let kind = node.kind();
+    if kind == "string" || kind == "raw_string" || kind == "comment" {
+        return true;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if is_offset_in_string_or_comment(child, offset) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// 递归收集 AST 中的所有真实 command 节点
@@ -228,10 +325,9 @@ fn strip_quotes(s: &str) -> String {
     if ((trimmed.starts_with('"') && trimmed.ends_with('"'))
         || (trimmed.starts_with('\'') && trimmed.ends_with('\'')))
         && trimmed.len() >= 2
+        && let Some(inner) = trimmed.get(1..trimmed.len().saturating_sub(1))
     {
-        if let Some(inner) = trimmed.get(1..trimmed.len().saturating_sub(1)) {
-            return inner.to_string();
-        }
+        return inner.to_string();
     }
     trimmed.to_string()
 }
@@ -300,17 +396,17 @@ fn evaluate_command(cmd: &ParsedCommand) -> Option<SafetyInspectResult> {
 
     if name == "dd" {
         for arg in args {
-            if let Some(dev) = arg.strip_prefix("of=/dev/") {
-                if dev.starts_with("sd") || dev.starts_with("vd") || dev.starts_with("nvme") || dev.starts_with("mapper") {
-                    return Some(SafetyInspectResult {
-                        level: DangerLevel::Critical,
-                        matched_rule: Some("dd-block-device".to_string()),
-                        rule_title: Some("底层块设备覆写".to_string()),
-                        explanation: Some(format!("dd 直接向块设备 '{}' 写入数据，极易破坏文件系统", arg)),
-                        offending_command: Some(cmd.raw_text.clone()),
-                        require_verification_code: true,
-                    });
-                }
+            if let Some(dev) = arg.strip_prefix("of=/dev/")
+                && (dev.starts_with("sd") || dev.starts_with("vd") || dev.starts_with("nvme") || dev.starts_with("mapper"))
+            {
+                return Some(SafetyInspectResult {
+                    level: DangerLevel::Critical,
+                    matched_rule: Some("dd-block-device".to_string()),
+                    rule_title: Some("底层块设备覆写".to_string()),
+                    explanation: Some(format!("dd 直接向块设备 '{}' 写入数据，极易破坏文件系统", arg)),
+                    offending_command: Some(cmd.raw_text.clone()),
+                    require_verification_code: true,
+                });
             }
         }
     }
@@ -489,5 +585,19 @@ mod tests {
             analyze_command_safety(r#"bash -c "echo hello && rm -rf /""#).level,
             DangerLevel::Critical
         );
+    }
+
+    #[test]
+    fn test_custom_prompt_with_sliding_window() {
+        // 方案 3 核心验证：即使提示符完全未剥离且没有终止符，滑动 AST 探测依然精准触发
+        let cmd = "my-weird-custom-prompt-without-symbol rm -rf /";
+        assert_eq!(analyze_command_safety(cmd).level, DangerLevel::Critical);
+
+        let cmd2 = "fancy-theme-git-branch-main reboot";
+        assert_eq!(analyze_command_safety(cmd2).level, DangerLevel::High);
+
+        // 字符串字面量保护：即便包含高危词，只要在引号内就绝不误报
+        let cmd3 = "my-weird-prompt echo 'rm -rf /'";
+        assert_eq!(analyze_command_safety(cmd3).level, DangerLevel::Safe);
     }
 }

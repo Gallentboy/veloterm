@@ -93,7 +93,7 @@ pub fn analyze(source: &str, line: u32, column: u32) -> BashAnalysisResult {
     while let Some(node) = stack.pop() {
         match node.kind() {
             "variable_assignment" => {
-                if node.parent().map_or(true, |p| p.kind() != "declaration_command") {
+                if node.parent().is_none_or(|p| p.kind() != "declaration_command") {
                     insert_assignment_var(node, source, &mut vars, cursor_line);
                 }
             }
@@ -106,7 +106,7 @@ pub fn analyze(source: &str, line: u32, column: u32) -> BashAnalysisResult {
     }
 
     BashAnalysisResult {
-        in_comment: at.map_or(false, |n| n.kind() == "comment"),
+        in_comment: at.is_some_and(|n| n.kind() == "comment"),
         variables: into_sorted(vars),
         functions: into_sorted(funcs),
         command_name: at.and_then(|n| command_name_at(n, source)),
@@ -149,31 +149,31 @@ fn collect_scope_child(
         }
         // for_statement 的循环变量（child(1)，上游 child(1) 同位）
         "for_statement" => {
-            if let Some(var_node) = child.child(1).filter(|n| n.kind() == "variable_name") {
-                if let Some(name) = text_of(var_node, source) {
-                    insert_symbol(
-                        vars,
-                        name,
-                        var_node.start_position().row as u32,
-                        has_function_ancestor(var_node),
-                        cursor_line,
-                    );
-                }
+            if let Some(var_node) = child.child(1).filter(|n| n.kind() == "variable_name")
+                && let Some(name) = text_of(var_node, source)
+            {
+                insert_symbol(
+                    vars,
+                    name,
+                    var_node.start_position().row as u32,
+                    has_function_ancestor(var_node),
+                    cursor_line,
+                );
             }
         }
         // 上游 isDefinition：variable_assignment / function_definition
         "variable_assignment" => insert_assignment_var(child, source, vars, cursor_line),
         "function_definition" => {
-            if let Some(name_node) = child.named_child(0) {
-                if let Some(name) = text_of(name_node, source) {
-                    insert_symbol(
-                        funcs,
-                        name,
-                        child.start_position().row as u32,
-                        false,
-                        cursor_line,
-                    );
-                }
+            if let Some(name_node) = child.named_child(0)
+                && let Some(name) = text_of(name_node, source)
+            {
+                insert_symbol(
+                    funcs,
+                    name,
+                    child.start_position().row as u32,
+                    false,
+                    cursor_line,
+                );
             }
         }
         // `: "${VAR:=default}"` 惯用法（: 做参数展开并保留副作用）
@@ -204,16 +204,16 @@ fn collect_colon_default(
             }
             let mut expansion_cursor = expansion.walk();
             for var_node in expansion.children(&mut expansion_cursor) {
-                if var_node.kind() == "variable_name" {
-                    if let Some(name) = text_of(var_node, source) {
-                        insert_symbol(
-                            vars,
-                            name,
-                            var_node.start_position().row as u32,
-                            has_function_ancestor(var_node),
-                            cursor_line,
-                        );
-                    }
+                if var_node.kind() == "variable_name"
+                    && let Some(name) = text_of(var_node, source)
+                {
+                    insert_symbol(
+                        vars,
+                        name,
+                        var_node.start_position().row as u32,
+                        has_function_ancestor(var_node),
+                        cursor_line,
+                    );
                 }
             }
         }
@@ -238,23 +238,23 @@ fn collect_read_vars(
     let mut cursor = command.walk();
     let mut prev: Option<Node> = None;
     for word_node in command.children(&mut cursor) {
-        if word_node.kind() == "word" {
-            if let Some(text) = text_of(word_node, source) {
-                let prev_takes_arg = prev.is_some_and(|p| {
-                    text_of(p, source).is_some_and(|t| {
-                        t.starts_with('-')
-                            && t.ends_with(['d', 'i', 'n', 'N', 'p', 't', 'u'])
-                    })
-                });
-                if !text.starts_with('-') && !prev_takes_arg {
-                    insert_symbol(
-                        vars,
-                        text,
-                        word_node.start_position().row as u32,
-                        has_function_ancestor(word_node),
-                        cursor_line,
-                    );
-                }
+        if word_node.kind() == "word"
+            && let Some(text) = text_of(word_node, source)
+        {
+            let prev_takes_arg = prev.is_some_and(|p| {
+                text_of(p, source).is_some_and(|t| {
+                    t.starts_with('-')
+                        && t.ends_with(['d', 'i', 'n', 'N', 'p', 't', 'u'])
+                })
+            });
+            if !text.starts_with('-') && !prev_takes_arg {
+                insert_symbol(
+                    vars,
+                    text,
+                    word_node.start_position().row as u32,
+                    has_function_ancestor(word_node),
+                    cursor_line,
+                );
             }
         }
         prev = Some(word_node);
