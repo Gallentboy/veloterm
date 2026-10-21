@@ -19,6 +19,7 @@ import { resolveLanguageIdWithContent } from '@/editor/languageMap';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { ensureNginxLanguage } from '@/editor/nginxLanguage';
+import { ensureBashCompletion, registerBashHostModel } from '@/editor/bashLanguage';
 import { cn } from '@/lib/utils';
 
 /**
@@ -305,12 +306,14 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
     initMonacoTheme();
     setupMonacoEnvironment();
     ensureNginxLanguage(monaco);
+    ensureBashCompletion(monaco);
 
     // 内容嗅探：conf 系文件实为 nginx 时切 nginx（高亮/补全/hover）
     const model = monaco.editor.createModel(
       initial,
       resolveLanguageIdWithContent(fileName, initial),
     );
+    registerBashHostModel(model, hostId);
     const editor = monaco.editor.create(container, {
       ...PREVIEW_EDITOR_OPTIONS,
       model,

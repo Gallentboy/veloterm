@@ -1,6 +1,7 @@
 pub mod about;
 pub mod ai;
 pub mod ai_agent;
+pub mod bash_analysis;
 pub mod cert;
 pub mod command_library;
 pub mod commands;
@@ -104,9 +105,10 @@ pub fn run() {
 	            pdf::release_pdf_temp_files,
 		            excel::read_excel_workbook,
 		            excel::read_excel_sheet_data,
-			            cert::parse_certificate,
-			            sqlite_viewer::read_sqlite_metadata,
-			            sqlite_viewer::query_sqlite_data,
+            cert::parse_certificate,
+            sqlite_viewer::read_sqlite_metadata,
+            sqlite_viewer::query_sqlite_data,
+            bash_analysis::analyze_bash_document,
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,
             zk_hosts::zk_host_delete,
@@ -154,6 +156,7 @@ pub fn run() {
             sftp::commands::sftp_chown,
             sftp::commands::sftp_list_users_groups,
             sftp::commands::sftp_exec_available,
+            sftp::commands::sftp_bash_remote_commands,
             sftp::commands::sftp_copy_file,
 		            sftp::file_ops::sftp_read_file,
 		            sftp::file_ops::sftp_read_file_hex,
