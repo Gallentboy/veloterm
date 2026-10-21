@@ -54,7 +54,7 @@ export function Tooltip({
   return (
     <div
       ref={anchorRef}
-      className="inline-flex items-center"
+      className="inline-flex min-w-0 items-center"
       onMouseEnter={show}
       onMouseLeave={hide}
       onFocus={show}

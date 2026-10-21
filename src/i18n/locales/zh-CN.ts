@@ -746,6 +746,14 @@ export default {
     clearConfirm: '确定清空该主机的全部密码历史？此操作无法撤销。',
     clearFailed: '清空密码历史失败',
   },
+  passwdPrompts: {
+    sectionTitle: '改密提示词配置',
+    hint: '配置 shell 内 passwd 改密检测的终端提示词：三条都填写才启用严格匹配，建议从实际终端复制粘贴提示词原文；不配置时使用内置默认模式。',
+    current: '当前密码提示词',
+    new: '新密码提示词',
+    retype: '确认密码提示词',
+    perLine: '每行一条，命中任意即匹配',
+  },
   groups: {
     title: '分组管理',
     newGroup: '新建分组',
