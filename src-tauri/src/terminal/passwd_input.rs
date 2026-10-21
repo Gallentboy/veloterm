@@ -78,11 +78,10 @@ struct SessionState {
     /// 出现明确结束标志（written 置位或收到 shell 提示符）才放行。
     saw_passwd_flow: bool,
     /// 改密链已被服务端接受（retype 轮 new==retype 且非空——PAM 只在两次
-    /// 一致时才返回 SUCCESS 的协议不变量）。这是「认证通过」的判据，也是
-    /// shell-ready 的**唯一放行条件**——与是否回写数据库无关：无 host_id
-    /// 的临时主机、密钥认证主机、DB 写失败等场景照样放行（改密链已被
-    /// 接受，用户即将进入 shell，就绪钩子应当执行）。后续若再出现改密
-    /// 提示（弱密码被 PAM 拒绝重来）则回置 false，直到最后一轮通过。
+    /// 一致时才返回 SUCCESS 的协议不变量）。是「认证通过/流程走完」的判据，
+    /// 与 `written`（已存库）**共同构成** shell-ready 的放行条件（缺一不可）：
+    /// 后续若再出现改密提示（弱密码被 PAM 拒绝重来）则回置 false——第一轮
+    /// retype 匹配虽已写库，流程没走完就绝不能放行。
     flow_verified: bool,
 }
 
@@ -341,19 +340,24 @@ impl PasswdInputLog {
     /// 敲进去（实测：改密必失败）。
     ///
     /// 判定不是简单的「此刻在等输入」——改密流程中两轮提示之间 `await_kind`
-    /// 会短暂为 None（提示词已清、下一提示未到），只看瞬时态会误放行。故用
-    /// 「进过改密流程 且 尚未认证通过」作为未完成判据。
+    /// 会短暂为 None（提示词已清、下一提示未到），只看瞬时态会误放行。
     ///
-    /// **放行条件是认证通过（`flow_verified`，改密链被服务端接受），与是否
-    /// 回写数据库无关**——无 host_id 的临时主机、密钥认证主机、DB 写失败
-    /// 等场景照样放行（改密已成功，用户即将进入 shell）。
+    /// **放行条件 = 流程走完 且 已存库**（`flow_verified && written`，
+    /// 两者缺一不可）：
+    /// - 只看 `written` 不够：弱密码被拒重来时第一轮 retype 匹配就会写库，
+    //    重试轮的提示间隙会误放行（`flow_verified` 随新提示回置）；
+    /// - 只看 `flow_verified` 不够：改密被接受但尚未存库就放行，钩子命令
+    ///   可能赶在存库完成前落地。
+    /// 无 host_id（临时主机无钩子配置）、密钥认证主机（无密码可存）、
+    /// DB 写失败等场景不放行——宁可不放行也不在存库前放行。
     ///
     /// **不做超时兜底**：改密失败（用户连续输错）时服务器不会进 shell，
     /// 永远不发 ShellReady 正是正确行为——用户本来就到不了 shell。
     pub fn is_awaiting_password(&self, terminal_id: usize) -> bool {
         let map = self.sessions.lock().unwrap();
         map.get(&terminal_id).is_some_and(|sc| {
-            sc.await_kind.is_some() || (sc.saw_passwd_flow && !sc.flow_verified)
+            sc.await_kind.is_some()
+                || (sc.saw_passwd_flow && !(sc.flow_verified && sc.written))
         })
     }
 }
@@ -480,29 +484,30 @@ mod tests {
         assert!(cap.is_awaiting_password(50));
     }
 
-    /// 认证通过（retype 轮 new==retype 且非空）即放行 shell-ready——
-    /// **与是否回写数据库无关**（无 host_id 临时主机、密钥认证主机、
-    /// DB 写失败等场景照样放行）
+    /// 流程走完（retype 匹配）但未存库 → 仍阻塞：shell-password 改密流程的
+    /// 放行条件是「流程走完 且 已存库」两者同时满足（本测试无 host_id，
+    /// 无法回写 → 不放行；真实存库后的放行需真实 DB，见集成验证）
     #[test]
-    fn shell_ready_released_once_change_verified() {
+    fn shell_ready_blocked_until_flow_done_and_saved() {
         let cap = PasswdInputLog::new();
         cap.feed_output(20, b"Current password: ");
         cap.feed_input(20, b"old\r");
         cap.feed_output(20, b"New password: ");
         cap.feed_input(20, b"newpass\r");
         cap.feed_output(20, b"Retype new password: ");
-        // retype 还没输 → 仍阻塞
         assert!(cap.is_awaiting_password(20));
-        // retype 与 new 一致 → 认证通过 → 放行（本会话无 host_id，DB 未写）
+        // retype 与 new 一致 → 流程走完（flow_verified），但无 host_id 未存库
+        // → 仍阻塞
         cap.feed_input(20, b"newpass\r");
         assert!(
-            !cap.is_awaiting_password(20),
-            "verified change must release shell-ready regardless of DB write"
+            cap.is_awaiting_password(20),
+            "flow completion without DB save must keep blocking shell-ready"
         );
     }
 
     /// 弱密码被 PAM 拒绝重来：retype 通过后又出现 New password: 提示 →
-    /// 已验证态作废、重新阻塞，直到最后一轮通过才放行
+    /// 已验证态作废、重新阻塞（第一轮已写库也不行——流程没走完），
+    /// 直到最后一轮走完才进入「等存库」态
     #[test]
     fn weak_password_retry_keeps_blocking_until_final_round() {
         let cap = PasswdInputLog::new();
@@ -512,17 +517,21 @@ mod tests {
         cap.feed_input(21, b"weak\r");
         cap.feed_output(21, b"Retype new password: ");
         cap.feed_input(21, b"weak\r");
-        // 第一轮通过（weak==weak）……
-        // ……但 PAM 拒绝并重新提示（BAD PASSWORD → New password:）
+        // PAM 拒绝并重新提示（BAD PASSWORD → New password:）
         cap.feed_output(21, b"BAD PASSWORD: it is too short\r\nNew password: ");
         assert!(
             cap.is_awaiting_password(21),
             "PAM-rejected round must re-block shell-ready"
         );
         cap.feed_input(21, b"str0ngpw\r");
+        // 重试轮的提示间隙（await 已消费、新 retype 提示未到）也必须阻塞
+        assert!(
+            cap.is_awaiting_password(21),
+            "gap inside retry round must keep blocking"
+        );
         cap.feed_output(21, b"Retype new password: ");
         cap.feed_input(21, b"str0ngpw\r");
-        // 最后一轮通过，且无后续提示 → 放行
-        assert!(!cap.is_awaiting_password(21));
+        // 最后一轮走完但仍未存库（无 host_id）→ 继续阻塞（等存库）
+        assert!(cap.is_awaiting_password(21));
     }
 }
