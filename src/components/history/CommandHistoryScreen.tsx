@@ -86,10 +86,10 @@ __veloterm_preexec() {
 __veloterm_wrap_ps1() {
   # 3. 稳妥包裹 PROMPT 与 PS1（防 p10k / oh-my-zsh 覆盖）
   if [[ "$PROMPT" != *"]133;A"* ]]; then
-    PROMPT=\$'%%{\\e]133;A\\a%%}'"\${PROMPT:-%n@%m %~ %# }"\$'%%{\\e]133;B\\a%%}'
+    PROMPT=\$'\\001\\e]133;A\\a\\002'"\${PROMPT:-%n@%m %~ %# }"\$'\\001\\e]133;B\\a\\002'
   fi
   if [[ "$PS1" != *"]133;A"* ]]; then
-    PS1=\$'%%{\\e]133;A\\a%%}'"\${PS1:-%n@%m %~ %# }"\$'%%{\\e]133;B\\a%%}'
+    PS1=\$'\\001\\e]133;A\\a\\002'"\${PS1:-%n@%m %~ %# }"\$'\\001\\e]133;B\\a\\002'
   fi
 }
 __veloterm_wrap_ps1
