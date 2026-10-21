@@ -37,6 +37,23 @@ vim 的运行文件树（syntax/ftplugin/doc 等）随包放安装根 `vim-runti
 「exe 同目录是否存在」探测（os_win32.c `s_dont_use_vimrun`），找不到即走
 直调 shell 路径，行为完整。
 
+staging 时（build-tools.mjs 的 vim 段）在随包树上再剔一轮杂项，合计约
+4.6MB，vendor 树保持上游形态不动：
+
+- `syntax/testdir`（11MB .dump 快照）与 `indent/testdir`——上游测试夹具
+- `tutor/`：vimtutor 脚本不随包分发，教程数据无消费方
+- `lang/`（菜单翻译）：恒为控制台 vim，menu.vim 经 `runtime!` 加载、
+  缺失时静默回退英文菜单
+- `tools/`（维护者脚本源码资产）与 `macros/`（legacy 演示宏）
+- 根目录 logo/desktop 素材（vimlogo.*、vim{16,32,48}x{16,32,48}.*、
+  *_png.h 仅 X11/GTK 编译期 include、MSVC 构建不参与）与 *.info 存根
+- `spell/` 顶层只留 *.spl/*.sug：locale 子目录（main.aap/.diff）是词表
+  构建资产，README/check*/fixdup 等为维护脚本
+
+功能性数据全保留：doc 帮助树、syntax/indent/ftplugin/autoload/plugin/
+colors/compiler/keymap/print、en 词表六件套（en.{ascii,latin1,utf-8}.{spl,sug}）。
+升级 vim 后如 runtime 布局变化需复核剔除清单（尤其根目录模式匹配）。
+
 ## 裁剪清单（相对上游 tarball）
 
 - `src/testdir/`（18M 测试套件；**仅保留 `Make_all.mak`**——Make_mvc.mak 第 699
@@ -51,7 +68,8 @@ vim 的运行文件树（syntax/ftplugin/doc 等）随包放安装根 `vim-runti
   `README.txt` 原样保留）
 
 其余全量保留（含 runtime/doc 帮助树、spell、tutor 与 `src/INSTALL/` ——
-其中 `INSTALLpc.txt` 是上游 Windows 构建方式的权威文档）。
+其中 `INSTALLpc.txt` 是上游 Windows 构建方式的权威文档；tutor 等仅 vendor
+保留，随包 staging 会再剔除，见「随包数据文件」节）。
 
 ### 必须保留（曾实踩丢失）
 

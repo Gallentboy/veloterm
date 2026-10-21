@@ -16,7 +16,7 @@
 // 未指定 target 时取 rustc 默认 host triple。
 
 import { execSync, execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, existsSync, rmSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { cpSync, mkdirSync, existsSync, rmSync, readFileSync, writeFileSync, copyFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -483,21 +483,57 @@ if (!only || only === 'vim') {
     }
   }
 
-  // runtime 数据树 staging：整目录拷贝后剔除上游测试夹具——
-  // syntax/testdir（11MB，2411 个 .dump 期望输出快照）与 indent/testdir（348K）
-  // 是 vim 上游跑测试的输入/基线，运行时零用途（此前整拷使 Windows 安装包
-  // 平白多出 11.4MB 无关文件）；doc/testing.txt 与 colortest/hitest.vim 等
-  // 保留（前者是用户文档，后者是可在 vim 里 :so 演示的实用脚本）
+  // runtime 数据树 staging：整目录拷贝后剔除运行期零用途的杂项（vendor 树保持
+  // 上游形态不动，剔除只作用于随包产物树），功能性数据全保留：doc/ 帮助树
+  // （:help 全文）、syntax/indent/ftplugin/autoload/plugin/colors/compiler/
+  // keymap/print、spell 顶层 en 词表六件套（en.{ascii,latin1,utf-8}.{spl,sug}）、
+  // doc/testing.txt 与 colortest/hitm.vim 等演示脚本。剔除项（合计约 4.6MB）：
+  // ① 测试夹具 syntax/testdir（11MB，2411 个 .dump 期望输出快照，此前整拷使
+  //    安装包平白多 11.4MB）与 indent/testdir（348K）——上游跑测试的输入/基线
+  // ② tutor/（1.8M，~20 语言教程数据）：vimtutor 脚本不随包分发，无消费方
+  // ③ lang/（1.2M，153 个 menu_*.vim 菜单翻译）：本形态恒为控制台 vim，
+  //    menu.vim 经 `runtime!` 加载、缺失时静默回退英文菜单（已核实保留脚本
+  //    对其无其它引用）
+  // ④ tools/（140K 维护者脚本：ccfilter.c/pltags.pl/demoserver.py 等源码资产）
+  //    与 macros/（164K 上游 legacy 演示宏 hanoi/urm/less 等）
+  // ⑤ 根目录 logo/desktop 素材与 *.info 存根（65K）：vimlogo.* 与
+  //    vim{16,32,48}x{16,32,48}.*、*_png.h 仅被 X11/GTK 源码编译期 include
+  //    （MSVC 构建不参与，GUI 图标走资源编译），vim.desktop 是 Linux 桌面集成
+  // ⑥ spell/ 顶层只留 *.spl/*.sug（剔除 1.2M）：README×2、main.aap、check*/
+  //    fixdup/cleanadd 等维护脚本，及 50+ locale 子目录（词表构建资产
+  //    main.aap/.diff——非 en 词表本就不在源码树，这些子目录仅指路下载）
   const rtSrc = join(vimSrc, 'runtime');
   const rtDest = join(outDir, 'vim-runtime');
   rmSync(rtDest, { recursive: true, force: true });
   cpSync(rtSrc, rtDest, { recursive: true });
-  const testFixtures = ['syntax/testdir', 'indent/testdir'];
-  for (const rel of testFixtures) {
+  const runtimeDirDrops = [
+    'syntax/testdir',
+    'indent/testdir',
+    'tutor',
+    'lang',
+    'tools',
+    'macros',
+  ];
+  for (const rel of runtimeDirDrops) {
     const target = join(rtDest, rel);
     if (existsSync(target)) {
       rmSync(target, { recursive: true, force: true });
-      console.log(`[build-tools] 剔除 vim 测试夹具: runtime/${rel}`);
+      console.log(`[build-tools] 剔除 vim runtime 杂项: ${rel}/`);
+    }
+  }
+  // 根目录散文件按模式剔除（模式匹配，升级后新增同类素材自动覆盖）
+  const rootJunk = /^vimlogo\.|^vim\d+x\d+\.|_png\.h$|\.info$|^vim\.desktop$/;
+  for (const ent of readdirSync(rtDest)) {
+    if (rootJunk.test(ent.name)) {
+      rmSync(join(rtDest, ent.name), { recursive: true, force: true });
+      console.log(`[build-tools] 剔除 vim runtime 杂项: ${ent.name}`);
+    }
+  }
+  // spell/：顶层只留词表本件（*.spl/*.sug），其余为维护脚本与词表构建资产
+  const spellDir = join(rtDest, 'spell');
+  for (const ent of readdirSync(spellDir, { withFileTypes: true })) {
+    if (!/\.(spl|sug)$/.test(ent.name)) {
+      rmSync(join(spellDir, ent.name), { recursive: true, force: true });
     }
   }
 
