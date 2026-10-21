@@ -132,13 +132,9 @@ pub struct PdfPageImage {
     pub height: u32,
 }
 
-/// 当前平台对应的 vendor 库文件名
+/// 开发期 vendor 目录里的库文件名（带架构后缀，仓库内区分多份产物）。
 #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-fn lib_file_name() -> &'static str {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    {
-        "libpdfium-arm64.dylib"
-    }
+fn vendor_lib_file_name() -> &'static str {
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
     {
         "libpdfium-x64.dylib"
@@ -160,6 +156,26 @@ fn lib_file_name() -> &'static str {
     }
 }
 
+/// 随包分发的标准库名（无架构后缀）。
+///
+/// 架构由安装包本身决定；源文件的 -arm64/-x64 只是仓库内区分手段。
+/// build.rs 的 prepare_pdfium_resource 按 target 拷对应库并重命名为这个名字。
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+fn packaged_lib_file_name() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "libpdfium.dylib"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "pdfium.dll"
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        "libpdfium.dylib"
+    }
+}
+
 /// 解析 PDFium 动态库的绝对路径。
 ///
 /// **debug / release 两种查找策略**：
@@ -175,12 +191,11 @@ fn lib_file_name() -> &'static str {
 /// 两条路径都保留 resource_dir 兜底（Tauri 资源映射位置可能随配置变化）。
 #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
 fn resolve_pdfium_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let name = lib_file_name();
-
-    // ── debug：固定用源码树 vendor 目录 ──
+    // ── debug：固定用源码树 vendor 目录（带架构后缀的原名） ──
     #[cfg(debug_assertions)]
     {
         let _ = app; // debug 分支不需要 AppHandle
+        let name = vendor_lib_file_name();
         let dev_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("vendor")
             .join("pdfium")
@@ -196,9 +211,10 @@ fn resolve_pdfium_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         };
     }
 
-    // ── release：按平台标准路径查找 ──
+    // ── release：按平台标准路径查找（随包文件用标准名，见 build.rs） ──
     #[cfg(not(debug_assertions))]
     {
+        let name = packaged_lib_file_name();
         use tauri::Manager;
         let mut tried: Vec<PathBuf> = Vec::new();
 
@@ -424,12 +440,21 @@ fn short_hash(input: &str) -> String {
 mod tests {
     use super::*;
 
-    /// 动态加载平台的库文件名（静态链接的 mac arm64 没有这个函数）
+    /// 库文件名：开发期带架构后缀，随包用标准名（静态链接的 mac arm64 无此函数）
     #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     #[test]
-    fn lib_file_name_is_platform_specific() {
-        let name = lib_file_name();
-        assert!(name.ends_with(".dylib") || name.ends_with(".dll"), "got {name}");
+    fn lib_file_names_are_correct() {
+        let vendor = vendor_lib_file_name();
+        assert!(
+            vendor.ends_with(".dylib") || vendor.ends_with(".dll"),
+            "vendor name: {vendor}"
+        );
+        // 随包名必须是标准名（不带架构后缀）：架构由安装包本身决定
+        let packaged = packaged_lib_file_name();
+        assert!(
+            packaged == "libpdfium.dylib" || packaged == "pdfium.dll",
+            "packaged name must be the standard library name, got {packaged}"
+        );
     }
 
     #[test]
