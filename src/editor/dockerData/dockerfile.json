@@ -1,0 +1,305 @@
+{
+  "parserDirectives": [
+    {
+      "insert": "# syntax=docker/dockerfile:1",
+      "summary": "启用 BuildKit 最新稳定版 Dockerfile 语法（--mount / --link / heredoc 等能力需要它）"
+    },
+    {
+      "insert": "# escape=`",
+      "summary": "设置行续接与转义字符（默认 \\，Windows 路径场景常用反引号）"
+    }
+  ],
+  "predefinedArgs": [
+    {
+      "name": "TARGETPLATFORM",
+      "summary": "目标平台，如 linux/amd64、linux/arm64。FROM 行内直接可用；其他位置需先 ARG 声明"
+    },
+    {
+      "name": "TARGETOS",
+      "summary": "目标操作系统（linux / windows）。FROM 行内直接可用；其他位置需先 ARG 声明"
+    },
+    {
+      "name": "TARGETARCH",
+      "summary": "目标 CPU 架构（amd64 / arm64 …）。FROM 行内直接可用；其他位置需先 ARG 声明"
+    },
+    {
+      "name": "TARGETVARIANT",
+      "summary": "目标架构变体（如 arm 的 v7）。FROM 行内直接可用；其他位置需先 ARG 声明"
+    },
+    {
+      "name": "BUILDPLATFORM",
+      "summary": "执行构建的平台。FROM 行内直接可用；其他位置需先 ARG 声明"
+    },
+    {
+      "name": "BUILDOS",
+      "summary": "执行构建的操作系统。FROM 行内直接可用；其他位置需先 ARG 声明"
+    },
+    {
+      "name": "BUILDARCH",
+      "summary": "执行构建的 CPU 架构。FROM 行内直接可用；其他位置需先 ARG 声明"
+    }
+  ],
+  "proxyVars": [
+    {
+      "name": "HTTP_PROXY",
+      "summary": "构建期默认可用的代理变量（RUN 内自动生效，无需 ARG 声明；小写变体等价）"
+    },
+    {
+      "name": "HTTPS_PROXY",
+      "summary": "构建期默认可用的代理变量（RUN 内自动生效，无需 ARG 声明；小写变体等价）"
+    },
+    {
+      "name": "FTP_PROXY",
+      "summary": "构建期默认可用的代理变量（RUN 内自动生效，无需 ARG 声明；小写变体等价）"
+    },
+    {
+      "name": "NO_PROXY",
+      "summary": "代理排除列表（构建期默认可用，无需 ARG 声明；小写变体等价）"
+    },
+    {
+      "name": "ALL_PROXY",
+      "summary": "构建期默认可用的代理变量（RUN 内自动生效，无需 ARG 声明；小写变体等价）"
+    }
+  ],
+  "instructions": [
+    {
+      "name": "FROM",
+      "summary": "指定基础镜像并可选声明构建阶段（FROM <image> [AS <stage>]）；必须是第一条有效指令",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#from",
+      "snippet": "FROM ${1:image} AS ${2:stage}",
+      "stageDecl": true,
+      "varExpansion": true,
+      "flags": [
+        {
+          "name": "--platform",
+          "summary": "限定拉取的目标平台（如 linux/amd64），配合 TARGET* 预定义 ARG 使用",
+          "valueHint": "linux/amd64"
+        },
+        {
+          "name": "--tag",
+          "summary": "为本次构建产出的镜像指定 tag（BuildKit）",
+          "valueHint": "<image:tag>"
+        }
+      ]
+    },
+    {
+      "name": "RUN",
+      "summary": "执行命令并把结果记录到镜像层；每条 RUN 一层，建议用 && 合并命令以减小层数",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#run",
+      "snippet": "RUN ${1:command}",
+      "varExpansion": true,
+      "flags": [
+        {
+          "name": "--mount",
+          "summary": "构建期挂载（缓存目录 / 构建上下文 / SSH 密钥 / 机密），不写入镜像层",
+          "values": ["type=cache", "type=bind", "type=secret", "type=ssh", "type=tmpfs"]
+        },
+        {
+          "name": "--network",
+          "summary": "RUN 执行期间的网络模式",
+          "values": ["default", "none", "host"]
+        },
+        {
+          "name": "--security",
+          "summary": "安全模式（experimental，syntax 1.6+）",
+          "values": ["sandbox", "insecure"]
+        }
+      ]
+    },
+    {
+      "name": "CMD",
+      "summary": "容器默认启动命令，被 docker run 参数覆盖；与 ENTRYPOINT 搭配时提供默认参数",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#cmd",
+      "snippet": "CMD [\"${1:executable}\", \"${2:arg}\"]"
+    },
+    {
+      "name": "LABEL",
+      "summary": "为镜像添加元数据键值对（docker inspect 可见）",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#label",
+      "snippet": "LABEL ${1:key}=\"${2:value}\"",
+      "varExpansion": true
+    },
+    {
+      "name": "MAINTAINER",
+      "summary": "已废弃：改用 LABEL maintainer=\"...\"",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#maintainer-deprecated",
+      "deprecated": true
+    },
+    {
+      "name": "EXPOSE",
+      "summary": "声明容器运行时监听的端口（文档性质，不实际发布端口；发布需 -p / compose ports）",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#expose",
+      "snippet": "EXPOSE ${1:80}",
+      "varExpansion": true
+    },
+    {
+      "name": "ENV",
+      "summary": "设置环境变量，构建期与运行期均生效（推荐 key=value 形式）",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#env",
+      "snippet": "ENV ${1:key}=${2:value}",
+      "definesVar": "env",
+      "varExpansion": true
+    },
+    {
+      "name": "ADD",
+      "summary": "复制本地/远程文件进镜像；比 COPY 多 URL 拉取与压缩包自动解压能力，普通文件优先用 COPY",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#add",
+      "snippet": "ADD ${1:src} ${2:dest}",
+      "varExpansion": true,
+      "flags": [
+        {
+          "name": "--checksum",
+          "summary": "校验远程 URL 资源的摘要",
+          "valueHint": "sha256:..."
+        },
+        {
+          "name": "--chmod",
+          "summary": "设置目标文件权限",
+          "valueHint": "0644"
+        },
+        {
+          "name": "--chown",
+          "summary": "设置目标文件属主/属组",
+          "valueHint": "user:group"
+        },
+        {
+          "name": "--keep-git-dir",
+          "summary": "ADD git 远程上下文时保留 .git 目录"
+        },
+        {
+          "name": "--link",
+          "summary": "写入独立层以提升跨阶段缓存复用"
+        },
+        {
+          "name": "--exclude",
+          "summary": "排除匹配的路径（syntax 1.7+）",
+          "valueHint": "<pattern>"
+        }
+      ]
+    },
+    {
+      "name": "COPY",
+      "summary": "从构建上下文（或 --from 指定的阶段/镜像）复制文件到镜像",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#copy",
+      "snippet": "COPY ${1:src} ${2:dest}",
+      "varExpansion": true,
+      "flags": [
+        {
+          "name": "--from",
+          "summary": "从指定构建阶段或镜像复制（而非构建上下文）",
+          "valueHint": "<stage>|<image>",
+          "stageRef": true
+        },
+        {
+          "name": "--chmod",
+          "summary": "设置目标文件权限",
+          "valueHint": "0644"
+        },
+        {
+          "name": "--chown",
+          "summary": "设置目标文件属主/属组",
+          "valueHint": "user:group"
+        },
+        {
+          "name": "--link",
+          "summary": "写入独立层以提升跨阶段缓存复用"
+        },
+        {
+          "name": "--parents",
+          "summary": "保留源路径的目录前缀（syntax 1.7+）"
+        },
+        {
+          "name": "--exclude",
+          "summary": "排除匹配的路径（syntax 1.7+）",
+          "valueHint": "<pattern>"
+        }
+      ]
+    },
+    {
+      "name": "ENTRYPOINT",
+      "summary": "容器固定入口命令；docker run 的参数会作为它的附加参数",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#entrypoint",
+      "snippet": "ENTRYPOINT [\"${1:executable}\"]"
+    },
+    {
+      "name": "VOLUME",
+      "summary": "声明匿名卷挂载点（运行期由 -v 覆盖；推荐在 compose 中显式命名管理）",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#volume",
+      "snippet": "VOLUME [\"${1:/data}\"]",
+      "varExpansion": true
+    },
+    {
+      "name": "USER",
+      "summary": "设置后续 RUN / CMD / ENTRYPOINT 的运行用户（UID:GID 或用户名）",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#user",
+      "snippet": "USER ${1:user}[:${2:group}]",
+      "varExpansion": true
+    },
+    {
+      "name": "WORKDIR",
+      "summary": "设置后续指令的工作目录（不存在则自动创建；建议绝对路径）",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#workdir",
+      "snippet": "WORKDIR ${1:/app}",
+      "varExpansion": true
+    },
+    {
+      "name": "ARG",
+      "summary": "定义构建期变量（docker build --build-arg 传入；仅声明之后的指令可用）",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#arg",
+      "snippet": "ARG ${1:name}=${2:default}",
+      "definesVar": "arg"
+    },
+    {
+      "name": "ONBUILD",
+      "summary": "以当前镜像为基础镜像再次构建时触发的指令（本镜像构建时不执行）",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#onbuild",
+      "snippet": "ONBUILD ${1:instruction}"
+    },
+    {
+      "name": "STOPSIGNAL",
+      "summary": "设置停止容器的系统信号（SIGTERM / SIGKILL 或信号编号）",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#stopsignal",
+      "snippet": "STOPSIGNAL ${1:SIGTERM}",
+      "varExpansion": true
+    },
+    {
+      "name": "HEALTHCHECK",
+      "summary": "容器健康检查：CMD 后接检查命令，NONE 表示禁用从基础镜像继承的检查",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#healthcheck",
+      "snippet": "HEALTHCHECK --interval=${1:30s} --timeout=${2:3s} --retries=${3:3} CMD ${4:curl -f http://localhost/ || exit 1}",
+      "flags": [
+        {
+          "name": "--interval",
+          "summary": "检查间隔（默认 30s）",
+          "valueHint": "30s"
+        },
+        {
+          "name": "--timeout",
+          "summary": "单次检查超时（默认 30s）",
+          "valueHint": "3s"
+        },
+        {
+          "name": "--start-period",
+          "summary": "启动宽限期，期间失败不计入 retries（默认 0s）",
+          "valueHint": "0s"
+        },
+        {
+          "name": "--start-interval",
+          "summary": "启动期间的检查间隔（默认 5s）",
+          "valueHint": "5s"
+        },
+        {
+          "name": "--retries",
+          "summary": "连续失败多少次判定 unhealthy（默认 3）",
+          "valueHint": "3"
+        }
+      ]
+    },
+    {
+      "name": "SHELL",
+      "summary": "设置 RUN / CMD / ENTRYPOINT 使用的默认 shell（Linux 默认 [\"/bin/sh\", \"-c\"]）",
+      "docUrl": "https://docs.docker.com/reference/dockerfile/#shell",
+      "snippet": "SHELL [\"${1:/bin/sh}\", \"-c\"]"
+    }
+  ]
+}

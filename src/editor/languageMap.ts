@@ -46,6 +46,8 @@ const EXT_LANGUAGE_MAP: Record<string, string> = {
   txt: 'plaintext',
   log: 'plaintext',
   csv: 'plaintext',
+  // *.dockerfile（Dockerfile 精确名与 Dockerfile.dev 基名剥离已覆盖）
+  dockerfile: 'dockerfile',
 };
 
 /** 无后缀的常见文本文件名 → language id */

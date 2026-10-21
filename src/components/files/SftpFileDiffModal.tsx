@@ -15,7 +15,7 @@ import { loadRemoteContent } from '@/editor/contentLoader';
 import { resolveLanguageIdWithContent } from '@/editor/languageMap';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme } from '@/editor/monacoTheme';
-import { ensureNginxLanguage } from '@/editor/nginxLanguage';
+import { ensureExtendedLanguages } from '@/editor/languages';
 import { ensureBashCompletion, registerBashHostModel } from '@/editor/bashLanguage';
 
 export interface SftpDiffFileTarget {
@@ -124,7 +124,7 @@ export const SftpFileDiffModal = memo(function SftpFileDiffModal({
 
     initMonacoTheme();
     setupMonacoEnvironment();
-    ensureNginxLanguage(monaco);
+    ensureExtendedLanguages(monaco);
     ensureBashCompletion(monaco);
 
     const diffEditor = monaco.editor.createDiffEditor(container, {
