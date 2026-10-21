@@ -22,13 +22,102 @@
 //! 查找顺序：Tauri resource_dir（打包后）→ 可执行文件同级 → 编译期 vendor 路径
 //! （开发期直接跑 target/debug/app 时命中）。任一路径存在即可。
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 use pdfium_render::prelude::*;
 
 /// 渲染宽度（px）。1600 宽在 2x 屏上约等于 A4 的 200 DPI，正文与图表都清晰；
 /// 再高会显著增加 PNG 体积与编码时间，对阅读无实质收益。
 const RENDER_TARGET_WIDTH: i32 = 1600;
+
+// ===== 临时文件生命周期 =====
+//
+// PDF 预览会产生两类临时文件：下载的源 PDF 与渲染出的 PNG。两者都登记在
+// 全局集合里，由前端显式释放（关闭预览时调 `release_pdf_temp_files`）或
+// 进程退出时兜底清理。不依赖「打开新文档时删旧的」——同时打开多个预览
+// 会互相删对方的文件。
+
+/// 本进程创建的 PDF 相关临时文件（绝对路径）。渲染与下载都登记到这里，
+/// 供 release / 退出时统一删除。
+static PDF_TEMP_FILES: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// 登记一个临时文件（后续由 release / 退出清理）
+fn register_temp_file(path: &Path) {
+    if let Ok(mut set) = PDF_TEMP_FILES.lock() {
+        set.insert(path.to_path_buf());
+    }
+}
+
+/// 删除单个临时文件并移出登记表（文件已不存在也视为成功）
+fn remove_temp_file(path: &Path) {
+    if let Ok(mut set) = PDF_TEMP_FILES.lock() {
+        set.remove(path);
+    }
+    if let Err(e) = std::fs::remove_file(path)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        log::warn!("[PDF] 删除临时文件失败（{}）: {e}", path.display());
+    }
+}
+
+/// 释放一批临时文件（前端关闭预览时调用）。
+///
+/// `paths` 为空时清理本进程登记的全部 PDF 临时文件（应用退出兜底）。
+/// 只删除登记过的路径——防止前端传入任意路径导致误删用户文件。
+#[tauri::command]
+pub fn release_pdf_temp_files(paths: Vec<String>) {
+    let registered: Vec<PathBuf> = match PDF_TEMP_FILES.lock() {
+        Ok(set) => set.iter().cloned().collect(),
+        Err(_) => return,
+    };
+    if paths.is_empty() {
+        for path in registered {
+            remove_temp_file(&path);
+        }
+        return;
+    }
+    let wanted: HashSet<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+    for path in registered {
+        if wanted.contains(&path) {
+            remove_temp_file(&path);
+        }
+    }
+}
+
+/// 进程退出兜底清理（由 lib.rs 的退出钩子调用）。
+pub fn cleanup_all_temp_files() {
+    let registered: Vec<PathBuf> = match PDF_TEMP_FILES.lock() {
+        Ok(set) => set.iter().cloned().collect(),
+        Err(_) => return,
+    };
+    if registered.is_empty() {
+        return;
+    }
+    log::info!("[PDF] 退出清理 {} 个临时文件", registered.len());
+    for path in registered {
+        remove_temp_file(&path);
+    }
+}
+
+/// 生成下载用的本地临时路径并登记（前端下载远端 PDF 时调用）。
+///
+/// 只负责分配路径与登记，实际下载由既有的 `sftp_download_file` 完成
+/// （它已有进度 Channel、取消、续传）。
+#[tauri::command]
+pub fn pdf_temp_path(file_name: String) -> Result<String, String> {
+    // 只取文件名部分，防止前端传入带目录分隔符的路径逃逸出临时目录
+    let safe_name = Path::new(&file_name)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "无效的文件名".to_string())?;
+    let path = std::env::temp_dir().join(format!("veloterm_pdf_src_{safe_name}"));
+    register_temp_file(&path);
+    Ok(path.to_string_lossy().into_owned())
+}
 
 /// 单页渲染结果
 #[derive(Debug, serde::Serialize)]
@@ -224,6 +313,8 @@ fn render_blocking(
         image
             .save_with_format(&out_path, image::ImageFormat::Png)
             .map_err(|e| format!("保存 PNG 失败（{}）: {e}", out_path.display()))?;
+        // 登记：前端关闭预览时调 release_pdf_temp_files 删除
+        register_temp_file(&out_path);
 
         log::debug!(
             "[PDF] rendered {} page {} -> {} ({}x{})",

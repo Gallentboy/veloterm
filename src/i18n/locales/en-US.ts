@@ -415,6 +415,7 @@ export default {
     // written straight into the xterm buffer by TerminalSession (hardcoded there)
   },
   pdf: {
+    downloading: 'Downloading PDF… {{percent}}% {{size}}',
     loading: 'Loading…',
     pageIndicator: 'Page {{current}} / {{total}}',
     prevPage: 'Previous',
