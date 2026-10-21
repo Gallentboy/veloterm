@@ -27,6 +27,10 @@ const EXT_LANGUAGE_MAP: Record<string, string> = {
   sh: 'shell',
   bash: 'shell',
   zsh: 'shell',
+  // Windows Batch（自建 batch 语言：Monarch + 补全 + goto 标签跳转，
+  // 见 editor/batchLanguage.ts）
+  bat: 'batch',
+  cmd: 'batch',
   sql: 'sql',
   json: 'json',
   yaml: 'yaml',
