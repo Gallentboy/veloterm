@@ -1863,6 +1863,7 @@ export function SftpSessionView({
         <Suspense fallback={null}>
           <SftpFilePreviewModal
             hostId={hostId}
+            sessionId={sessionId}
             fileName={preview.name}
             remotePath={preview.path}
             onClose={() => setPreview(null)}

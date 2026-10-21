@@ -1,8 +1,9 @@
 import { AlertCircle, Eye, Loader2, Pencil, PencilOff, Save, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as monaco from 'monaco-editor';
 import { Button } from '@/components/ui/button';
+import { PdfRemotePreview } from '@/components/files/PdfRemotePreview';
 import { loadRemoteContent, loadRemoteContentSudo, saveRemoteContent, saveRemoteContentSudo } from '@/editor/contentLoader';
 import { resolveLanguageId } from '@/editor/languageMap';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
@@ -23,6 +24,8 @@ import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 
 interface SftpFilePreviewModalProps {
   hostId: number;
+  /** SFTP 会话 id（PDF 分支下载远端文件用；未传时 PDF 预览不可用） */
+  sessionId?: string;
   fileName: string;
   remotePath: string;
   onClose: () => void;
@@ -60,8 +63,11 @@ const PREVIEW_EDITOR_OPTIONS = {
 } as const;
 
 export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
-  const { hostId, fileName, remotePath, onClose, onSaved } = props;
+  const { hostId, sessionId, fileName, remotePath, onClose, onSaved } = props;
   const { t } = useTranslation();
+
+  /** PDF 文件走独立渲染分支（不加载 Monaco） */
+  const isPdf = /\.pdf$/i.test(fileName);
 
   /** 远端内容基线：加载时初始化、保存成功后推进（编辑器内容不回写此状态） */
   const [baseline, setBaseline] = useState<string | null>(null);
@@ -99,6 +105,8 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
 
   /* —— 内容加载（打开时一次） —— */
   useEffect(() => {
+    // PDF 走独立渲染分支（PdfRemotePreview），不加载 Monaco 文本内容
+    if (isPdf) return;
     let cancelled = false;
     (async () => {
       try {
@@ -117,7 +125,7 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [hostId, remotePath]);
+  }, [hostId, remotePath, isPdf]);
 
   /* —— sudo 前缀码 → i18n 文案（REMOTE: 原样透出服务器输出尾部） —— */
   const mapSudoError = useCallback(
@@ -352,7 +360,7 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            {!editing ? (
+            {isPdf ? null : !editing ? (
               <Button type="button" size="sm" variant="ghost" onClick={switchToEdit}>
                 <Pencil className="size-3" />
                 <span>{t('common.edit')}</span>
@@ -397,13 +405,23 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
         </div>
 
         <div className="relative min-h-0 flex-1">
-          <div ref={containerRef} className="h-full w-full" />
-          {baseline === null && !loadError ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-popover">
-              <Loader2 className="size-5 animate-spin text-foreground-subtle" />
-            </div>
-          ) : null}
-          {loadError ? (
+          {isPdf && sessionId ? (
+            // PDF：后端 PDFium 渲染成图，不走 Monaco（下载 → 渲染 → 翻页全链路
+            // 自带进度与 Loading 反馈，见 PdfRemotePreview）
+            <Suspense fallback={null}>
+              <PdfRemotePreview sessionId={sessionId} remotePath={remotePath} />
+            </Suspense>
+          ) : (
+            <>
+              <div ref={containerRef} className="h-full w-full" />
+              {baseline === null && !loadError ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-popover">
+                  <Loader2 className="size-5 animate-spin text-foreground-subtle" />
+                </div>
+              ) : null}
+            </>
+          )}
+          {!isPdf && loadError ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-popover px-6 text-center">
               <AlertCircle className="size-6 text-warning" />
               <p className="max-w-full break-all text-ui-sm text-foreground-subtle">{loadError}</p>

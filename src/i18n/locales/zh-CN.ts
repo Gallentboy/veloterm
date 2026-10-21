@@ -415,6 +415,7 @@ export default {
     // xterm 终端缓冲（文案硬编码在组件内，与终端输出同生命周周期）
   },
   pdf: {
+    downloading: '正在下载 PDF… {{percent}}% {{size}}',
     loading: '加载中…',
     pageIndicator: '第 {{current}} / {{total}} 页',
     prevPage: '上一页',

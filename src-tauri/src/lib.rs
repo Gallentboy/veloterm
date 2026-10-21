@@ -96,6 +96,8 @@ pub fn run() {
             host_password_history::host_password_history_list,
             host_password_history::host_password_history_clear,
             pdf::render_pdf_page,
+            pdf::pdf_temp_path,
+            pdf::release_pdf_temp_files,
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,
             zk_hosts::zk_host_delete,
@@ -253,6 +255,10 @@ pub fn run() {
         // 兜底落库：macOS ⌘Q / 应用菜单退出等路径不经过窗口 CloseRequested
         if let tauri::RunEvent::ExitRequested { .. } = event {
             window_state::persist_from_handle(app_handle);
+            // PDF 预览的临时文件（下载的源文件 + 渲染的 PNG）兜底清理：
+            // 前端正常关闭预览时会主动调 release_pdf_temp_files，
+            // 这里覆盖崩溃/强退等未走前端的路径
+            pdf::cleanup_all_temp_files();
         }
     });
 }
