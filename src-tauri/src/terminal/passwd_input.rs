@@ -77,6 +77,13 @@ struct SessionState {
     /// shell-ready 判断用它兜底：进过流程就必须等 `await_kind` 归 None 且
     /// 出现明确结束标志（written 置位或收到 shell 提示符）才放行。
     saw_passwd_flow: bool,
+    /// 改密链已被服务端接受（retype 轮 new==retype 且非空——PAM 只在两次
+    /// 一致时才返回 SUCCESS 的协议不变量）。这是「认证通过」的判据，也是
+    /// shell-ready 的**唯一放行条件**——与是否回写数据库无关：无 host_id
+    /// 的临时主机、密钥认证主机、DB 写失败等场景照样放行（改密链已被
+    /// 接受，用户即将进入 shell，就绪钩子应当执行）。后续若再出现改密
+    /// 提示（弱密码被 PAM 拒绝重来）则回置 false，直到最后一轮通过。
+    flow_verified: bool,
 }
 
 /// 全局注册表：terminal_id → 状态
@@ -170,22 +177,48 @@ impl PasswdInputLog {
                     || text.contains("当前的密码")
             }
         };
+        // 密码过期强制改密的**前置警告**：这段文本先于 `(current) UNIX
+        // password:` 到达（sshd 的 do_pwchange 先打 WARNING，PAM 随后才出
+        // 提示词；两者常分属不同输出块）。若只认提示词，警告块到达时
+        // is_awaiting_password 仍为 false → ShellReady 立刻发射 → 就绪钩子
+        // 在用户刚开始输密码时把钩子命令敲进去（实测：改密必失败）。
+        // 故警告一出现就置 saw_passwd_flow，提前压住 shell-ready。
+        let matched_expiry_warning = {
+            text.contains("password has expired")
+                || text.contains("must change your password")
+                || text.contains("you are required to change")
+                || text.contains("password expired")
+                || text.contains("密码已过期")
+                || text.contains("密码已经过期")
+                || text.contains("必须更改密码")
+                || text.contains("必须修改密码")
+                || text.contains("需要更改密码")
+        };
 
         if matched_retype {
             sc.await_kind = Some(Await::Retype);
             sc.saw_passwd_flow = true;
+            // 新一轮提示开始：上一轮的「已验证」作废（弱密码被拒重来的循环）
+            sc.flow_verified = false;
             sc.buf.clear();
             sc.scan.clear();
         } else if matched_new {
             sc.await_kind = Some(Await::New);
             sc.saw_passwd_flow = true;
+            sc.flow_verified = false;
             sc.buf.clear();
             sc.scan.clear();
         } else if matched_current {
             sc.await_kind = Some(Await::Current);
             sc.saw_passwd_flow = true;
+            sc.flow_verified = false;
             sc.buf.clear();
             sc.scan.clear();
+        } else if matched_expiry_warning {
+            // 过期警告：此时还没有提示词，不能设 await_kind（否则下一行用户
+            // 输入会被当成密码记错轮次）。只置流程标志，让 shell-ready 继续
+            // 等待——真正的提示词随后到达会正常进入捕获态。
+            sc.saw_passwd_flow = true;
         }
         // 保留已匹配的提示词原文供语言检测（在 clear 之前拷贝）
         if sc.await_kind.is_some() && !text.is_empty() {
@@ -218,7 +251,8 @@ impl PasswdInputLog {
                         }
                         Some(Await::Retype) => {
                             sc.new_entries.push(line.clone());
-                            // Retype 提交即判定：new==retype 且非空 → 回写
+                            // Retype 提交即判定：new==retype 且非空 → 认证通过
+                            // （协议判据，与 DB 回写无关——见 flow_verified）。
                             // （get 而非索引：仓库 deny indexing_slicing）
                             let n = sc.new_entries.len();
                             if n >= 2
@@ -226,6 +260,7 @@ impl PasswdInputLog {
                                 && *prev == line
                                 && !line.is_empty()
                             {
+                                sc.flow_verified = true;
                                 self.try_write_password(terminal_id, sc, &line);
                             }
                         }
@@ -299,21 +334,27 @@ impl PasswdInputLog {
         self.sessions.lock().unwrap().remove(&terminal_id);
     }
 
-    /// 该会话是否处于「改密流程未完成」状态（用于推迟 shell-ready）。
+    /// 该会话是否处于「认证尚未通过」状态（用于推迟 shell-ready）。
     ///
-    /// 密码过期时服务器的首个输出就是 `(current) UNIX password:` 提示，
-    /// 此时若立刻发 ShellReady，就绪钩子会把命令当成密码敲进去。
+    /// 密码过期强制改密时，服务器的首个输出是过期警告/`(current) UNIX
+    /// password:` 提示，此时若发 ShellReady，就绪钩子会把钩子命令当成密码
+    /// 敲进去（实测：改密必失败）。
     ///
-    /// 判定不是简单的「此刻在等输入」——改密流程中两轮提示之间
-    /// `await_kind` 会短暂为 None（提示词已清、下一提示未到），只看瞬时态
-    /// 会误放行。故用「进过改密流程 且 尚未成功回写」作为未完成判据。
+    /// 判定不是简单的「此刻在等输入」——改密流程中两轮提示之间 `await_kind`
+    /// 会短暂为 None（提示词已清、下一提示未到），只看瞬时态会误放行。故用
+    /// 「进过改密流程 且 尚未认证通过」作为未完成判据。
+    ///
+    /// **放行条件是认证通过（`flow_verified`，改密链被服务端接受），与是否
+    /// 回写数据库无关**——无 host_id 的临时主机、密钥认证主机、DB 写失败
+    /// 等场景照样放行（改密已成功，用户即将进入 shell）。
     ///
     /// **不做超时兜底**：改密失败（用户连续输错）时服务器不会进 shell，
     /// 永远不发 ShellReady 正是正确行为——用户本来就到不了 shell。
     pub fn is_awaiting_password(&self, terminal_id: usize) -> bool {
         let map = self.sessions.lock().unwrap();
-        map.get(&terminal_id)
-            .is_some_and(|sc| sc.await_kind.is_some() || (sc.saw_passwd_flow && !sc.written))
+        map.get(&terminal_id).is_some_and(|sc| {
+            sc.await_kind.is_some() || (sc.saw_passwd_flow && !sc.flow_verified)
+        })
     }
 }
 
@@ -414,19 +455,74 @@ mod tests {
         );
     }
 
-    /// 改密成功后放行 shell-ready
+    /// 密码过期强制改密：sshd 的过期警告先于 passwd 提示词到达（常分属
+    /// 不同输出块）。警告块本身不含任何密码提示词，若只认提示词，
+    /// is_awaiting_password 在警告块时为 false → ShellReady 提前发射 →
+    /// 就绪钩子在用户刚开始输密码时把钩子命令敲进去（实测改密必失败）。
+    /// 警告一出现就必须置 saw_passwd_flow 压住 shell-ready。
     #[test]
-    fn shell_ready_released_after_successful_change() {
+    fn expiry_warning_blocks_shell_ready_before_prompt_arrives() {
         let cap = PasswdInputLog::new();
-        // host_id 为空 → try_write_password 提前返回、written 不置位，
-        // 因此这里只验证「未回写时仍阻塞」；成功路径需真实 DB，见集成测试
+        // 第一块：过期警告（sshd do_pwchange 先打 WARNING，提示词还在后块）
+        cap.feed_output(
+            50,
+            b"WARNING: Your password has expired.\r\nYou must change your password now and login again!\r\n",
+        );
+        assert!(
+            cap.is_awaiting_password(50),
+            "expiry warning alone must suppress shell-ready before the prompt arrives"
+        );
+        // 第二块：passwd 真正的提示词到达，进入捕获态，继续阻塞
+        cap.feed_output(50, b"Changing password for user test.\r\n(current) UNIX password: ");
+        assert!(cap.is_awaiting_password(50));
+        // 用户输完 current 轮，间隙仍阻塞（同 shell_ready_blocked_during_passwd_flow）
+        cap.feed_input(50, b"oldpw\r");
+        assert!(cap.is_awaiting_password(50));
+    }
+
+    /// 认证通过（retype 轮 new==retype 且非空）即放行 shell-ready——
+    /// **与是否回写数据库无关**（无 host_id 临时主机、密钥认证主机、
+    /// DB 写失败等场景照样放行）
+    #[test]
+    fn shell_ready_released_once_change_verified() {
+        let cap = PasswdInputLog::new();
         cap.feed_output(20, b"Current password: ");
         cap.feed_input(20, b"old\r");
         cap.feed_output(20, b"New password: ");
         cap.feed_input(20, b"newpass\r");
         cap.feed_output(20, b"Retype new password: ");
-        cap.feed_input(20, b"newpass\r");
-        // 无 host_id：密码一致但无法回写，written 仍为 false → 仍阻塞
+        // retype 还没输 → 仍阻塞
         assert!(cap.is_awaiting_password(20));
+        // retype 与 new 一致 → 认证通过 → 放行（本会话无 host_id，DB 未写）
+        cap.feed_input(20, b"newpass\r");
+        assert!(
+            !cap.is_awaiting_password(20),
+            "verified change must release shell-ready regardless of DB write"
+        );
+    }
+
+    /// 弱密码被 PAM 拒绝重来：retype 通过后又出现 New password: 提示 →
+    /// 已验证态作废、重新阻塞，直到最后一轮通过才放行
+    #[test]
+    fn weak_password_retry_keeps_blocking_until_final_round() {
+        let cap = PasswdInputLog::new();
+        cap.feed_output(21, b"Current password: ");
+        cap.feed_input(21, b"old\r");
+        cap.feed_output(21, b"New password: ");
+        cap.feed_input(21, b"weak\r");
+        cap.feed_output(21, b"Retype new password: ");
+        cap.feed_input(21, b"weak\r");
+        // 第一轮通过（weak==weak）……
+        // ……但 PAM 拒绝并重新提示（BAD PASSWORD → New password:）
+        cap.feed_output(21, b"BAD PASSWORD: it is too short\r\nNew password: ");
+        assert!(
+            cap.is_awaiting_password(21),
+            "PAM-rejected round must re-block shell-ready"
+        );
+        cap.feed_input(21, b"str0ngpw\r");
+        cap.feed_output(21, b"Retype new password: ");
+        cap.feed_input(21, b"str0ngpw\r");
+        // 最后一轮通过，且无后续提示 → 放行
+        assert!(!cap.is_awaiting_password(21));
     }
 }
