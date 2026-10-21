@@ -20,6 +20,7 @@ import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { ensureExtendedLanguages } from '@/editor/languages';
 import { ensureBashCompletion, registerBashHostModel } from '@/editor/bashLanguage';
+import { attachHtmlAutoInsert } from '@/editor/htmlAutoInsert';
 import { cn } from '@/lib/utils';
 
 /**
@@ -324,6 +325,8 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       saveRef.current();
     });
+    // HTML 键入辅助（编辑态可用；只读时无键入不触发）
+    attachHtmlAutoInsert(editor);
     const listener = model.onDidChangeContent(() => {
       setDirty(model.getValue() !== baselineRef.current);
       setPendingDiscard(null);
