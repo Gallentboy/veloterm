@@ -431,10 +431,10 @@ impl LocalPtySession {
                     match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            if let Some(slice) = buf.get(..n) {
-                                if batch_tx.send(slice.to_vec()).is_err() {
-                                    break;
-                                }
+                            if let Some(slice) = buf.get(..n)
+                                && batch_tx.send(slice.to_vec()).is_err()
+                            {
+                                break;
                             }
                         }
                         Err(_) => break,

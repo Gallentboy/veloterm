@@ -30,7 +30,12 @@ impl std::io::Read for ReplayReader {
             return Ok(0);
         }
         let n = remaining.min(buf.len());
-        buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+        if let (Some(dst), Some(src)) = (
+            buf.get_mut(..n),
+            self.data.get(self.pos..self.pos + n),
+        ) {
+            dst.copy_from_slice(src);
+        }
         self.pos += n;
         Ok(n)
     }
@@ -69,7 +74,7 @@ fn engine_emits_sz_entry_header_matching_detector() {
             crate::terminal::zmodem::Detection::Sz { .. }
         ),
         "engine ZRQINIT frame not detected as sz entry: {:?}",
-        &out[..out.len().min(12)]
+        out.get(..out.len().min(12)).unwrap_or_default()
     );
 }
 

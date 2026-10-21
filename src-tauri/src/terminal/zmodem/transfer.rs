@@ -263,8 +263,9 @@ pub async fn start_upload_batch(app: AppHandle, hits: Vec<PendingHit>) {
     let paths: Vec<std::path::PathBuf> = vec![picked];
     // 选完文件后补发带名称/大小的开始事件（前端首帧显示「开始上传 xxx」）
     let display_name = if paths.len() == 1 {
-        paths[0]
-            .file_name()
+        paths
+            .first()
+            .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
     } else {

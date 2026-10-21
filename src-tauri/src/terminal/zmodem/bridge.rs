@@ -61,7 +61,12 @@ impl Read for BridgeReader {
         // 先消费当前 chunk 剩余
         if self.pos < self.pending.len() {
             let n = (self.pending.len() - self.pos).min(buf.len());
-            buf[..n].copy_from_slice(&self.pending[self.pos..self.pos + n]);
+            if let (Some(dst), Some(src)) = (
+                buf.get_mut(..n),
+                self.pending.get(self.pos..self.pos + n),
+            ) {
+                dst.copy_from_slice(src);
+            }
             self.pos += n;
             if self.pos >= self.pending.len() {
                 self.pending.clear();

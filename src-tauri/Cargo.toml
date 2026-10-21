@@ -137,10 +137,16 @@ image = { version = "0.25", default-features = false, features = [
   "avif",
 ] }
 once_cell = "1"
-# JPEG XL 解码（jxl 格式）：不启用 `image` feature——它要求 image ^0.25,<0.25.9，
-# 与本项目（及 onefetch）锁定的 0.25.10 冲突。改为直接用 jpegxl-rs 的像素
-# 解码 API 取 RGBA 缓冲，再用 image 0.25 编码 PNG（见 pdf.rs 的 jxl 分支）。
-jpegxl-rs = { version = "0.13.1", default-features = false }
+# JPEG XL 解码（jxl 格式）：**树内 vendor 的运行期加载分支**。
+# 不启用 `image` feature——它要求 image ^0.25,<0.25.9，与本项目（及
+# onefetch）锁定的 0.25.10 冲突；直接用 jpegxl-rs 的像素解码 API 取 RGBA
+# 缓冲，再用 image 0.25 编码 PNG（见 pdf.rs 的 jxl 分支）。
+# 上游 crates.io 版是链接期动态链接（pkg-config 找不到 libjxl 时 build
+# script 直接 panic，且进程启动即硬依赖库文件），树内修补版改为 pdfium
+# 同型的运行期加载：pdf.rs 先按候选路径调 jpegxl_sys::bind_to_library，
+# 再走 jpegxl-rs 的解码 API。修补清单见 vendor/jpegxl-sys/README.md。
+jpegxl-rs = { path = "vendor/jpegxl-rs", default-features = false }
+jpegxl-sys = { path = "vendor/jpegxl-sys" }
 
 # **PDFium 链接形态按平台分流**：
 # - macOS Apple Silicon（aarch64）：**静态链接** vendor/pdfium/libpdfium.a
