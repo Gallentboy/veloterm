@@ -150,7 +150,6 @@ const NATIVE_IMAGE_EXTS: &[&str] = &[
 fn unsupported_reason(ext: &str) -> Option<&'static str> {
     match ext {
         "heic" | "heif" => Some("HEIC/HEIF 需要 libheif 解码器（当前构建未启用）"),
-        "jxl" => Some("JPEG XL 需要 libjxl 解码器（当前构建未启用）"),
         "jp2" | "j2k" | "jpf" | "jpx" => Some("JPEG 2000 需要 openjpeg 解码器（当前构建未启用）"),
         "psd" | "psb" => Some("Photoshop 文档（PSD）暂不支持"),
         "cr2" | "cr3" | "nef" | "arw" | "dng" | "orf" | "raf" | "rw2" => {
@@ -158,6 +157,77 @@ fn unsupported_reason(ext: &str) -> Option<&'static str> {
         }
         _ => None,
     }
+}
+
+/// JPEG XL 解码：jpegxl-rs（libjxl 绑定）→ RGBA8 缓冲 → image 的 RgbaImage。
+///
+/// **为什么不用 jpegxl-rs 的 `image` feature**：它要求 image `^0.25,<0.25.9`，
+/// 与本项目（及 onefetch）锁定的 0.25.10 冲突。这里直接用它的 `decode_with::<u8>()`
+/// 拿原始像素，自己用 image 0.25 组图并编码 PNG。
+///
+/// 像素格式：jxl 可能是灰度/灰度+alpha/RGB/RGBA，`decode_with` 返回交错排列的
+/// u8 数据；按 metadata 的通道数决定如何组装成 RGBA。
+fn decode_jxl_to_rgba(
+    src: &Path,
+) -> Result<(image::DynamicImage, u32, u32), String> {
+    let bytes = std::fs::read(src).map_err(|e| format!("读取 JXL 文件失败: {e}"))?;
+    let (metadata, pixels) = jpegxl_rs::decoder_builder()
+        .build()
+        .map_err(|e| format!("初始化 JXL 解码器失败: {e}"))?
+        .decode_with::<u8>(&bytes)
+        .map_err(|e| format!("JXL 解码失败: {e}"))?;
+
+    let (width, height) = (metadata.width, metadata.height);
+    if width == 0 || height == 0 {
+        return Err("JXL 图像尺寸无效（宽或高为 0）".to_string());
+    }
+    let channels = metadata.num_color_channels
+        + u32::from(metadata.has_alpha_channel);
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|n| n.checked_mul(channels as usize))
+        .ok_or_else(|| "JXL 图像尺寸过大".to_string())?;
+    if pixels.len() < expected {
+        return Err(format!(
+            "JXL 像素数据不足：期望 {expected} 字节，实际 {}",
+            pixels.len()
+        ));
+    }
+
+    // 逐像素组装成 RGBA（灰度的 R=G=B，无 alpha 时 A=255）
+    let mut rgba = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    let px_count = (width as usize) * (height as usize);
+    for i in 0..px_count {
+        let base = i * channels as usize;
+        let (r, g, b, a) = match channels {
+            1 => {
+                let v = pixels.get(base).copied().unwrap_or(0);
+                (v, v, v, 255)
+            }
+            2 => {
+                let v = pixels.get(base).copied().unwrap_or(0);
+                let a = pixels.get(base + 1).copied().unwrap_or(255);
+                (v, v, v, a)
+            }
+            3 => (
+                pixels.get(base).copied().unwrap_or(0),
+                pixels.get(base + 1).copied().unwrap_or(0),
+                pixels.get(base + 2).copied().unwrap_or(0),
+                255,
+            ),
+            _ => (
+                pixels.get(base).copied().unwrap_or(0),
+                pixels.get(base + 1).copied().unwrap_or(0),
+                pixels.get(base + 2).copied().unwrap_or(0),
+                pixels.get(base + 3).copied().unwrap_or(255),
+            ),
+        };
+        rgba.extend_from_slice(&[r, g, b, a]);
+    }
+
+    let img = image::RgbaImage::from_raw(width, height, rgba)
+        .ok_or_else(|| "JXL 像素缓冲尺寸不匹配".to_string())?;
+    Ok((image::DynamicImage::ImageRgba8(img), width, height))
 }
 
 /// 准备图片预览：原生格式直传，其余用 image crate 转码为 PNG。
@@ -197,22 +267,29 @@ pub async fn prepare_image_preview(source_path: String) -> Result<ImagePreviewRe
         return Err(format!("无法预览 .{ext} 图片：{reason}"));
     }
 
-    // 其余交给 image crate 解码；它自己按魔数嗅探格式，扩展名只用于报错信息
+    // 其余交给 image crate 解码；它自己按魔数嗅探格式，扩展名只用于报错信息。
+    // JPEG XL 例外：image crate 不支持，走 jpegxl-rs（见下）。
     let out_path = std::env::temp_dir().join(format!(
         "veloterm_img_{}_preview.png",
         short_hash(&source_path)
     ));
+    let is_jxl = matches!(ext.as_str(), "jxl");
     let result = tokio::task::spawn_blocking({
         let src = src.clone();
         let out = out_path.clone();
         move || -> Result<(u32, u32), String> {
-            let img = image::open(&src).map_err(|e| {
-                format!(
-                    "解码失败（.{}）：{e}。该格式可能不在支持列表内（支持：TIFF/TGA/DDS/HDR/EXR/PNM/QOI 等）",
-                    src.extension().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default()
-                )
-            })?;
-            let (w, h) = (img.width(), img.height());
+            let (img, w, h) = if is_jxl {
+                decode_jxl_to_rgba(&src)?
+            } else {
+                let img = image::open(&src).map_err(|e| {
+                    format!(
+                        "解码失败（.{}）：{e}。该格式可能不在支持列表内（支持：TIFF/TGA/DDS/HDR/EXR/PNM/QOI/JXL 等）",
+                        src.extension().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default()
+                    )
+                })?;
+                let (w, h) = (img.width(), img.height());
+                (img, w, h)
+            };
             img.save_with_format(&out, image::ImageFormat::Png)
                 .map_err(|e| format!("保存 PNG 失败: {e}"))?;
             Ok((w, h))
@@ -557,6 +634,14 @@ fn short_hash(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// JXL 解码器能初始化 = libjxl 动态库加载成功（本机 brew 安装的 0.12）
+    #[test]
+    fn jxl_decoder_initializes() {
+        // build() 会加载 libjxl 并创建解码器实例；失败说明动态库缺失/版本不兼容
+        let decoder = jpegxl_rs::decoder_builder().build();
+        assert!(decoder.is_ok(), "libjxl 加载失败: {:?}", decoder.err());
+    }
 
     /// 库文件名：开发期带架构后缀，随包用标准名（静态链接的 mac arm64 无此函数）
     #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]

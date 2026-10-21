@@ -137,6 +137,10 @@ image = { version = "0.25", default-features = false, features = [
   "avif",
 ] }
 once_cell = "1"
+# JPEG XL 解码（jxl 格式）：不启用 `image` feature——它要求 image ^0.25,<0.25.9，
+# 与本项目（及 onefetch）锁定的 0.25.10 冲突。改为直接用 jpegxl-rs 的像素
+# 解码 API 取 RGBA 缓冲，再用 image 0.25 编码 PNG（见 pdf.rs 的 jxl 分支）。
+jpegxl-rs = { version = "0.13.1", default-features = false }
 
 # **PDFium 链接形态按平台分流**：
 # - macOS Apple Silicon（aarch64）：**静态链接** vendor/pdfium/libpdfium.a
