@@ -98,30 +98,78 @@ export class SafetyInputTracker {
 }
 
 /**
- * 剥除终端行首的 Shell Prompt 提示符。
- * 支持常见 root / user 提示符形式：
- * - "[root@host ~]# rm -rf /"
- * - "user@host:~$ rm -rf /"
- * - "macbook% rm -rf /"
- * - "bash-5.1$ rm -rf /"
+ * 现代终端主流 Prompt 终止符集合：
+ * - 传统 UNIX / Linux: # (root), $ (user), % (zsh), > (cmd/fish/pwsh)
+ * - 现代美化主题 (Starship / Oh-My-Zsh / Powerlevel10k / Agnoster / Pure / Lambda):
+ *   ❯ (U+276F), ➜ (U+279C), » (U+00BB), λ (U+03BB), ▶ (U+25B6), → (U+2192), › (U+203A), ﹥ (U+FE65), ⚡, ✗, ✔, ✓, ✘
+ */
+const PROMPT_TERMINATORS = new Set([
+  '#',
+  '$',
+  '%',
+  '>',
+  '❯',
+  '➜',
+  '»',
+  'λ',
+  '▶',
+  '→',
+  '›',
+  '﹥',
+  '⚡',
+  '✗',
+  '✔',
+  '✓',
+  '✘',
+]);
+
+/**
+ * 方案 2：现代通用 Prompt 终止符词法集 + 逆向扫描器 (Reverse Scanner with Quote Protection)。
+ *
+ * 核心原理：
+ * 1. 引号逃逸保护：先扫描全行标记字符串字面量（单双引号与反引号范围），防止 `echo "a # b"` 误切；
+ * 2. 从右往左逆向寻找最近的合法提示符终止符（后紧邻空白符）；
+ * 3. 辅助规则：识别 `]: `、`): ` 等路径闭合符号；
+ * 4. 兜底策略：若未找到任何提示符，返回整行（由后端方案 3 AST 滑动探测兜底）。
  */
 export function cleanPrompt(text: string): string {
-  const trimmed = text.trim();
+  const trimmed = text.trimEnd();
   if (!trimmed) return '';
 
-  // 1. 匹配带空格的提示符：以 # 、$ 、% 、> 结尾且后面跟空格
-  const promptMatch = trimmed.match(/^.*?[#$%>]\s+(.*)$/s);
-  if (promptMatch && promptMatch[1] !== undefined) {
-    return promptMatch[1].trim();
+  // 1. 引号状态标记（单引号、双引号、反引号内部不作为提示符切分点）
+  const inQuotes = new Array<boolean>(trimmed.length).fill(false);
+  let inSingle = false;
+  let inDouble = false;
+  let inBacktick = false;
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    const prev = i > 0 ? trimmed[i - 1] : '';
+    if (ch === '"' && !inSingle && prev !== '\\') inDouble = !inDouble;
+    else if (ch === "'" && !inDouble) inSingle = !inSingle;
+    else if (ch === '`' && !inSingle && prev !== '\\') inBacktick = !inBacktick;
+    inQuotes[i] = inSingle || inDouble || inBacktick;
   }
 
-  // 2. 匹配没有空格但后面紧跟命令字符的极端提示符 (如 root#rm)
-  const promptMatchNoSpace = trimmed.match(/^.*?[#$%>]([a-zA-Z0-9_\-./].*)$/s);
-  if (promptMatchNoSpace && promptMatchNoSpace[1]) {
-    return promptMatchNoSpace[1].trim();
+  // 2. 从右向左寻找最近的有效 Prompt 终止符
+  for (let i = trimmed.length - 1; i >= 0; i--) {
+    if (inQuotes[i]) continue;
+    const ch = trimmed[i];
+    if (PROMPT_TERMINATORS.has(ch)) {
+      // 终止符后面通常必须跟着空白字符，或者位于倒数第二个字符
+      if (i + 1 < trimmed.length && /\s/.test(trimmed[i + 1])) {
+        return trimmed.slice(i + 1).trim();
+      }
+    }
   }
 
-  return trimmed;
+  // 3. 辅助规则：识别 "): "、"]: "、"@host: "
+  const colonMatch = trimmed.match(/^.*?[\]):]\s+(.*)$/s);
+  if (colonMatch && colonMatch[1]) {
+    return colonMatch[1].trim();
+  }
+
+  return trimmed.trim();
 }
 
 /**
