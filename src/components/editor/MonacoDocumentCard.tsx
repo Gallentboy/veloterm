@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
+import { ensureNginxLanguage } from '@/editor/nginxLanguage';
 import type { EditorFileDescriptor, MonacoDocumentCardProps } from '@/editor/types';
 
 /**
@@ -115,6 +116,9 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
 
     initMonacoTheme();
     setupMonacoEnvironment();
+    // nginx 语言（高亮/补全/hover）幂等注册；数据懒加载，
+    // 见 nginxLanguage.ts
+    ensureNginxLanguage(monaco);
 
     if (isDiff) {
       const diffEditor = monaco.editor.createDiffEditor(container, {
