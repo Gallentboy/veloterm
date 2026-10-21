@@ -195,7 +195,7 @@ static JXL_BIND: LazyLock<Result<(), String>> = LazyLock::new(|| {
 ///
 /// - Windows 开发期：源码树 `vendor/libjxl/{x64,arm64}/`（8 个 DLL 同目录，
 ///   依赖经 LOAD_WITH_ALTERED_SEARCH_PATH 从该目录解析，见 jpegxl-sys 补丁）；
-/// - Windows 发布：安装根 `libjxl/` 子目录（tauri 资源映射）→ exe 同级；
+/// - Windows 发布：安装根 `lib/` 子目录（与其他随包 DLL 同一约定）→ exe 同级；
 /// - macOS：Homebrew 前缀（Intel 的 /usr/local 与 Apple Silicon 的 /opt/homebrew；
 ///   **不随包分发**——未装 jpeg-xl 的机器 .jxl 预览给出可诊断提示，其余功能无感）。
 fn jxl_lib_candidates() -> Vec<PathBuf> {
@@ -218,8 +218,9 @@ fn jxl_lib_candidates() -> Vec<PathBuf> {
         if let Ok(exe) = std::env::current_exe()
             && let Some(dir) = exe.parent()
         {
-            // 发布形态：随包 DLL 统一放安装根 libjxl/ 子目录（资源映射目标）
-            candidates.push(dir.join("libjxl").join("jxl.dll"));
+            // 发布形态：随包 DLL 统一放安装根 lib/ 子目录（与 pdfium/FFI 家族
+            // 同约定，LOAD_WITH_ALTERED_SEARCH_PATH 从 lib/ 解析 jxl 的依赖）
+            candidates.push(dir.join("lib").join("jxl.dll"));
             // 平铺兜底（开发者手工拷贝等场景）
             candidates.push(dir.join("jxl.dll"));
         }
@@ -524,8 +525,8 @@ fn resolve_pdfium_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
             if let Ok(exe) = std::env::current_exe()
                 && let Some(parent) = exe.parent()
             {
-                // 本项目约定：随包 DLL 统一放安装根 lib/ 子目录
-                for candidate in [parent.join(name), parent.join("lib").join(name)] {
+                // 本项目约定：随包 DLL 统一放安装根 lib/ 子目录（pdfium/libjxl 同约定）
+                for candidate in [parent.join("lib").join(name), parent.join(name)] {
                     if candidate.is_file() {
                         return Ok(candidate);
                     }
@@ -534,9 +535,14 @@ fn resolve_pdfium_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
             }
         }
 
-        // Tauri resources 兜底（映射位置可能随配置调整）
+        // Tauri resources 兜底（映射位置可能随配置调整）；末位是老版本安装位
+        // （1.0.x 早期 pdfium/ 子目录布局），升级安装不卸残留目录时兜底
         if let Ok(dir) = app.path().resource_dir() {
-            for candidate in [dir.join("pdfium").join(name), dir.join(name)] {
+            for candidate in [
+                dir.join("lib").join(name),
+                dir.join(name),
+                dir.join("pdfium").join(name),
+            ] {
                 if candidate.is_file() {
                     return Ok(candidate);
                 }
