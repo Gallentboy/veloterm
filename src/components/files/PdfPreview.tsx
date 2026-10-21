@@ -160,18 +160,16 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
           <label className="flex items-center gap-1.5 text-ui-sm text-foreground-subtle select-none">
             <span>{t('pdf.jumpTo')}</span>
             <input
-              type="text"
-              inputMode="numeric"
+              type="number"
+              min={1}
+              max={pageCount}
+              step={1}
               value={jumpInput}
               onChange={(e) => {
-                // 只保留数字，并即时钳制到 [1, pageCount]（空串允许，便于重新输入）
-                const digits = e.target.value.replace(/[^\d]/g, '');
-                if (!digits) {
-                  setJumpInput('');
-                  return;
-                }
-                const n = Number.parseInt(digits, 10);
-                setJumpInput(String(Math.min(Math.max(1, n), pageCount)));
+                // number 输入框的 value 已是数字串；空串允许（便于重新输入）。
+                // 越界值在 blur/回车时由 commitJump 钳制，输入过程中不打断用户
+                // （即时改写 value 会让上下按钮连点体验变差）。
+                setJumpInput(e.target.value);
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -187,8 +185,9 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
               }}
               placeholder="1"
               aria-label={t('pdf.jumpToPage')}
-              // 宽度按总页数位数动态给，再放宽 4 倍留出点击与输入余量
-              style={{ width: `${Math.max(2, String(pageCount).length) * 4}ch` }}
+              // 宽度按总页数位数动态给，再放宽 4 倍留出点击与输入余量；
+              // 额外留 1.5ch 给右侧原生的上下微调按钮
+              style={{ width: `calc(${Math.max(2, String(pageCount).length) * 4}ch + 1.5ch)` }}
               className="h-6 rounded-md border border-border bg-input px-1.5 text-center font-mono text-ui-xs text-foreground outline-none transition-colors placeholder:text-foreground-subtlest focus:border-border-hover"
             />
             {/* 后缀（中文「页」/ 英文空）——空串时不渲染，避免多余空格 */}
