@@ -19,8 +19,14 @@ const NATIVE_IMAGE_EXTS = new Set([
 
 /** 已知不支持、会给出明确错误原因的格式（与后端 unsupported_reason 对齐） */
 const KNOWN_UNSUPPORTED_EXTS = new Set([
-  'heic', 'heif', 'jxl', 'jp2', 'j2k', 'jpf', 'jpx',
+  'heic', 'heif', 'jp2', 'j2k', 'jpf', 'jpx',
   'psd', 'psb', 'cr2', 'cr3', 'nef', 'arw', 'dng', 'orf', 'raf', 'rw2',
+]);
+
+/** 后端可转码的格式（image crate 解码 + jpegxl-rs 的 jxl） */
+const CONVERTIBLE_EXTS = new Set([
+  'tif', 'tiff', 'tga', 'dds', 'hdr', 'exr', 'pnm', 'ppm', 'pgm', 'pbm', 'qoi', 'ff', 'farbfeld',
+  'jxl',
 ]);
 
 /** 该文件是否走图片预览分支（原生支持 + 可转码的常见格式） */
@@ -28,9 +34,9 @@ export function isPreviewableImage(fileName: string): boolean {
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
   if (!ext) return false;
   if (NATIVE_IMAGE_EXTS.has(ext)) return true;
-  // 转码格式：排除明确不支持的，其余交给后端试（image crate 按魔数嗅探）
-  if (KNOWN_UNSUPPORTED_EXTS.has(ext)) return true; // 仍进预览，让后端给出具体原因
-  return ['tif', 'tiff', 'tga', 'dds', 'hdr', 'exr', 'pnm', 'ppm', 'pgm', 'pbm', 'qoi', 'ff', 'farbfeld'].includes(ext);
+  // 明确不支持的也进预览，让后端给出具体原因（而不是静默无入口）
+  if (KNOWN_UNSUPPORTED_EXTS.has(ext)) return true;
+  return CONVERTIBLE_EXTS.has(ext);
 }
 
 /**
