@@ -1,7 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "bundle": {
-    "comment": "macOS Apple Silicon 为静态链接（见 build.rs），不随包分发任何 PDFium 库文件",
     "resources": {}
   }
 }
