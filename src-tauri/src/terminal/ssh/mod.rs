@@ -146,6 +146,14 @@ impl SshTerminalSession {
             let mut exit_code: i32 = 0;
             // shell-ready 只发一次：首次收到 Output 时标记
             let mut shell_ready_emitted = false;
+            // 认证已完成（收到 Connected——client.rs 在认证通过后才发此状态，
+            // 随后才执行 pending_ops 打开 shell 通道）。认证期的输出（kbd-int
+            // 提示、手输回显、零 prompt Success 的「未校验密码即放行」提示）
+            // 与 shell 输出共用通道 id 1，但它们出现在 Connected 之前——
+            // ShellReady 必须 只在认证后的输出上判定，否则零 prompt 场景下那行
+            // 提示文案就会提前触发 ShellReady，等 shell 内 passwd 提示到达时
+            // 闸门已关不上（就绪钩子命令正好落在用户输密码的过程中）
+            let mut auth_completed = false;
             // ── ZMODEM 传输态（探测命中后接管输出流，不再转发前端）──
             let mut zmodem_detector = crate::terminal::zmodem::ZmodemDetector::new();
             // 上次上传结束时刻：lrz 退出时可能重发 ZRINIT（合法入口帧），
@@ -229,6 +237,7 @@ impl SshTerminalSession {
                         let _ = on_output.send(msg);
                     }
                     RCEvent::State(RCState::Connected) => {
+                        auth_completed = true;
                         emit(LifecycleKind::Connected, None, None);
                         log::info!(
                             "[SshTerminalSession {}] connected to {}",
@@ -246,7 +255,8 @@ impl SshTerminalSession {
                         // `(current) UNIX password:` 提示，此时若立刻发
                         // ShellReady，就绪钩子会把钩子命令当成密码敲进去
                         // （实测：用户无法输入密码，改密失败）。
-                        if !shell_ready_emitted
+                        if auth_completed
+                            && !shell_ready_emitted
                             && !crate::terminal::passwd_input::PasswdInputLog::global()
                                 .is_awaiting_password(id)
                         {
@@ -392,7 +402,7 @@ impl SshTerminalSession {
                                 id,
                                 direction,
                                 data.len(),
-                                String::from_utf8_lossy(&data[..data.len().min(16)])
+                                String::from_utf8_lossy(data.get(..data.len().min(16)).unwrap_or_default())
                             );
                             if let Some(batch) = aggregator.register(id, direction, hit) {
                                 tokio::spawn(crate::terminal::zmodem::start_batch(
