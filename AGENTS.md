@@ -73,10 +73,15 @@
 
 ### 预览引擎第三方库（app 侧，运行期加载）
 
-PDF 与图片预览的原生引擎是 **app crate** 的依赖（不进 coreutils 依赖图），两者同一铁律：**运行期按路径加载，缺库只影响对应预览功能、绝不拖累进程启动**——因此任何「链接期动态链接」的绑定 crate 都不可直接引入（链接期依赖 = 进程启动硬要求库文件 + 构建机无库时 build script panic，Windows/macOS runner 全不可编）。
+PDF 与图片预览的原生引擎是 **app crate** 的依赖（不进 coreutils 依赖图），两者同一铁律：**运行期按路径加载，缺库只影响对应预览功能、绝不拖累进程启动**——因此任何「链接期动态链接」的绑定 crate 都不可直接引入（链接期依赖 = 进程启动硬要求库文件 + 构建机无库时 build script panic，Windows/macOS runner 全不可编）。结构化与二进制预览（Markdown / CSV / JSON+jq / Hex）走前端与通用接口协同，不增加链接期重型 C 依赖：
 
 - **PDFium（PDF 渲染）**：pdfium-render 0.9。macOS ARM64 **静态链接**（vendor/pdfium 的 libpdfium.a + Chromium 自编 libcxx/libcxxabi，build.rs 以 rustc-link-arg 链入——macOS ARM64 拒载未签名第三方 dylib，静态化是签名问题的根治，**此形态严禁改**）；macOS x64 与 Windows 双架构动态：dylib/dll 经 pdfium-render `bind_to_library` 按路径加载（`pdf.rs` 的 resolve_pdfium_path：debug 用 vendor 树、release 查 App Bundle/Frameworks、安装根 `lib/`、brew 前缀等），Windows 随包映射到 `lib/pdfium.dll`（与其他 FFI DLL 同一 lib/ 约定；架构专属 tauri 配置做 vendor 原名 → 标准名重命名；解析候选保留老版 `pdfium/` 子目录安装位作升级兼容兑底）。
 - **libjxl（JPEG XL 解码）**：树内 vendor 的 `vendor/jpegxl-rs` + `vendor/jpegxl-sys`（**runtime-loading 分支**，pdfium-render bind_to_library 同型）。上游 crates.io 版是链接期 pkg-config 动态链接（build script 无库即 panic、启动硬依赖），树内补丁：sys 侧 lib.rs 加 `bind_to_library` + `jxl_ffi!` 宏，8 个 extern 块头一行改（块内 120 条 FFI 声明零改动，宏生成符号表 + 同名同签名的 extern "C-unwind" 包装），build.rs/pkg-config/links 全废除；rs 侧**源码零改动**仅清单调 path。符号表按模块惰性解析（不带 jxl_threads.dll 也能解码）。Windows DLL（x64/arm64 各 8 个，vcpkg 0.12 产物放 `vendor/libjxl/`，test-libjxl 车道出包）随包映射到安装根 `lib/`（与其他随包 DLL 同一约定），加载用 `LOAD_WITH_ALTERED_SEARCH_PATH` 让 jxl.dll 的依赖（hwy/brotli/lcms）从其自身目录解析；macOS 走 brew（不随包，缺库 .jxl 预览报可诊断提示）。绑定 0.11.2 ABI 对 0.12 实测兼容（macOS 端到端解码测试 `testdata/sample.jxl`，无库机器跳过不失败）。**许可证注意：上游 GPL-3.0-or-later，随树保留 COPYING/LICENSE——商用发布前需项目方确认（同 nmap NPSL 的先例）**。升级：换两树源码 + 按 sys 树 README 重放补丁 + 重跑 test-libjxl 车道换 DLL。
+- **Markdown / CSV / JSON (内置 jq) / Hex 预览（全功能视图矩阵）**：
+  - **Markdown（`MarkdownPreview`）**：`react-markdown` + `remark-gfm` + `rehype-highlight`，富文本文章排版、任务列表、代码块语言标与一键复制；只读态提供「渲染 / 源码 / Hex」三态无缝切换。
+  - **CSV / TSV（`CsvPreview`）**：RFC 4180 合规的高性能分隔符状态机解析器，固定表头、按列类型自适应排序（数值与字符区分）、全局实时搜索过滤、基于视口的高性能虚拟滚动、数据转制表符复制。
+  - **JSON 树 + 内置 jq 过滤（`JsonPreview`）**：支持常规 JSON 与 JSON Lines（`.jsonl`），递归折叠树，字段类型主题色（key/str/num/bool/null），节点悬停快捷复制路径/键/值，一键展开/折叠全部；顶部 jq 过滤框直通后端 `execute_jq_filter`（Windows 自动走内置 `tools/jq.exe` 或 `coreutils.exe jq`，macOS 走系统/brew `jq`，带 3s 超时与 5MB 内存保护），结果重新动态建树。
+  - **Hex 十六进制查看器（`HexPreview`）**：所有非目录文件（尤其不可编辑的二进制 .so/.bin/.exe/.db/.tar 等）均开放右键预览并自动切入 Hex 视图；后端 `sftp_read_file_hex` 基于 SFTP seek 分块读取（单次 64KB，支持无上限大文件），前端经典 16 字节三栏布局（偏移/Hex/ASCII），字节类型色彩语义高亮，Hex 与 ASCII 光标双向联动高亮，底栏实时字节探测器（Offset/Hex/Dec/Bin/Char），一键导出标准 xxd 风格 hex dump。
 
 ### OpenSSL 锁版本
 

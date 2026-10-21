@@ -279,6 +279,78 @@ pub async fn sftp_write_file(
     Ok(())
 }
 
+/// 读取远端文件二进制分片（用于 Hex 十六进制查看器，不限文件大小与格式）
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SftpFileHexContent {
+    pub total_size: u64,
+    pub offset: u64,
+    pub bytes_base64: String,
+}
+
+#[tauri::command]
+pub async fn sftp_read_file_hex(
+    host_id: i64,
+    remote_path: String,
+    offset: u64,
+    length: Option<u32>,
+    state: State<'_, SftpState>,
+) -> Result<SftpFileHexContent, String> {
+    use std::io::SeekFrom;
+    use tokio::io::AsyncSeekExt;
+    use base64::Engine;
+
+    let session_key = host_id.to_string();
+    let client = get_or_connect_sftp(&state, &session_key).await?;
+
+    let meta = client
+        .metadata(&remote_path)
+        .await
+        .map_err(|e| format!("Failed to stat remote file '{remote_path}': {}", sftp_error_message(e)))?;
+    let total_size = meta.len();
+
+    let mut remote_file = client
+        .open(&remote_path)
+        .await
+        .map_err(|e| format!("Failed to open remote file '{remote_path}': {}", sftp_error_message(e)))?;
+
+    if offset > 0 {
+        remote_file
+            .seek(SeekFrom::Start(offset))
+            .await
+            .map_err(|e| format!("Failed to seek remote file: {}", dedup_sftp_status_text(&e.to_string())))?;
+    }
+
+    // 默认读取 64KB，单次最大 1MB
+    let read_len = (length.unwrap_or(65536) as usize).min(1024 * 1024);
+    let mut buf = vec![0u8; read_len];
+    let mut total_read = 0usize;
+
+    while total_read < buf.len() {
+        let Some(chunk) = buf.get_mut(total_read..) else {
+            break;
+        };
+        let n = remote_file
+            .read(chunk)
+            .await
+            .map_err(|e| format!("Failed to read remote file: {}", dedup_sftp_status_text(&e.to_string())))?;
+        if n == 0 {
+            break;
+        }
+        total_read += n;
+    }
+    buf.truncate(total_read);
+    let _ = remote_file.close().await;
+
+    let bytes_base64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+
+    Ok(SftpFileHexContent {
+        total_size,
+        offset,
+        bytes_base64,
+    })
+}
+
 /* ─────────────────── sudo 提权读写（Permission denied 的编辑/预览兜底） ───────────────────
  *
  * 场景：登录用户对目标文件无读/写权限（root 属主的配置文件等）。读走

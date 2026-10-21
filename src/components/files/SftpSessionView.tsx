@@ -48,9 +48,8 @@ import {
   type FastRemovePreview,
   type RemoteFileItem,
 } from '@/services/sftpService';
-import { loadRemoteContent } from '@/editor/contentLoader';
-import { isPreviewableImage } from '@/services/imagePreviewService';
-const SftpFilePreviewModal = lazy(() =>
+	import { loadRemoteContent } from '@/editor/contentLoader';
+	const SftpFilePreviewModal = lazy(() =>
   import('@/components/files/SftpFilePreviewModal').then((m) => ({
     default: m.SftpFilePreviewModal,
   })),
@@ -120,13 +119,13 @@ const CODE_CONFIG_EXTS = new Set([
 ]);
 
 /**
- * 是否有预览入口。
+ * 是否可在弹窗内预览（Monaco 文本 / PDF / 图片 / 表格 / JSON / Hex 十六进制查看器）。
  *
- * 后端 `editable` 只判文本文件（二进制为 false），但 PDF 虽不可编辑也能预览
- * （走 PDFium 渲染分支），故这里额外放行 .pdf。
+ * 所有非目录文件均支持预览：结构化文本走专用渲染，纯文本走 Monaco，图片/PDF 走
+ * 对应引擎，二进制文件自动降级进入 Hex 查看器。
  */
-function canPreview(item: { name: string; editable?: boolean }): boolean {
-  return Boolean(item.editable) || /\.pdf$/i.test(item.name) || isPreviewableImage(item.name);
+function canPreview(item: { is_dir?: boolean; name?: string; editable?: boolean }): boolean {
+  return !item.is_dir;
 }
 
 function getFileItemVisuals(item: RemoteFileItem) {
