@@ -1166,6 +1166,10 @@ impl Connector {
                 // ——后置递增，默认值 3，实际是「初始 1 次 + 重试 3 次 = 4 次」）
                 let mut kbdint_attempts = 0u32;
                 const KBDINT_MAX_ATTEMPTS: u32 = 4;
+                // 本会话 kbd-int 是否出现过 InfoRequest（粘性：重试轮 round 归零
+                // 也不清）。区分「密码被提交并验证后拒绝」与「方法层直接拒绝、
+                // 密码从未被验过」——后者重试无意义且不得触发跳过 password 回落
+                let mut kbdint_saw_info_request = false;
                 // 会话语言（提示词含 CJK 即中文；「密码已保存」提示按此适配）
                 let mut session_is_chinese = false;
                 // 服务器在 FAILURE 里给出的剩余认证方法（最终失败时按 OpenSSH
@@ -1277,6 +1281,28 @@ impl Connector {
                                 );
                                 break;
                             }
+                            // 方法层面的瞬时拒绝：服务器仍声称支持 kbd-int，却
+                            // 对 START 请求直接回 FAILURE、从未发过 InfoRequest
+                            // ——密码从未被提交/验证（实测形态：4 连拒仅 65ms，
+                            // pam_unix 真验密每轮 ~3.2s）。典型成因：容器 sshd 的
+                            // PAM 栈初始化失败、root 密码式认证被策略整体禁用。
+                            // 重试同一方法必然同样结果，且密码未经任何验证，
+                            // password 方法完全可能成功——立即回落，不烧尝试
+                            // 次数、也不触发「跳过 password 回落」（实测：
+                            // 密码正确的 password 认证被误报 Permission denied）
+                            if !kbdint_saw_info_request {
+                                log::debug!(
+                                    "[SSH {}] kbd-int rejected without any prompt \
+                                     (method-level), falling back to password auth",
+                                    self.id
+                                );
+                                let methods: Vec<&str> = remaining_methods
+                                    .iter()
+                                    .map(<&str>::from)
+                                    .collect();
+                                last_remaining_methods = Some(methods.join(","));
+                                break;
+                            }
                             // 记录服务器允许的剩余方法（转可读字符串，供最终
                             // 失败时按 OpenSSH 格式「Permission denied (m1,m2)」
                             // 呈现——MethodSet 的 Debug 是 "MethodSet([PublicKey])"
@@ -1351,6 +1377,7 @@ impl Connector {
                             ref prompts,
                         } => {
                             round += 1;
+                            kbdint_saw_info_request = true;
                             log::debug!(
                                 "[SSH {}] kbd-int round {}: {} prompt(s), \
                                  name={:?} instructions={:?}",
@@ -1640,11 +1667,12 @@ impl Connector {
                     }
                     return Ok(());
                 }
-                // 回落：password 方法（仅当 kbd-int 从未成功发起过交互——
-                // 即服务器不支持 kbd-int）。若 kbd-int 已经用同一个保存密码
-                // 试过并失败，再走 password 必然同样失败，只会白等一次服务器
-                // PAM 校验（pam_unix 哈希刻意慢，实测 ~3.2s/次），故直接跳过。
-                if kbdint_attempts > 0 {
+                // 回落：password 方法。跳过条件是「kbd-int 真正验过密码并拒绝」
+                // （saw_info_request 且有失败计数）——只有这时「同一密码再走
+                // password 必然同样失败」才成立；方法层直接拒绝（从未发过
+                // InfoRequest）时密码未经任何验证，password 必须照常尝试。
+                // 跳过时的收益：免去一次必然失败的 pam_unix 哈希等待（~3.2s）。
+                if kbdint_attempts > 0 && kbdint_saw_info_request {
                     log::debug!(
                         "[SSH {}] kbd-int already failed with saved password, \
                          skipping password fallback",
