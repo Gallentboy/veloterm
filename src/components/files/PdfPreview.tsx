@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -7,6 +7,23 @@ import { renderPdfPage } from '@/services/pdfPreviewService';
 
 /** 翻页防抖：连续点击时只渲染最后一次（避免把 PDFium 阻塞池打满） */
 const PAGE_CHANGE_DEBOUNCE_MS = 120;
+
+/**
+ * 重置字号 token 为基准值。
+ *
+ * SFTP 面板在根节点用内联 style 覆盖 `--text-ui-*`（缩放功能），弹窗作为
+ * 子树会继承——但 PDF 预览是文档阅读界面，工具栏与页码不该随面板缩放变化。
+ * 在预览根节点写回基准值即隔离（内联 style 优先级高于继承值）。
+ */
+const UI_FONT_BASE_PX = 14;
+const RESET_FONT_SCALE_STYLE = {
+  '--text-ui-xl': `${UI_FONT_BASE_PX + 4}px`,
+  '--text-ui-lg': `${UI_FONT_BASE_PX + 2}px`,
+  '--text-ui-base': `${UI_FONT_BASE_PX}px`,
+  '--text-ui-caption': `${UI_FONT_BASE_PX - 1}px`,
+  '--text-ui-sm': `${UI_FONT_BASE_PX - 2}px`,
+  '--text-ui-xs': `${UI_FONT_BASE_PX - 4}px`,
+} as CSSProperties;
 
 export interface PdfPreviewProps {
   /** 本地 PDF 绝对路径（远端文件需先下载到临时目录） */
@@ -128,9 +145,13 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
   }, [jumpInput, pageCount, goToPage]);
 
   return (
-    <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
-      {/* 工具栏：页码输入（跳页）+ 翻页 */}
+    <div
+      className={cn('flex min-h-0 flex-1 flex-col', className)}
+      style={RESET_FONT_SCALE_STYLE}
+    >
+      {/* 工具栏三段布局：左右等宽占位让跳页输入框严格居中，不受翻页按钮宽度影响 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1.5">
+        <div className="flex-1" />
         {pageCount != null ? (
           <span className="flex items-center gap-1.5 text-ui-sm text-foreground-subtle select-none">
             <input
@@ -161,27 +182,28 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
         ) : (
           <span className="text-ui-sm text-foreground-subtle select-none">{t('pdf.loading')}</span>
         )}
-        <div className="flex-1" />
-        <Button
-          variant="outline"
-          size="lg"
-          className="h-7 gap-1 px-2 text-ui-xs"
-          disabled={!canPrev || loading}
-          onClick={() => goToPage(pageIndex - 1)}
-        >
-          <ChevronLeft className="size-3.5" />
-          {t('pdf.prevPage')}
-        </Button>
-        <Button
-          variant="outline"
-          size="lg"
-          className="h-7 gap-1 px-2 text-ui-xs"
-          disabled={!canNext || loading}
-          onClick={() => goToPage(pageIndex + 1)}
-        >
-          {t('pdf.nextPage')}
-          <ChevronRight className="size-3.5" />
-        </Button>
+        <div className="flex flex-1 items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="lg"
+            className="h-7 gap-1 px-2 text-ui-xs"
+            disabled={!canPrev || loading}
+            onClick={() => goToPage(pageIndex - 1)}
+          >
+            <ChevronLeft className="size-3.5" />
+            {t('pdf.prevPage')}
+          </Button>
+          <Button
+            variant="outline"
+            size="lg"
+            className="h-7 gap-1 px-2 text-ui-xs"
+            disabled={!canNext || loading}
+            onClick={() => goToPage(pageIndex + 1)}
+          >
+            {t('pdf.nextPage')}
+            <ChevronRight className="size-3.5" />
+          </Button>
+        </div>
       </div>
 
       {/* 页面区域：图片按自然尺寸显示，超出容器时双向滚动。
