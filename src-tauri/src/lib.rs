@@ -1,6 +1,7 @@
 pub mod about;
 pub mod ai;
 pub mod ai_agent;
+pub mod cert;
 pub mod command_library;
 pub mod commands;
 pub mod common;
@@ -17,6 +18,7 @@ pub mod pdf;
 pub mod port_forward;
 pub mod relays;
 pub mod sftp;
+pub mod sqlite_viewer;
 pub mod terminal;
 pub mod text_detect;
 pub mod tools;
@@ -100,8 +102,11 @@ pub fn run() {
 	            pdf::pdf_temp_path,
 	            pdf::prepare_image_preview,
 	            pdf::release_pdf_temp_files,
-	            excel::read_excel_workbook,
-	            excel::read_excel_sheet_data,
+		            excel::read_excel_workbook,
+		            excel::read_excel_sheet_data,
+			            cert::parse_certificate,
+			            sqlite_viewer::read_sqlite_metadata,
+			            sqlite_viewer::query_sqlite_data,
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,
             zk_hosts::zk_host_delete,

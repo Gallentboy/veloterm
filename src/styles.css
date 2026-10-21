@@ -236,25 +236,41 @@ body {
 }
 
 /*
- * 紧凑滚动条（全局胶囊语言减半，视觉宽约 4px）：用于横向空间紧张的条带区域
- * （终端/文件 Tab 栏）。Firefox 走 scrollbar-width:thin，WebKit 走 7px 胶囊。
+ * 紧凑滚动条（恒定细线，悬停绝不膨胀变粗）：用于数据表格、Tab 栏等。
+ * Firefox 走 scrollbar-width:thin，WebKit 钉死 5px 恒定胶囊，无透明边框内缩，
+ * 显式区分 :horizontal 与 :vertical，加 !important 彻底覆盖 * 通配规则。
  */
 .scrollbar-slim {
-  scrollbar-width: thin;
+  scrollbar-width: thin !important;
 }
 
 .scrollbar-slim::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 5px !important;
+  height: 5px !important;
+}
+
+.scrollbar-slim::-webkit-scrollbar:horizontal {
+  height: 5px !important;
+}
+
+.scrollbar-slim::-webkit-scrollbar:vertical {
+  width: 5px !important;
+}
+
+.scrollbar-slim::-webkit-scrollbar-track {
+  background: transparent !important;
 }
 
 .scrollbar-slim::-webkit-scrollbar-thumb {
-  min-height: 16px;
-  min-width: 16px;
-  border: 2px solid transparent;
-  border-radius: 9999px;
-  background: var(--color-border);
-  background-clip: padding-box;
+  min-height: 20px !important;
+  min-width: 20px !important;
+  border: none !important;
+  border-radius: 9999px !important;
+  background: var(--color-border) !important;
+}
+
+.scrollbar-slim::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover) !important;
 }
 
 /*
