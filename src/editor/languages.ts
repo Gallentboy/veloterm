@@ -1,6 +1,6 @@
 /**
- * 自建 Monaco 语言支持（nginx / dockerfile / docker-compose / batch）的统一
- * 幂等注册入口，顺带一次性对齐内置 html 语言的 worker 侧格式化缺省
+ * 自建 Monaco 语言支持（nginx / dockerfile / docker-compose / batch / sql）
+ * 的统一幂等注册入口，顺带一次性对齐内置 html 语言的 worker 侧格式化缺省
  * （htmlDefaults.format 缺省 insertSpaces=false 出 TAB，与编辑器空格缩进
  * 约定相悖）。各语言模块自身另有幂等与数据懒加载（独立 async chunk，不
  * 打开对应文件的会话零数据成本）；宿主（编辑器面板 / SFTP 预览 / diff
@@ -18,6 +18,7 @@ import { ensureBatchLanguage } from './batchLanguage';
 import { ensureComposeLanguage } from './composeLanguage';
 import { ensureDockerfileLanguage } from './dockerfileLanguage';
 import { ensureNginxLanguage } from './nginxLanguage';
+import { ensureSqlLanguage } from './sqlLanguage';
 
 let htmlDefaultsAligned = false;
 
@@ -53,5 +54,6 @@ export function ensureExtendedLanguages(monaco: typeof MonacoNs): void {
   ensureDockerfileLanguage(monaco);
   ensureComposeLanguage(monaco);
   ensureBatchLanguage(monaco);
+  ensureSqlLanguage(monaco);
   alignHtmlDefaults(monaco);
 }
