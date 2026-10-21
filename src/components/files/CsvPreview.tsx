@@ -291,7 +291,7 @@ export const CsvPreview = memo(function CsvPreview({
           }
         }}
         onScroll={handleScroll}
-        className="relative min-h-0 flex-1 overflow-auto"
+        className="relative min-h-0 flex-1 overflow-auto scrollbar-slim"
       >
         <table className="w-full border-collapse font-mono text-ui-xs">
           {/* 固定表头 */}

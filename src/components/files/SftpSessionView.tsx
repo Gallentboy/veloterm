@@ -3,7 +3,9 @@ import {
   ArrowLeftRight,
   ArrowUp,
   Download,
+  Eye,
   File,
+  FileDiff,
   Folder,
   FolderOpen,
   HardDrive,
@@ -13,7 +15,6 @@ import {
   RefreshCw,
   RotateCw,
   SquareTerminal,
-  Eye,
   Trash2,
   Upload,
   X,
@@ -54,6 +55,7 @@ import {
     default: m.SftpFilePreviewModal,
   })),
 );
+import { SftpFileDiffModal, type SftpDiffFileTarget } from '@/components/files/SftpFileDiffModal';
 import { SftpFilePropsDialog } from '@/components/files/SftpFilePropsDialog';
 import { sendToTerminal } from '@/services/aiTerminalTools';
 import { formatPathForTerminal } from '@/lib/shellPath';
@@ -548,6 +550,13 @@ export function SftpSessionView({
   const [isTryingEdit, setIsTryingEdit] = useState<boolean>(false);
   // 文件预览弹窗（Monaco：默认只读、可切换编辑保存；内容加载/保存由弹窗组件自理）
   const [preview, setPreview] = useState<{ name: string; path: string } | null>(null);
+  // 双文件差异对比弹窗目标对
+  const [diffTargetPair, setDiffTargetPair] = useState<{
+    original: SftpDiffFileTarget;
+    modified: SftpDiffFileTarget;
+  } | null>(null);
+  // 单个暂存用于对比的文件候选
+  const [compareCandidate, setCompareCandidate] = useState<RemoteFileItem | null>(null);
   // 是否正被拖拽悬停（作为放置目标时的高亮态）
   const [isDropTarget, setIsDropTarget] = useState<boolean>(false);
 
@@ -1251,6 +1260,25 @@ export function SftpSessionView({
                 <Download className="size-3 text-foreground-subtle" />
                 <span>{t('files.selection.download')}</span>
               </Button>
+              {selectedPaths.size === 2 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const selected = items.filter((it) => selectedPaths.has(it.path) && !it.is_dir);
+                    if (selected.length === 2) {
+                      setDiffTargetPair({
+                        original: { name: selected[0].name, path: selected[0].path },
+                        modified: { name: selected[1].name, path: selected[1].path },
+                      });
+                    }
+                  }}
+                  className="h-6 gap-1 rounded-md px-2 text-ui-xs font-medium border-border/70 bg-surface/40 hover:bg-hover active:bg-hover/80 text-foreground shadow-2xs transition-colors"
+                >
+                  <FileDiff className="size-3 text-terminal-blue" />
+                  <span>{t('files.compare')}</span>
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="ghost"
@@ -1787,6 +1815,63 @@ export function SftpSessionView({
                   <span>{t('files.preview')}</span>
                 </button>
               ) : null}
+              {/* 文件差异对比入口 */}
+              {!fileMenu.item.is_dir && selectedPaths.size === 2 && selectedPaths.has(fileMenu.item.path) ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    const selected = items.filter((it) => selectedPaths.has(it.path) && !it.is_dir);
+                    setFileMenu(null);
+                    if (selected.length === 2) {
+                      setDiffTargetPair({
+                        original: { name: selected[0].name, path: selected[0].path },
+                        modified: { name: selected[1].name, path: selected[1].path },
+                      });
+                    }
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+                >
+                  <FileDiff className="size-3.5 text-terminal-blue" />
+                  <span>{t('files.compareSelected')}</span>
+                </button>
+              ) : !fileMenu.item.is_dir ? (
+                <>
+                  {compareCandidate && compareCandidate.path !== fileMenu.item.path ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        const target = fileMenu.item;
+                        const first = compareCandidate;
+                        setFileMenu(null);
+                        setCompareCandidate(null);
+                        setDiffTargetPair({
+                          original: { name: first.name, path: first.path },
+                          modified: { name: target.name, path: target.path },
+                        });
+                      }}
+                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+                    >
+                      <FileDiff className="size-3.5 text-terminal-green" />
+                      <span>{t('files.compareWith', { name: compareCandidate.name })}</span>
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      const target = fileMenu.item;
+                      setFileMenu(null);
+                      setCompareCandidate(target);
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover"
+                  >
+                    <FileDiff className="size-3.5 text-foreground-subtle" />
+                    <span>{t('files.selectForCompare')}</span>
+                  </button>
+                </>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"
@@ -1883,6 +1968,16 @@ export function SftpSessionView({
             }}
           />
         </Suspense>
+      ) : null}
+
+      {/* 双文件 Monaco 差异对比弹窗 */}
+      {diffTargetPair ? (
+        <SftpFileDiffModal
+          hostId={hostId}
+          original={diffTargetPair.original}
+          modified={diffTargetPair.modified}
+          onClose={() => setDiffTargetPair(null)}
+        />
       ) : null}
 
       {/* 文件属性弹窗：权限九宫格/预设/八进制联动/特殊位/属主属组/递归；应用后刷新目录 */}
