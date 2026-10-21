@@ -57,7 +57,7 @@ pub fn apply_log_level_filter(filter: LevelFilter) {
     log::set_max_level(filter);
 }
 
-/// 生成本地时区时间戳 `[YYYY-MM-DD][HH:MM:SS.mmm]`。
+/// 生成本地时区时间戳 `YYYY-MM-DD HH:MM:SS.mmm`（无括号，空格分隔）。
 ///
 /// - 时区取 [`TimezoneStrategy::UseLocal`]（内部为 `OffsetDateTime::now_local()`），
 ///   避免插件默认的 `UseUtc` 让日志比本地时间少 8 小时；
@@ -67,7 +67,7 @@ pub fn apply_log_level_filter(filter: LevelFilter) {
 fn format_local_timestamp() -> String {
     let now = TimezoneStrategy::UseLocal.get_now();
     format!(
-        "[{:04}-{:02}-{:02}][{:02}:{:02}:{:02}.{:03}]",
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
         now.year(),
         u8::from(now.month()),
         now.day(),
