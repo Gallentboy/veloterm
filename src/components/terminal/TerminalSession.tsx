@@ -1273,9 +1273,15 @@ export function TerminalSession({
     // Windows 本地终端（cmd）：term.clear() 只清前端视口、旧内容仍留在回滚区，
     // 而 cmd 用户习惯的 cls 是整缓冲清除——把 cls 当键入发给 PTY。程序化注入走
     // transport.write 直写（与就绪钩子同路）：不进 onData，联动模式不会把
-    // cls 文本镜像到其余终端（那些目标仍走前端清屏）
-    if (hostId == null && platformKind === 'windows') {
-      void transport.write({ id: sessionId, data: encodeTerminalInput('cls\r') });
+    // cls 文本镜像到其余终端（那些目标仍走前端清屏）。
+    // 注意 id 语义：transport.write 的 id 是**后端分配的 terminalId**（异步就绪，
+    // 见 onTerminalIdReady），不是前端 Tab 的 sessionId——两者各自从 1 自增，
+    // 首个终端碰巧同值，但开/关过 Tab 后序列错开，用 sessionId 会把 cls 写到
+    // 别的后端终端（当前终端收不到清屏序列，前端缓冲残留 → 视口错位）。
+    // 未就绪（terminalId 尚为 null）时退回前端清屏。
+    const tid = terminalIdRef.current ?? terminalSessionRegistry.getTerminalId(sessionId);
+    if (hostId == null && platformKind === 'windows' && tid !== null) {
+      void transport.write({ id: tid, data: encodeTerminalInput('cls\r') });
     } else {
       term?.clear();
     }
