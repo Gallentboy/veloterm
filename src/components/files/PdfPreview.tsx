@@ -148,8 +148,8 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
       </div>
 
       {/* 页面区域：图片按自然尺寸显示，超出容器时双向滚动。
-          居中用子元素的 m-auto 而非容器的 justify-center——后者在内容
-          超出时会把左侧裁掉且无法滚动到（flex 居中溢出问题的经典坑）。 */}
+          居中用 mx-auto（仅水平）：内容比容器宽时左右都能滚到；垂直方向
+          从顶部开始（items-start），图片比容器高时顶部不会被裁。 */}
       <div className="flex min-h-0 flex-1 items-start overflow-auto bg-background-alt/40 p-4">
         {error ? (
           <div className="m-auto flex flex-col items-center gap-2 py-8">
@@ -164,7 +164,7 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
             </Button>
           </div>
         ) : (
-          <div className="relative m-auto">
+          <div className="relative mx-auto">
             {loading ? (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60">
                 <Loader2 className="size-5 animate-spin text-foreground-subtle" />
