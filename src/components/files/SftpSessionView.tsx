@@ -118,6 +118,16 @@ const CODE_CONFIG_EXTS = new Set([
   'json', 'yaml', 'yml', 'toml', 'xml', 'conf', 'cfg', 'ini', 'env', 'sh', 'bash', 'zsh', 'fish', 'py', 'rs', 'ts', 'js', 'go', 'c', 'cpp', 'h',
 ]);
 
+/**
+ * 是否有预览入口。
+ *
+ * 后端 `editable` 只判文本文件（二进制为 false），但 PDF 虽不可编辑也能预览
+ * （走 PDFium 渲染分支），故这里额外放行 .pdf。
+ */
+function canPreview(item: { name: string; editable?: boolean }): boolean {
+  return Boolean(item.editable) || /\.pdf$/i.test(item.name);
+}
+
 function getFileItemVisuals(item: RemoteFileItem) {
   if (item.is_dir) {
     return {
@@ -290,7 +300,7 @@ const SftpFileRow = memo(function SftpFileRow({
             </Tooltip>
           ) : (
             <>
-              {item.editable ? (
+              {canPreview(item) ? (
                 <Tooltip content={t('files.tooltips.preview')} side="top">
                   <Button
                     type="button"
@@ -1762,7 +1772,7 @@ export function SftpSessionView({
           ) : (
             <>
               {/* 预览与编辑同门槛：后端判非可编辑（非文本后缀 / 超 5MB）的内容拉下来也无法展示 */}
-              {fileMenu.item.editable ? (
+              {canPreview(fileMenu.item) ? (
                 <button
                   type="button"
                   role="menuitem"
