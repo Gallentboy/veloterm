@@ -29,6 +29,11 @@ const RESET_FONT_SCALE_STYLE = {
 export interface ImagePreviewProps {
   /** 本地图片绝对路径（远端文件需先下载到临时目录） */
   imagePath: string;
+  /**
+   * 后端转码产生的 PNG 路径上报（未转码时不回调）。
+   * 父组件据此在卸载时释放——否则只能等应用退出清理。
+   */
+  onConvertedFile?: (path: string) => void;
   className?: string;
 }
 
@@ -40,7 +45,7 @@ export interface ImagePreviewProps {
  * - 非原生格式由后端转 PNG 一次（结果缓存在临时文件，同图重开不再转）
  * - 图片按缩放倍率设置 CSS 尺寸，超出容器时外层 overflow-auto 双向滚动
  */
-export function ImagePreview({ imagePath, className }: ImagePreviewProps) {
+export function ImagePreview({ imagePath, onConvertedFile, className }: ImagePreviewProps) {
   const { t } = useTranslation();
   const [url, setUrl] = useState<string | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
@@ -61,6 +66,8 @@ export function ImagePreview({ imagePath, className }: ImagePreviewProps) {
       .then((result) => {
         if (cancelled) return;
         setUrl(result.url);
+        // 转码产物需父组件在卸载时释放（源文件由父组件负责）
+        if (result.converted) onConvertedFile?.(result.path);
         setNaturalSize(
           result.width > 0 && result.height > 0
             ? { width: result.width, height: result.height }
@@ -77,7 +84,7 @@ export function ImagePreview({ imagePath, className }: ImagePreviewProps) {
     return () => {
       cancelled = true;
     };
-  }, [imagePath]);
+  }, [imagePath, onConvertedFile]);
 
   const zoomBy = useCallback((delta: number) => {
     setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number((z + delta).toFixed(2)))));

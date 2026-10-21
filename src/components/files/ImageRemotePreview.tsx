@@ -29,7 +29,14 @@ export function ImageRemotePreview({ sessionId, remotePath }: ImageRemotePreview
   const [error, setError] = useState<string | null>(null);
 
   const localPathRef = useRef<string | null>(null);
+  /** 后端转码产生的 PNG（卸载时一并删除） */
+  const convertedFilesRef = useRef<Set<string>>(new Set());
   const disposedRef = useRef(false);
+
+  /** ImagePreview 转码完成回调：收集路径供卸载时释放 */
+  const handleConvertedFile = useCallback((path: string) => {
+    convertedFilesRef.current.add(path);
+  }, []);
 
   const startDownload = useCallback(async () => {
     setStage('downloading');
@@ -69,7 +76,9 @@ export function ImageRemotePreview({ sessionId, remotePath }: ImageRemotePreview
     void startDownload();
     return () => {
       disposedRef.current = true;
-      const paths = localPathRef.current ? [localPathRef.current] : [];
+      const paths: string[] = [];
+      if (localPathRef.current) paths.push(localPathRef.current);
+      paths.push(...convertedFilesRef.current);
       void invoke('release_pdf_temp_files', { paths }).catch(() => undefined);
     };
   }, [startDownload]);
@@ -113,7 +122,7 @@ export function ImageRemotePreview({ sessionId, remotePath }: ImageRemotePreview
   // 下载完成：交给 ImagePreview（它内部处理原生直传/后端转码、缩放与滚动）
   return localPath ? (
     <div className="flex h-full min-h-0 flex-col">
-      <ImagePreview imagePath={localPath} />
+      <ImagePreview imagePath={localPath} onConvertedFile={handleConvertedFile} />
     </div>
   ) : null;
 }
