@@ -28,6 +28,11 @@ const RESET_FONT_SCALE_STYLE = {
 export interface PdfPreviewProps {
   /** 本地 PDF 绝对路径（远端文件需先下载到临时目录） */
   pdfPath: string;
+  /**
+   * 渲染出的 PNG 临时文件路径上报（每渲染一页回调一次）。
+   * 父组件据此在卸载时释放这些文件——否则它们只能等应用退出才清理。
+   */
+  onRenderedFile?: (path: string) => void;
   className?: string;
 }
 
@@ -41,7 +46,7 @@ export interface PdfPreviewProps {
  *   避免慢请求覆盖新页面（竞态）
  * - 渲染结果按页缓存于内存（同一页来回翻不重复渲染）
  */
-export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
+export function PdfPreview({ pdfPath, onRenderedFile, className }: PdfPreviewProps) {
   const { t } = useTranslation();
   const [pageIndex, setPageIndex] = useState(0);
   const [pageCount, setPageCount] = useState<number | null>(null);
@@ -88,6 +93,8 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
           width: result.width,
           height: result.height,
         });
+        // 上报临时文件路径：父组件卸载时统一释放（否则只能等应用退出清理）
+        onRenderedFile?.(result.path);
         setPageCount(result.pageCount);
         setImageUrl(result.url);
         setImageSize({ width: result.width, height: result.height });
@@ -98,7 +105,7 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
         if (generation === generationRef.current) setLoading(false);
       }
     },
-    [pdfPath],
+    [pdfPath, onRenderedFile],
   );
 
   // 首次加载 / 路径变化：重置状态并渲染第 0 页

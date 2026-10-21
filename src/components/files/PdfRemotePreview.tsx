@@ -32,8 +32,15 @@ export function PdfRemotePreview({ sessionId, remotePath }: PdfRemotePreviewProp
 
   /** 本次下载产生的临时文件（卸载时删除） */
   const localPathRef = useRef<string | null>(null);
+  /** 渲染出的各页 PNG 临时文件（卸载时一并删除，否则只能等应用退出清理） */
+  const renderedFilesRef = useRef<Set<string>>(new Set());
   /** 组件已卸载：丢弃在途下载的进度更新 */
   const disposedRef = useRef(false);
+
+  /** PdfPreview 每渲染一页回调一次：收集路径供卸载时释放 */
+  const handleRenderedFile = useCallback((path: string) => {
+    renderedFilesRef.current.add(path);
+  }, []);
 
   const startDownload = useCallback(async () => {
     setStage('downloading');
@@ -79,8 +86,10 @@ export function PdfRemotePreview({ sessionId, remotePath }: PdfRemotePreviewProp
     void startDownload();
     return () => {
       disposedRef.current = true;
-      // 卸载即释放本次临时文件（下载的 PDF + 已渲染的 PNG）
-      const paths = localPathRef.current ? [localPathRef.current] : [];
+      // 卸载即释放本次全部临时文件：下载的源 PDF + 渲染出的各页 PNG
+      const paths: string[] = [];
+      if (localPathRef.current) paths.push(localPathRef.current);
+      paths.push(...renderedFilesRef.current);
       void invoke('release_pdf_temp_files', { paths }).catch(() => undefined);
     };
   }, [startDownload]);
@@ -128,7 +137,7 @@ export function PdfRemotePreview({ sessionId, remotePath }: PdfRemotePreviewProp
   // 才能拿到受限高度——否则高度随内容撑开，内部 overflow-auto 永不触发滚动条。
   return localPath ? (
     <div className="flex h-full min-h-0 flex-col">
-      <PdfPreview pdfPath={localPath} />
+      <PdfPreview pdfPath={localPath} onRenderedFile={handleRenderedFile} />
     </div>
   ) : null;
 }
