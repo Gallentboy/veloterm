@@ -42,7 +42,8 @@ const SNIPPETS: Array<{ shell: 'bash' | 'zsh' | 'fish'; code: string }> = [
     code: `# VeloTerm 命令采集与 OSC 133 语义化防护（粘贴到 ~/.bashrc；幂等，可重复粘贴）
 __veloterm_report() {
   local rc=$? line cmd enc
-  printf '\\033]133;D;%s\\033\\\\\\033]133;A\\033\\\\' "$rc"
+  # 1. 严格发送 133;D（上条命令结束+退出码），提示符由 PS1 首尾的 133;A / 133;B 界定
+  printf '\\033]133;D;%s\\033\\\\' "$rc"
   if [[ -n \${__veloterm_skip:-} ]]; then __veloterm_skip=; return; fi
   line=$(HISTTIMEFORMAT= history 1)
   line="\${line#"\${line%%[! ]*}"}"
@@ -53,10 +54,15 @@ __veloterm_report() {
   enc=\${enc//$'\\n'/%0A}; enc=\${enc//$'\\r'/%0D}
   printf '\\033]7777;cmd;%s;%s\\033\\\\' "$rc" "$enc"
 }
-__veloterm_ps1_hook() {
-  [[ "$PS1" == *"]133;B"* ]] || PS1="$PS1\\[\\033]133;B\\033\\\\\\]"
+# 2. 将 133;A (Prompt开始) 与 133;B (Prompt结束/命令起点) 严格包裹在 PS1 首尾
+__veloterm_wrap_ps1() {
+  if [[ "$PS1" != *"]133;A"* ]]; then
+    PS1="\\[\\033]133;A\\033\\\\\\]\${PS1:-\\u@\\h:\\w\\$ }\\[\\033]133;B\\033\\\\\\]"
+  fi
 }
-case ";\${PROMPT_COMMAND:-};" in *";__veloterm_report;"*) ;; *) PROMPT_COMMAND="__veloterm_report;__veloterm_ps1_hook\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac
+# 加载即刻生效（首行提示符立享 133 保护），并在 PROMPT_COMMAND 中保持常驻
+__veloterm_wrap_ps1
+case ";\${PROMPT_COMMAND:-};" in *";__veloterm_report;"*) ;; *) PROMPT_COMMAND="__veloterm_report;__veloterm_wrap_ps1\${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; esac
 __veloterm_skip=1`,
   },
   {
@@ -64,7 +70,8 @@ __veloterm_skip=1`,
     code: `# VeloTerm 命令采集与 OSC 133 语义化防护（粘贴到 ~/.zshrc；幂等，可重复粘贴）
 __veloterm_report() {
   local rc=$? cmd enc
-  printf '\\033]133;D;%s\\033\\\\\\033]133;A\\033\\\\' "$rc"
+  # 1. 发送 133;D（上条命令结束+退出码）
+  printf '\\033]133;D;%s\\033\\\\' "$rc"
   if [[ -n \${__veloterm_skip:-} ]]; then __veloterm_skip=; return; fi
   cmd=\${history[\${#history}]}
   [[ -n $cmd ]] || return
@@ -73,12 +80,16 @@ __veloterm_report() {
   printf '\\033]7777;cmd;%s;%s\\033\\\\' "$rc" "$enc"
 }
 __veloterm_preexec() {
-  printf '\\033]133;C\\033\\\\'
+  printf '\\033]133;C\\033\\\\' # 2. 命令敲击回车瞬间发送 133;C (开始执行)
 }
-__veloterm_ps1_hook() {
-  [[ "$PS1" == *"]133;B"* ]] || PS1="$PS1%{\\033]133;B\\033\\\\%}"
+__veloterm_wrap_ps1() {
+  if [[ "$PS1" != *"]133;A"* ]]; then
+    PS1="%{\\033]133;A\\033\\\\%}\${PS1:-%n@%m %~ %# }%{\\033]133;B\\033\\\\%}"
+  fi
 }
-(( \${precmd_functions[(Ie)__veloterm_report]} )) || precmd_functions+=(__veloterm_report __veloterm_ps1_hook)
+# 加载即刻生效（首行提示符立享 133 保护）
+__veloterm_wrap_ps1
+(( \${precmd_functions[(Ie)__veloterm_report]} )) || precmd_functions+=(__veloterm_report __veloterm_wrap_ps1)
 (( \${preexec_functions[(Ie)__veloterm_preexec]} )) || preexec_functions+=(__veloterm_preexec)
 __veloterm_skip=1`,
   },
@@ -87,7 +98,8 @@ __veloterm_skip=1`,
     code: `# VeloTerm 命令采集与 OSC 133 语义化防护（粘贴到 ~/.config/fish/config.fish；幂等）
 function __veloterm_report --on-event fish_prompt
     set -l rc $status
-    printf '\\e]133;D;%s\\e\\\\\\e]133;A\\e\\\\' $rc
+    # 1. 命令结束，发送 133;D
+    printf '\\e]133;D;%s\\e\\\\' $rc
     if set -q __veloterm_skip
         set -e __veloterm_skip
         return
@@ -103,11 +115,14 @@ function __veloterm_report --on-event fish_prompt
     printf '\\e]7777;cmd;%s;%s\\e\\\\' $rc "$enc"
 end
 function __veloterm_preexec --on-event fish_preexec
+    # 2. 用户按下回车，命令开始执行
     printf '\\e]133;C\\e\\\\'
 end
+# 3. 包装 fish_prompt：首部发送 133;A，尾部发送 133;B (命令起点)
 if not functions -q __veloterm_fish_prompt_orig
     functions -c fish_prompt __veloterm_fish_prompt_orig
     function fish_prompt
+        printf '\\e]133;A\\e\\\\'
         __veloterm_fish_prompt_orig
         printf '\\e]133;B\\e\\\\'
     end
