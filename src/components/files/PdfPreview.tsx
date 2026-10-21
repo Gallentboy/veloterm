@@ -31,6 +31,8 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [loading, setLoading] = useState(true);
+  /** 跳页输入框的临时值（空 = 显示当前页占位） */
+  const [jumpInput, setJumpInput] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   /** 请求代次：只有最新代次的响应才被采纳 */
@@ -112,18 +114,53 @@ export function PdfPreview({ pdfPath, className }: PdfPreviewProps) {
   const canPrev = pageIndex > 0;
   const canNext = pageCount != null && pageIndex < pageCount - 1;
 
+  /**
+   * 跳页输入提交：接受 1 基页码，越界钳制到 [1, pageCount]。
+   * 非数字或空输入直接还原为当前页（不做任何跳转）。
+   */
+  const commitJump = useCallback(() => {
+    const raw = jumpInput.trim();
+    setJumpInput('');
+    if (!raw || pageCount == null) return;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed)) return;
+    goToPage(parsed - 1);
+  }, [jumpInput, pageCount, goToPage]);
+
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
-      {/* 工具栏：页码 + 翻页 */}
+      {/* 工具栏：页码输入（跳页）+ 翻页 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-1.5">
-        <span className="text-ui-sm text-foreground-subtle select-none">
-          {pageCount != null
-            ? t('pdf.pageIndicator', {
-                current: pageIndex + 1,
-                total: pageCount,
-              })
-            : t('pdf.loading')}
-        </span>
+        {pageCount != null ? (
+          <span className="flex items-center gap-1.5 text-ui-sm text-foreground-subtle select-none">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={jumpInput}
+              onChange={(e) => setJumpInput(e.target.value.replace(/[^\d]/g, ''))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  commitJump();
+                } else if (e.key === 'Escape') {
+                  setJumpInput('');
+                  e.currentTarget.blur();
+                }
+              }}
+              onBlur={() => {
+                if (jumpInput) commitJump();
+              }}
+              placeholder={String(pageIndex + 1)}
+              aria-label={t('pdf.jumpToPage')}
+              // 宽度按总页数位数动态给（最少 2 个字符宽）
+              style={{ width: `${Math.max(2, String(pageCount).length)}ch` }}
+              className="h-6 rounded-md border border-border bg-input px-1.5 text-center font-mono text-ui-xs text-foreground outline-none transition-colors placeholder:text-foreground-subtlest focus:border-border-hover"
+            />
+            <span>/ {pageCount}</span>
+          </span>
+        ) : (
+          <span className="text-ui-sm text-foreground-subtle select-none">{t('pdf.loading')}</span>
+        )}
         <div className="flex-1" />
         <Button
           variant="outline"
