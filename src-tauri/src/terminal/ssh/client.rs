@@ -1718,15 +1718,13 @@ impl Connector {
                     let response = session
                         .authenticate_password(username.to_string(), pw_to_try.clone())
                         .await?;
-                    auth_result = self
-                        ._handle_auth_result(
-                            session,
-                            username.to_string(),
-                            Some(pw_to_try.as_str()),
-                            response,
-                        )
-                        .await
-                        .unwrap_or(false);
+                    // 直接判结果，不走 _handle_auth_result：它会因 remaining
+                    // methods 含 kbd-int 而再发起一轮内嵌 kbd-int（并把刚被
+                    // 拒的同一密码自动填进去）——每轮重试实际烧 2~3 次
+                    // MaxAuthTries（常见默认 6），约两三轮后服务器直接
+                    // DISCONNECT，挂在屏上的 Password: 提示从此无响应（实测）。
+                    // 本循环就是纯 password 重试，语义应为线性的单请求/轮。
+                    auth_result = matches!(response, AuthResult::Success);
                     if auth_result {
                         log::info!(
                             "[SSH {}] Authenticated with password as {}",
