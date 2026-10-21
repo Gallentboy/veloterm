@@ -31,6 +31,7 @@ import {
   extractCommandLineFromTerminal,
   inspectCommandSafety,
   type SafetyInspectResult,
+  type Osc133TrackerState,
 } from '@/services/safetyGuardService';
 import { loadHostStore, resolveJumpHostChain } from '@/hosts/storage';
 import { formatShellShortLabel } from '@/terminal/terminalPanelState';
@@ -269,6 +270,12 @@ export function TerminalSession({
 
   // ── 生产环境安全拦截与视觉护罩 ──
   const safetyTrackerRef = useRef(new SafetyInputTracker());
+  const osc133TrackerRef = useRef<Osc133TrackerState>({
+    hasOsc133: false,
+    commandStartX: 0,
+    commandStartY: 0,
+    inCommand: false,
+  });
   const [safetyModal, setSafetyModal] = useState<{
     isOpen: boolean;
     command: string;
@@ -757,6 +764,25 @@ export function TerminalSession({
     // IP/URL 可点击链接（悬停下划线由 xterm 自带，随 term.dispose 一并释放）
     registerOutputLinkProvider(term);
 
+    // 注册 OSC 133 语义化 Shell Integration 监听器（支持精准命令起点定位）
+    const oscTracker = osc133TrackerRef.current;
+    const osc133Disposer = term.parser.registerOscHandler(133, (data) => {
+      const code = data[0];
+      if (code === 'B') {
+        const buffer = term.buffer.active;
+        oscTracker.hasOsc133 = true;
+        oscTracker.inCommand = true;
+        oscTracker.commandStartX = buffer.cursorX;
+        oscTracker.commandStartY = buffer.cursorY + buffer.baseY;
+        return true;
+      } else if (code === 'C' || code === 'D' || code === 'A') {
+        oscTracker.inCommand = false;
+        return true;
+      }
+      return false;
+    });
+    registryDisposers.push(osc133Disposer);
+
     // 重连 remount 时恢复上一实例的滚动缓冲（快照在 registry.release →
     // entry.dispose 时存入；首次挂载无快照，此处 no-op）
     restoreSessionSnapshot(sessionId, term);
@@ -1166,12 +1192,12 @@ export function TerminalSession({
               const isEnterHit = data.includes('\r') || data.includes('\n');
               if (isEnterHit) {
                 // 生产/预发高危拦截检查：优先从真实屏幕行提取（涵盖按⬆️调历史命令、Tab补全、光标编辑等场景）
-                const screenCmd = extractCommandLineFromTerminal(term);
+                const extracted = extractCommandLineFromTerminal(term, osc133TrackerRef.current);
                 const trackerCmd = safetyTrackerRef.current.feed(data).commandToInspect;
-                const cmdToInspect = screenCmd || trackerCmd;
+                const cmdToInspect = extracted.command || trackerCmd;
 
                 if (cmdToInspect) {
-                  void inspectCommandSafety(cmdToInspect, envLevel).then((inspectRes) => {
+                  void inspectCommandSafety(cmdToInspect, envLevel, extracted.fromOsc133).then((inspectRes) => {
                     if (inspectRes.level !== 'safe') {
                       setSafetyModal({
                         isOpen: true,

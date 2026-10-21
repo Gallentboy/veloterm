@@ -15,10 +15,12 @@ export interface SafetyInspectResult {
 /**
  * 调用 Rust 安全分析引擎 inspect_command_safety。
  * 仅在 staging/prod 环境下进行高危检测；dev/test 快速返回 safe。
+ * `isClean`: 是否来自 OSC 133 语义化坐标切片（若为 true 则在后端跳过 Prompt 剥离直飞 AST）。
  */
 export async function inspectCommandSafety(
   command: string,
   hostEnv: HostEnvironmentLevel = 'dev',
+  isClean: boolean = false,
 ): Promise<SafetyInspectResult> {
   const env = (hostEnv || 'dev').toLowerCase();
   if (env !== 'prod' && env !== 'staging') {
@@ -32,6 +34,7 @@ export async function inspectCommandSafety(
     return await invoke<SafetyInspectResult>('inspect_command_safety', {
       command,
       hostEnv: env,
+      isClean,
     });
   } catch (err) {
     console.error('[SafetyGuard] inspect_command_safety failed:', err);
@@ -97,29 +100,61 @@ export class SafetyInputTracker {
   }
 }
 
+export interface Osc133TrackerState {
+  hasOsc133: boolean;
+  commandStartX: number;
+  commandStartY: number;
+  inCommand: boolean;
+}
+
+export interface ExtractedTerminalCommand {
+  command: string;
+  fromOsc133: boolean;
+}
+
 /**
  * 直接从 xterm.js 的当前屏幕缓冲区读取光标所在行（含换行拼接），
- * 提取当前行的真实终端文本，直接送往 Rust 后端进行 Prompt 剥离与 AST 语法树安全分析。
+ * 提取当前行的真实终端文本，直接送往 Rust 后端进行 AST 语法树安全分析。
  *
- * 核心优势：
- * 不论用户是直接键盘敲入、按 ⬆️/⬇️ 调出历史命令、按 Tab 自动补全、
- * 还是用鼠标粘贴，屏幕缓冲区永远是绝对可靠的真实屏幕内容。
- * 词法提取、Prompt 剥离（防 # 注释误判陷阱）与 AST 规则全交由 Rust 后端统一闭环。
+ * 双模式引擎：
+ * 1. 语义化模式 (OSC 133): 若检测到远端 Shell 的 `OSC 133;B`（Prompt 结束 / 命令行开始），
+ *    从记录的绝对坐标 (commandStartX, commandStartY) 物理切片提取，精度 100%，直飞语法树！
+ * 2. 启发式模式 (Fallback): 若未注入 OSC 133，向上寻找折行拼接整行，交由 Rust 端逆向剥离 Prompt。
  */
-export function extractCommandLineFromTerminal(term: {
-  buffer: {
-    active: {
-      cursorY: number;
-      baseY: number;
-      getLine: (y: number) => { isWrapped?: boolean; translateToString: (trimRight?: boolean) => string } | undefined;
+export function extractCommandLineFromTerminal(
+  term: {
+    buffer: {
+      active: {
+        cursorX: number;
+        cursorY: number;
+        baseY: number;
+        getLine: (y: number) => { isWrapped?: boolean; translateToString: (trimRight?: boolean, startColumn?: number, endColumn?: number) => string } | undefined;
+      };
     };
-  };
-}): string {
+  },
+  oscTracker?: Osc133TrackerState | null,
+): ExtractedTerminalCommand {
   try {
     const buffer = term.buffer.active;
     const cursorY = buffer.cursorY + buffer.baseY;
 
-    // 向上寻找起始行（支持超长命令被 xterm 自动折行 isWrapped）
+    // 1. 若有活跃的 OSC 133;B 坐标，直接进行精准像素切片
+    if (oscTracker?.hasOsc133 && oscTracker.commandStartY <= cursorY) {
+      let fullLine = '';
+      for (let y = oscTracker.commandStartY; y <= cursorY; y++) {
+        const line = buffer.getLine(y);
+        if (line) {
+          if (y === oscTracker.commandStartY) {
+            fullLine += line.translateToString(true, oscTracker.commandStartX);
+          } else {
+            fullLine += line.translateToString(true);
+          }
+        }
+      }
+      return { command: fullLine.trim(), fromOsc133: true };
+    }
+
+    // 2. Fallback 通道：向上寻找起始行（支持超长命令被 xterm 自动折行 isWrapped）
     let startY = cursorY;
     while (startY > 0 && buffer.getLine(startY)?.isWrapped) {
       startY--;
@@ -133,10 +168,10 @@ export function extractCommandLineFromTerminal(term: {
       }
     }
 
-    return fullLine.trim();
+    return { command: fullLine.trim(), fromOsc133: false };
   } catch (err) {
     console.warn('[SafetyGuard] extractCommandLineFromTerminal failed:', err);
-    return '';
+    return { command: '', fromOsc133: false };
   }
 }
 
