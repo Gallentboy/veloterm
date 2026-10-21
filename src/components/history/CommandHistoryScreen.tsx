@@ -384,9 +384,15 @@ export function CommandHistoryScreen() {
         {loading ? (
           <span className="text-ui-sm text-foreground-subtlest select-none">{t('commandHistory.loading')}</span>
         ) : showGuide ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 select-none">
-            <span className="text-ui-sm text-foreground-subtlest">{t('commandHistory.emptyGuide')}</span>
-          </div>
+          helpOpen ? (
+            <div className="py-1 text-center select-none shrink-0">
+              <span className="text-ui-xs text-foreground-subtlest">{t('commandHistory.emptyGuide')}</span>
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 select-none">
+              <span className="text-ui-sm text-foreground-subtlest">{t('commandHistory.emptyGuide')}</span>
+            </div>
+          )
         ) : showFilteredEmpty ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 select-none">
             <span className="text-ui-sm text-foreground-subtlest">{t('commandHistory.emptyFiltered')}</span>
@@ -428,7 +434,7 @@ export function CommandHistoryScreen() {
           <Button
             variant="outline"
             size="lg"
-            className="h-7 self-start px-3 text-ui-xs"
+            className="h-7 self-start px-3 text-ui-xs shrink-0"
             disabled={exhausted || loadingMore}
             onClick={() => void loadPage(nextOffset, 'append')}
           >
@@ -437,15 +443,18 @@ export function CommandHistoryScreen() {
           </Button>
         ) : null}
 
-        {/* 「启用采集」可折叠帮助区：三段 shell 片段逐字对应后端解析协议。
-            外层禁 overflow-hidden——滚动容器里它会退化成「压缩裁剪」而非撑出滚动高度
-            （被裁内容不可达）；展开体按仓库惯例（GrpcScreen 同款）限高内部滚动 */}
-        <div className="mt-1 shrink-0 rounded-lg border border-border/60">
+        {/* 「启用采集」可折叠帮助区：展开时 flex-1 min-h-0 充满剩余高度，彻底利用空间 */}
+        <div
+          className={cn(
+            'mt-1 rounded-lg border border-border/60 flex flex-col',
+            helpOpen ? 'flex-1 min-h-[300px]' : 'shrink-0',
+          )}
+        >
           <button
             type="button"
             onClick={() => setHelpOpen((current) => !current)}
             aria-expanded={helpOpen}
-            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover select-none"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-hover select-none shrink-0"
           >
             {helpOpen ? (
               <ChevronDown className="size-3.5 shrink-0 text-foreground-subtle" />
@@ -458,10 +467,10 @@ export function CommandHistoryScreen() {
             </span>
           </button>
           {helpOpen ? (
-            <div className="flex max-h-[46vh] flex-col gap-3 overflow-y-auto border-t border-border/60 p-3">
-              <p className="text-ui-xs leading-relaxed text-foreground-subtle">{t('commandHistory.helpDesc')}</p>
+            <div className="flex flex-1 min-h-0 flex-col gap-3 overflow-y-auto border-t border-border/60 p-3">
+              <p className="text-ui-xs leading-relaxed text-foreground-subtle shrink-0">{t('commandHistory.helpDesc')}</p>
               {SNIPPETS.map(({ shell, code }) => (
-                <div key={shell} className="flex flex-col gap-1.5">
+                <div key={shell} className="flex flex-col gap-1.5 shrink-0">
                   <div className="flex items-center">
                     <span className="font-mono text-ui-xs text-foreground-subtle select-none">{shell}</span>
                     <div className="flex-1" />
