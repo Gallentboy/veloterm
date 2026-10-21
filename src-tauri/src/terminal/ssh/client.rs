@@ -1689,25 +1689,98 @@ impl Connector {
                     )));
                 }
                 log::debug!("[SSH {}] falling back to password auth", self.id);
-                let response = session
-                    .authenticate_password(username.to_string(), password)
-                    .await?;
-                auth_result = self
-                    ._handle_auth_result(
-                        session,
-                        username.to_string(),
-                        Some(password.as_str()),
-                        response,
-                    )
-                    .await
-                    .unwrap_or(false);
-                if auth_result {
-                    log::info!(
-                        "[SSH {}] Authenticated with password as {}",
-                        self.id,
-                        username
-                    );
-                } else {
+                // 对齐 OpenSSH userauth_passwd 语义：保存密码失败不直接断开，
+                // 重试轮显示 Password: 等用户手输（共 1 次自动 + 2 次手输 =
+                // number_of_password_prompts=3）。提示保持裸格式、不加
+                // user@host 前缀——与 kbd-int 路径的既有约定一致。
+                // 手输密码通过服务器 Success 验证且与保存值不同 → 回写
+                // 主机库（user-input 源，同 kbd-int 路径）。
+                let mut pw_attempts = 0u32;
+                while pw_attempts < 3 {
+                    let (pw_to_try, from_user) = if pw_attempts == 0 {
+                        (password.clone(), false)
+                    } else {
+                        // OpenSSH attempt_passwd != 1 分支的重试文案
+                        let _ = self
+                            .tx
+                            .send(RCEvent::Output(
+                                1,
+                                bytes::Bytes::from(
+                                    "\r\nPermission denied, please try again.\r\n",
+                                ),
+                            ))
+                            .await;
+                        match self.ask_in_terminal("Password: ", false).await {
+                            Some(p) => (p, true),
+                            None => break, // 输入超时/会话中止
+                        }
+                    };
+                    let response = session
+                        .authenticate_password(username.to_string(), pw_to_try.clone())
+                        .await?;
+                    auth_result = self
+                        ._handle_auth_result(
+                            session,
+                            username.to_string(),
+                            Some(pw_to_try.as_str()),
+                            response,
+                        )
+                        .await
+                        .unwrap_or(false);
+                    if auth_result {
+                        log::info!(
+                            "[SSH {}] Authenticated with password as {}",
+                            self.id,
+                            username
+                        );
+                        if from_user
+                            && pw_to_try != *password
+                            && let Some(host_id) = self.host_id
+                        {
+                            match crate::db::change_host_password(
+                                host_id,
+                                &pw_to_try,
+                                "user-input",
+                                self.app_handle.as_ref(),
+                            ) {
+                                Ok(true) => {
+                                    log::info!(
+                                        "[SSH {}] user-entered password accepted \
+                                         (password method), host {} updated",
+                                        self.id,
+                                        host_id
+                                    );
+                                    let notice = if session_is_chinese {
+                                        "\r\n密码已自动保存到主机配置。"
+                                    } else {
+                                        "\r\nPassword saved to host settings."
+                                    };
+                                    let _ = self
+                                        .tx
+                                        .send(RCEvent::Output(1, bytes::Bytes::from(notice)))
+                                        .await;
+                                }
+                                Ok(false) => {
+                                    log::debug!(
+                                        "[SSH {}] host {} is not password-auth, skip update",
+                                        self.id,
+                                        host_id
+                                    );
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "[SSH {}] password write-back failed: {}",
+                                        self.id,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    pw_attempts += 1;
+                }
+                if !auth_result {
                     auth_error_msg =
                         Some("Password authentication was rejected by the SSH target".to_string());
                 }
