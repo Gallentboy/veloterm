@@ -5,6 +5,7 @@ import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { ensureExtendedLanguages } from '@/editor/languages';
 import { ensureBashCompletion, registerBashHostModel } from '@/editor/bashLanguage';
+import { attachHtmlAutoInsert } from '@/editor/htmlAutoInsert';
 import type { EditorFileDescriptor, MonacoDocumentCardProps } from '@/editor/types';
 
 /**
@@ -150,6 +151,8 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       latestPropsRef.current.onSaveRequest();
     });
+    // HTML 键入辅助（`>` 闭合标签 / `</` 补名 / `=` 补引号），仅 html 模型生效
+    attachHtmlAutoInsert(editor);
     editor.onDidChangeModelContent(() => {
       const model = editor.getModel();
       if (!model) return;

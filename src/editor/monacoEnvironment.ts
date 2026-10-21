@@ -8,6 +8,10 @@
  * - 子路径用包 exports 映射（`./*.js` → `./esm/vs/*.js`）展开后的形态：
  *   带 `esm/vs/` 前缀的子路径会被二次映射而无法解析（Rspack 遵循 exports 映射）
  *
+ * html/css worker 打包的就是 vscode-html/css-languageservice（VS Code
+ * html-language-features 扩展 server 的同一引擎），独立 chunk 懒加载——
+ * 不打开 html/css 文件的会话零成本。
+ *
  * 首个 Monaco 宿主（编辑器面板 MonacoDocumentCard、SFTP 预览弹窗）挂载时调用；
  * 后续实例共享同一 worker 池。
  */
@@ -20,6 +24,20 @@ export function setupMonacoEnvironment(): void {
   self.MonacoEnvironment = {
     getWorker(_workerId, label) {
       switch (label) {
+        case 'html':
+        case 'handlebars':
+        case 'razor':
+          return new Worker(
+            new URL('monaco-editor/language/html/html.worker.js', import.meta.url),
+            { type: 'module' },
+          );
+        case 'css':
+        case 'scss':
+        case 'less':
+          return new Worker(
+            new URL('monaco-editor/language/css/css.worker.js', import.meta.url),
+            { type: 'module' },
+          );
         case 'json':
           return new Worker(
             new URL('monaco-editor/language/json/json.worker.js', import.meta.url),
