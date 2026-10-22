@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { terminalSessionRegistry } from '@/terminal/terminalSessionRegistry';
 
-/** 后端 terminal/zmodem/transfer.rs 的 ZmodemProgress 事件载荷（camelCase） */
+/** 后端 terminal/zmodem/transfer.rs 的 ZmodemProgress 事件载荷（camelCase）。
+ * trzsz 的 TrzszProgress（terminal/trzsz/engine.rs）字段同构，复用本组件。 */
 interface ZmodemProgress {
   sessionId: string;
   direction: 'download' | 'upload';
@@ -16,8 +17,9 @@ interface ZmodemProgress {
   error: string | null;
 }
 
-/** 事件名与后端 ZMODEM_EVENT 常量一致 */
+/** 事件名与后端常量一致：ZMODEM_EVENT / TRZSZ_EVENT */
 const ZMODEM_EVENT = 'zmodem-progress';
+const TRZSZ_EVENT = 'trzsz-progress';
 
 /** ANSI：回到行首 + 擦除整行（动态刷新状态行用） */
 const CR_ERASE = '\r\x1b[2K';
@@ -25,6 +27,7 @@ const CR_ERASE = '\r\x1b[2K';
 /**
  * 文件传输状态**就地写入终端缓冲**（不叠 DOM 覆盖层——项目约定：
  * 终端内提示直接写 xterm）。用户视角只是「传文件」，不出现协议名。
+ * 同时服务 ZMODEM 与 trzsz 两条通道（事件载荷同构）。
  *
  * 三态（紧跟 rz/sz 输出之后，单行动态刷新）：
  * ```text
@@ -39,9 +42,9 @@ export function ZmodemTerminalStatus() {
 
   useEffect(() => {
     let disposed = false;
-    const unlistenPromise = listen<ZmodemProgress>(ZMODEM_EVENT, (event) => {
+
+    const handleProgress = (payload: ZmodemProgress) => {
       if (disposed) return;
-      const payload = event.payload;
       // 后端事件带的是 terminalId（TerminalManager 的计数），不是前端
       // sessionId（panel state 的自增序号）——两者是独立编号，必须反查
       const terminalId = Number(payload.sessionId.replace('terminal-', ''));
@@ -106,14 +109,19 @@ export function ZmodemTerminalStatus() {
       }
       const color = ok ? '\x1b[32m' : '\x1b[33m';
       term.write(`${CR_ERASE}${color}${parts.join('  ')}${reset}\r\n`);
-    });
+    };
+
+    const unlistenPromise = Promise.all([
+      listen<ZmodemProgress>(ZMODEM_EVENT, (e) => handleProgress(e.payload)),
+      listen<ZmodemProgress>(TRZSZ_EVENT, (e) => handleProgress(e.payload)),
+    ]);
 
     return () => {
       disposed = true;
       // 兜底：组件卸载时仍在传输（或事件丢失）的会话，恢复光标，
       // 避免光标永久隐藏
       startedAtRef.current.clear();
-      void unlistenPromise.then((unlisten) => unlisten());
+      void unlistenPromise.then((fns) => fns.forEach((fn) => fn()));
     };
   }, []);
 
