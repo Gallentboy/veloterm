@@ -22,6 +22,8 @@
 
 extern void *ma_multi_malloc(myf MyFlags, ...);
 
+static ExtraInfoSerializeFunc extra_serialize_funcs[OB20_SVR_END + 1];
+
 /* veloterm patch (Windows/MSVC): ob_mutex_t is CRITICAL_SECTION on Windows,
  * which has no static initializer (upstream only guarantees POSIX builds).
  * Use INIT_ONCE instead - statically constructible and semantically equal
@@ -38,7 +40,6 @@ static BOOL CALLBACK ob20_init_once_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
 static ob_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int init_flag = 0;
 #endif
-static ExtraInfoSerializeFunc extra_serialize_funcs[OB20_SVR_END + 1];
 
 // CRC table for the CRC-16. The poly is 0x8005 (x^16 + x^15 + x^2 + 1)
 uint16_t const ob_crc16_table[256] = {0x0000,
