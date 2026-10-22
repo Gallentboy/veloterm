@@ -52,6 +52,22 @@ const EXT_LANGUAGE_MAP: Record<string, string> = {
   csv: 'plaintext',
   // *.dockerfile（Dockerfile 精确名与 Dockerfile.dev 基名剥离已覆盖）
   dockerfile: 'dockerfile',
+  // systemd 单元文件（自建 systemd 语言：Monarch + 节内指令补全 + hover，
+  // 见 editor/systemdLanguage.ts）。扩展名足够判定，不做内容嗅探。
+  service: 'systemd',
+  socket: 'systemd',
+  timer: 'systemd',
+  target: 'systemd',
+  mount: 'systemd',
+  automount: 'systemd',
+  path: 'systemd',
+  slice: 'systemd',
+  scope: 'systemd',
+  device: 'systemd',
+  swap: 'systemd',
+  // crontab（自建 crontab 语言：Monarch + 表达式校验 markers + 下次运行
+  // hover + 调度模板补全，见 editor/crontabLanguage.ts）
+  crontab: 'crontab',
 };
 
 /** 无后缀的常见文本文件名 → language id */
@@ -67,6 +83,8 @@ const EXACT_NAME_LANGUAGE_MAP: Record<string, string> = {
   // nginx 主配置名精确命中（其余 .conf 大多是普通 ini 系配置，
   // 是否 nginx 由 resolveLanguageIdWithContent 按内容嗅探判定）
   'nginx.conf': 'nginx',
+  // 无扩展名的 crontab 文件名精确命中（*.crontab 走扩展名表）
+  crontab: 'crontab',
 };
 
 export function resolveLanguageId(fileName: string): string {
