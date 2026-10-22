@@ -59,7 +59,11 @@ export function WorkspaceHeader({
             ? t('groups.title')
             : page === 'settings'
               ? t('settings.title')
-              : t('app.name');
+              : page === 'dbhosts'
+                ? t('dbHosts.title')
+                : page === 'db'
+                  ? t('db.title')
+                  : t('app.name');
 
   return (
     <header

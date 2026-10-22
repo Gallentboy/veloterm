@@ -8,6 +8,7 @@ pub mod command_library;
 pub mod commands;
 pub mod common;
 pub mod db;
+pub mod db_browser;
 pub mod editor_storage;
 pub mod excel;
 pub mod grpc_client;
@@ -37,6 +38,13 @@ fn is_apple_silicon() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // rustls 进程级 CryptoProvider 显式钉 aws-lc-rs：依赖图里 reqwest 0.12
+    // （__rustls-ring）与 quinn/tonic/mysql_async（aws-lc-rs）并存，rustls 的
+    // crate-feature 自动探测在双 provider 下返回空——首次走进程默认 provider
+    // 的构造（PG/MySQL TLS 的 ClientConfig::builder()）会运行期 panic。
+    // 启动时显式安装消除歧义；已装时 install 返回 Err，忽略即幂等。
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let app = tauri::Builder::default()
         .plugin(logging::build_log_plugin())
         // 原生剪贴板插件：终端 Cmd+C/V 经由 Rust 侧读写系统剪贴板，
@@ -51,6 +59,7 @@ pub fn run() {
         .manage(port_forward::PortForwardManager::default())
         .manage(sftp::types::SftpState::new())
         .manage(zk::ZkState::new())
+        .manage(db_browser::DbState::new())
         .invoke_handler(tauri::generate_handler![
             is_apple_silicon,
             about::show_about_window,
@@ -90,6 +99,23 @@ pub fn run() {
             port_forward::port_forward_states,
             zk::zk_connect,
             zk::zk_disconnect,
+            db_browser::db_connection_list,
+            db_browser::db_connection_save,
+            db_browser::db_connection_delete,
+            db_browser::db_connection_test,
+            db_browser::db_connect,
+            db_browser::db_disconnect,
+            db_browser::db_catalog,
+            db_browser::db_query,
+            db_browser::db_query_cancel,
+            db_browser::db_list_databases,
+            db_browser::db_use_database,
+            db_browser::db_list_databases_for_record,
+            db_browser::db_object_definition,
+            db_browser::db_table_detail,
+            db_browser::oracle_client_dir_get,
+            db_browser::oracle_client_dir_set,
+            db_browser::oracle_client_dir_pick,
             zk::zk_list,
             zk::zk_get,
             zk::zk_set_data,

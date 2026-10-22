@@ -17,6 +17,8 @@ import { CommandHistoryScreen } from '@/components/history/CommandHistoryScreen'
 import { RelaysScreen } from '@/components/relays/RelaysScreen';
 import { ZkScreen } from '@/components/zk/ZkScreen';
 import { ZkHostsScreen } from '@/components/zkhosts/ZkHostsScreen';
+import { DbHostsScreen } from '@/components/dbhosts/DbHostsScreen';
+import { DbScreen } from '@/components/db/DbScreen';
 import { GrpcScreen } from '@/components/grpc/GrpcScreen';
 import { SettingsScreen } from '@/components/SettingsScreen';
 import { TerminalScreen } from '@/components/terminal';
@@ -547,6 +549,10 @@ export function AppShell() {
                 <div className={cn('h-full min-h-0 w-full', page !== 'grpc' && 'hidden')}>
                   <GrpcScreen />
                 </div>
+                {/* 数据库工作台持久挂载（同 SFTP/ZK）：切换页面保持会话/树/查询现场 */}
+                <div className={cn('h-full min-h-0 w-full', page !== 'db' && 'hidden')}>
+                  <DbScreen isVisible={page === 'db'} />
+                </div>
                 {page === 'home' ? (
                   <WelcomeScreen
                     onNewTerminal={handleOpenNewTerminal}
@@ -562,7 +568,7 @@ export function AppShell() {
                   />
                 ) : page === 'editor' ? (
                   <EditorScreen />
-                ) : page === 'files' || page === 'zk' || page === 'grpc' ? null : page === 'hosts' ? (
+                ) : page === 'files' || page === 'zk' || page === 'grpc' || page === 'db' ? null : page === 'hosts' ? (
                   <HostsScreen
                     onConnectHost={(host) => {
                       createSession({ hostId: host.id, customTitle: host.name });
@@ -590,6 +596,16 @@ export function AppShell() {
                         new CustomEvent('veloterm:zk-connect-host', { detail: host }),
                       );
                       setPage('zk');
+                    }}
+                  />
+                ) : page === 'dbhosts' ? (
+                  <DbHostsScreen
+                    onConnectConnection={(record) => {
+                      // 工作台常驻挂载，经 window 自定义事件递给 DbScreen 新建 tab 自动连接
+                      window.dispatchEvent(
+                        new CustomEvent('veloterm:db-connect-host', { detail: record }),
+                      );
+                      setPage('db');
                     }}
                   />
                 ) : (

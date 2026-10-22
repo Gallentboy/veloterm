@@ -847,6 +847,60 @@ A lightweight gRPC interactive test bench supporting official Server Reflection,
     ],
   },
   {
+    id: 'dbworkbench',
+    title: 'Database Workbench (Database)',
+    icon: 'Database',
+    sections: [
+      {
+        id: 'db-connections',
+        title: 'Connection Library & Testing',
+        badge: 'MySQL/PG',
+        keywords: ['Database', 'MySQL', 'PostgreSQL', 'Oracle', 'Connection', 'SSL', 'TLS', 'Read-only'],
+        content: `### Overview
+Built-in native MySQL and PostgreSQL connectivity (pure Rust drivers, TLS via rustls; Oracle reserved for a later release). Passwords live in the SQLCipher-encrypted store, with environment tiers and a read-only guard toggle.
+
+### Entry & Shortcuts
+- **Entry**: Create or edit connections on the "DB Hosts" page in the sidebar.
+
+### Core Steps
+1. Click "New Connection" and pick an engine (MySQL / PostgreSQL; default port 3306 / 5432 auto-filled).
+2. Fill in host, port, database, username and password; choose an SSL mode:
+   - **Disable**: plaintext;
+   - **Prefer/Require TLS**: encrypted without certificate verification (self-signed intranet certs);
+   - **Verify Full**: validation against system root certificates (managed cloud databases).
+3. Set the environment tier (dev/test/staging/prod) and the "Read-only session" toggle (on by default: writes are rejected by a backend AST whitelist).
+4. "Test" before saving: connect, fetch the server version, disconnect, and report the round-trip in milliseconds.
+
+### Tips & Notes
+- On edit, an empty password field keeps the stored one (passwords are never echoed back).
+- The read-only guard runs on the backend: writes are rejected even if the frontend is bypassed.`,
+      },
+      {
+        id: 'db-workbench',
+        title: 'SQL Workbench & Catalog Tree',
+        badge: 'SQL',
+        keywords: ['SQL Workbench', 'Query', 'Catalog', 'Schema', 'Cancel', 'Result Sets'],
+        content: `### Overview
+A multi-session tab workbench: a lazily loaded catalog tree on the left (database/schema → tables/views/functions/procedures/sequences groups with counts, empty groups hidden → columns of tables/views; resizable), a Monaco SQL editor (static completion) and streaming result grids (per-statement tabs, sorting, filtering, TSV copy) on the right.
+
+### Entry & Shortcuts
+- **Entry**: Press ▶ on a connection in "DB Hosts", or click + in the workbench and pick a saved connection.
+- **Run**: ⌘/Ctrl + Enter; cancel and row limit (1,000–50,000) live on the toolbar.
+
+### Core Steps
+1. Connecting loads the catalog tree; expand a database/schema → table/view/function/procedure/sequence groups, then a table to inspect columns and types.
+2. **Double-click a table** to draft a \`SELECT * ... LIMIT 200\` into the editor.
+3. Write SQL (multiple statements split on semicolons; semicolons inside strings/comments are ignored) and run with ⌘/Ctrl+Enter.
+4. The result panel tabs per statement: result grid (sortable/filterable/copyable), DML affected-row counts, and error details; large results stream in 300-row batches.
+5. Cancel long-running queries at any time (the backend streaming loop aborts immediately).
+
+### Tips & Notes
+- Page/tab switches preserve all session state (the workbench stays mounted); closing a tab disconnects.
+- In read-only sessions, writes are intercepted before execution with the reason shown.`,
+      },
+    ],
+  },
+  {
     id: 'hosts',
     title: 'Hosts & Asset Management (Hosts & Groups)',
     icon: 'Server',

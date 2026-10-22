@@ -25,6 +25,8 @@ export interface SelectMenuProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /** 触发器样式覆写（tailwind-merge：同组类后者胜；如工具栏的 h-6 紧凑形态） */
+  triggerClassName?: string;
   'aria-label'?: string;
 }
 
@@ -53,6 +55,7 @@ export function SelectMenu({
   placeholder,
   disabled = false,
   className,
+  triggerClassName,
   'aria-label': ariaLabel,
 }: SelectMenuProps) {
   const [open, setOpen] = useState(false);
@@ -138,6 +141,7 @@ export function SelectMenu({
           TRIGGER_CLASS,
           'flex cursor-pointer items-center justify-between gap-1.5 text-left',
           disabled && 'cursor-not-allowed opacity-50',
+          triggerClassName,
         )}
       >
         <span className={cn('truncate', !selected && 'text-foreground-subtlest')}>

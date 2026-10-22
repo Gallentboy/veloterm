@@ -1,4 +1,4 @@
-import { Boxes, Command, Database, FileCode, FolderSync, FolderTree, History, House, Network, Server, Settings, Terminal, Waypoints } from 'lucide-react';
+import { Boxes, Command, Cylinder, Database, FileCode, FolderSync, FolderTree, History, House, Network, Server, Settings, TableProperties, Terminal, Waypoints } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -12,7 +12,7 @@ import {
   SIDEBAR_VISIBILITY_EVENT,
 } from '@/services/sidebarVisibility';
 
-export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'commands' | 'zk' | 'zkhosts' | 'relays' | 'history' | 'grpc' | 'settings';
+export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'commands' | 'dbhosts' | 'db' | 'zk' | 'zkhosts' | 'relays' | 'history' | 'grpc' | 'settings';
 
 /** 侧栏导航项（settings 固定展示，不参与可见性配置）。设置页的菜单展示
  *  区块与此清单同源（同一导出），勾选状态经 kv + 事件实时联动。 */
@@ -28,6 +28,8 @@ export const SIDEBAR_NAV_ITEMS: Array<{ page: Page; icon: LucideIcon; navKey: st
   { page: 'groups', icon: FolderTree, navKey: 'nav.groups' },
   { page: 'commands', icon: Command, navKey: 'nav.commands' },
   { page: 'zkhosts', icon: Boxes, navKey: 'nav.zkHosts' },
+  { page: 'dbhosts', icon: Cylinder, navKey: 'nav.dbHosts' },
+  { page: 'db', icon: TableProperties, navKey: 'nav.db' },
   { page: 'zk', icon: Database, navKey: 'nav.zk' },
 ];
 
