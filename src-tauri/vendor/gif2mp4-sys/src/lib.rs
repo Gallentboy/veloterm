@@ -242,4 +242,34 @@ mod tests {
         assert_eq!(Code::from_raw(-7), Code::Busy);
         assert_eq!(Code::from_raw(-99), Code::Unknown);
     }
+
+    /// ABI 布局断言：OptionsRaw 的 sizeof 必须与 C 侧 gif2mp4_options 一致
+    /// （C 侧在 gif2mp4_run 入口用 `struct_size != sizeof(gif2mp4_options)`
+    /// 做前向兼容校验——两边算出的值不等会直接返回 E_ARG）。
+    /// 布局：u32 + int + int + ptr + int + fnptr + ptr，64 位下 48 字节。
+    #[test]
+    fn options_layout_matches_c() {
+        assert_eq!(std::mem::size_of::<OptionsRaw>(), 48, "OptionsRaw 大小与 C 侧 gif2mp4_options 不符");
+        assert_eq!(std::mem::align_of::<OptionsRaw>(), 8);
+        // 关键字段偏移（与 C 侧逐字段核对，防 #[repr(C)] 之外的意外重排）
+        assert_eq!(std::mem::offset_of!(OptionsRaw, struct_size), 0);
+        assert_eq!(std::mem::offset_of!(OptionsRaw, fps), 4);
+        assert_eq!(std::mem::offset_of!(OptionsRaw, crf), 8);
+        assert_eq!(std::mem::offset_of!(OptionsRaw, preset), 16);
+        assert_eq!(std::mem::offset_of!(OptionsRaw, loop_), 24);
+        assert_eq!(std::mem::offset_of!(OptionsRaw, on_progress), 32);
+        assert_eq!(std::mem::offset_of!(OptionsRaw, progress_userdata), 40);
+    }
+
+    /// 进度结构布局：i64 + i64 + f64 ×3 = 40 字节（C 侧 gif2mp4_progress 同构）
+    #[test]
+    fn progress_layout_matches_c() {
+        assert_eq!(std::mem::size_of::<Progress>(), 40);
+        assert_eq!(std::mem::align_of::<Progress>(), 8);
+        assert_eq!(std::mem::offset_of!(Progress, decoded_frames), 0);
+        assert_eq!(std::mem::offset_of!(Progress, total_frames), 8);
+        assert_eq!(std::mem::offset_of!(Progress, percent), 16);
+        assert_eq!(std::mem::offset_of!(Progress, out_time_sec), 24);
+        assert_eq!(std::mem::offset_of!(Progress, duration_sec), 32);
+    }
 }

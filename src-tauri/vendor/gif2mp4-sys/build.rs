@@ -76,9 +76,32 @@ fn main() {
         println!("cargo:rustc-link-lib=static={name}");
     }
 
-    if target_os == "macos" {
-        println!("cargo:rustc-link-lib=dylib=pthread");
-        println!("cargo:rustc-link-lib=dylib=m");
+    match target_os.as_str() {
+        "macos" => {
+            println!("cargo:rustc-link-lib=dylib=pthread");
+            println!("cargo:rustc-link-lib=dylib=m");
+        }
+        "windows" => {
+            // ffmpeg 在 Windows 下依赖的系统库（configure 的 check_lib 探测项，
+            // 见 vendor/ffmpeg/configure:6997-7002 与 avutil_suggest）。
+            // 缺任何一个都会在链接期报一堆 UND 符号（BCryptGenRandom /
+            // CoTaskMemFree / CommandLineToArgvW / RegCloseKey / GetProcessMemoryInfo）。
+            for sys_lib in [
+                "bcrypt",    // BCryptGenRandom（avutil 随机数）
+                "ole32",     // CoTaskMemFree（COM 内存）
+                "advapi32",  // RegCloseKey（注册表）
+                "shell32",   // CommandLineToArgvW
+                "user32",    // MessageBox 等（avutil_suggest 列出）
+                "psapi",     // GetProcessMemoryInfo
+                "ws2_32",    // winsock（网络组件虽裁剪，头文件探测仍可能引用）
+                "secur32",   // schannel 相关（TLS 组件裁剪后的残留引用）
+                "gdi32",     // 位图/显示相关
+                "winmm",     // 多媒体定时器
+            ] {
+                println!("cargo:rustc-link-lib=dylib={sys_lib}");
+            }
+        }
+        other => panic!("[gif2mp4-sys] 未处理的 target os: {other}"),
     }
 
     for name in ALL_LIBS {

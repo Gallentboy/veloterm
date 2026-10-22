@@ -2,7 +2,16 @@ import { listen } from '@tauri-apps/api/event';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { Terminal as XTerm, type IDisposable } from '@xterm/xterm';
-import { Circle, CircleStop, ClipboardPaste, Copy, Eraser, MonitorPlay, Type } from 'lucide-react';
+import {
+  Circle,
+  CircleStop,
+  ClipboardPaste,
+  Copy,
+  Eraser,
+  Loader2,
+  MonitorPlay,
+  Type,
+} from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -56,7 +65,7 @@ import {
   stopCastRecording,
   type CastRecording,
 } from '@/terminal/castRecorder';
-import { exportCastFile, exportLogFile } from '@/terminal/castExport';
+import { exportCastFile, exportGifFile, exportLogFile, exportMp4File } from '@/terminal/castExport';
 import type { ITerminalTransport, TerminalSize } from '@/terminal/types';
 
 const DEFAULT_TERMINAL_FONT_FAMILY =
@@ -264,7 +273,8 @@ export function TerminalSession({
 
   // ── 终端录制（Asciinema v2 .cast）──
   // 录制器实例存模块级 Map（castRecorder.ts），跨重挂载存活；这里只持 UI 状态。
-  // recStopped：停止后胶囊以「已停止」形态保留为操作面板锚点，面板关闭即复位。
+  // recStopped：停止后胶囊以「已停止」形态保留为操作面板锚点，面板关闭或
+  // 停止 3s 超时（RecordingPill 内自动淡出）即复位；上次录制右键菜单仍可回放。
   // 初始态从模块级录制器取（录制器跨重挂载存活，UI 态不能凭空重置为 false）
   const [recActive, setRecActive] = useState(() => getActiveRecorder(sessionId) != null);
   const [recElapsedMs, setRecElapsedMs] = useState(0);
@@ -1575,6 +1585,43 @@ export function TerminalSession({
     if (rec) void exportLogFile(rec);
   }, [stopRecording]);
 
+  // GIF 走后端 agg 渲染（秒级耗时），字体链与终端/回放器同源（含 CJK 回退）；
+  // 逐帧进度回传给本会话的全屏 busy 遮罩（整个终端内容区转圈 + 百分比）。
+  // MP4 是两阶段链（渲染临时 GIF → 转码）：state 记录当前阶段与百分比，
+  // 遮罩按阶段切换步骤文案（与 GIF 导出同一遮罩）
+  const [gifExport, setGifExport] = useState<{
+    busy: boolean;
+    kind: 'gif' | 'mp4';
+    phase: 'gif' | 'mp4';
+    percent: number | null;
+  }>({ busy: false, kind: 'gif', phase: 'gif', percent: null });
+  const handleExportGif = useCallback(async (): Promise<boolean> => {
+    const rec = stopRecording();
+    if (!rec) return false;
+    setGifExport({ busy: true, kind: 'gif', phase: 'gif', percent: null });
+    try {
+      return await exportGifFile(rec, DEFAULT_TERMINAL_FONT_FAMILY, (p) =>
+        setGifExport((s) => (s.busy ? { busy: true, kind: 'gif', phase: 'gif', percent: p } : s)),
+      );
+    } finally {
+      setGifExport({ busy: false, kind: 'gif', phase: 'gif', percent: null });
+    }
+  }, [stopRecording]);
+  const handleExportMp4 = useCallback(async (): Promise<boolean> => {
+    const rec = stopRecording();
+    if (!rec) return false;
+    setGifExport({ busy: true, kind: 'mp4', phase: 'gif', percent: null });
+    try {
+      return await exportMp4File(rec, DEFAULT_TERMINAL_FONT_FAMILY, (phase, percent) =>
+        setGifExport((s) =>
+          s.busy ? { busy: true, kind: 'mp4', phase, percent: percent < 0 ? null : percent } : s,
+        ),
+      );
+    } finally {
+      setGifExport({ busy: false, kind: 'mp4', phase: 'gif', percent: null });
+    }
+  }, [stopRecording]);
+
   // 挂载时同步一次录制态给面板（录制器跨重挂载存活，顶栏按钮需正确显示，
   // 不能等第一次开关才对齐）
   useEffect(() => {
@@ -1587,7 +1634,7 @@ export function TerminalSession({
     const entry = terminalSessionRegistry.get(sessionId);
     if (!entry) return;
     entry.toggleRecording = () => {
-      if (getActiveRecorder(sessionId)) {
+      if (getActiveRecorder(sessionId)?.isRecording) {
         stopRecording();
       } else {
         startRecording();
@@ -1806,6 +1853,8 @@ export function TerminalSession({
           onPreview={openRecordingPreview}
           onExportCast={handleExportCast}
           onExportLog={handleExportLog}
+          onExportGif={handleExportGif}
+          onExportMp4={handleExportMp4}
           onResume={() => undefined}
           onIdleClose={closeStoppedPill}
         />
@@ -1815,6 +1864,30 @@ export function TerminalSession({
           recording={playerRecording}
           onClose={() => setPlayerRecording(null)}
         />
+      ) : null}
+
+      {/* GIF/MP4 导出全屏 busy 遮罩：整个终端内容区转圈 + 步骤/百分比，拦截
+          输入形成明确 busy 态（秒级；含保存对话框阶段的「未开始」态）。
+          MP4 导出按阶段切换文案：渲染 GIF → 转换 MP4 */}
+      {gifExport.busy ? (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 className="size-8 animate-spin text-primary" strokeWidth={2} />
+            <span className="font-mono text-ui-sm text-foreground select-none">
+              {gifExport.kind === 'mp4'
+                ? gifExport.phase === 'mp4'
+                  ? gifExport.percent != null
+                    ? `${t('terminal.recording.exportingMp4Video')} ${gifExport.percent}%`
+                    : t('terminal.recording.exportingMp4Video')
+                  : gifExport.percent != null
+                    ? `${t('terminal.recording.exportingMp4Gif')} ${gifExport.percent}%`
+                    : t('terminal.recording.exportingMp4Gif')
+                : gifExport.percent != null
+                  ? `${t('terminal.recording.exportingGif')} ${gifExport.percent}%`
+                  : t('terminal.recording.exportingGif')}
+            </span>
+          </div>
+        </div>
       ) : null}
 
       {/* 字体倍率气泡（Chrome 同款反馈）：捏合/ctrl+滚轮时短暂显示当前百分比 */}
