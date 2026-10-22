@@ -34,10 +34,13 @@ SM3 认证、NUMBER/DATE 格式模型、LOB locator、TNS 名解析全部是 OB 
     macOS 腿同走 OpenSSL 路径，行为一致
   - `-DWITH_CURL=OFF`：remote_io 插件整体跳过（plugins/io 的
     `IF(WITH_CURL)` 门），不给产物引入 curl 依赖
-- **macOS**：上游官方路径可用——`deps/3rd/dep_create.sh`（按
-  `libobclient.darwin.arm64.deps` 清单从阿里云镜像拉 OpenSSL 1.1.1u 静态
-  库）+ `build.sh`，已在 Apple Silicon 实测编通（libobclnt.dylib /
-  libobclnt.a，.a 已合并 ssl+crypto）。mac 的 vcpkg 等价物未做
+- **macOS**：车道口径走 `scripts/build-obclient.mjs` 的 mac 臂（brew
+  openssl@3 的静态 .a → CMake `.a` 合并分支 → 自包含 `libobclnt.a`）。
+  上游官方路径（`deps/3rd/dep_create.sh` 拉 OpenSSL 1.1.1u + `build.sh`）
+  仍是有效的本地替代——仅 darwin.arm64 清单，已在 Apple Silicon 实测
+  编通（产物同形态）。OpenSSL 版本口径：两平台同代 3.x（win vcpkg 锁
+  3.6.4#1 / mac brew 公式当前 3.5.9，无 3.6.4 配方），ABI 兼容、补丁位
+  不强求一致。
 
 ### 产物
 
