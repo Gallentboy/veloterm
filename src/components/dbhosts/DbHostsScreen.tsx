@@ -1,0 +1,851 @@
+/**
+ * 数据库主机管理页（ZkHostsScreen 同型）：连接库列表 + 表单 Modal（引擎/
+ * 主机/凭证/SSL/环境级别/只读）+ 测试连接 + 复制/删除。行内「连接」经
+ * onConnectConnection 派发 window 事件跳数据库工作台页自动开 tab。
+ * 页头另有「Oracle 客户端」设置弹层：Oracle 引擎运行期 dlopen Instant
+ * Client，用户可指定库目录（进程级一次初始化，改目录需重启生效）。
+ * SSH 隧道（P1）未接入。
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
+import {
+  CircleCheck,
+  CircleX,
+  Database,
+  FolderOpen,
+  Loader2,
+  Pencil,
+  Play,
+  Plus,
+  Trash2,
+  Zap,
+} from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import { Modal } from '@/components/ui/modal';
+import { SelectMenu } from '@/components/ui/SelectMenu';
+import { FormField, PasswordInput, TextInput } from '@/components/hosts/formFields';import { ControlHintTooltip } from '@/components/ControlHintTooltip';
+import { useAnchoredPanel } from '@/hooks/useAnchoredPanel';
+import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
+import {
+  dbConnectionDelete,
+  dbConnectionList,
+  dbConnectionSave,
+  dbConnectionTest,
+  dbListDatabasesForRecord,
+  oracleClientDirGet,
+  oracleClientDirPick,
+  oracleClientDirSet,
+  type DbConnectionRecord,
+  type DbConnectionTestResult,
+  type DbEngineKind,
+} from '@/services/dbConnectionsService';
+import { cn } from '@/lib/utils';
+
+const ENGINE_DEFAULT_PORTS: Record<DbEngineKind, number> = {
+  mysql: 3306,
+  postgres: 5432,
+  oracle: 1521,
+};
+
+const ENGINE_LABELS: Record<DbEngineKind, string> = {
+  mysql: 'MySQL',
+  postgres: 'PostgreSQL',
+  oracle: 'Oracle',
+};
+
+const SSL_MODES: Array<{ value: DbConnectionRecord['sslMode']; labelKey: string }> = [
+  { value: 'disable', labelKey: 'dbHosts.ssl_disable' },
+  { value: 'prefer', labelKey: 'dbHosts.ssl_prefer' },
+  { value: 'require', labelKey: 'dbHosts.ssl_require' },
+  { value: 'verify-full', labelKey: 'dbHosts.ssl_verify_full' },
+];
+
+const ENV_LEVELS = ['dev', 'test', 'staging', 'prod'] as const;
+
+export function DbHostsScreen({
+  onConnectConnection,
+}: {
+  onConnectConnection: (record: DbConnectionRecord) => void;
+}) {
+  const { t } = useTranslation();
+  const [records, setRecords] = useState<DbConnectionRecord[]>([]);
+  const [editing, setEditing] = useState<DbConnectionRecord | null>(null);
+  const [deleting, setDeleting] = useState<DbConnectionRecord | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  // Oracle 客户端库目录设置弹层（进程级一次初始化，改目录需重启生效）
+  const [clientDirOpen, setClientDirOpen] = useState(false);
+  const [clientDir, setClientDir] = useState('');
+  const [clientDirSaved, setClientDirSaved] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      setRecords(await dbConnectionList());
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  const openClientDir = async () => {
+    setClientDirOpen(true);
+    setClientDirSaved(null);
+    try {
+      setClientDir((await oracleClientDirGet()) ?? '');
+    } catch {
+      setClientDir('');
+    }
+  };
+
+  const saveClientDir = async (dir: string | null) => {
+    try {
+      await oracleClientDirSet(dir && dir.trim() ? dir.trim() : null);
+      setClientDirSaved(dir && dir.trim() ? dir.trim() : '');
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleting) return;
+    try {
+      await dbConnectionDelete(deleting.id);
+      setDeleting(null);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const newRecord = (): DbConnectionRecord => ({
+    id: 0,
+    name: '',
+    engine: 'mysql',
+    host: '',
+    port: 3306,
+    database: null,
+    serviceName: null,
+    username: null,
+    password: null,
+    sslMode: 'disable',
+    sshHostId: null,
+    envLevel: 'dev',
+    readonly: true,
+    color: null,
+    createdAt: 0,
+    updatedAt: 0,
+  });
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="flex shrink-0 items-center justify-between border-b border-border/50 px-4 py-2">
+        <span className="text-ui-sm text-foreground-subtle select-none">
+          {t('dbHosts.summary', { total: records.length })}
+        </span>
+        <div className="flex items-center gap-1.5">
+          {/* Oracle 客户端库目录（运行期 dlopen；缺库只报错不崩进程） */}
+          <Button
+            variant="ghost"
+            size="lg"
+            className="h-7 px-3 text-ui-xs"
+            onClick={() => void openClientDir()}
+          >
+            <FolderOpen className="size-3.5" />
+            {t('dbHosts.oracleClientDir')}
+          </Button>
+          <Button size="lg" className="h-7 px-3 text-ui-xs" onClick={() => setEditing(newRecord())}>
+            <Plus className="size-3.5" />
+            {t('dbHosts.newConnection')}
+          </Button>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-4 py-1.5 text-ui-xs text-destructive">
+          <span className="min-w-0 flex-1 truncate">{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="opacity-70 hover:opacity-100"
+          >
+            ✕
+          </button>
+        </div>
+      ) : null}
+
+      <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-3">
+        {loading ? (
+          <span className="text-ui-sm text-foreground-subtlest">{t('dbHosts.loading')}</span>
+        ) : records.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 select-none">
+            <span className="text-ui-sm text-foreground-subtlest">{t('dbHosts.empty')}</span>
+            <Button variant="outline" size="lg" onClick={() => setEditing(newRecord())}>
+              {t('dbHosts.newConnection')}
+            </Button>
+          </div>
+        ) : (
+          records.map((record) => (
+            <div
+              key={record.id}
+              className="group flex items-center gap-3 rounded-lg border border-border px-3 py-2 transition-colors hover:border-border-hover"
+            >
+              <Database
+                className={cn(
+                  'size-4 shrink-0',
+                  record.engine === 'mysql'
+                    ? 'text-terminal-cyan'
+                    : record.engine === 'postgres'
+                      ? 'text-terminal-blue'
+                      : 'text-terminal-red',
+                )}
+              />
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="flex items-center gap-1.5 truncate text-ui-sm font-medium text-foreground">
+                  {record.name}
+                  {record.envLevel === 'prod' || record.envLevel === 'staging' ? (
+                    <span
+                      className={cn(
+                        'rounded px-1 py-px font-mono text-[9px] font-semibold uppercase',
+                        record.envLevel === 'prod'
+                          ? 'bg-destructive/15 text-destructive'
+                          : 'bg-amber-500/15 text-amber-500',
+                      )}
+                    >
+                      {record.envLevel}
+                    </span>
+                  ) : null}
+                  {record.readonly ? (
+                    <span className="rounded bg-surface px-1 py-px font-mono text-[9px] text-foreground-subtle uppercase">
+                      {t('dbHosts.readonlyBadge')}
+                    </span>
+                  ) : null}
+                </span>
+                <span className="truncate font-mono text-ui-xs text-foreground-subtle">
+                  {ENGINE_LABELS[record.engine]} · {record.host}:{record.port}
+                  {record.database ? `/${record.database}` : ''} ·{' '}
+                  {t(`dbHosts.ssl_${record.sslMode.replace('-', '_')}`)}
+                </span>
+              </div>
+              <span className="flex shrink-0 items-center gap-0.5">
+                <ControlHintTooltip title={t('dbHosts.connect')} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-7 rounded-lg text-foreground-subtle hover:text-primary"
+                    onClick={() => onConnectConnection(record)}
+                  >
+                    <Play className="size-3.5" />
+                  </Button>
+                </ControlHintTooltip>
+                <ControlHintTooltip title={t('common.edit')} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-7 rounded-lg text-foreground-subtle hover:text-foreground"
+                    onClick={() => setEditing(record)}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                </ControlHintTooltip>
+                <ControlHintTooltip title={t('common.delete')} side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-7 rounded-lg text-foreground-subtle hover:text-destructive"
+                    onClick={() => setDeleting(record)}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </ControlHintTooltip>
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+
+      {editing ? (
+        <DbConnectionFormDialog
+          node={editing.id > 0 ? editing : null}
+          onSaved={() => {
+            setEditing(null);
+            void refresh();
+          }}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
+
+      {deleting ? (
+        <Modal
+          title={t('dbHosts.deleteTitle')}
+          onClose={() => setDeleting(null)}
+          className="w-[420px]"
+          footer={
+            <>
+              <Button
+                variant="ghost"
+                size="lg"
+                className="h-8 px-3 text-ui-base"
+                onClick={() => setDeleting(null)}
+              >
+                {t('common.cancel')}
+              </Button>
+              <Button
+                variant="destructive"
+                size="lg"
+                className="h-8 px-3 text-ui-base"
+                onClick={() => void handleDelete()}
+              >
+                {t('common.delete')}
+              </Button>
+            </>
+          }
+        >
+          <p className="text-ui-sm text-foreground">
+            {t('dbHosts.deleteConfirm', { name: deleting.name })}
+          </p>
+        </Modal>
+      ) : null}
+
+      {/* Oracle 客户端库目录设置：ODPI-C 运行期 dlopen，指定 Instant Client
+          目录（留空走系统搜索路径）；进程级一次初始化——已连接过 Oracle 后
+          改目录需重启应用生效 */}
+      {clientDirOpen ? (
+        <Modal
+          onClose={() => setClientDirOpen(false)}
+          title={t('dbHosts.oracleClientDir')}
+          className="w-[520px]"
+          footer={
+            <>
+              <Button variant="outline" className="h-8 px-3 text-ui-base" onClick={() => void saveClientDir(null)}>
+                {t('dbHosts.oracleClientDirClear')}
+              </Button>
+              <Button
+                className="h-8 px-3 text-ui-base"
+                onClick={async () => {
+                  await saveClientDir(clientDir);
+                }}
+              >
+                {t('common.save')}
+              </Button>
+            </>
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <FormField label={t('dbHosts.oracleClientDirLabel')}>
+              <div className="flex gap-2">
+                <TextInput
+                  value={clientDir}
+                  onChange={(e) => setClientDir(e.target.value)}
+                  placeholder={t('dbHosts.oracleClientDirPlaceholder')}
+                  className="min-w-0 flex-1"
+                />
+                <Button
+                  variant="outline"
+                  className="h-8 shrink-0 px-3 text-ui-base"
+                  onClick={async () => {
+                    const picked = await oracleClientDirPick().catch(() => null);
+                    if (picked) setClientDir(picked);
+                  }}
+                >
+                  <FolderOpen className="size-3.5" />
+                  {t('dbHosts.oracleClientDirBrowse')}
+                </Button>
+              </div>
+            </FormField>
+            <p className="text-ui-xs text-foreground-subtle">
+              {t('dbHosts.oracleClientDirHint')}
+            </p>
+            {clientDirSaved != null ? (
+              <p className="text-ui-xs text-terminal-green">
+                {clientDirSaved
+                  ? t('dbHosts.oracleClientDirSaved', { dir: clientDirSaved })
+                  : t('dbHosts.oracleClientDirCleared')}
+              </p>
+            ) : null}
+          </div>
+        </Modal>
+      ) : null}
+    </div>
+  );
+}
+
+/** 数据库字段：手输 + 右侧下拉按钮（用表单当前参数临时建连拉库清单，portal
+ * 弹层选择回填；编辑态密码留空时后端自动从库补）——库清单选择器。 */
+function DatabasePickerField({
+  value,
+  onChange,
+  canLoad,
+  buildRecord,
+  connectionId,
+  placeholder,
+  pickLabel,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  canLoad: boolean;
+  buildRecord: () => DbConnectionRecord;
+  connectionId: number | undefined;
+  /** 输入占位 / 选择按钮 title（按引擎文案） */
+  placeholder?: string;
+  pickLabel?: string;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [databases, setDatabases] = useState<string[]>([]);
+  const { anchorRef, panelRef, position, measure } = useAnchoredPanel(open);
+  useDismissOnOutsidePointer(open, [anchorRef, panelRef], () => setOpen(false));
+
+  const load = async () => {
+    if (loading || !canLoad) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const list = await dbListDatabasesForRecord(buildRecord(), connectionId);
+      setDatabases(list);
+      if (list.length === 0) {
+        setError(t('dbHosts.noDatabases'));
+        return;
+      }
+      // 先量锚点再开面板（AnchoredPanel 按钮锚 + 视口夹取）
+      measure();
+      setOpen(true);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div ref={anchorRef} className="flex gap-1.5">
+        <TextInput
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder ?? t('dbHosts.databasePlaceholder')}
+          className="font-mono"
+        />
+        <Button
+          variant="outline"
+          size="icon-sm"
+          className="size-8 shrink-0 rounded-md"
+          disabled={!canLoad || loading}
+          onClick={() => void load()}
+          aria-label={pickLabel ?? t('dbHosts.pickDatabase')}
+          title={pickLabel ?? t('dbHosts.pickDatabase')}
+        >
+          {loading ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : (
+            <Database className="size-3.5" />
+          )}
+        </Button>
+      </div>
+      {error ? (
+        <span className="break-all text-ui-xs text-destructive">{error}</span>
+      ) : null}
+      {open && position
+        ? createPortal(
+            <div
+              ref={panelRef}
+              role="listbox"
+              style={{ position: 'fixed', top: position.top, left: position.left }}
+              className="z-[110] max-h-64 min-w-44 overflow-y-auto rounded-lg border border-border bg-menu p-1 shadow-lg scrollbar-slim"
+            >
+              {databases.map((db) => (
+                <button
+                  key={db}
+                  type="button"
+                  role="option"
+                  aria-selected={db === value}
+                  onClick={() => {
+                    onChange(db);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    'flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left font-mono text-ui-xs transition-colors',
+                    db === value
+                      ? 'bg-selected font-semibold text-foreground'
+                      : 'text-foreground-subtle hover:bg-menu-hover hover:text-foreground',
+                  )}
+                >
+                  <Database className="size-3 shrink-0 text-terminal-cyan" />
+                  <span className="min-w-0 flex-1 truncate">{db}</span>
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
+}
+
+function DbConnectionFormDialog({
+  node,
+  onSaved,
+  onClose,
+}: {
+  node: DbConnectionRecord | null;
+  onSaved: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [name, setName] = useState(node?.name ?? '');
+  const [engine, setEngine] = useState<DbEngineKind>(node?.engine ?? 'mysql');
+  const [host, setHost] = useState(node?.host ?? '');
+  const [port, setPort] = useState(String(node?.port ?? 3306));
+  const [database, setDatabase] = useState(node?.database ?? '');
+  const [serviceName, setServiceName] = useState(node?.serviceName ?? '');
+  const [username, setUsername] = useState(node?.username ?? '');
+  // 回显已存密码（默认掩码，点眼睛可查看明文——PasswordInput 自带切换）；
+  // 用户不动它保存即原值写回；主动清空保存则保留库中旧值（后端 None=保留语义）
+  const [password, setPassword] = useState(node?.password ?? '');
+  const [sslMode, setSslMode] = useState<DbConnectionRecord['sslMode']>(node?.sslMode ?? 'disable');
+  const [envLevel, setEnvLevel] = useState(node?.envLevel ?? 'dev');
+  const [readonly, setReadonly] = useState(node?.readonly ?? true);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<DbConnectionTestResult | null>(null);
+  const savingRef = useRef(false);
+
+  const dbLabel =
+    engine === 'mysql'
+      ? t('dbHosts.databaseLabelMysql')
+      : engine === 'postgres'
+        ? t('dbHosts.databaseLabelPg')
+        : t('dbHosts.databaseLabelOracle');
+
+  // Oracle：服务名必填（连库必需）；database 降为可选的初始 schema
+  const canSave =
+    !saving &&
+    name.trim().length > 0 &&
+    host.trim().length > 0 &&
+    (engine !== 'oracle' || serviceName.trim().length > 0);
+
+  const buildRecord = (): DbConnectionRecord => ({
+    id: node?.id ?? 0,
+    name: name.trim(),
+    engine,
+    host: host.trim(),
+    port: Number.parseInt(port, 10) || ENGINE_DEFAULT_PORTS[engine],
+    database: database.trim() || null,
+    serviceName: engine === 'oracle' ? serviceName.trim() || null : null,
+    username: username.trim() || null,
+    // 留空 = 更新时保留旧值（后端语义）；新建时空值即无密码
+    password: password.length > 0 || node == null ? password || null : null,
+    sslMode,
+    sshHostId: null,
+    envLevel,
+    readonly,
+    color: null,
+    createdAt: 0,
+    updatedAt: 0,
+  });
+
+  const handleTest = async () => {
+    if (!host.trim() || testing) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      // 编辑态密码被清空时传 connection_id：后端从库里补上已存密码再测，
+      // 测试结果永远反映真实保存状态
+      setTestResult(await dbConnectionTest(buildRecord(), node?.id));
+    } catch (e) {
+      setTestResult({
+        ok: false,
+        elapsedMs: 0,
+        serverVersion: null,
+        message: String(e),
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!canSave || savingRef.current) return;
+    setSaving(true);
+    savingRef.current = true;
+    try {
+      await dbConnectionSave(buildRecord());
+      onSaved();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+      savingRef.current = false;
+    }
+  };
+
+  return (
+    <Modal
+      title={node ? t('dbHosts.editTitle', { name: node.name }) : t('dbHosts.newTitle')}
+      onClose={onClose}
+      className="w-[480px]"
+      footer={
+        <>
+          <Button
+            variant="outline"
+            size="lg"
+            className="h-8 px-3 text-ui-base"
+            disabled={!host.trim() || testing}
+            onClick={() => void handleTest()}
+          >
+            {testing ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Zap className="size-3.5" />
+            )}
+            {t('dbHosts.testConnection')}
+          </Button>
+          <div className="flex-1" />
+          <Button variant="ghost" size="lg" className="h-8 px-3 text-ui-base" onClick={onClose}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            size="lg"
+            className="h-8 px-4 text-ui-base"
+            disabled={!canSave}
+            onClick={() => void handleSave()}
+          >
+            {t('common.save')}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3.5">
+        <FormField label={t('dbHosts.nameLabel')}>
+          <TextInput
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t('dbHosts.namePlaceholder')}
+            autoFocus
+          />
+        </FormField>
+
+        <FormField label={t('dbHosts.engineLabel')}>
+          <div className="flex gap-1.5">
+            {(['mysql', 'postgres', 'oracle'] as const).map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => {
+                  setEngine(kind);
+                  setPort(String(ENGINE_DEFAULT_PORTS[kind]));
+                }}
+                className={cn(
+                  'flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-ui-xs transition-colors',
+                  engine === kind
+                    ? 'border-primary/60 bg-primary/10 font-semibold text-foreground'
+                    : 'border-border/70 text-foreground-subtle hover:bg-hover hover:text-foreground',
+                )}
+                title={ENGINE_LABELS[kind]}
+              >
+                {ENGINE_LABELS[kind]}
+              </button>
+            ))}
+          </div>
+        </FormField>
+
+        <div className="flex gap-3">
+          <div className="min-w-0 flex-[2]">
+            <FormField label={t('dbHosts.hostLabel')}>
+              <TextInput
+                value={host}
+                onChange={(e) => setHost(e.target.value)}
+                placeholder="10.0.0.5"
+                className="font-mono"
+              />
+            </FormField>
+          </div>
+          <div className="w-24 shrink-0">
+            <FormField label={t('dbHosts.portLabel')}>
+              <TextInput
+                value={port}
+                onChange={(e) => setPort(e.target.value)}
+                placeholder="3306"
+                className="font-mono"
+              />
+            </FormField>
+          </div>
+        </div>
+
+        {/* Oracle：服务名行（必填，连库必需；SSL 同行）；MySQL/PG 无此行 */}
+        {engine === 'oracle' ? (
+          <div className="flex gap-3">
+            <div className="min-w-0 flex-1">
+              <FormField label={t('dbHosts.serviceNameLabel')}>
+                <TextInput
+                  value={serviceName}
+                  onChange={(e) => setServiceName(e.target.value)}
+                  placeholder="ORCLPDB1"
+                  className="font-mono"
+                />
+              </FormField>
+            </div>
+            <div className="w-36 shrink-0">
+              <FormField label={t('dbHosts.sslLabel')}>
+                <SelectMenu
+                  value={sslMode}
+                  onChange={(v) => setSslMode(v as DbConnectionRecord['sslMode'])}
+                  options={SSL_MODES.map((m) => ({ value: m.value, label: t(m.labelKey) }))}
+                />
+              </FormField>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="flex gap-3">
+          <div className="min-w-0 flex-1">
+            <FormField label={dbLabel}>
+              <DatabasePickerField
+                value={database}
+                onChange={setDatabase}
+                canLoad={
+                  engine === 'oracle'
+                    ? host.trim().length > 0 && serviceName.trim().length > 0
+                    : host.trim().length > 0
+                }
+                buildRecord={() => buildRecord()}
+                connectionId={node?.id}
+                placeholder={
+                  engine === 'oracle'
+                    ? t('dbHosts.schemaPlaceholder')
+                    : t('dbHosts.databasePlaceholder')
+                }
+                pickLabel={
+                  engine === 'oracle' ? t('dbHosts.pickSchema') : t('dbHosts.pickDatabase')
+                }
+              />
+            </FormField>
+          </div>
+          {engine !== 'oracle' ? (
+            <div className="w-36 shrink-0">
+              <FormField label={t('dbHosts.sslLabel')}>
+                <SelectMenu
+                  value={sslMode}
+                  onChange={(v) => setSslMode(v as DbConnectionRecord['sslMode'])}
+                  options={SSL_MODES.map((m) => ({ value: m.value, label: t(m.labelKey) }))}
+                />
+              </FormField>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex gap-3">
+          <div className="min-w-0 flex-1">
+            <FormField label={t('dbHosts.userLabel')}>
+              <TextInput
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="root"
+                className="font-mono"
+              />
+            </FormField>
+          </div>
+          <div className="min-w-0 flex-1">
+            <FormField
+              label={t('dbHosts.passwordLabel')}
+              hint={
+                node != null && password.length === 0
+                  ? t('dbHosts.passwordClearedHint')
+                  : node != null
+                    ? t('dbHosts.passwordSavedHint')
+                    : undefined
+              }
+            >
+              <PasswordInput
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={node != null && password.length === 0 ? t('dbHosts.passwordKeep') : '••••••'}
+              />
+            </FormField>
+          </div>
+        </div>
+
+        <div className="flex gap-3">
+          <div className="w-36 shrink-0">
+            <FormField label={t('dbHosts.envLabel')}>
+              <SelectMenu
+                value={envLevel}
+                onChange={setEnvLevel}
+                options={ENV_LEVELS.map((level) => ({
+                  value: level,
+                  label: t(`dbHosts.env_${level}`),
+                }))}
+              />
+            </FormField>
+          </div>
+          <div className="flex min-w-0 flex-1 items-end pb-1.5">
+            <button
+              type="button"
+              onClick={() => setReadonly((v) => !v)}
+              className="flex items-center gap-2 text-ui-xs text-foreground-subtle select-none hover:text-foreground"
+            >
+              <span
+                className={cn(
+                  'relative h-4 w-7 rounded-full transition-colors',
+                  readonly ? 'bg-primary' : 'bg-border',
+                )}
+              >
+                <span
+                  className={cn(
+                    'absolute top-0.5 size-3 rounded-full bg-white transition-all',
+                    readonly ? 'left-3.5' : 'left-0.5',
+                  )}
+                />
+              </span>
+              {t('dbHosts.readonlyToggle')}
+            </button>
+          </div>
+        </div>
+
+        {testResult ? (
+          <div
+            className={cn(
+              'flex items-start gap-2 rounded-md border px-2.5 py-2 text-ui-xs',
+              testResult.ok
+                ? 'border-terminal-green/30 bg-terminal-green/10 text-terminal-green'
+                : 'border-destructive/30 bg-destructive/10 text-destructive',
+            )}
+          >
+            {testResult.ok ? (
+              <CircleCheck className="mt-0.5 size-3.5 shrink-0" />
+            ) : (
+              <CircleX className="mt-0.5 size-3.5 shrink-0" />
+            )}
+            <div className="min-w-0 flex-1">
+              {testResult.ok ? (
+                <span className="break-all">
+                  {t('dbHosts.testOk', { ms: testResult.elapsedMs })}
+                  {testResult.serverVersion ? ` · ${testResult.serverVersion}` : ''}
+                </span>
+              ) : (
+                <span className="break-all">{testResult.message}</span>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-ui-xs text-destructive">
+            <span className="break-all">{error}</span>
+          </div>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}

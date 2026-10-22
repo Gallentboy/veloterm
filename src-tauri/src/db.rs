@@ -371,9 +371,32 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
       );
 
       CREATE INDEX IF NOT EXISTS idx_command_history_host_time
-          ON command_history(host_id, created_at DESC);
+        ON command_history(host_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_command_history_failed
-          ON command_history(created_at DESC) WHERE exit_code != 0;",
+        ON command_history(created_at DESC) WHERE exit_code != 0;
+
+      -- 数据库工作台连接库（侧栏「数据库主机」页）：一台引擎实例一条记录。
+      -- password 明文存 SQLCipher 库（zk_credentials 同级安全水位）；
+      -- ssh_host_id 指向 hosts 表（经该主机的跳板链+中继建隧道，空 = 直连）；
+      -- engine: 'mysql' | 'postgres' | 'oracle'（oracle 走 vendor oracle-rs 纯 Rust 驱动）。
+      CREATE TABLE IF NOT EXISTS db_connections (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          engine TEXT NOT NULL,
+          host TEXT NOT NULL,
+          port INTEGER NOT NULL,
+          database TEXT,
+          service_name TEXT,
+          username TEXT,
+          password TEXT,
+          ssl_mode TEXT NOT NULL DEFAULT 'disable',
+          ssh_host_id INTEGER,
+          env_level TEXT NOT NULL DEFAULT 'dev',
+          readonly INTEGER NOT NULL DEFAULT 1,
+          color TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+      );",
     )
     .map_err(|e| format!("failed to initialize schema in SQLCipher database: {e}"))?;
 
@@ -408,6 +431,16 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
         {
             return Err(format!("failed to apply column migration `{col_def}`: {e}"));
         }
+    }
+
+    // db_connections 的列级迁移（老库升级补列；新库建表已含，duplicate 吞掉幂等）。
+    // service_name：Oracle 专有——服务名连库必需，与 database（Oracle 语义 =
+    // 初始 schema）分离，不做老记录回退（老 Oracle 记录需补填服务名后才能连）
+    if let Err(e) =
+        conn.execute_batch("ALTER TABLE db_connections ADD COLUMN service_name TEXT")
+        && !e.to_string().contains("duplicate column")
+    {
+        return Err(format!("failed to apply db_connections column migration: {e}"));
     }
 
     log::info!(
@@ -938,6 +971,245 @@ pub fn delete_zk_host(pool: &DbPool, id: usize) -> Result<(), String> {
         .map_err(|e| format!("failed to delete zk host: {e}"))?;
     tx.commit()
         .map_err(|e| format!("failed to commit zk host delete: {e}"))?;
+    Ok(())
+}
+
+// ===== `db_connections`：数据库工作台连接库（侧栏「数据库主机」页）=====
+
+/// 数据库连接记录（对应 `db_connections` 表）。engine 限定 'mysql' | 'postgres'
+/// | 'oracle'（oracle 为 P2 插件形态预留，连接时报「暂未接入」）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DbConnectionRecord {
+    pub id: usize,
+    pub name: String,
+    pub engine: String,
+    pub host: String,
+    pub port: u16,
+    #[serde(default)]
+    pub database: Option<String>,
+    /// Oracle 专有：服务名（连库必需；Oracle 语义下 database 是初始 schema）。
+    /// 老记录无此字段时服务名在 database 里，连接层兼容回退
+    #[serde(default)]
+    pub service_name: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    /// 明文存 SQLCipher 加密库（zk_credentials 同级安全水位）
+    #[serde(default)]
+    pub password: Option<String>,
+    /// disable | prefer | require | verify-full（prefer 在客户端实现上等价
+    /// require：TLS 建立失败即报错，不做明文回退）
+    #[serde(default = "default_ssl_mode")]
+    pub ssl_mode: String,
+    /// 经哪台 SSH 主机建隧道（跳板链+中继）；空 = 直连
+    #[serde(default)]
+    pub ssh_host_id: Option<usize>,
+    #[serde(default = "default_db_env_level")]
+    pub env_level: String,
+    #[serde(default = "default_db_readonly")]
+    pub readonly: bool,
+    #[serde(default)]
+    pub color: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+fn default_ssl_mode() -> String {
+    "disable".to_string()
+}
+
+fn default_db_env_level() -> String {
+    "dev".to_string()
+}
+
+fn default_db_readonly() -> bool {
+    true
+}
+
+impl DbConnectionRecord {
+    /// engine 合法性（mysql / postgres / oracle 三引擎）
+    pub fn supported_engine(&self) -> bool {
+        matches!(self.engine.as_str(), "mysql" | "postgres" | "oracle")
+    }
+}
+
+fn validate_db_connection(record: &DbConnectionRecord) -> Result<(), String> {
+    if record.name.trim().is_empty() {
+        return Err("连接名称不能为空".to_string());
+    }
+    if !record.supported_engine() {
+        return Err(format!("不支持的数据库引擎：{}", record.engine));
+    }
+    if record.host.trim().is_empty() {
+        return Err("数据库地址不能为空".to_string());
+    }
+    if !matches!(
+        record.ssl_mode.as_str(),
+        "disable" | "prefer" | "require" | "verify-full"
+    ) {
+        return Err(format!("无效的 SSL 模式：{}", record.ssl_mode));
+    }
+    Ok(())
+}
+
+const DB_CONNECTION_COLUMNS: &str = "id, name, engine, host, port, database, username, password, \
+     ssl_mode, ssh_host_id, env_level, readonly, color, created_at, updated_at, service_name";
+
+fn row_to_db_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbConnectionRecord> {
+    Ok(DbConnectionRecord {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        engine: row.get(2)?,
+        host: row.get(3)?,
+        port: row.get::<_, i64>(4)?.clamp(1, 65535) as u16,
+        database: row.get(5)?,
+        username: row.get(6)?,
+        password: row.get(7)?,
+        ssl_mode: row.get(8)?,
+        ssh_host_id: row.get::<_, Option<i64>>(9)?.map(|v| v.max(0) as usize),
+        env_level: row.get(10)?,
+        readonly: row.get::<_, i64>(11)? != 0,
+        color: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        service_name: row.get(15)?,
+    })
+}
+
+pub fn list_db_connections(pool: &DbPool) -> Result<Vec<DbConnectionRecord>, String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {DB_CONNECTION_COLUMNS} FROM db_connections ORDER BY id ASC"
+        ))
+        .map_err(|e| format!("failed to prepare db_connections query: {e}"))?;
+    let rows = stmt
+        .query_map([], row_to_db_connection)
+        .map_err(|e| format!("failed to query db_connections: {e}"))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| format!("failed to decode db connection row: {e}"))?);
+    }
+    Ok(out)
+}
+
+/// 按 id 取单条（连接时用）；不存在返回 None。
+pub fn get_db_connection(pool: &DbPool, id: usize) -> Result<Option<DbConnectionRecord>, String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    conn.query_row(
+        &format!("SELECT {DB_CONNECTION_COLUMNS} FROM db_connections WHERE id = ?1"),
+        params![id],
+        row_to_db_connection,
+    )
+    .optional()
+    .map_err(|e| format!("failed to query db connection {id}: {e}"))
+}
+
+/// 新建（id=0）或更新（id>0）。password 为 None 且是更新时保留库中旧值
+/// （前端表单不回显密码、未改动就不传）。
+pub fn save_db_connection(
+    pool: &DbPool,
+    record: DbConnectionRecord,
+) -> Result<DbConnectionRecord, String> {
+    validate_db_connection(&record)?;
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    let now = now_timestamp_ms();
+
+    if record.id == 0 {
+        conn.execute(
+            "INSERT INTO db_connections \
+             (name, engine, host, port, database, username, password, ssl_mode, ssh_host_id, \
+              env_level, readonly, color, created_at, updated_at, service_name) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14)",
+            params![
+                record.name.trim(),
+                record.engine,
+                record.host.trim(),
+                record.port as i64,
+                record.database,
+                record.username,
+                record.password,
+                record.ssl_mode,
+                record.ssh_host_id.map(|v| v as i64),
+                record.env_level,
+                record.readonly as i64,
+                record.color,
+                now,
+                record.service_name,
+            ],
+        )
+        .map_err(|e| format!("failed to insert db connection: {e}"))?;
+        let id = conn.last_insert_rowid() as usize;
+        get_db_connection(pool, id)?.ok_or_else(|| "failed to read back db connection".to_string())
+    } else {
+        let changed = if record.password.is_some() {
+            conn.execute(
+                "UPDATE db_connections SET name=?2, engine=?3, host=?4, port=?5, database=?6, \
+                 username=?7, password=?8, ssl_mode=?9, ssh_host_id=?10, env_level=?11, \
+                 readonly=?12, color=?13, updated_at=?14, service_name=?15 WHERE id=?1",
+                params![
+                    record.id,
+                    record.name.trim(),
+                    record.engine,
+                    record.host.trim(),
+                    record.port as i64,
+                    record.database,
+                    record.username,
+                    record.password,
+                    record.ssl_mode,
+                    record.ssh_host_id.map(|v| v as i64),
+                    record.env_level,
+                    record.readonly as i64,
+                    record.color,
+                    now,
+                    record.service_name,
+                ],
+            )
+        } else {
+            conn.execute(
+                "UPDATE db_connections SET name=?2, engine=?3, host=?4, port=?5, database=?6, \
+                 username=?7, ssl_mode=?8, ssh_host_id=?9, env_level=?10, readonly=?11, \
+                 color=?12, updated_at=?13, service_name=?14 WHERE id=?1",
+                params![
+                    record.id,
+                    record.name.trim(),
+                    record.engine,
+                    record.host.trim(),
+                    record.port as i64,
+                    record.database,
+                    record.username,
+                    record.ssl_mode,
+                    record.ssh_host_id.map(|v| v as i64),
+                    record.env_level,
+                    record.readonly as i64,
+                    record.color,
+                    now,
+                    record.service_name,
+                ],
+            )
+        }
+        .map_err(|e| format!("failed to update db connection: {e}"))?;
+        if changed == 0 {
+            return Err(format!("数据库连接不存在：id={}", record.id));
+        }
+        get_db_connection(pool, record.id)?
+            .ok_or_else(|| "failed to read back db connection".to_string())
+    }
+}
+
+/// 删除连接记录；不存在时静默成功（幂等）。
+pub fn delete_db_connection(pool: &DbPool, id: usize) -> Result<(), String> {
+    let conn = pool
+        .get()
+        .map_err(|e| format!("failed to get db connection: {e}"))?;
+    conn.execute("DELETE FROM db_connections WHERE id = ?1", params![id])
+        .map_err(|e| format!("failed to delete db connection: {e}"))?;
     Ok(())
 }
 
@@ -2296,6 +2568,165 @@ mod tests {
                 .expect("list after delete should succeed")
                 .is_empty()
         );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn db_connection_roundtrip() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("veloterm-dbconn-test-{}", Uuid::new_v4()));
+        let db_path = temp_dir.join("veloterm.db");
+        let pool =
+            init_db_at_path(&db_path, "db-conn-key").expect("init_db_at_path should succeed");
+
+        // 1. 新增（id=0）：MySQL 连接，密码落库
+        let created = save_db_connection(
+            &pool,
+            DbConnectionRecord {
+                id: 0,
+                name: "prod-mysql".to_string(),
+                engine: "mysql".to_string(),
+                host: "10.0.0.5".to_string(),
+                port: 3306,
+                database: Some("app".to_string()),
+                service_name: None,
+                username: Some("root".to_string()),
+                password: Some("secret".to_string()),
+                ssl_mode: "require".to_string(),
+                ssh_host_id: None,
+                env_level: "prod".to_string(),
+                readonly: true,
+                color: None,
+                created_at: 0,
+                updated_at: 0,
+            },
+        )
+        .expect("save_db_connection insert should succeed");
+        assert!(created.id > 0);
+        assert_eq!(created.password.as_deref(), Some("secret"));
+        assert!(created.readonly);
+        assert_eq!(created.engine, "mysql");
+        let listed = list_db_connections(&pool).expect("list_db_connections should succeed");
+        assert_eq!(listed, vec![created.clone()]);
+
+        // 2. 更新：改端口/engine；password=None 保留库中旧值（表单未改动不回传）
+        let updated = save_db_connection(
+            &pool,
+            DbConnectionRecord {
+                id: created.id,
+                name: "prod-pg".to_string(),
+                engine: "postgres".to_string(),
+                host: "10.0.0.6".to_string(),
+                port: 5432,
+                database: None,
+                service_name: None,
+                username: None,
+                password: None,
+                ssl_mode: "disable".to_string(),
+                ssh_host_id: Some(9),
+                env_level: "dev".to_string(),
+                readonly: false,
+                color: Some("#ff0000".to_string()),
+                created_at: 0,
+                updated_at: 0,
+            },
+        )
+        .expect("save_db_connection update should succeed");
+        assert_eq!(updated.name, "prod-pg");
+        assert_eq!(updated.port, 5432);
+        assert_eq!(
+            updated.password.as_deref(),
+            Some("secret"),
+            "password=None 的更新必须保留库中旧密码"
+        );
+        assert!(!updated.readonly);
+        assert_eq!(updated.ssh_host_id, Some(9));
+
+        // 3. get 单条
+        let fetched = get_db_connection(&pool, updated.id)
+            .expect("get_db_connection should succeed")
+            .expect("record should exist");
+        assert_eq!(fetched, updated);
+
+        // 4. 校验：空名 / 非法 engine / 非法 ssl_mode 拒绝
+        let bad = save_db_connection(
+            &pool,
+            DbConnectionRecord {
+                id: 0,
+                name: "  ".to_string(),
+                engine: "mysql".to_string(),
+                host: "h".to_string(),
+                port: 3306,
+                database: None,
+                service_name: None,
+                username: None,
+                password: None,
+                ssl_mode: "disable".to_string(),
+                ssh_host_id: None,
+                env_level: "dev".to_string(),
+                readonly: true,
+                color: None,
+                created_at: 0,
+                updated_at: 0,
+            },
+        );
+        assert!(bad.is_err());
+        let mut mssql = updated.clone();
+        mssql.engine = "sqlserver".to_string();
+        assert!(save_db_connection(&pool, mssql.clone()).is_err());
+        mssql.engine = "mysql".to_string();
+        mssql.ssl_mode = "uber-secure".to_string();
+        assert!(save_db_connection(&pool, mssql).is_err());
+
+        // 5. 删除幂等
+        delete_db_connection(&pool, updated.id).expect("delete should succeed");
+        delete_db_connection(&pool, updated.id).expect("delete should be idempotent");
+        assert!(
+            list_db_connections(&pool)
+                .expect("list after delete should succeed")
+                .is_empty()
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn db_connection_json_payload_roundtrip() {
+        // 模拟前端 invoke 载荷（camelCase JSON）→ serde 反序列化 → 入库 → 读回：
+        // 锁定「密码经 Tauri IPC 层不丢」的完整链路
+        let temp_dir =
+            std::env::temp_dir().join(format!("veloterm-dbjson-test-{}", Uuid::new_v4()));
+        let db_path = temp_dir.join("veloterm.db");
+        let pool =
+            init_db_at_path(&db_path, "db-json-key").expect("init_db_at_path should succeed");
+
+        let payload = serde_json::json!({
+            "id": 0,
+            "name": "prod",
+            "engine": "mysql",
+            "host": "10.0.0.5",
+            "port": 3306,
+            "database": "app",
+            "username": "root",
+            "password": "s3cret!密码",
+            "sslMode": "require",
+            "sshHostId": null,
+            "envLevel": "prod",
+            "readonly": true,
+            "color": null,
+            "createdAt": 0,
+            "updatedAt": 0
+        });
+        let record: DbConnectionRecord =
+            serde_json::from_value(payload).expect("json payload should deserialize");
+        assert_eq!(record.password.as_deref(), Some("s3cret!密码"));
+
+        let saved = save_db_connection(&pool, record).expect("save should succeed");
+        let read_back = get_db_connection(&pool, saved.id)
+            .expect("get should succeed")
+            .expect("record should exist");
+        assert_eq!(read_back.password.as_deref(), Some("s3cret!密码"));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

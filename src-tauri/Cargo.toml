@@ -167,6 +167,47 @@ jpegxl-sys = { path = "vendor/jpegxl-sys" }
 # 字体：树内自带 NotoEmoji/SymbolsNerdFont + fontdb 系统字体扫描，CJK 走
 # 配置传入的系统字体回退链（PingFang/微软雅黑等），无需打包 CJK 字体。
 agg = { path = "vendor/agg" }
+# Oracle 引擎：kubo/rust-oracle（oracle crate，官方 ODPI-C 绑定）vendor 树
+#（锁 tag v0.6.3），UPL-1.0/Apache-2.0 双许可。ODPI-C 经 crates.io 的
+# odpic-sys 在编译期 cc 静态编入（无需 Oracle SDK），运行期需 Instant
+# Client（11.2–23ai 全版本）。同步 API——engines.rs 经 with_oracle
+# （spawn_blocking）包裹。前一方案 stiang/oracle-rs（纯 Rust TNS）在 11.2
+# 实测不可用已移除。裁剪与说明见 vendor/rust-oracle/README-VELOTERM.md。
+oracle = { path = "vendor/rust-oracle", features = ["chrono"] }
+# ── 数据库工作台（MySQL / PostgreSQL / Oracle）──
+# mysql_async：纯 Rust 异步 MySQL 客户端。default-rustls = rustls + aws-lc-rs
+# provider（与 quinn/tonic/russh 同一份 aws-lc-sys，禁止 default 的 native-tls
+# ——rustls 双 provider 并存会运行期 panic，见上方 rustls 条目约束）。
+mysql_async = { version = "0.35", default-features = false, features = [
+  "default-rustls",
+] }
+# tokio-postgres：纯 Rust 异步 PostgreSQL 客户端（extended protocol，query_raw
+# 逐行流式拉取）；with-* 类型扩展让 jsonb/numeric/uuid/timestamp 列都能取值
+# 字符串化（工作台结果表格的通用降级取值链）。
+tokio-postgres = { version = "0.7", features = [
+  "with-serde_json-1",
+  "with-chrono-0_4",
+  "with-uuid-0_8",
+] }
+chrono = { version = "0.4", default-features = false, features = [
+  "clock",
+  "std",
+] }
+# verify-full 模式的系统根证书（tonic tls-native-roots 已拉过同 crate，直依赖复用）
+rustls-native-certs = "0.8"
+rust_decimal = { version = "1", default-features = false, features = [
+  "std",
+  "db-tokio-postgres",
+] }
+# tokio-postgres 的 uuid 集成锁 0.8（工程主 uuid 为 1.x，仅用于 id 生成）；
+# rename 为 pg_uuid 与主依赖同名共存，PG uuid 列取值专用
+pg-uuid = { package = "uuid", version = "0.8" }
+# PostgreSQL 的 rustls MakeConnector（provider 由全局 rustls/aws-lc-rs 决定）
+tokio-postgres-rustls = "0.14"
+# SQL 语句分割 + 只读白名单判定（数据库工作台的多语句执行与写防护）。
+# 解析失败时降级到手写分号分割器（字符串/注释内的分号不算），sqlparser
+# 只是增强路径而非硬依赖路径（方言特有语法不该把工作台卡死）。
+sqlparser = "0.53"
 
 # **PDFium 链接形态按平台分流**：
 # - macOS Apple Silicon（aarch64）：**静态链接** vendor/pdfium/libpdfium.a
