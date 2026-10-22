@@ -90,6 +90,9 @@ const char *tag_str[FLT_TAG_MAX_TYPE] =
   "client_host"
 };
 
+static enum_field_types id2type[FLT_EXTRA_INFO_ID_END + 1];
+static FLTFunc flt_funcs[FLT_EXTRA_INFO_TYPE_END + 1];
+
 /* veloterm patch (Windows/MSVC): ob_mutex_t is CRITICAL_SECTION on Windows,
  * which has no static initializer (upstream only guarantees POSIX builds).
  * Use INIT_ONCE instead - statically constructible and semantically equal
@@ -107,8 +110,6 @@ static BOOL CALLBACK flt_init_once_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
 static ob_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int init_flag = 0;
 #endif
-static enum_field_types id2type[FLT_EXTRA_INFO_ID_END + 1];
-static FLTFunc flt_funcs[FLT_EXTRA_INFO_TYPE_END + 1];
 
 static uint64_t xorshift128plus(uint64_t *s);
 
