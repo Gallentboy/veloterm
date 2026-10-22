@@ -206,8 +206,13 @@ jobs:
           # 并去编 libavfilter/x86/*.o，与 cl.exe 的 ARM64 目标冲突（LNK1112
           # module machine type 'x64' conflicts with 'ARM64'）。必须显式声明
           # --arch=aarch64（ffmpeg 的架构名，不是 arm64）+ 交叉编译开关。
+          #
+          # 但 --enable-cross-compile 会让 configure 走「GNU 汇编器」探测分支
+          # （configure:6487 起要求 gas-preprocessor），而 MSVC 下应走 armasm64。
+          # 显式 --as=armasm64.exe 把汇编器钉回 MSVC 自带的 ARM64 汇编器
+          # （VS 2022 默认随 cl.exe 提供，无需额外安装）。
           $archArgs = if ('${{ matrix.arch }}' -eq 'arm64') {
-            "--arch=aarch64 --target-os=win64 --enable-cross-compile"
+            "--arch=aarch64 --target-os=win64 --enable-cross-compile --as=armasm64.exe"
           } else { "" }
           Write-Host "arch args: $archArgs"
 
