@@ -24,12 +24,13 @@ import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { AiChatPanel } from '@/components/ai/AiChatPanel';
 import { CommandPalette } from '@/components/commands/CommandPalette';
 import { CommandsScreen } from '@/components/commands/CommandsScreen';
+import { AboutOverlay } from '@/components/about/AboutOverlay';
 import { WorkspaceHeader } from '@/components/WorkspaceHeader';
 import { WorkspaceSidebar, type Page } from '@/components/WorkspaceSidebar';
 import { useAppPanels } from '@/hooks/useAppPanels';
 import { useTranslation } from 'react-i18next';
 import { hasPrimaryModifier } from '@/lib/keyboard';
-import { isMacOS } from '@/lib/platform';
+import { isMacOS, platformKind } from '@/lib/platform';
 import { cn } from '@/lib/utils';
 import { getDbKv, setDbKv } from '@/services/dbStorage';
 import { useSftpStore } from '@/services/SftpProvider';
@@ -125,6 +126,8 @@ export function AppShell() {
   // 广播 about-visibility；遮罩阻断主窗交互，点击遮罩即关闭关于窗（与 Esc/
   // Enter/OK 同一销毁路径，对齐 ZCode 的 modal 关闭手感）
   const [isAboutOpen, setIsAboutOpen] = useState(false);
+  /** Windows/Linux 的「关于」纯前端弹层开关（macOS 走 Rust 独立窗口） */
+  const [isAboutOverlayOpen, setIsAboutOverlayOpen] = useState(false);
   useEffect(() => {
     const unlisten = listen<boolean>('about-visibility', ({ payload }) => {
       setIsAboutOpen(Boolean(payload));
@@ -490,6 +493,11 @@ export function AppShell() {
                 onOpenAiChat={page === 'terminal' ? () => openAiChat() : undefined}
                 isAiPanelOpen={isAiChatOpen}
                 onToggleAiPanel={page === 'terminal' ? () => setAiChatOpen((current) => !current) : undefined}
+                onShowAbout={
+                  platformKind === 'macos'
+                    ? undefined // macOS：走 Rust 独立窗口（菜单栏同一路径）
+                    : () => setIsAboutOverlayOpen(true) // Windows/Linux：主窗内纯前端弹层
+                }
               />
               <main className="min-h-0 flex-1 overflow-y-auto relative">
                 {/* SFTP 文件视图持久挂载，切换页面保持后台状态、文件路径与传输任务 */}
@@ -627,6 +635,12 @@ export function AppShell() {
               'fixed inset-0 z-[90] cursor-default bg-black/45 transition-opacity duration-[320ms]',
               isAboutOpen ? 'opacity-100' : 'pointer-events-none opacity-0',
             )}
+          />
+
+          {/* Windows/Linux：「关于」纯前端弹层（macOS 用独立窗口，见 AboutWindow） */}
+          <AboutOverlay
+            open={isAboutOverlayOpen}
+            onClose={() => setIsAboutOverlayOpen(false)}
           />
         </div>
       </div>

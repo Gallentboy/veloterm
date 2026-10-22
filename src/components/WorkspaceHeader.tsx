@@ -17,13 +17,23 @@ interface WorkspaceHeaderProps {
   isAiPanelOpen?: boolean;
   /** 切换 AI 右侧面板展开/收起 */
   onToggleAiPanel?: () => void;
+  /**
+   * 打开「关于」。macOS 由调用方触发独立窗口（Rust show_about_window）；
+   * Windows 由调用方打开主窗内的纯前端弹层（见 AboutOverlay——WebView2
+   * 透明分层窗口不稳定，改为主窗内渲染）。
+   */
+  onShowAbout?: () => void;
 }
 
 /** 主面板头部（移植自 ZCode WorkspaceHeader）：h-12、整条可拖拽移动窗口，右侧帮助菜单。 */
-export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat, isAiPanelOpen, onToggleAiPanel }: WorkspaceHeaderProps) {
+export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat, isAiPanelOpen, onToggleAiPanel, onShowAbout }: WorkspaceHeaderProps) {
   const { t } = useTranslation();
   const showAbout = () => {
-    // 与菜单栏「关于 VeloTerm」同走 Rust 侧 show_about（同一个自绘窗口）
+    if (onShowAbout) {
+      onShowAbout();
+      return;
+    }
+    // 兜底：未提供回调时走 Rust 侧独立窗口（macOS 菜单栏同路径）
     void invoke('show_about_window').catch(() => undefined);
   };
   const title =

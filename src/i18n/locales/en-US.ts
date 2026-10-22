@@ -914,6 +914,7 @@ export default {
     version: 'version',
     buildTime: 'Build Time',
     ok: 'OK',
+    close: 'Close',
     appleSilicon: 'Optimized for Apple Silicon.',
     fontNotice: 'Bundled font: HarmonyOS Sans SC',
   },  theme: {

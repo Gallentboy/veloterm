@@ -914,6 +914,7 @@ export default {
     version: '版本',
     buildTime: '构建时间',
     ok: '确定',
+    close: '关闭',
     appleSilicon: '已针对 Apple Silicon 优化。',
     fontNotice: '内置字体：HarmonyOS Sans SC',
   },
