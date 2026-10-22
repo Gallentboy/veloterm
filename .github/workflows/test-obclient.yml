@@ -1,0 +1,100 @@
+# 目标（单一）：obconnector-c（OceanBase libobclient）的 Windows x64 编译验证
+# 车道（MSVC + CMake + vcpkg OpenSSL 静态库），见 src-tauri/vendor/obconnector-c/
+# veloterm-win/README.md 与 scripts/build-tools.mjs 的 obclient 段。
+# app 侧数据库驱动的 vendor（OB Oracle 模式私有协议层），尚未接线消费——本
+# 车道验证「MSVC 能编通 + 静态库可链可跑（冒烟）」并留存产物。
+# 依赖：CMake/VS（runner 自带）+ OpenSSL 静态库（vcpkg manifest 安装，与
+# publish.yml 同源、版本锁 src-tauri/vcpkg.json）。
+# 触发：推 tag（验证完删除）——
+#   git tag test_obclient && git push origin test_obclient
+#   git push origin :refs/tags/test_obclient
+# 也支持 workflow_dispatch 手动触发。
+name: 'test-obclient'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_obclient*'
+
+jobs:
+  build-obclient:
+    permissions:
+      contents: read
+      packages: write
+    runs-on: windows-latest
+    env:
+      # vcpkg 二进制缓存（GitHub Packages NuGet 源），与 publish.yml 同一份
+      # feed——缓存已由 publish 预热，此处为秒级恢复；未命中则本地编译
+      USERNAME: Gallentboy
+      FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
+      VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Add NuGet source for vcpkg binary cache (GitHub Packages)
+        shell: pwsh
+        run: |
+          $vcpkgExe = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" } else { "C:\vcpkg\vcpkg.exe" }
+          $nuget = (& $vcpkgExe fetch nuget | Select-Object -Last 1)
+          & $nuget sources add `
+            -Source "$env:FEED_URL" `
+            -StorePasswordInClearText `
+            -Name GitHubPackages `
+            -UserName "$env:USERNAME" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
+
+      # manifest 模式安装（src-tauri/vcpkg.json，与 publish/nmap 同型），差异点：
+      # release-only 写进 triplet 文件——VCPKG_BUILD_TYPE 环境变量对 manifest
+      # 模式无效（test-gif2mp4 的教训：须 Add-Content 进 triplet 的 cmake 变量），
+      # 只编 release 省一半时间。官方 triplet 在 triplets/、community 在
+      # triplets/community/（x64-windows-static 是官方）。
+      - name: Install OpenSSL static (Windows, release-only)
+        working-directory: src-tauri
+        shell: pwsh
+        env:
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
+          $triplet = "x64-windows-static"
+          $tripletFile = "$vcpkgRoot\triplets\$triplet.cmake"
+          if (-not (Test-Path $tripletFile)) {
+            $tripletFile = "$vcpkgRoot\triplets\community\$triplet.cmake"
+          }
+          if (-not (Test-Path $tripletFile)) { throw "triplet 文件未找到: $triplet" }
+          Add-Content -Path $tripletFile -Value "`r`nset(VCPKG_BUILD_TYPE release)"
+          Write-Host "triplet 已追加 release-only: $tripletFile"
+          git config --global --add safe.directory "$vcpkgRoot"
+          git -C "$vcpkgRoot" fetch origin master
+          if ($LASTEXITCODE -ne 0) { Write-Host "git fetch 补历史失败（exit $LASTEXITCODE），继续安装" }
+          vcpkg install "--x-install-root=$vcpkgRoot\installed"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install openssl 失败" }
+
+      - name: Set OpenSSL env (Windows)
+        shell: pwsh
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
+          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
+          echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
+
+      # obclient 段：上游树 CMake 配置 + Release 构建 + 产物断言 + 静态链冒烟
+      - name: Build obconnector-c (obclient segment)
+        run: node scripts/build-tools.mjs --only obclient
+
+      - name: Upload obclient artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: obclient-windows-x64
+          # 产物留在构建树（未接线 app 消费，不拷 binaries/）：DLL 已链入
+          # vcpkg OpenSSL；静态库 obclnt.lib 需消费方自带 ssl/crypto
+          path: |
+            src-tauri/obclient-build/libmariadb/Release/libobclnt.dll
+            src-tauri/obclient-build/libmariadb/Release/libobclnt.lib
+            src-tauri/obclient-build/libmariadb/Release/obclnt.lib
+            src-tauri/obclient-build/smoke/Release/obclient-smoke.exe
+          if-no-files-found: error
+          retention-days: 30

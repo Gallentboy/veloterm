@@ -14,3 +14,12 @@ src-tauri/vendor/libqalculate/** text eol=lf
 # 例外：po*/*.gmo 是 gettext 编译产物的二进制文件，绝不能被 text 规则
 # 做 CRLF→LF 规范化（--disable-nls 下虽不使用，进库的也必须是原样字节）
 src-tauri/vendor/libqalculate/**/*.gmo binary
+
+# vendor/obconnector-c：上游整树以 LF 存库（入库前已全树扫描确认零 CRLF
+# 文件）。Windows runner 的 autocrlf 检出成 CRLF 会污染字节敏感资产——
+# rpm/libobclient-VER.txt 被根 CMakeLists 的 file(STRINGS) 读入版本串
+# （尾随 \r 会拼进 CPACK_PACKAGE_VERSION 与 mariadb_version.h），build.sh /
+# dep_create.sh 等 shell 脚本按 LF 设计。整树强制 LF（libqalculate 同型）。
+src-tauri/vendor/obconnector-c/** text eol=lf
+# 例外：win/packaging 的 WiX 对话框图片是二进制文件，不能被 text 规则规范化
+src-tauri/vendor/obconnector-c/win/packaging/*.jpg binary
