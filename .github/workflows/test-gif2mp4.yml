@@ -208,7 +208,10 @@ jobs:
           "@
           if ($LASTEXITCODE -ne 0) { throw "configure 失败" }
 
-          & make.exe -j2
+          # 并行核数：按逻辑处理器数（CI runner 通常 2-4 核）
+          $jobs = [Environment]::ProcessorCount
+          Write-Host "make -j$jobs (ProcessorCount=$jobs)"
+          & make.exe -j$jobs
           if ($LASTEXITCODE -ne 0) { throw "make 失败" }
 
       # 收集 .lib 族：改名为 build.rs 期望的无 lib 前缀形态
@@ -293,7 +296,7 @@ jobs:
   build-gif2mp4-mac-x64:
     permissions:
       contents: read
-    runs-on: macos-13
+    runs-on: macos-26-intel
     steps:
       - uses: actions/checkout@v7
 
