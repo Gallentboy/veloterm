@@ -82,11 +82,11 @@ pub async fn export_recording_gif(
     let channel = on_progress.clone();
     let last_percent = Arc::new(AtomicU8::new(u8::MAX));
     let progress = Box::new(move |done: u64, total: u64| {
-        let percent = if total == 0 {
-            100
-        } else {
-            ((done * 100) / total).min(100) as u8
-        };
+        // checked 链防溢出分支（total == 0 已由调用侧保证非零，兜底 100）
+        let percent = done
+            .checked_mul(100)
+            .and_then(|v| v.checked_div(total))
+            .map_or(100, |p| p.min(100) as u8);
         if last_percent.swap(percent, Ordering::Relaxed) != percent {
             let _ = channel.send(GifProgress { percent });
         }
