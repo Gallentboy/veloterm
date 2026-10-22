@@ -1,0 +1,23 @@
+# gif2mp4 的 Rust 绑定（sys crate：预编译静态库接线 + C ABI 包装）
+#
+# 形态对齐 vendor/bc-app：ffmpeg 树（vendor/ffmpeg）事先 configure+make
+# 出 .a 族（命令见 vendor/ffmpeg/libgif2mp4/README.md），本 crate 的
+# build.rs 只发链接旗标不做编译——「库到时候编译好提供」。
+#
+# 注意：ffmpeg 源码树被根 workspace exclude，本 crate 以 path 依赖进
+# app 的依赖图（rzsz/jpegxl-sys 同先例），不属于工具 crate 家族。
+
+[package]
+name = "gif2mp4-sys"
+version = "0.1.0"
+edition = "2021"
+description = "Static bindings for the in-tree libgif2mp4 (GIF to MP4, ffmpeg tree)"
+license = "GPL-3.0"
+publish = false
+
+[dependencies]
+# 日志桥：C 回调转发到宿主日志门面（app 侧经 tauri-plugin-log 落地）
+log = "0.4"
+
+[lib]
+name = "gif2mp4_sys"
