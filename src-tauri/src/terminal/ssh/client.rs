@@ -225,12 +225,19 @@ struct Connector {
 }
 
 
-/// 认证期终端输入等待者（标准 ssh 客户端行为的复刻）：kbd-int 提示写到
-/// 终端显示后，等待用户在该终端按键（terminal_write → Write 命令 → 此处），
-/// 拼行直到回车作为应答。同一时刻只有一个连接在认证，单槽即可。
-pub static AUTH_INPUT_WAITER: std::sync::LazyLock<
-    std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+/// 认证期终端输入等待者（标准 ssh 客户端行为的复刻）：kbd-int/password
+/// 提示写到终端显示后，等待用户在该终端按键（terminal_write → Write 命令
+/// → 此处），拼行直到回车作为应答。槽内带会话 id：多会话并存时（A 在
+/// 等密码、B 已进 shell）只劫持本会话的输入——否则 B 的击键会被喂进
+/// A 的密码缓冲（既污染密码又丢输入，多 Tab 场景实测可达）。
+/// 等待者槽：会话 id + 字节发送端
+type AuthInputWaiterSlot = Option<(
+    usize,
+    tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+)>;
+
+pub static AUTH_INPUT_WAITER: std::sync::LazyLock<std::sync::Mutex<AuthInputWaiterSlot>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
 /// 远程 SSH 客户端状态机（迁移自 `warpgate-protocol-ssh/src/client/mod.rs::RemoteClient`）：
 /// - 支持在连接尚未完成时预入队 `ChannelOperation`（如 `OpenShell` / `RequestPty` / `RequestShell` / `ResizePty`）；
@@ -530,12 +537,15 @@ impl RemoteClient {
                 }
             }
             RCCommand::Channel(ch, op) => {
-                // 认证期终端输入（标准 ssh 复刻）：kbd-int 改密询问在等用户
-                // 输入时，Write 命令的字节转给等待者（拼行回车提交），
-                // 不进 channel（此时 shell channel 未开）
+                // 认证期终端输入（标准 ssh 复刻）：kbd-int/password 提示在等
+                // 用户输入时，本会话 Write 命令的字节转给等待者（拼行回车
+                // 提交），不进 channel（此时 shell channel 未开）。带会话 id
+                // 过滤：其他会话的输入绝不能被劫持进本会话的密码缓冲
                 if let ChannelOperation::Data(ref data) = op {
                     let waiter = AUTH_INPUT_WAITER.lock().unwrap().clone();
-                    if let Some(tx) = waiter {
+                    if let Some((waiter_session, tx)) = waiter
+                        && waiter_session == self.id
+                    {
                         let _ = tx.send(data.to_vec());
                         return Ok(false);
                     }
@@ -1066,9 +1076,9 @@ impl Connector {
             .tx
             .send(RCEvent::Output(1, bytes::Bytes::from(line)))
             .await;
-        // 注册输入等待
+        // 注册输入等待（带会话 id，喂入侧按 id 过滤防跨会话劫持）
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
-        *AUTH_INPUT_WAITER.lock().unwrap() = Some(tx);
+        *AUTH_INPUT_WAITER.lock().unwrap() = Some((self.id, tx));
         // 拼行直到回车。echo=true 时把可打印字符回显到终端（同 tty ECHO 语义）。
         let mut buf: Vec<u8> = Vec::new();
         let mut done: Option<Option<String>> = None;
@@ -1667,36 +1677,45 @@ impl Connector {
                     }
                     return Ok(());
                 }
-                // 回落：password 方法。跳过条件是「kbd-int 真正验过密码并拒绝」
-                // （saw_info_request 且有失败计数）——只有这时「同一密码再走
-                // password 必然同样失败」才成立；方法层直接拒绝（从未发过
-                // InfoRequest）时密码未经任何验证，password 必须照常尝试。
-                // 跳过时的收益：免去一次必然失败的 pam_unix 哈希等待（~3.2s）。
+                // 回落：password 方法（对齐 OpenSSH 核心流程：kbd-int 方法
+                // 耗尽 → userauth() 走服务器列表选下一个方法 → 全新提示）。
+                // kbd-int 曾真正验过密码并拒绝（saw_info_request 且有失败
+                // 计数）时：保存密码已被服务器实拍拒绝，自动重发那一次
+                // 确定失败（pam_unix 哈希 ~3.2s/次）——跳过自动轮直接进
+                // 手输轮（attempt_floor=1，手输密码可不同于已验错的保存值，
+                // 这正是 OpenSSH 允许的）；若服务器此时已不再提供 password
+                //（最后的 FAILURE 列表不含它），则方法真正用尽，按 OpenSSH
+                // 格式报错直接结束。方法层直接拒绝（从未发过 InfoRequest）
+                // 时密码未经任何验证，password 全流程照常。
+                let mut attempt_floor = 0u32;
                 if kbdint_attempts > 0 && kbdint_saw_info_request {
-                    log::debug!(
-                        "[SSH {}] kbd-int already failed with saved password, \
-                         skipping password fallback",
-                        self.id
-                    );
-                    // 复刻 OpenSSH userauth() 方法用尽时的报错（sshconnect2.c:543
-                    // `%s@%s: Permission denied (%s).`）：括号内是服务器给出的
-                    // 剩余认证方法列表
-                    let methods = last_remaining_methods
+                    let offered = last_remaining_methods
                         .as_deref()
                         .unwrap_or("publickey,password,keyboard-interactive");
-                    return Err(ConnectionError::Authentication(format!(
-                        "Permission denied ({methods})."
-                    )));
+                    if !offered.split(',').any(|m| m.trim() == "password") {
+                        // 复刻 OpenSSH userauth() 方法用尽报错（sshconnect2.c:543
+                        // `%s@%s: Permission denied (%s).`）
+                        return Err(ConnectionError::Authentication(format!(
+                            "Permission denied ({offered})."
+                        )));
+                    }
+                    log::debug!(
+                        "[SSH {}] kbd-int verified & rejected saved password, \
+                         entering manual password rounds directly",
+                        self.id
+                    );
+                    attempt_floor = 1;
                 }
                 log::debug!("[SSH {}] falling back to password auth", self.id);
                 // 对齐 OpenSSH userauth_passwd 语义：保存密码失败不直接断开，
-                // 重试轮显示 Password: 等用户手输（共 1 次自动 + 2 次手输 =
-                // number_of_password_prompts=3）。提示保持裸格式、不加
-                // user@host 前缀——与 kbd-int 路径的既有约定一致。
-                // 手输密码通过服务器 Success 验证且与保存值不同 → 回写
-                // 主机库（user-input 源，同 kbd-int 路径）。
-                let mut pw_attempts = 0u32;
-                while pw_attempts < 3 {
+                // 重试轮显示 Password: 等用户手输（正常路径 1 次自动 + 2 次
+                // 手输；kbd-int 已验拒保存密码时 floor=1，3 轮全手输——
+                // 总提示次数与 OpenSSH number_of_password_prompts=3 一致）。
+                // 提示保持裸格式、不加 user@host 前缀——与 kbd-int 路径的
+                // 既有约定一致。手输密码通过服务器 Success 验证且与保存值
+                // 不同 → 回写主机库（user-input 源，同 kbd-int 路径）。
+                let mut pw_attempts = attempt_floor;
+                while pw_attempts < attempt_floor + 3 {
                     let (pw_to_try, from_user) = if pw_attempts == 0 {
                         (password.clone(), false)
                     } else {
@@ -1724,7 +1743,21 @@ impl Connector {
                     // MaxAuthTries（常见默认 6），约两三轮后服务器直接
                     // DISCONNECT，挂在屏上的 Password: 提示从此无响应（实测）。
                     // 本循环就是纯 password 重试，语义应为线性的单请求/轮。
-                    auth_result = matches!(response, AuthResult::Success);
+                    match response {
+                        AuthResult::Success => auth_result = true,
+                        AuthResult::Failure { remaining_methods, .. } => {
+                            let methods: Vec<&str> =
+                                remaining_methods.iter().map(<&str>::from).collect();
+                            last_remaining_methods = Some(methods.join(","));
+                            // OpenSSH input_userauth_failure → userauth()：服务器
+                            // 不再提供 password 时立即停止本方法（换方法/结束），
+                            //绝不对着已禁用的方法继续提示用户输入密码
+                            if !remaining_methods.contains(&russh::MethodKind::Password)
+                            {
+                                break;
+                            }
+                        }
+                    }
                     if auth_result {
                         log::info!(
                             "[SSH {}] Authenticated with password as {}",
@@ -1779,8 +1812,11 @@ impl Connector {
                     pw_attempts += 1;
                 }
                 if !auth_result {
-                    auth_error_msg =
-                        Some("Password authentication was rejected by the SSH target".to_string());
+                    // OpenSSH 方法用尽报错格式（sshconnect2.c：
+                    // `Permission denied (methods).`），括号内为服务器给出的
+                    // 剩余认证方法列表
+                    let methods = last_remaining_methods.as_deref().unwrap_or("password");
+                    auth_error_msg = Some(format!("Permission denied ({methods})."));
                 }
             }
 
