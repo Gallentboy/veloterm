@@ -1,11 +1,19 @@
-# 目标（单一）：obconnector-c（OceanBase libobclient）的 Windows x64 编译验证
-# 车道（MSVC + CMake + vcpkg OpenSSL 静态库），见 src-tauri/vendor/obconnector-c/
-# veloterm-win/README.md 与 scripts/build-obclient.mjs（独立脚本，不经
-# build-tools.mjs——其尾段 nmap 无条件构建，与 obclient 无关）。
-# app 侧数据库驱动的 vendor（OB Oracle 模式私有协议层），尚未接线消费——本
-# 车道验证「MSVC 能编通 + 静态库可链可跑（冒烟）」并留存产物。
-# 依赖：CMake/VS（runner 自带）+ OpenSSL 静态库（vcpkg manifest 安装，与
-# publish.yml 同源、版本锁 src-tauri/vcpkg.json）。
+# 目标（单一）：obconnector-c（OceanBase libobclient）四平台静态库构建车道，
+# 产出 obclnt-sys 的链接档案（vendor/obclient-lib/<平台>/）：
+#   win-x64（windows-latest）/ win-arm64（windows-11-arm）→ obclnt.lib
+#   mac-aarch64（macos-26）/ mac-x86_64（macos-26-intel）→ libobclnt.a（自包含）
+# 全原生 runner（与 publish.yml 的 mac 双腿同型，无交叉编译）。
+# 构建逻辑（含平台分流）见 scripts/build-obclient.mjs；细节见
+# src-tauri/vendor/obconnector-c/veloterm-win/README.md。
+#
+# OpenSSL 来源（两平台同代 3.x、ABI 兼容；补丁位不强求一致——mac 侧
+# brew 公式跟上游发布走，无 3.6.4 配方，当前 3.5.9）：
+#   - Windows：vcpkg manifest（src-tauri/vcpkg.json，与 publish 同源锁
+#     3.6.4#1），release-only 写进 triplet 文件（VCPKG_BUILD_TYPE env 对
+#     manifest 模式无效——test-gif2mp4 的教训），二进制缓存走 GitHub
+#     Packages NuGet 源
+#   - macOS：brew openssl@3（keg 自带静态 .a——mac 合并分支的硬前提）
+#
 # 触发：推 tag（验证完删除）——
 #   git tag test_obclient && git push origin test_obclient
 #   git push origin :refs/tags/test_obclient
@@ -22,18 +30,33 @@ jobs:
   build-obclient:
     permissions:
       contents: read
+      # vcpkg 二进制缓存推送/拉取 GitHub Packages（NuGet feed）所需（Windows 腿）
       packages: write
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win-x64
+            triplet: x64-windows-static
+          - os: windows-11-arm
+            platform: win-arm64
+            triplet: arm64-windows-static
+          - os: macos-26
+            platform: mac-aarch64
+          - os: macos-26-intel
+            platform: mac-x86_64
+    runs-on: ${{ matrix.os }}
     env:
-      # vcpkg 二进制缓存（GitHub Packages NuGet 源），与 publish.yml 同一份
-      # feed——缓存已由 publish 预热，此处为秒级恢复；未命中则本地编译
       USERNAME: Gallentboy
       FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
       VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
     steps:
       - uses: actions/checkout@v7
 
+      # ── Windows 腿：vcpkg OpenSSL（manifest + triplet release-only）─────────
       - name: Add NuGet source for vcpkg binary cache (GitHub Packages)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $vcpkgExe = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" } else { "C:\vcpkg\vcpkg.exe" }
@@ -46,24 +69,19 @@ jobs:
             -Password "${{ secrets.GITHUB_TOKEN }}"
           & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
 
-      # manifest 模式安装（src-tauri/vcpkg.json，与 publish/nmap 同型），差异点：
-      # release-only 写进 triplet 文件——VCPKG_BUILD_TYPE 环境变量对 manifest
-      # 模式无效（test-gif2mp4 的教训：须 Add-Content 进 triplet 的 cmake 变量），
-      # 只编 release 省一半时间。官方 triplet 在 triplets/、community 在
-      # triplets/community/（x64-windows-static 是官方）。
       - name: Install OpenSSL static (Windows, release-only)
+        if: runner.os == 'Windows'
         working-directory: src-tauri
         shell: pwsh
         env:
-          VCPKG_DEFAULT_TRIPLET: x64-windows-static
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.triplet }}
         run: |
           $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
-          $triplet = "x64-windows-static"
-          $tripletFile = "$vcpkgRoot\triplets\$triplet.cmake"
+          $tripletFile = "$vcpkgRoot\triplets\${{ matrix.triplet }}.cmake"
           if (-not (Test-Path $tripletFile)) {
-            $tripletFile = "$vcpkgRoot\triplets\community\$triplet.cmake"
+            $tripletFile = "$vcpkgRoot\triplets\community\${{ matrix.triplet }}.cmake"
           }
-          if (-not (Test-Path $tripletFile)) { throw "triplet 文件未找到: $triplet" }
+          if (-not (Test-Path $tripletFile)) { throw "triplet 文件未找到: ${{ matrix.triplet }}" }
           Add-Content -Path $tripletFile -Value "`r`nset(VCPKG_BUILD_TYPE release)"
           Write-Host "triplet 已追加 release-only: $tripletFile"
           git config --global --add safe.directory "$vcpkgRoot"
@@ -73,29 +91,47 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install openssl 失败" }
 
       - name: Set OpenSSL env (Windows)
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
-          $opensslDir = "$vcpkgRoot\installed\x64-windows-static"
+          $opensslDir = "$vcpkgRoot\installed\${{ matrix.triplet }}"
           echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
           echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
-      # obclient 构建：上游树 CMake 配置 + Release 构建 + 产物断言 + 静态链冒烟
+      # ── macOS 腿：brew openssl@3（静态 .a 触发合并分支出全包含 .a）────────
+      - name: Install openssl@3 (macOS)
+        if: runner.os == 'macOS'
+        run: brew install openssl@3
+
+      # ── 构建 + 冒烟（脚本内按平台分流；产物断言带目录诊断）────────────────
       - name: Build obconnector-c
         run: node scripts/build-obclient.mjs
+
+      # ── 收集 + 上传（归一到 dist/，obclnt-sys 的 build.rs 按平台目录消费）──
+      - name: Collect artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item src-tauri/obclient-build/libmariadb/Release/obclnt.lib dist/
+          Copy-Item src-tauri/obclient-build/smoke/Release/obclient-smoke.exe dist/
+          Get-ChildItem dist | ForEach-Object { Write-Host "  $($_.Name) ($([math]::Round($_.Length/1KB)) KB)" }
+
+      - name: Collect artifact (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          cp src-tauri/obclient-build/archive_output_directory/libobclnt.a dist/
+          cp src-tauri/obclient-build/obclient-smoke dist/
+          ls -lh dist/
 
       - name: Upload obclient artifact
         uses: actions/upload-artifact@v7
         with:
-          name: obclient-windows-x64
-          # 产物留在构建树（未接线 app 消费，不拷 binaries/）：DLL 已链入
-          # vcpkg OpenSSL；静态库 obclnt.lib 需消费方自带 ssl/crypto
-          path: |
-            src-tauri/obclient-build/libmariadb/Release/libobclnt.dll
-            src-tauri/obclient-build/libmariadb/Release/libobclnt.lib
-            src-tauri/obclient-build/libmariadb/Release/obclnt.lib
-            src-tauri/obclient-build/smoke/Release/obclient-smoke.exe
+          name: obclient-${{ matrix.platform }}
+          path: dist/*
           if-no-files-found: error
           retention-days: 30
