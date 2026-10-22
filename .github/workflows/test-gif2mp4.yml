@@ -110,7 +110,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MSYS
-          install: make
+          install: make pkgconf
           update: false
 
       # link.exe 冲突：MSYS2 的 GNU link 与 MSVC 的 link 同名（Wiki 常见坑）。
@@ -155,8 +155,11 @@ jobs:
           $pkgDir = "$x264Dir\lib\pkgconfig"
           $env:PKG_CONFIG_PATH = $pkgDir.Replace('\', '/') -replace '^([A-Z]):', { '/' + $_.Groups[1].Value.ToLower() }
           Write-Host "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH (手工 Unix 化)"
-          # 验证：从 MSYS2 bin 直接调 pkg-config（避免 MinGW 的 pkg-config 抢先）
-          & "$msysBin\pkg-config.exe" --exists x264
+          # 验证：pkgconf 包提供 pkg-config.exe（MSYS2 的 pkgconf 是 pkg-config 实现）
+          $pkgConfig = "$msysBin\pkg-config.exe"
+          if (-not (Test-Path $pkgConfig)) { $pkgConfig = "$msysBin\pkgconf.exe" }
+          if (-not (Test-Path $pkgConfig)) { throw "pkg-config/pkgconf 未找到: $msysBin" }
+          & $pkgConfig --exists x264
           if ($LASTEXITCODE -ne 0) {
             throw "pkg-config 找不到 x264（PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH）"
           }
