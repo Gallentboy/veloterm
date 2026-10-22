@@ -144,6 +144,7 @@ fn collect_pids(spec: &str, opts: &mut PsOptions) {
 /// -C 过滤语义：进程名（Windows 下为 exe 文件名，如 WeChat.exe）**或**完整命令行
 /// 任一子串命中即可（忽略大小写）。只匹配进程名会让「按参数搜进程」落空
 /// （如 java -jar server.jar 里搜 server.jar），这正是 Windows 下最常见的搜不到
+#[inline(always)]
 fn matches_filter(name: &str, command: &str, filter: &str) -> bool {
     name.to_lowercase().contains(filter) || command.to_lowercase().contains(filter)
 }

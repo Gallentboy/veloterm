@@ -230,6 +230,7 @@ pub fn is_editable_text(filename: Option<&str>, bytes: &[u8]) -> bool {
 ///
 /// 未知后缀（`None`）在列表阶段保守判不可编辑，避免为嗅探逐个读文件；
 /// 打开文件时由 [`is_editable_text`] 结合内容探针做二次判定。
+#[inline(always)]
 pub fn is_editable_sftp_entry(name: &str, size: u64) -> bool {
     size <= MAX_EDITABLE_FILE_SIZE_BYTES && is_text_file_by_name(name) == Some(true)
 }

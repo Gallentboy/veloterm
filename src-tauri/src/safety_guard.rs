@@ -223,6 +223,7 @@ pub fn strip_shell_prompt(line: &str) -> &str {
     trimmed
 }
 
+#[inline(always)]
 fn is_prompt_terminator(ch: char) -> bool {
     matches!(
         ch,
@@ -400,6 +401,7 @@ fn normalize_command_name(name: &str) -> String {
 /// 是否为环境变量赋值形态（KEY=VAL，KEY 为合法标识符）。
 /// `env VAR=1 rm ...` / `sudo VAR=1 cmd` 中这类 token 属于包装层参数，
 /// 穿透时需跳过而非当成真实命令。
+#[inline(always)]
 fn is_env_assignment(s: &str) -> bool {
     let Some(eq) = s.find('=') else {
         return false;
@@ -532,6 +534,7 @@ fn parse_command_node(node: Node, source: &[u8]) -> Option<ParsedCommand> {
     })
 }
 
+#[inline]
 fn strip_quotes(s: &str) -> String {
     let trimmed = s.trim();
     if ((trimmed.starts_with('"') && trimmed.ends_with('"'))
@@ -544,6 +547,7 @@ fn strip_quotes(s: &str) -> String {
     trimmed.to_string()
 }
 
+#[inline(always)]
 fn is_wrapper_command(cmd: &str) -> bool {
     matches!(
         cmd,

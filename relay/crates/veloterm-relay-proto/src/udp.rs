@@ -42,6 +42,7 @@ pub struct DataDatagram<'a> {
 
 /// 仅结构解析（不验证明不验窗），供服务端按「解析→查密→验证明→验窗」组合使用，
 /// 以便对「鉴权失败」与「时间偏差」回不同错误码。
+#[inline]
 pub fn decode_data(buf: &[u8]) -> Result<DataDatagram<'_>, ProtoError> {
     let header_len = 4 + 1 + 8 + PROOF_LEN;
     if buf.len() < header_len + 1 || buf[..4] != DATA_MAGIC {
@@ -54,6 +55,7 @@ pub fn decode_data(buf: &[u8]) -> Result<DataDatagram<'_>, ProtoError> {
 }
 
 /// 独立验证明（与 decode_data 组合用）。
+#[inline]
 pub fn verify_data_proof(secret: &Secret, key_id: u8, time_ms: u64, proof: &[u8; PROOF_LEN]) -> bool {
     auth::const_eq(&auth::udp_data_proof(secret, key_id, time_ms), proof)
 }
@@ -72,6 +74,7 @@ pub fn decode_and_verify_data(buf: &[u8], secret_for: impl Fn(u8) -> Option<Secr
 }
 
 /// 验窗：`|time_ms - now_ms| <= window`。
+#[inline(always)]
 pub fn time_within_window(time_ms: u64, now_ms: u64) -> bool {
     time_ms.abs_diff(now_ms) <= DEFAULT_WINDOW_MS
 }

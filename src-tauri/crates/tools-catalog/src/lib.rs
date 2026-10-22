@@ -170,6 +170,7 @@ pub fn all_commands() -> Vec<&'static str> {
 }
 
 /// 是否为已知命令
+#[inline]
 pub fn is_known_command(name: &str) -> bool {
     CROSS_PLATFORM_COMMANDS.contains(&name)
         || PLATFORM_COMMANDS.contains(&name)

@@ -77,6 +77,7 @@ impl ServerAuth {
         self.entries.push(entry);
     }
 
+    #[inline]
     pub fn get(&self, key_id: u8) -> Option<&AuthEntry> {
         self.entries.iter().find(|e| e.key_id == key_id)
     }
