@@ -52,25 +52,19 @@ console.log(`[build-tools] target: ${target}`);
 // MSVC/cmake/nmake 走 ARM64、GOAMD64 仅对 x86_64 有意义
 const isArm64 = target.startsWith('aarch64-');
 
-// --only <段>：局部构建（coreutils / goffi / qalc / vim / nmap / ncat / nping /
-// obclient）。
+// --only <段>：局部构建（coreutils / goffi / qalc / vim / nmap / ncat / nping）。
 // tag 触发的 test-*.yml 快速反馈车道用
 // `--only qalc` 只依赖 MSYS2；`--only vim` 只依赖 MSVC nmake（零外部包，最轻）；
 // `--only nmap|ncat|nping` 走 MSVC+CMake——三者同属
 // Nmap 项目、同工程（veloterm-win/CMakeLists.txt），`--only nmap` 出全部三个
 // DLL，`--only ncat` / `--only nping` 只出对应那一个（cmake --target 单目标，
-// 用于增量验证）；goffi 段（yq+fzf 合并 DLL）只依赖 Go；obclient 段
-// （obconnector-c，app 侧数据库驱动 vendor）走 MSVC+CMake+vcpkg OpenSSL，
-// 尚未接线 app 消费、不进全量构建。不传时全量构建
+// 用于增量验证）；goffi 段（yq+fzf 合并 DLL）只依赖 Go。不传时全量构建
 // （publish 路径），行为不变
 const onlyFlag = args.indexOf('--only');
 const only = onlyFlag !== -1 && args[onlyFlag + 1] ? args[onlyFlag + 1] : '';
-if (
-  only &&
-  !['coreutils', 'goffi', 'qalc', 'vim', 'nmap', 'ncat', 'nping', 'obclient'].includes(only)
-) {
+if (only && !['coreutils', 'goffi', 'qalc', 'vim', 'nmap', 'ncat', 'nping'].includes(only)) {
   console.error(
-    `[build-tools] 未知 --only 段：${only}（可选 coreutils/goffi/qalc/vim/nmap/ncat/nping/obclient）`,
+    `[build-tools] 未知 --only 段：${only}（可选 coreutils/goffi/qalc/vim/nmap/ncat/nping）`,
   );
   process.exit(1);
 }
@@ -787,88 +781,5 @@ if (wantNping) {
   cpSync(builtNpingDll, join(outDir, 'npingffi.dll'));
 }
 console.log(`[build-tools] nmap 段产物 (${nmapVersion}) -> ${join(outDir)}`);
-
-// ── obconnector-c（MSVC + CMake）：OceanBase libobclient 的 Windows 编译段 ──
-// app 侧数据库工作台的 OceanBase 驱动 vendor（OB Oracle 模式私有协议层），
-// 尚未接线消费（无 sys-crate/FFI）——本段只做「能编出来 + 冒烟链接」的车道
-// 验证（tag test_obclient → test-obclient.yml），故仅 --only obclient 局部
-// 构建、不进 publish 全量、产物不拷 binaries/。接线后改为 !only ||
-// only === 'obclient' 并入全量。CMake 旗标细节与产物说明见
-// vendor/obconnector-c/veloterm-win/README.md。
-if (only === 'obclient') {
-  const obSrc = join(srcTauri, 'vendor', 'obconnector-c');
-  const obVersion = readFileSync(join(obSrc, 'rpm', 'libobclient-VER.txt'), 'utf8').trim();
-  console.log(
-    `[build-tools] obconnector-c ${obVersion}: MSVC + CMake 构建（${isArm64 ? 'arm64' : 'x64'}，Release only）`,
-  );
-
-  // OpenSSL 静态库：vcpkg（manifest 安装，publish 同源；车道步骤先在 triplet
-  // 文件写入 release-only 再 install），triplet 随目标架构
-  const obOpensslDir =
-    process.env.OPENSSL_DIR ??
-    `C:\\vcpkg\\installed\\${isArm64 ? 'arm64' : 'x64'}-windows-static`;
-  if (!existsSync(join(obOpensslDir, 'lib', 'libcrypto.lib'))) {
-    console.error(
-      `[build-tools] 未找到 OpenSSL 静态库（obclient 段必需）：${obOpensslDir}\\lib\\libcrypto.lib 不存在。\n` +
-        `  CI 上由 test-obclient.yml 的 vcpkg 步骤安装并导出 OPENSSL_DIR；本地请设 OPENSSL_DIR 指向 ${isArm64 ? 'arm64' : 'x64'}-windows-static 安装根。`,
-    );
-    process.exit(1);
-  }
-
-  const obBuild = join(srcTauri, 'obclient-build');
-  rmSync(obBuild, { recursive: true, force: true });
-  mkdirSync(obBuild, { recursive: true });
-
-  // CMake 4 移除 <3.5 兼容：上游非 APPLE 分支声明 cmake_minimum_required(2.8)
-  // 会硬报错，CMAKE_POLICY_VERSION_MINIMUM=3.5 是官方逃生口（CMake 3 下仅是
-  // 多余缓存变量，无害）。OpenSSL 三件套显式传路径（上游 build.sh 同型）；
-  // WITH_CURL=OFF 跳过 remote_io 插件（plugins/io 的 IF(WITH_CURL) 门）。
-  execSync(
-    `cmake -S "${obSrc}" -B "${obBuild}" -A ${isArm64 ? 'ARM64' : 'x64'} ` +
-      `-DCMAKE_POLICY_VERSION_MINIMUM=3.5 ` +
-      `-DWITH_SSL=OPENSSL -DWITH_CURL=OFF ` +
-      `-DOPENSSL_ROOT_DIR="${obOpensslDir}" ` +
-      `-DOPENSSL_INCLUDE_DIR="${obOpensslDir}\\include" ` +
-      `-DOPENSSL_SSL_LIBRARY="${obOpensslDir}\\lib\\libssl.lib" ` +
-      `-DOPENSSL_CRYPTO_LIBRARY="${obOpensslDir}\\lib\\libcrypto.lib"`,
-    { stdio: 'inherit' },
-  );
-  execSync(`cmake --build "${obBuild}" --config Release --parallel`, {
-    stdio: 'inherit',
-  });
-
-  // 产物断言：动态 libobclnt.dll + 导入库 libobclnt.lib（vcpkg OpenSSL 已链入
-  // DLL）+ 静态 obclnt.lib（仅连接器对象，OpenSSL 不在内——冒烟工程自带）。
-  // VS 多配置生成器默认输出到 libmariadb/Release/。
-  const obLibDir = join(obBuild, 'libmariadb', 'Release');
-  for (const f of ['libobclnt.dll', 'libobclnt.lib', 'obclnt.lib']) {
-    if (!existsSync(join(obLibDir, f))) {
-      console.error(`[build-tools] 缺少构建产物: ${join(obLibDir, f)}`);
-      const probe = join(obBuild, 'libmariadb');
-      if (existsSync(probe)) {
-        console.error(`  libmariadb/ 实际内容：${readdirSync(probe).join(', ')}`);
-      }
-      process.exit(1);
-    }
-  }
-
-  // 冒烟：静态链 obclnt.lib + vcpkg ssl/crypto 跑 init/close 生命周期
-  // （WIN32 初始化路径含 WSAStartup，顺带验证 ws2_32 接线）
-  const obSmokeBuild = join(obBuild, 'smoke');
-  execSync(
-    `cmake -S "${join(obSrc, 'veloterm-win')}" -B "${obSmokeBuild}" ` +
-      `-A ${isArm64 ? 'ARM64' : 'x64'} -DOBCLIENT_BUILD_DIR="${obBuild}" ` +
-      `-DOPENSSL_ROOT_DIR="${obOpensslDir}"`,
-    { stdio: 'inherit' },
-  );
-  execSync(`cmake --build "${obSmokeBuild}" --config Release`, { stdio: 'inherit' });
-  execSync(`"${join(obSmokeBuild, 'Release', 'obclient-smoke.exe')}"`, {
-    stdio: 'inherit',
-  });
-
-  console.log(
-    `[build-tools] obclient 段产物 (${obVersion}) 留在 ${obBuild}（未接线 app 消费，不拷 ${outDir}）`,
-  );
-}
 
 console.log('[build-tools] 完成');

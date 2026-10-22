@@ -22,8 +22,22 @@
 
 extern void *ma_multi_malloc(myf MyFlags, ...);
 
+/* veloterm patch (Windows/MSVC): ob_mutex_t is CRITICAL_SECTION on Windows,
+ * which has no static initializer (upstream only guarantees POSIX builds).
+ * Use INIT_ONCE instead - statically constructible and semantically equal
+ * to the POSIX PTHREAD_MUTEX_INITIALIZER + init_flag double-checked lock. */
+#ifdef _WIN32
+static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK ob20_init_once_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
+{
+  (void)once; (void)param; (void)ctx;
+  OB20_SERIALIZE_FUNC_INIT();
+  return TRUE;
+}
+#else
 static ob_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int init_flag = 0;
+#endif
 static ExtraInfoSerializeFunc extra_serialize_funcs[OB20_SVR_END + 1];
 
 // CRC table for the CRC-16. The poly is 0x8005 (x^16 + x^15 + x^2 + 1)
@@ -313,6 +327,9 @@ int ob20_init(Ob20Protocol *ob20protocol, unsigned long conid, my_bool use_flt)
   if (OB_ISNULL(ob20protocol)) {
     ret = OB_ERROR;
   } else {
+#ifdef _WIN32
+    InitOnceExecuteOnce(&init_once, ob20_init_once_cb, NULL, NULL);
+#else
     if (!init_flag) {
       ob_mutex_lock(&init_mutex);
       if (!init_flag) {
@@ -321,6 +338,7 @@ int ob20_init(Ob20Protocol *ob20protocol, unsigned long conid, my_bool use_flt)
       }
       ob_mutex_unlock(&init_mutex);
     }
+#endif
     memset(ob20protocol, 0, sizeof(*(ob20protocol)));
 
     ob20protocol->header.magic_num = OB20_PROTOCOL_MAGIC_NUM;

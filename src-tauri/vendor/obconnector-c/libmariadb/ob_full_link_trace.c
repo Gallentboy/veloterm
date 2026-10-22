@@ -90,8 +90,23 @@ const char *tag_str[FLT_TAG_MAX_TYPE] =
   "client_host"
 };
 
+/* veloterm patch (Windows/MSVC): ob_mutex_t is CRITICAL_SECTION on Windows,
+ * which has no static initializer (upstream only guarantees POSIX builds).
+ * Use INIT_ONCE instead - statically constructible and semantically equal
+ * to the POSIX PTHREAD_MUTEX_INITIALIZER + init_flag double-checked lock. */
+#ifdef _WIN32
+static INIT_ONCE init_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK flt_init_once_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
+{
+  (void)once; (void)param; (void)ctx;
+  FLT_EXTRA_INFO_INIT();                /* init id2type */
+  FLT_SERIALIZE_FUNC_INIT();            /* init flt_funcs */
+  return TRUE;
+}
+#else
 static ob_mutex_t init_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int init_flag = 0;
+#endif
 static enum_field_types id2type[FLT_EXTRA_INFO_ID_END + 1];
 static FLTFunc flt_funcs[FLT_EXTRA_INFO_TYPE_END + 1];
 
@@ -118,6 +133,9 @@ int flt_init(FLTInfo *flt)
   int ret = OB_SUCCESS; 
 
   if (OB_NOT_NULL(flt)) {
+#ifdef _WIN32
+    InitOnceExecuteOnce(&init_once, flt_init_once_cb, NULL, NULL);
+#else
     if (!init_flag) {
       ob_mutex_lock(&init_mutex);
       if (!init_flag) {
@@ -127,6 +145,7 @@ int flt_init(FLTInfo *flt)
       }
       ob_mutex_unlock(&init_mutex);
     }
+#endif
 
     memset(flt, 0, sizeof(*flt));
 

@@ -21,10 +21,10 @@ SM3 认证、NUMBER/DATE 格式模型、LOB locator、TNS 名解析全部是 OB 
 
 - **Windows（本目录所在的段）**：MSVC + CMake（VS 多配置生成器，仅
   Release），OpenSSL 用 vcpkg 静态库（manifest 模式，与 publish.yml 同源，
-  版本锁 `src-tauri/vcpkg.json` 的 overrides 3.6.4#1）。入口：
-  `node scripts/build-tools.mjs --only obclient`；车道
-  `.github/workflows/test-obclient.yml`（tag `test_obclient` 触发）。
-  关键 CMake 旗标（上游树零修补，全部外参）：
+  版本锁 `src-tauri/vcpkg.json` 的 overrides 3.6.4#1）。入口：**独立脚本
+  `scripts/build-obclient.mjs`**（不经 build-tools.mjs——其尾段 nmap 无条件
+  构建，与 obclient 无关）；车道 `.github/workflows/test-obclient.yml`
+  （tag `test_obclient` 触发）。关键 CMake 旗标（上游树全外参）：
   - `-DCMAKE_POLICY_VERSION_MINIMUM=3.5`：CMake 4 移除 <3.5 兼容，上游
     非 APPLE 分支声明 `cmake_minimum_required(2.8)` 会硬报错，这是官方
     逃生口（对 CMake 3 是无害的多余缓存变量）
@@ -52,13 +52,26 @@ veloterm-win/ 冒烟工程（本目录 CMakeLists.txt + smoke.c）静态链 obcl
 
 ## 尚未接线
 
-app 侧暂无 sys-crate / FFI 消费方，本段只在 `--only obclient` 局部构建
-（不进 publish 全量、产物不拷 `src-tauri/binaries/`）。接线时：加
-`vendor/obclient-sys`（发链接旗标）+ `db_browser` 引擎第三臂，并把本段并
-入全量构建（`!only || only === 'obclient'`）。
+app 侧暂无 sys-crate / FFI 消费方，本段只在车道验证（产物不拷
+`src-tauri/binaries/`）。接线时：加 `vendor/obclient-sys`（发链接旗标）+
+`db_browser` 引擎第三臂。
+
+## 本地修补（两处，升级时重放）
+
+上游从未发布过 Windows 产物（GitHub releases 只有 Linux RPM + macOS 包），
+MSVC 编译有两处硬错——`ob_mutex_t` 在 Windows 是 CRITICAL_SECTION，无静态
+初始化形态，而上游直接用了 `PTHREAD_MUTEX_INITIALIZER` 静态构造：
+
+1. `libmariadb/ob_protocol20.c`：静态 mutex + init_flag 双检锁 → Windows 臂
+   改 `INIT_ONCE`（`INIT_ONCE_STATIC_INIT` 静态可构造，语义等价），POSIX 臂
+   原样保留（`#ifdef _WIN32` 分枝）
+2. `libmariadb/ob_full_link_trace.c`：同型同改
+
+其余源码零改动（OB 增量代码的 `_WIN32` 守卫齐全，实测仅这两处遗漏）。
 
 ## 升级
 
 换整树（对照上游 release，`rpm/libobclient-VER.txt` 取新版本）→ 全树扫描
-确认零 CRLF → 重跑车道。本树对上游**零修补**，veloterm 侧资产只有本目录
-（veloterm-win/）与外层 .gitattributes 规则。
+确认零 CRLF → **重放上述两处 INIT_ONCE 补丁** → 重跑车道。veloterm 侧资产：
+本目录（veloterm-win/）、`scripts/build-obclient.mjs`、外层 .gitattributes
+规则。
