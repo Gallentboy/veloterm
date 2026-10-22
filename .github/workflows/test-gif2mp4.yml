@@ -42,14 +42,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: windows-latest
-            triplet: x64-windows-static
-            arch: x64
-            msvc_arch: x64
+          # 临时只跑 ARM64 腿（x64 与 mac 已验证通过，先集中修 ARM64 交叉编译）
+          # - runner: windows-latest
+          #   triplet: x64-windows-static
+          #   arch: x64
+          #   msvc_arch: x64
           - runner: windows-11-arm
             triplet: arm64-windows-static
             arch: arm64
             msvc_arch: arm64
+            # MSYS2 是 x64 进程，configure 的自动探测会判成 x86_64 并在
+            # libavfilter/x86/ 下编 x64 汇编（与 cl 的 ARM64 目标冲突：
+            # LNK1112）。显式声明交叉编译目标，ffmpeg 的 arch 名是 aarch64
+            ff_arch: aarch64
     runs-on: ${{ matrix.runner }}
     env:
       USERNAME: Gallentboy
@@ -196,9 +201,20 @@ jobs:
           # ffmpeg configure 需要 POSIX shell 执行；--toolchain=msvc 让 cc=cl/ar=lib
           # 不再 --disable-asm：nasm 已装，ffmpeg 自身 x86 SIMD（scale/format）启用
           # --enable-pic：静态库日后可包 DLL
+          #
+          # ARM64 腿：MSYS2 是 x64 进程，configure 自动探测会把 arch 判成 x86_64
+          # 并去编 libavfilter/x86/*.o，与 cl.exe 的 ARM64 目标冲突（LNK1112
+          # module machine type 'x64' conflicts with 'ARM64'）。必须显式声明
+          # --arch=aarch64（ffmpeg 的架构名，不是 arm64）+ 交叉编译开关。
+          $archArgs = if ('${{ matrix.arch }}' -eq 'arm64') {
+            "--arch=aarch64 --target-os=win64 --enable-cross-compile"
+          } else { "" }
+          Write-Host "arch args: $archArgs"
+
           & sh.exe -c @"
             ./configure \
               --toolchain=msvc \
+              $archArgs \
               --disable-everything --disable-shared --enable-static \
               --disable-doc --disable-network --disable-autodetect \
               --enable-demuxer=gif --enable-decoder=gif --enable-parser=gif \
@@ -302,68 +318,68 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # ── macOS x86_64（Intel runner，brew x264，clang 原生编译） ──
-  # 与本机 mac-aarch64 编译完全同参数（--disable-everything 裁剪集 +
-  # --enable-parser=gif），区别只有 x264 路径用 brew --prefix 动态取
-  # （Intel brew 在 /usr/local，ARM 在 /opt/homebrew）。
-  build-gif2mp4-mac-x64:
-    permissions:
-      contents: read
-    runs-on: macos-26-intel
-    steps:
-      - uses: actions/checkout@v7
+#   # ── macOS x86_64（Intel runner，brew x264，clang 原生编译） ──
+#   # 与本机 mac-aarch64 编译完全同参数（--disable-everything 裁剪集 +
+#   # --enable-parser=gif），区别只有 x264 路径用 brew --prefix 动态取
+#   # （Intel brew 在 /usr/local，ARM 在 /opt/homebrew）。
+#   build-gif2mp4-mac-x64:
+#     permissions:
+#       contents: read
+#     runs-on: macos-26-intel
+#     steps:
+#       - uses: actions/checkout@v7
 
-      - name: Install x264 via Homebrew
-        run: |
-          brew install x264 nasm
-          echo "X264_PREFIX=$(brew --prefix x264)" >> "$GITHUB_ENV"
+#       - name: Install x264 via Homebrew
+#         run: |
+#           brew install x264 nasm
+#           echo "X264_PREFIX=$(brew --prefix x264)" >> "$GITHUB_ENV"
 
-      - name: Build ffmpeg with libgif2mp4
-        run: |
-          cd src-tauri/vendor/ffmpeg
-          ./configure \
-            --disable-everything --disable-shared --enable-static \
-            --disable-doc --disable-network --disable-autodetect \
-            --enable-demuxer=gif --enable-decoder=gif --enable-parser=gif \
-            --enable-muxer=mp4 \
-            --enable-encoder=libx264 --enable-libx264 --enable-gpl \
-            --enable-protocol=file --enable-filter=fps,scale,format,null,pad,crop \
-            --enable-pic \
-            --extra-libs="$X264_PREFIX/lib/libx264.a" \
-            --prefix="$PWD/build"
-          make -j"$(sysctl -n hw.ncpu)"
+#       - name: Build ffmpeg with libgif2mp4
+#         run: |
+#           cd src-tauri/vendor/ffmpeg
+#           ./configure \
+#             --disable-everything --disable-shared --enable-static \
+#             --disable-doc --disable-network --disable-autodetect \
+#             --enable-demuxer=gif --enable-decoder=gif --enable-parser=gif \
+#             --enable-muxer=mp4 \
+#             --enable-encoder=libx264 --enable-libx264 --enable-gpl \
+#             --enable-protocol=file --enable-filter=fps,scale,format,null,pad,crop \
+#             --enable-pic \
+#             --extra-libs="$X264_PREFIX/lib/libx264.a" \
+#             --prefix="$PWD/build"
+#           make -j"$(sysctl -n hw.ncpu)"
 
-      - name: Collect static libraries
-        run: |
-          mkdir -p out
-          cp src-tauri/vendor/ffmpeg/libgif2mp4/libgif2mp4.a \
-             src-tauri/vendor/ffmpeg/libavfilter/libavfilter.a \
-             src-tauri/vendor/ffmpeg/libswscale/libswscale.a \
-             src-tauri/vendor/ffmpeg/libavformat/libavformat.a \
-             src-tauri/vendor/ffmpeg/libavcodec/libavcodec.a \
-             src-tauri/vendor/ffmpeg/libswresample/libswresample.a \
-             src-tauri/vendor/ffmpeg/libavutil/libavutil.a \
-             "$X264_PREFIX/lib/libx264.a" \
-             out/
-          # 断言 8 件齐全
-          if [ "$(ls out/*.a | wc -l | tr -d ' ')" -ne 8 ]; then
-            echo "期望 8 件 .a，实际 $(ls out/*.a | wc -l)"; exit 1
-          fi
-          echo "=== 产物清单 ==="
-          ls -lh out/
+#       - name: Collect static libraries
+#         run: |
+#           mkdir -p out
+#           cp src-tauri/vendor/ffmpeg/libgif2mp4/libgif2mp4.a \
+#              src-tauri/vendor/ffmpeg/libavfilter/libavfilter.a \
+#              src-tauri/vendor/ffmpeg/libswscale/libswscale.a \
+#              src-tauri/vendor/ffmpeg/libavformat/libavformat.a \
+#              src-tauri/vendor/ffmpeg/libavcodec/libavcodec.a \
+#              src-tauri/vendor/ffmpeg/libswresample/libswresample.a \
+#              src-tauri/vendor/ffmpeg/libavutil/libavutil.a \
+#              "$X264_PREFIX/lib/libx264.a" \
+#              out/
+#           # 断言 8 件齐全
+#           if [ "$(ls out/*.a | wc -l | tr -d ' ')" -ne 8 ]; then
+#             echo "期望 8 件 .a，实际 $(ls out/*.a | wc -l)"; exit 1
+#           fi
+#           echo "=== 产物清单 ==="
+#           ls -lh out/
 
-      - name: Package libs into zip
-        run: |
-          zip -j gif2mp4-mac-x64.zip out/*
-          ls -lh out/*.a | awk '{print $NF"\t"$5}' > gif2mp4-mac-x64-manifest.txt
-          cat gif2mp4-mac-x64-manifest.txt
+#       - name: Package libs into zip
+#         run: |
+#           zip -j gif2mp4-mac-x64.zip out/*
+#           ls -lh out/*.a | awk '{print $NF"\t"$5}' > gif2mp4-mac-x64-manifest.txt
+#           cat gif2mp4-mac-x64-manifest.txt
 
-      - name: Upload gif2mp4 lib bundle
-        uses: actions/upload-artifact@v7
-        with:
-          name: gif2mp4-mac-x64
-          path: |
-            gif2mp4-mac-x64.zip
-            gif2mp4-mac-x64-manifest.txt
-          if-no-files-found: error
-          retention-days: 30
+#       - name: Upload gif2mp4 lib bundle
+#         uses: actions/upload-artifact@v7
+#         with:
+#           name: gif2mp4-mac-x64
+#           path: |
+#             gif2mp4-mac-x64.zip
+#             gif2mp4-mac-x64-manifest.txt
+#           if-no-files-found: error
+#           retention-days: 30
