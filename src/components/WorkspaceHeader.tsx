@@ -23,10 +23,20 @@ interface WorkspaceHeaderProps {
    * 透明分层窗口不稳定，改为主窗内渲染）。
    */
   onShowAbout?: () => void;
+  /** 打开「使用说明 / 用户手册」电子书大弹窗 */
+  onOpenManual?: () => void;
 }
 
 /** 主面板头部（移植自 ZCode WorkspaceHeader）：h-12、整条可拖拽移动窗口，右侧帮助菜单。 */
-export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat, isAiPanelOpen, onToggleAiPanel, onShowAbout }: WorkspaceHeaderProps) {
+export function WorkspaceHeader({
+  page,
+  isSidebarVisible,
+  onOpenAiChat,
+  isAiPanelOpen,
+  onToggleAiPanel,
+  onShowAbout,
+  onOpenManual,
+}: WorkspaceHeaderProps) {
   const { t } = useTranslation();
   const showAbout = () => {
     if (onShowAbout) {
@@ -102,7 +112,10 @@ export function WorkspaceHeader({ page, isSidebarVisible, onOpenAiChat, isAiPane
             </Button>
           </ControlHintTooltip>
         ) : null}
-        <WorkspaceHelpMenuButton onShowAbout={showAbout} />
+        <WorkspaceHelpMenuButton
+          onShowAbout={showAbout}
+          onOpenManual={onOpenManual ?? (() => {})}
+        />
       </div>
     </header>
   );

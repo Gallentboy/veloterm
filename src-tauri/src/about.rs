@@ -142,6 +142,15 @@ pub fn install_macos_menu(app: &AppHandle) {
         log::warn!("[VeloTerm] 替换 About 菜单项失败：{err}");
         return;
     }
+
+    // 在系统 Help（帮助）子菜单中追加「使用说明 / User Manual」
+    let manual_label = if locale == "en-US" { "User Manual" } else { "使用说明" };
+    if let Ok(manual) = MenuItem::with_id(app, "veloterm-manual", manual_label, true, None::<&str>) {
+        if let Some(MenuItemKind::Submenu(help_submenu)) = items.last() {
+            let _ = help_submenu.append(&manual);
+        }
+    }
+
     if let Err(err) = app.set_menu(menu) {
         log::warn!("[VeloTerm] 安装菜单失败：{err}");
     }

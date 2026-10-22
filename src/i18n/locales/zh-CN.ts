@@ -909,6 +909,18 @@ export default {
   help: {
     menu: '帮助',
     about: '关于 VeloTerm',
+    manual: '使用说明',
+    manualTitle: 'VeloTerm 使用说明',
+    sectionsCount: '个功能点',
+    searchPlaceholder: '搜索功能、命令或步骤...',
+    noResults: '未找到匹配的功能点',
+    prevSection: '上一节',
+    nextSection: '下一节',
+    toggleSidebar: '切换目录展示',
+    collapseSidebar: '收起目录',
+    expandSidebar: '展开目录',
+    enterFullscreen: '全屏阅读',
+    exitFullscreen: '还原窗口',
   },
   about: {
     version: '版本',

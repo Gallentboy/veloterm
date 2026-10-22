@@ -25,6 +25,7 @@ import { AiChatPanel } from '@/components/ai/AiChatPanel';
 import { CommandPalette } from '@/components/commands/CommandPalette';
 import { CommandsScreen } from '@/components/commands/CommandsScreen';
 import { AboutOverlay } from '@/components/about/AboutOverlay';
+import { ManualModal } from '@/components/manual/ManualModal';
 import { WorkspaceHeader } from '@/components/WorkspaceHeader';
 import { WorkspaceSidebar, type Page } from '@/components/WorkspaceSidebar';
 import { useAppPanels } from '@/hooks/useAppPanels';
@@ -128,9 +129,20 @@ export function AppShell() {
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   /** Windows/Linux 的「关于」纯前端弹层开关（macOS 走 Rust 独立窗口） */
   const [isAboutOverlayOpen, setIsAboutOverlayOpen] = useState(false);
+  const [isManualOpen, setIsManualOpen] = useState(false);
   useEffect(() => {
     const unlisten = listen<boolean>('about-visibility', ({ payload }) => {
       setIsAboutOpen(Boolean(payload));
+    });
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
+
+  // 监听 macOS 原生系统菜单广播的打开使用说明事件
+  useEffect(() => {
+    const unlisten = listen('open-manual', () => {
+      setIsManualOpen(true);
     });
     return () => {
       void unlisten.then((dispose) => dispose());
@@ -182,9 +194,14 @@ export function AppShell() {
     setPage('terminal');
   }, [createSession]);
 
-  // 主修饰键(⌘/Ctrl)+B 切换侧边栏、+N 新建/打开终端、+K 命令面板、+I AI 面板、+, 打开设置
+  // F1 打开使用说明、主修饰键(⌘/Ctrl)+B 切换侧边栏、+N 新建/打开终端、+K 命令面板、+I AI 面板、+, 打开设置
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'F1') {
+        event.preventDefault();
+        setIsManualOpen(true);
+        return;
+      }
       if (!hasPrimaryModifier(event) || event.altKey) {
         return;
       }
@@ -498,6 +515,7 @@ export function AppShell() {
                     ? undefined // macOS：走 Rust 独立窗口（菜单栏同一路径）
                     : () => setIsAboutOverlayOpen(true) // Windows/Linux：主窗内纯前端弹层
                 }
+                onOpenManual={() => setIsManualOpen(true)}
               />
               <main className="min-h-0 flex-1 overflow-y-auto relative">
                 {/* SFTP 文件视图持久挂载，切换页面保持后台状态、文件路径与传输任务 */}
@@ -641,6 +659,12 @@ export function AppShell() {
           <AboutOverlay
             open={isAboutOverlayOpen}
             onClose={() => setIsAboutOverlayOpen(false)}
+          />
+
+          {/* 全平台使用说明（电子书式沉浸手册）大弹窗 */}
+          <ManualModal
+            open={isManualOpen}
+            onClose={() => setIsManualOpen(false)}
           />
         </div>
       </div>
