@@ -1,0 +1,225 @@
+# 目标（单一）：Windows 双架构 libgif2mp4 静态库构建车道。
+#
+# 为什么需要：终端录制的 MP4 导出经 gif2mp4-sys（ffmpeg 树内库）。macOS
+# 走 Homebrew x264；Windows 无系统分发渠道，必须自编。本车道用 MSVC
+# 原生工具链（--toolchain=msvc）+ vcpkg x264 静态库出 .lib 族。
+#
+# 产物：8 件 .lib（gif2mp4 + avfilter/swscale/avformat/avcodec/
+# swresample/avutil + x264），按 build.rs 期望的无 lib 前缀命名
+# （avcodec.lib 而非 libavcodec.lib），打包 zip 上传 artifact——
+# 下载后放入 src-tauri/vendor/ffmpeg-lib/win-{x64,arm64}/ 即可。
+#
+# 关键选择：
+# - **MSVC 原生工具链**（--toolchain=msvc）：产物 .lib，与 app 的 MSVC
+#   Rust 工具链天然配对。不用 MinGW（.a 给 MSVC linker 有兼容风险）。
+# - **vcpkg 静态 triplet**（x64-windows-static / arm64-windows-static）：
+#   x264 静态库自包含链入，零运行时 DLL 依赖。vcpkg 二进制缓存走
+#   GitHub Packages NuGet 源（与 publish 同源）。
+# - **--disable-asm**：裁剪集不需要汇编（x264 的汇编已由 vcpkg 预编），
+#   绕开 nasm/yasm 在 CI runner 的安装与路径问题。
+# - **MSYS2 仅作 shell 工具层**（make/sh）：ffmpeg configure 需要 POSIX
+#   shell；MSYS2 的 link.exe 与 MSVC 的 link.exe 冲突 → 改名绕开。
+#
+# 触发：推 tag（验证完删除）——
+#   git tag test_gif2mp4 && git push origin test_gif2mp4
+#   git push origin :refs/tags/test_gif2mp4
+# 也支持 workflow_dispatch 手动触发。
+name: 'test-gif2mp4'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_gif2mp4*'
+
+jobs:
+  build-gif2mp4:
+    permissions:
+      contents: read
+      # vcpkg 二进制缓存推送/拉取 GitHub Packages（NuGet feed）所需
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            triplet: x64-windows-static
+            arch: x64
+            msvc_arch: x64
+          - runner: windows-11-arm
+            triplet: arm64-windows-static
+            arch: arm64
+            msvc_arch: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      USERNAME: Gallentboy
+      FEED_URL: https://nuget.pkg.github.com/Gallentboy/index.json
+      VCPKG_BINARY_SOURCES: 'clear;nuget,https://nuget.pkg.github.com/Gallentboy/index.json,readwrite'
+    steps:
+      - uses: actions/checkout@v7
+
+      # git 换行符：ffmpeg 的 makefile 对 CRLF 敏感（"missing separator"）
+      - name: Disable git autocrlf
+        run: git config --global core.autocrlf false
+
+      # MSVC 编译环境（cl/link/lib），按架构选 vcvarsall 参数
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      # vcpkg 二进制缓存（与 publish.yml / test-libjxl.yml 同款）
+      - name: Add NuGet source for vcpkg binary cache
+        shell: pwsh
+        run: |
+          $vcpkgExe = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" } else { "C:\vcpkg\vcpkg.exe" }
+          $nuget = (& $vcpkgExe fetch nuget | Select-Object -Last 1)
+          & $nuget sources add `
+            -Source "$env:FEED_URL" `
+            -StorePasswordInClearText `
+            -Name GitHubPackages `
+            -UserName "$env:USERNAME" `
+            -Password "${{ secrets.GITHUB_TOKEN }}"
+          & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
+
+      # 装 x264 静态库（vcpkg 静态 triplet → 纯 .lib，零 DLL 依赖）
+      - name: Install x264 via vcpkg
+        shell: pwsh
+        env:
+          VCPKG_BUILD_TYPE: release
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
+          git config --global --add safe.directory "$vcpkgRoot"
+          git -C "$vcpkgRoot" fetch origin master
+          if ($LASTEXITCODE -ne 0) { Write-Host "git fetch 补历史失败（exit $LASTEXITCODE），继续安装" }
+          & "$vcpkgRoot\vcpkg.exe" install "x264:${{ matrix.triplet }}" "--x-install-root=$vcpkgRoot\installed"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install x264 失败" }
+
+      # MSYS2 仅作 shell 工具层（make/sh/pkg-config）：ffmpeg configure 需要
+      # POSIX shell。link.exe 冲突 → 改名绕开（Wiki 的「常见坑」第一条）
+      - name: Setup MSYS2 build tools
+        shell: pwsh
+        run: |
+          # MSYS2 已预装在 runner；确认 make/sh 存在
+          $msysBin = "C:\msys64\usr\bin"
+          if (-not (Test-Path "$msysBin\make.exe")) { throw "MSYS2 make 未找到: $msysBin" }
+          if (-not (Test-Path "$msysBin\sh.exe")) { throw "MSYS2 sh 未找到: $msysBin" }
+          # link.exe 冲突：MSYS2 的 GNU link 与 MSVC 的 link 同名
+          if (Test-Path "$msysBin\link.exe") {
+            Rename-Item "$msysBin\link.exe" "link.exe.bak" -Force
+            Write-Host "已改名 MSYS2 link.exe → link.exe.bak（避免与 MSVC link.exe 冲突）"
+          }
+          # 同理 sh.exe 可能与 Git Bash 的 sh 冲突，不处理——configure 用 sh 即可
+          Write-Host "MSYS2 tools OK: $msysBin"
+
+      # 构建 ffmpeg + libgif2mp4（与 macOS 裁剪集同参数 + MSVC 工具链）
+      - name: Build ffmpeg with libgif2mp4
+        shell: pwsh
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
+          $x264Dir = "$vcpkgRoot\installed\${{ matrix.triplet }}"
+          $msysBin = "C:\msys64\usr\bin"
+
+          # 环境拼装：MSVC（已在 PATH，由 msvc-dev-cmd 设置）+ MSYS2 shell 工具
+          $env:PATH = "$msysBin;$env:PATH"
+          # x264 头文件与静态库路径
+          $env:INCLUDE = "$x264Dir\include;$env:INCLUDE"
+          $env:LIB = "$x264Dir\lib;$env:LIB"
+
+          cd src-tauri/vendor/ffmpeg
+
+          # ffmpeg configure 需要 POSIX shell 执行；--toolchain=msvc 让 cc=cl/ar=lib
+          # --disable-asm 绕开 nasm（x264 汇编已由 vcpkg 预编进 .lib）
+          # --enable-pic：静态库日后可包 DLL
+          & sh.exe -c @"
+            ./configure \
+              --toolchain=msvc \
+              --disable-everything --disable-shared --enable-static \
+              --disable-doc --disable-network --disable-autodetect \
+              --disable-asm \
+              --enable-demuxer=gif --enable-decoder=gif --enable-parser=gif \
+              --enable-muxer=mp4 \
+              --enable-encoder=libx264 --enable-libx264 --enable-gpl \
+              --enable-protocol=file --enable-filter=fps,scale,format \
+              --enable-pic \
+              --prefix=`$(pwd)/build
+          "@
+          if ($LASTEXITCODE -ne 0) { throw "configure 失败" }
+
+          & make.exe -j2
+          if ($LASTEXITCODE -ne 0) { throw "make 失败" }
+
+      # 收集 .lib 族：改名为 build.rs 期望的无 lib 前缀形态
+      # （ffmpeg 产 libavcodec.lib → 收集为 avcodec.lib）
+      - name: Collect static libraries
+        shell: pwsh
+        run: |
+          $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
+          $x264Dir = "$vcpkgRoot\installed\${{ matrix.triplet }}"
+
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+
+          # ffmpeg 树内 7 件（lib<name>.lib → <name>.lib）
+          $libMap = @{
+            'libgif2mp4/libgif2mp4.lib' = 'gif2mp4.lib'
+            'libavfilter/libavfilter.lib' = 'avfilter.lib'
+            'libswscale/libswscale.lib' = 'swscale.lib'
+            'libavformat/libavformat.lib' = 'avformat.lib'
+            'libavcodec/libavcodec.lib' = 'avcodec.lib'
+            'libswresample/libswresample.lib' = 'swresample.lib'
+            'libavutil/libavutil.lib' = 'avutil.lib'
+          }
+          foreach ($entry in $libMap.GetEnumerator()) {
+            $src = "src-tauri/vendor/ffmpeg/$($entry.Key)"
+            if (-not (Test-Path $src)) { throw "缺少产物: $src" }
+            Copy-Item $src "out/$($entry.Value)"
+            Write-Host "collect: $($entry.Value) ($([math]::Round((Get-Item $src).Length/1KB)) KB)"
+          }
+
+          # x264 从 vcpkg（libx264.lib → x264.lib）
+          $x264 = "$x264Dir\lib\libx264.lib"
+          if (-not (Test-Path $x264)) { throw "缺少 x264: $x264" }
+          Copy-Item $x264 "out/x264.lib"
+          Write-Host "collect: x264.lib ($([math]::Round((Get-Item $x264).Length/1KB)) KB)"
+
+          # 断言 8 件齐全
+          if ((Get-ChildItem out -Filter *.lib).Count -ne 8) {
+            throw "期望 8 件 .lib，实际 $((Get-ChildItem out -Filter *.lib).Count)"
+          }
+          Write-Host "=== 产物清单 ==="
+          Get-ChildItem out | ForEach-Object { Write-Host "  $($_.Name) ($([math]::Round($_.Length/1KB)) KB)" }
+
+      # 架构核验：PE/COFF 头 Machine 字段（0x8664=x64 / 0xAA64=ARM64）
+      - name: Assert architecture
+        shell: pwsh
+        run: |
+          $expect = if ('${{ matrix.arch }}' -eq 'arm64') { 0xAA64 } else { 0x8664 }
+          Get-ChildItem out -Filter *.lib | ForEach-Object {
+            $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+            # COFF archive 魔数 !<arch>\n 后第一个成员的 f_machine 字段
+            # 简化：读文件头前 8 字节是否为 !<arch>\n，然后扫 COFF 头
+            # 更可靠：用 dumpbin /headers 的输出匹配 machine
+            $dumpbinOutput = & dumpbin /headers $_.FullName 2>&1 | Select-String "machine"
+            Write-Host ("{0}: {1}" -f $_.Name, $dumpbinOutput)
+          }
+
+      - name: Package libs into zip
+        shell: pwsh
+        run: |
+          $zip = "gif2mp4-${{ matrix.arch }}.zip"
+          Compress-Archive -Path out/* -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "打包完成: $zip ($([math]::Round((Get-Item $zip).Length/1KB)) KB)"
+          # 清单随包留档
+          Get-ChildItem out | ForEach-Object { "$($_.Name)`t$($_.Length)" } |
+            Set-Content -Path "gif2mp4-${{ matrix.arch }}-manifest.txt" -Encoding utf8
+          Get-Content "gif2mp4-${{ matrix.arch }}-manifest.txt" | ForEach-Object { Write-Host "  $_" }
+
+      - name: Upload gif2mp4 lib bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: gif2mp4-${{ matrix.arch }}
+          path: |
+            gif2mp4-${{ matrix.arch }}.zip
+            gif2mp4-${{ matrix.arch }}-manifest.txt
+          if-no-files-found: error
+          retention-days: 30
