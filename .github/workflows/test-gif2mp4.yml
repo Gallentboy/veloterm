@@ -114,13 +114,19 @@ jobs:
           update: false
 
       # link.exe 冲突：MSYS2 的 GNU link 与 MSVC 的 link 同名（Wiki 常见坑）。
-      # setup-msys2 已把 MSYS2 bin 加进 PATH——从 make.exe 位置反推 bin 目录
+      # 定位 MSYS2 bin：pacman.exe 是 MSYS2 独有（MinGW/Git Bash 无此文件）
       - name: Resolve MSYS2 link.exe conflict
         shell: pwsh
         run: |
-          $makeExe = (Get-Command make.exe -ErrorAction SilentlyContinue)?.Source
-          if (-not $makeExe) { throw "make.exe 未在 PATH 中（setup-msys2 是否成功？）" }
-          $msysBin = Split-Path $makeExe -Parent
+          $pacman = (Get-Command pacman.exe -ErrorAction SilentlyContinue)?.Source
+          if (-not $pacman) {
+            # setup-msys2 可能没把 usr/bin 排在 PATH 最前——试已知路径
+            foreach ($dir in @("C:\msys64\usr\bin", "D:\msys64\usr\bin")) {
+              if (Test-Path "$dir\pacman.exe") { $pacman = "$dir\pacman.exe"; break }
+            }
+          }
+          if (-not $pacman) { throw "MSYS2 未找到（PATH 无 pacman.exe，C:\msys64 与 D:\msys64 也无）" }
+          $msysBin = Split-Path $pacman -Parent
           Write-Host "MSYS2 bin: $msysBin"
           if (Test-Path "$msysBin\link.exe") {
             Rename-Item "$msysBin\link.exe" "link.exe.bak" -Force
@@ -142,13 +148,14 @@ jobs:
           $env:INCLUDE = "$x264Dir\include;$env:INCLUDE"
           $env:LIB = "$x264Dir\lib;$env:LIB"
           # x264 的 .pc 文件（ffmpeg configure 经 pkg-config 探测 --enable-libx264）。
-          # MSYS2 的 pkg-config 只认 Unix 正斜杠路径（C:\foo → /c/foo）——用 cygpath 转换
+          # MSYS2 的 pkg-config 只认 Unix 正斜杠路径（C:\foo → /c/foo）——手工转换
           if (-not (Test-Path "$x264Dir\lib\pkgconfig\x264.pc")) {
             throw "x264.pc 未找到: $x264Dir\lib\pkgconfig\x264.pc"
           }
-          $env:PKG_CONFIG_PATH = & "$msysBin\cygpath.exe" -u "$x264Dir\lib\pkgconfig"
-          Write-Host "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH (cygpath 转换后)"
-          # 验证 pkg-config 能找到 x264（configure 前自检，早失败好过模糊报错）
+          $pkgDir = "$x264Dir\lib\pkgconfig"
+          $env:PKG_CONFIG_PATH = $pkgDir.Replace('\', '/') -replace '^([A-Z]):', { '/' + $_.Groups[1].Value.ToLower() }
+          Write-Host "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH (手工 Unix 化)"
+          # 验证：从 MSYS2 bin 直接调 pkg-config（避免 MinGW 的 pkg-config 抢先）
           & "$msysBin\pkg-config.exe" --exists x264
           if ($LASTEXITCODE -ne 0) {
             throw "pkg-config 找不到 x264（PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH）"
