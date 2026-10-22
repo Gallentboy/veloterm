@@ -45,11 +45,9 @@ jobs:
           - runner: windows-latest
             triplet: x64-windows-static
             arch: x64
-            msvc_arch: x64
           - runner: windows-11-arm
             triplet: arm64-windows-static
             arch: arm64
-            msvc_arch: arm64
     runs-on: ${{ matrix.runner }}
     env:
       USERNAME: Gallentboy
@@ -61,12 +59,6 @@ jobs:
       # git 换行符：ffmpeg 的 makefile 对 CRLF 敏感（"missing separator"）
       - name: Disable git autocrlf
         run: git config --global core.autocrlf false
-
-      # MSVC 编译环境（cl/link/lib），按架构选 vcvarsall 参数
-      - name: Setup MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.msvc_arch }}
 
       # vcpkg 二进制缓存（与 publish.yml / test-libjxl.yml 同款）
       - name: Add NuGet source for vcpkg binary cache
