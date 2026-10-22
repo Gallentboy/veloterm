@@ -115,6 +115,8 @@ export interface TerminalSessionProps {
   /** 底部远程资源监控条是否展示（仅标签页模式的当前可见 SSH 会话为 true；
    * 九宫格平铺自动隐藏，由 TerminalGridContainer 按布局模式计算） */
   resourceBarVisible?: boolean;
+  /** 录制状态变化上报（顶栏录制按钮按会话隔离展示：开始/停止时同步） */
+  onRecordingChange?: (sessionId: number, active: boolean) => void;
 }
 
 /**
@@ -145,6 +147,7 @@ export function TerminalSession({
   onDisconnected,
   onReconnectRequest,
   resourceBarVisible = false,
+  onRecordingChange,
 }: TerminalSessionProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -262,7 +265,8 @@ export function TerminalSession({
   // ── 终端录制（Asciinema v2 .cast）──
   // 录制器实例存模块级 Map（castRecorder.ts），跨重挂载存活；这里只持 UI 状态。
   // recStopped：停止后胶囊以「已停止」形态保留为操作面板锚点，面板关闭即复位。
-  const [recActive, setRecActive] = useState(false);
+  // 初始态从模块级录制器取（录制器跨重挂载存活，UI 态不能凭空重置为 false）
+  const [recActive, setRecActive] = useState(() => getActiveRecorder(sessionId) != null);
   const [recElapsedMs, setRecElapsedMs] = useState(0);
   const [recStopped, setRecStopped] = useState(false);
   const [recHasLast, setRecHasLast] = useState(false);
@@ -303,6 +307,11 @@ export function TerminalSession({
   const onShellLabelChangeRef = useRef(onShellLabelChange);
   const onSizeChangeRef = useRef(onSizeChange);
   const onRendererStatusChangeRef = useRef(onRendererStatusChange);
+  const onRecordingChangeRef = useRef(onRecordingChange);
+  onShellLabelChangeRef.current = onShellLabelChange;
+  onSizeChangeRef.current = onSizeChange;
+  onRendererStatusChangeRef.current = onRendererStatusChange;
+  onRecordingChangeRef.current = onRecordingChange;
   const onExitRef = useRef(onExit);
   const isDisconnectedRef = useRef(isDisconnected);
   const onDisconnectedRef = useRef(onDisconnected);
@@ -1533,6 +1542,7 @@ export function TerminalSession({
       setRecStopped(false);
       setRecHasLast(false);
       setRecElapsedMs(0);
+      onRecordingChangeRef.current?.(sessionId, true);
     }
   }, [recordingTitle, sessionId]);
 
@@ -1543,6 +1553,7 @@ export function TerminalSession({
       setRecActive(false);
       setRecStopped(true);
       setRecHasLast(true);
+      onRecordingChangeRef.current?.(sessionId, false);
       setRecElapsedMs(0);
       return rec;
     }
@@ -1563,6 +1574,30 @@ export function TerminalSession({
     const rec = stopRecording();
     if (rec) void exportLogFile(rec);
   }, [stopRecording]);
+
+  // 挂载时同步一次录制态给面板（录制器跨重挂载存活，顶栏按钮需正确显示，
+  // 不能等第一次开关才对齐）
+  useEffect(() => {
+    onRecordingChangeRef.current?.(sessionId, getActiveRecorder(sessionId) != null);
+  }, [sessionId]);
+
+  // registry 桥：顶栏录制按钮等外部入口经此切换本会话录制（按会话隔离——
+  // 录制器本就以 sessionId 为键，多 Tab 各自独立录制互不影响）
+  useEffect(() => {
+    const entry = terminalSessionRegistry.get(sessionId);
+    if (!entry) return;
+    entry.toggleRecording = () => {
+      if (getActiveRecorder(sessionId)) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    };
+    return () => {
+      const current = terminalSessionRegistry.get(sessionId);
+      if (current) current.toggleRecording = undefined;
+    };
+  }, [sessionId, startRecording, stopRecording]);
 
   const closeStoppedPill = useCallback(() => setRecStopped(false), []);
 

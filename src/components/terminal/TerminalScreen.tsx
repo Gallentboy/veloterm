@@ -1,4 +1,5 @@
 import {
+  Circle,
   Command,
   Eraser,
   Gauge,
@@ -108,6 +109,26 @@ export function TerminalScreen({
       };
     });
   }, []);
+
+  // 录制状态按会话隔离（Set<sessionId>）：顶栏按钮只反映当前激活 Tab 的
+  // 录制态，开关也只作用于激活会话（与资源监控同一模式）
+  const [recordingBySession, setRecordingBySession] = useState<ReadonlySet<number>>(
+    () => new Set(),
+  );
+  const handleRecordingChange = useCallback((sessionId: number, active: boolean) => {
+    setRecordingBySession((prev) => {
+      const isKnown = prev.has(sessionId);
+      if (active === isKnown) return prev;
+      const next = new Set(prev);
+      if (active) {
+        next.add(sessionId);
+      } else {
+        next.delete(sessionId);
+      }
+      return next;
+    });
+  }, []);
+  const activeRecordingOn = recordingBySession.has(activeSessionId);
 
   const handleSessionExit = useCallback(
     (sessionId: number, _exitCode: number) => {
@@ -318,6 +339,37 @@ export function TerminalScreen({
                 </Button>
               </ControlHintTooltip>
             ) : null}
+            {/* 终端录制开关（每会话独立）：作用于当前激活 Tab——录制中红点
+                呼吸；录制的启停/胶囊/导出/回放与右键菜单路径同一套状态源 */}
+            {activeSession ? (
+              <ControlHintTooltip
+                title={activeRecordingOn ? t('recording.stop') : t('recording.start')}
+                side="bottom"
+              >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => terminalSessionRegistry.get(activeSessionId)?.toggleRecording?.()}
+                  aria-pressed={activeRecordingOn}
+                  aria-label={t('recording.pillAria')}
+                  className={cn(
+                    // 与命令面板/资源监控按钮同规格（icon-sm + ghost）
+                    activeRecordingOn && 'bg-selected text-foreground hover:bg-selected',
+                  )}
+                >
+                  <Circle
+                    className={cn(
+                      'size-[13px]',
+                      activeRecordingOn
+                        ? 'fill-red-500 text-red-500 animate-pulse'
+                        : 'text-foreground',
+                    )}
+                    strokeWidth={2}
+                  />
+                </Button>
+              </ControlHintTooltip>
+            ) : null}
             {/* 服务器资源监控开关（每会话独立、默认关）：仅 SSH 会话展示——开 = 该会话
                 底部展示监控条并后台采样，切 Tab 各自记忆；本地终端无远端可采不展示 */}
             {activeSessionIsSsh ? (
@@ -486,6 +538,7 @@ export function TerminalScreen({
           onShellLabelChange={updateShellLabel}
           onSizeChange={handleSizeChange}
           onRendererStatusChange={handleRendererStatusChange}
+          onRecordingChange={handleRecordingChange}
           onExit={handleSessionExit}
           onSessionDisconnected={handleSessionDisconnected}
           onReconnectSession={reconnectSession}

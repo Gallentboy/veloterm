@@ -29,6 +29,8 @@ export interface TerminalGridContainerProps {
   onExit: (sessionId: number, exitCode: number) => void;
   /** SSH 会话断开回调（标记断开态，Tab 保留） */
   onSessionDisconnected: (sessionId: number, reason: string) => void;
+  /** 录制状态变化上报（顶栏录制按钮按会话隔离展示） */
+  onRecordingChange: (sessionId: number, active: boolean) => void;
   /** 重连请求（⌘R/Ctrl+R 快捷键触发：终端内由 xterm 键处理分支，焦点在终端外时全局快捷键）：
    *  释放旧会话并重新发起连接 */
   onReconnectSession: (sessionId: number) => void;
@@ -69,6 +71,7 @@ export function TerminalGridContainer({
   onRendererStatusChange,
   onExit,
   onSessionDisconnected,
+  onRecordingChange,
   onReconnectSession,
 }: TerminalGridContainerProps) {
   const isGrid = layoutMode === 'grid';
@@ -231,6 +234,7 @@ export function TerminalGridContainer({
                 isDisconnected={session.status === 'disconnected'}
                 onDisconnected={onSessionDisconnected}
                 onReconnectRequest={onReconnectSession}
+                onRecordingChange={onRecordingChange}
               />
             </div>
 

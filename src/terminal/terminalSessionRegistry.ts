@@ -46,6 +46,8 @@ export interface TerminalSessionRegistryEntry {
   searchAddon: SearchAddon | null;
   /** 当前挂载组件暴露的搜索栏打开动作（卸载时置空；registry.showSearch 统一调用） */
   openSearch?: () => void;
+  /** 顶栏录制按钮等外部入口用：切换本会话的录制状态（录制中→停止；空闲→开始） */
+  toggleRecording?: () => void;
   /** 当异步 `transport.create` 完成分配 `terminalId` 时通知当前挂载的组件实例 */
   onTerminalIdReady?: (terminalId: number) => void;
   dispose: () => void;
