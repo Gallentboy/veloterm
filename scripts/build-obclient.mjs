@@ -98,6 +98,13 @@ mkdirSync(obBuild, { recursive: true });
 const configureEnv = isWin
   ? { ...process.env, CFLAGS: '/DHAVE_BROKEN_INLINE' }
   : { ...process.env };
+// Windows ARM64 腿的 Release 降 /O1：windows-11-arm 的 MSVC 后端在默认
+// /O2 的代码生成阶段确定性崩溃（CL.exe 0xC0000005，UtcBldCompileSerializedFile
+// 栈，CI 实测崩在 ob_full_link_trace.c 批次的 "Generating Code..."）——
+// ARM64 编译器优化器缺陷，非源码问题（同源码 x64 腿 /O2 全绿）。
+// 网络客户端库 I/O 密集，/O1 的性能差异可忽略。
+const arm64O1Flags =
+  isWin && isArm64 ? ' -DCMAKE_C_FLAGS_RELEASE="/MT /O1 /Ob1 /DNDEBUG"' : '';
 execSync(
   `cmake -S "${obSrc}" -B "${obBuild}" ${isWin ? `-A ${isArm64 ? 'ARM64' : 'x64'} ` : '-DCMAKE_BUILD_TYPE=Release '}` +
     `-DCMAKE_POLICY_VERSION_MINIMUM=3.5 ` +
@@ -105,7 +112,8 @@ execSync(
     `-DOPENSSL_ROOT_DIR="${opensslDir}" ` +
     `-DOPENSSL_INCLUDE_DIR="${join(opensslDir, 'include')}" ` +
     `-DOPENSSL_SSL_LIBRARY="${join(opensslDir, 'lib', sslLibName)}" ` +
-    `-DOPENSSL_CRYPTO_LIBRARY="${join(opensslDir, 'lib', cryptoLibName)}"`,
+    `-DOPENSSL_CRYPTO_LIBRARY="${join(opensslDir, 'lib', cryptoLibName)}"` +
+    arm64O1Flags,
   { stdio: 'inherit', env: configureEnv },
 );
 execSync(
