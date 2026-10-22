@@ -1031,14 +1031,15 @@ mod tests {
         }
     }
 
-    fn new_engine(
-        sink: Arc<dyn EventSink>,
-    ) -> (
+    /// 测试夹具四元组：引擎 + 模拟服务端的输入/输出通道 + 取消位
+    type EngineFixture = (
         Engine,
         UnboundedSender<Vec<u8>>,
         UnboundedReceiver<Vec<u8>>,
         Arc<AtomicBool>,
-    ) {
+    );
+
+    fn new_engine(sink: Arc<dyn EventSink>) -> EngineFixture {
         let (in_tx, in_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         let (out_tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -1133,10 +1134,7 @@ mod tests {
             let proj_dir = dir.join("proj");
             let dir_cleanup = dir.clone();
 
-            let handle = tokio::spawn(async move {
-                let names = eng.recv_files(&dir).await.unwrap();
-                names
-            });
+            let handle = tokio::spawn(async move { eng.recv_files(&dir).await.unwrap() });
 
             // 服务端序：NUM → (NAME dir)(NAME file)(SIZE)(DATA)(MD5)
             send_int_frame(&srv_in, "NUM", 2);
@@ -1201,7 +1199,7 @@ mod tests {
             let (mut eng, srv_in, mut srv_out, _cancel) = new_engine(sink_arc);
             eng.directory = false;
 
-            let entries = collect_upload_entries(&[file_path.clone()]).unwrap();
+            let entries = collect_upload_entries(std::slice::from_ref(&file_path)).unwrap();
             assert_eq!(entries.len(), 1);
             assert_eq!(entries.first().unwrap().size, content.len() as u64);
 
