@@ -99,12 +99,12 @@ pub fn build_log_plugin<R: Runtime>() -> TauriPlugin<R> {
         // 所以必须先设时区、再用自定义 `format()` 覆盖回来，否则毫秒会被抹掉。
         .timezone_strategy(TimezoneStrategy::UseLocal)
         .format(|out, message, record| {
-            // 字段顺序与插件默认格式保持一致：`[时间][target][LEVEL] message`
+            // `[时间] [LEVEL] [target] message`
             out.finish(format_args!(
-                "{}[{}][{}] {}",
+                "{} [{}] [{}] {}",
                 format_local_timestamp(),
-                record.target(),
                 record.level(),
+                record.target(),
                 message,
             ))
         })

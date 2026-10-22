@@ -395,6 +395,11 @@ export default {
       preview: 'Preview Replay',
       exportCast: 'Export .cast',
       exportLog: 'Export Plain Text .log',
+      exportGif: 'Export GIF',
+      exportMp4: 'Export MP4',
+      exportingGif: 'Generating GIF…',
+      exportingMp4Gif: 'Rendering GIF…',
+      exportingMp4Video: 'Converting to MP4…',
       resume: 'Keep Recording',
       player: {
         title: 'Terminal Recording Replay',
@@ -406,6 +411,8 @@ export default {
         copyScreen: 'Copy Screen',
         exportCast: 'Export .cast',
         exportLog: 'Export .log',
+        exportGif: 'Export GIF',
+        exportMp4: 'Export MP4',
       },
     },
     resourceMonitor: {

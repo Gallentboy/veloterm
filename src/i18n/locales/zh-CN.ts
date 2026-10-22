@@ -395,6 +395,11 @@ export default {
       preview: '预览回放',
       exportCast: '导出 .cast',
       exportLog: '导出纯文本 .log',
+      exportGif: '导出 GIF',
+      exportMp4: '导出 MP4',
+      exportingGif: '正在生成 GIF…',
+      exportingMp4Gif: '正在渲染 GIF…',
+      exportingMp4Video: '正在转换为 MP4…',
       resume: '继续录制',
       player: {
         title: '终端录制回放',
@@ -406,6 +411,8 @@ export default {
         copyScreen: '复制屏幕',
         exportCast: '导出 .cast',
         exportLog: '导出 .log',
+        exportGif: '导出 GIF',
+        exportMp4: '导出 MP4',
       },
     },
     resourceMonitor: {

@@ -5,13 +5,14 @@
  * 由 CastPlayer 按序 term.resize），打开即自动播放。控制栏：播放/暂停（空格
  * 切换，焦点在按钮/输入框上时交给原生行为）、进度条拖动 seek（reset 后从零
  * 快速重建）、倍速（0.5/1/2/4×）、跳过空闲开关（默认开：单段静止最多回放
- * 2 秒）、复制屏幕（选区优先，无选区取整个缓冲）、导出 .cast / 纯文本 .log。
+ * 2 秒）、复制屏幕（选区优先，无选区取整个缓冲）、导出 .cast / 纯文本 .log /
+ * GIF（后端 agg 渲染，秒级耗时：按钮转 spinner 禁用至完成）。
  *
  * 渲染器用默认 DOM（弹窗内一次性回放无需 WebGL 上下文开销）；主题走
  * mergeTerminalTheme 与主终端一致。
  */
 
-import { Copy, FileDown, FileText, Pause, Play, RotateCcw } from 'lucide-react';
+import { Copy, FileDown, FileText, Film, Loader2, Pause, Play, RotateCcw, Video } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { useTranslation } from 'react-i18next';
@@ -19,7 +20,7 @@ import { useTranslation } from 'react-i18next';
 import { Modal } from '@/components/ui/modal';
 import { writeClipboardText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
-import { exportCastFile, exportLogFile } from '@/terminal/castExport';
+import { exportCastFile, exportGifFile, exportLogFile, exportMp4File } from '@/terminal/castExport';
 import { CastPlayer, parseCastEvents, type CastPlayerState } from '@/terminal/castPlayer';
 import type { CastRecording } from '@/terminal/castRecorder';
 import { mergeTerminalTheme } from '@/terminal/terminalTheme';
@@ -52,6 +53,13 @@ export function CastPlayerModal({ recording, onClose }: CastPlayerModalProps) {
     skipIdle: true,
     ended: false,
   }));
+  // GIF 导出秒级耗时：按钮转 spinner 禁用至完成（成功/取消/失败均复位），
+  // percent 为 agg 逐帧回传的整数百分比（保存对话框阶段为 null）
+  const [gifBusy, setGifBusy] = useState(false);
+  const [gifPercent, setGifPercent] = useState<number | null>(null);
+  const [mp4Busy, setMp4Busy] = useState(false);
+  const [mp4Phase, setMp4Phase] = useState<'gif' | 'mp4'>('gif');
+  const [mp4Percent, setMp4Percent] = useState<number | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -130,7 +138,29 @@ export function CastPlayerModal({ recording, onClose }: CastPlayerModalProps) {
       onClose={onClose}
       className="w-[780px]"
     >
-      <div className="flex min-h-0 flex-col gap-3">
+      <div className="relative flex min-h-0 flex-col gap-3">
+        {/* GIF/MP4 导出 busy 遮罩（与终端会话全屏遮罩同款）：转圈 + 步骤
+            文案 + 百分比；GIF 单步、MP4 双阶段按 phase 切换 */}
+        {gifBusy || mp4Busy ? (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="size-8 animate-spin text-primary" strokeWidth={2} />
+              <span className="font-mono text-ui-sm text-foreground select-none">
+                {mp4Busy
+                  ? mp4Phase === 'mp4'
+                    ? mp4Percent != null
+                      ? `${t('terminal.recording.exportingMp4Video')} ${mp4Percent}%`
+                      : t('terminal.recording.exportingMp4Video')
+                    : mp4Percent != null
+                      ? `${t('terminal.recording.exportingMp4Gif')} ${mp4Percent}%`
+                      : t('terminal.recording.exportingMp4Gif')
+                  : gifPercent != null
+                    ? `${t('terminal.recording.exportingGif')} ${gifPercent}%`
+                    : t('terminal.recording.exportingGif')}
+              </span>
+            </div>
+          </div>
+        ) : null}
         {/* terminal-xterm-shell 与主终端同款：背景由主题背景填满（不能另加
             bg-black/p-2——主题背景非黑时会露出黑边）、滚动条走同一套
             xterm-scrollable-element 细胶囊样式；overflow-hidden 交给
@@ -220,6 +250,42 @@ export function CastPlayerModal({ recording, onClose }: CastPlayerModalProps) {
             >
               <FileText className="size-3.5" />
               {t('terminal.recording.player.exportLog')}
+            </button>
+            <button
+              type="button"
+              disabled={gifBusy}
+              onClick={() => {
+                setGifBusy(true);
+                setGifPercent(null);
+                exportGifFile(recording, PLAYER_FONT_FAMILY, (p) => setGifPercent(p)).finally(() => {
+                  setGifBusy(false);
+                  setGifPercent(null);
+                });
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-ui-xs text-foreground transition-colors hover:bg-hover disabled:opacity-50"
+            >
+              {gifBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Film className="size-3.5" />}
+              {t('terminal.recording.player.exportGif')}
+            </button>
+            <button
+              type="button"
+              disabled={mp4Busy}
+              onClick={() => {
+                setMp4Busy(true);
+                setMp4Phase('gif');
+                setMp4Percent(null);
+                exportMp4File(recording, PLAYER_FONT_FAMILY, (phase, percent) => {
+                  setMp4Phase(phase);
+                  setMp4Percent(percent < 0 ? null : percent);
+                }).finally(() => {
+                  setMp4Busy(false);
+                  setMp4Percent(null);
+                });
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-ui-xs text-foreground transition-colors hover:bg-hover disabled:opacity-50"
+            >
+              {mp4Busy ? <Loader2 className="size-3.5 animate-spin" /> : <Video className="size-3.5" />}
+              {t('terminal.recording.player.exportMp4')}
             </button>
           </div>
         </div>

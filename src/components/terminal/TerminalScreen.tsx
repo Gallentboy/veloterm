@@ -343,7 +343,7 @@ export function TerminalScreen({
                 呼吸；录制的启停/胶囊/导出/回放与右键菜单路径同一套状态源 */}
             {activeSession ? (
               <ControlHintTooltip
-                title={activeRecordingOn ? t('recording.stop') : t('recording.start')}
+                title={activeRecordingOn ? t('terminal.recording.stop') : t('terminal.recording.start')}
                 side="bottom"
               >
                 <Button
@@ -352,7 +352,7 @@ export function TerminalScreen({
                   size="icon-sm"
                   onClick={() => terminalSessionRegistry.get(activeSessionId)?.toggleRecording?.()}
                   aria-pressed={activeRecordingOn}
-                  aria-label={t('recording.pillAria')}
+                  aria-label={t('terminal.recording.pillAria')}
                   className={cn(
                     // 与命令面板/资源监控按钮同规格（icon-sm + ghost）
                     activeRecordingOn && 'bg-selected text-foreground hover:bg-selected',

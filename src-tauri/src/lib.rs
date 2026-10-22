@@ -3,6 +3,7 @@ pub mod ai;
 pub mod ai_agent;
 pub mod bash_analysis;
 pub mod cert;
+pub mod gif2mp4;
 pub mod command_library;
 pub mod commands;
 pub mod common;
@@ -54,6 +55,7 @@ pub fn run() {
             is_apple_silicon,
             about::show_about_window,
             terminal_recording::export_text_file,
+            terminal_recording::export_recording_gif,
             logging::set_log_level,
             logging::get_current_log_level,
             logging::get_log_file_path,
@@ -112,6 +114,9 @@ pub fn run() {
             sqlite_viewer::read_sqlite_metadata,
             sqlite_viewer::query_sqlite_data,
             bash_analysis::analyze_bash_document,
+            gif2mp4::gif2mp4_convert,
+            gif2mp4::gif2mp4_cancel,
+            gif2mp4::export_recording_mp4,
             safety_guard::inspect_command_safety,
             zk_hosts::zk_host_list,
             zk_hosts::zk_host_save,

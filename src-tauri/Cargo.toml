@@ -64,6 +64,10 @@ rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
 # ZMODEM 协议引擎（终端内 sz/rz 收发；vendor 子集 + 本地修补/增补清单见
 # vendor/rzsz/README.md）
 rzsz = { path = "vendor/rzsz" }
+# GIF→MP4 转码（ffmpeg 树内库 libgif2mp4 的静态绑定；.a 族预编译好后由
+# 其 build.rs 接线，构建指引见 vendor/ffmpeg/libgif2mp4/README.md；
+# ⚠️ x264+--enable-gpl ⇒ 该库按 GPL 分发，随包商用前需项目方确认）
+gif2mp4-sys = { path = "vendor/gif2mp4-sys" }
 russh = { version = "0.63.3", default-features = false, features = [
   "des",
   "dsa",
@@ -156,6 +160,13 @@ once_cell = "1"
 # 再走 jpegxl-rs 的解码 API。修补清单见 vendor/jpegxl-sys/README.md。
 jpegxl-rs = { path = "vendor/jpegxl-rs", default-features = false }
 jpegxl-sys = { path = "vendor/jpegxl-sys" }
+# 终端录制导出 GIF：agg（asciinema 官方 GIF 生成器，纯 Rust）vendor 树的 lib
+# 目标，`agg::run(cast输入, 文件输出, Config)`。上游未发布 crates.io 库形态故
+# vendor（tag v1.9.0，零代码补丁，树体裁剪与许可注意见 vendor/agg/README.md：
+# 上游 GPL-3.0 + gifski AGPL-3.0，商用发布前需项目方确认，同 libjxl 先例）。
+# 字体：树内自带 NotoEmoji/SymbolsNerdFont + fontdb 系统字体扫描，CJK 走
+# 配置传入的系统字体回退链（PingFang/微软雅黑等），无需打包 CJK 字体。
+agg = { path = "vendor/agg" }
 
 # **PDFium 链接形态按平台分流**：
 # - macOS Apple Silicon（aarch64）：**静态链接** vendor/pdfium/libpdfium.a
