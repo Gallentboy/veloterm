@@ -104,18 +104,14 @@ jobs:
           install: make
           update: false
 
-      # link.exe 冲突：MSYS2 的 GNU link 与 MSVC 的 link 同名（Wiki 常见坑）
+      # link.exe 冲突：MSYS2 的 GNU link 与 MSVC 的 link 同名（Wiki 常见坑）。
+      # setup-msys2 已把 MSYS2 bin 加进 PATH——从 make.exe 位置反推 bin 目录
       - name: Resolve MSYS2 link.exe conflict
         shell: pwsh
         run: |
-          $msysBin = "${{ env.MSYS2_LOCATION }}\usr\bin"
-          if (-not (Test-Path $msysBin)) {
-            # setup-msys2 的默认安装位（runner image 版本不同可能路径不同）
-            $msysBin = (Get-ChildItem "C:\msys64\usr\bin","D:\msys64\usr\bin" -ErrorAction SilentlyContinue | Select-Object -First 1)?.DirectoryName
-          }
-          if (-not $msysBin -or -not (Test-Path "$msysBin\make.exe")) {
-            throw "MSYS2 未找到（期望 C:\msys64 或 D:\msys64），make.exe 不存在"
-          }
+          $makeExe = (Get-Command make.exe -ErrorAction SilentlyContinue)?.Source
+          if (-not $makeExe) { throw "make.exe 未在 PATH 中（setup-msys2 是否成功？）" }
+          $msysBin = Split-Path $makeExe -Parent
           Write-Host "MSYS2 bin: $msysBin"
           if (Test-Path "$msysBin\link.exe") {
             Rename-Item "$msysBin\link.exe" "link.exe.bak" -Force
