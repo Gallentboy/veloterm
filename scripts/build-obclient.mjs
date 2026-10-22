@@ -50,6 +50,13 @@ mkdirSync(obBuild, { recursive: true });
 // 会硬报错，CMAKE_POLICY_VERSION_MINIMUM=3.5 是官方逃生口（CMake 3 下仅是
 // 多余缓存变量，无害）。OpenSSL 三件套显式传路径（上游 build.sh 同型）；
 // WITH_CURL=OFF 跳过 remote_io 插件（plugins/io 的 IF(WITH_CURL) 门）。
+//
+// env CFLAGS 注入 /DHAVE_BROKEN_INLINE：MSVC 的 C inline（ma_global.h 在
+// _MSC_VER 下映射为 __inline）不发射外部符号，ob_serialize.c 的 40 个
+// encode_*/decode_* inline 定义被其他编译单元引用即 LNK2019（CI 实测
+// encode_i64/decode_i64）。HAVE_BROKEN_INLINE 是上游 ma_global.h 自带的
+// 逃生开关（#undef inline / #define inline 空），经 env CFLAGS 注入会追加
+// 在 CMake 平台 init 旗标之后，不覆盖 /DWIN32 等默认定义。
 // CMake 旗标细节与产物说明见 vendor/obconnector-c/veloterm-win/README.md。
 execSync(
   `cmake -S "${obSrc}" -B "${obBuild}" -A ${isArm64 ? 'ARM64' : 'x64'} ` +
@@ -59,7 +66,7 @@ execSync(
     `-DOPENSSL_INCLUDE_DIR="${opensslDir}\\include" ` +
     `-DOPENSSL_SSL_LIBRARY="${opensslDir}\\lib\\libssl.lib" ` +
     `-DOPENSSL_CRYPTO_LIBRARY="${opensslDir}\\lib\\libcrypto.lib"`,
-  { stdio: 'inherit' },
+  { stdio: 'inherit', env: { ...process.env, CFLAGS: '/DHAVE_BROKEN_INLINE' } },
 );
 execSync(`cmake --build "${obBuild}" --config Release --parallel`, { stdio: 'inherit' });
 
