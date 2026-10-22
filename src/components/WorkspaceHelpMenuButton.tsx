@@ -1,4 +1,4 @@
-import { CircleHelp, Info } from 'lucide-react';
+import { BookOpen, CircleHelp, Info } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
@@ -21,20 +21,21 @@ function DropdownItem({
       className="flex w-full cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-menu-hover"
     >
       {icon}
-      <span className="truncate">{children}</span>
+      <span className="flex-1 truncate">{children}</span>
     </button>
   );
 }
 
 interface WorkspaceHelpMenuButtonProps {
   onShowAbout: () => void;
+  onOpenManual: () => void;
 }
 
 /**
  * 头部帮助菜单（移植自 ZCode WorkspaceHelpMenuButton）：
- * ghost icon-md 问号按钮 + ControlHintTooltip，下拉仅保留「关于」项。
+ * ghost icon-md 问号按钮 + ControlHintTooltip，下拉包含「使用说明」与「关于」。
  */
-export function WorkspaceHelpMenuButton({ onShowAbout }: WorkspaceHelpMenuButtonProps) {
+export function WorkspaceHelpMenuButton({ onShowAbout, onOpenManual }: WorkspaceHelpMenuButtonProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -76,7 +77,21 @@ export function WorkspaceHelpMenuButton({ onShowAbout }: WorkspaceHelpMenuButton
       </ControlHintTooltip>
 
       {open ? (
-        <div className="absolute right-0 top-full z-50 mt-1 min-w-40 rounded-lg border border-border bg-menu p-1 shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-44 rounded-lg border border-border bg-menu p-1 shadow-lg">
+          <DropdownItem
+            icon={<BookOpen className="size-4 shrink-0 text-primary" />}
+            onSelect={() => {
+              setOpen(false);
+              onOpenManual();
+            }}
+          >
+            <div className="flex items-center justify-between w-full">
+              <span>{t('help.manual', '使用说明')}</span>
+              <kbd className="rounded border border-border/60 bg-surface px-1 py-0.2 font-mono text-[10px] text-foreground-subtle">
+                F1
+              </kbd>
+            </div>
+          </DropdownItem>
           <DropdownItem
             icon={<Info className="size-4 shrink-0" />}
             onSelect={() => {

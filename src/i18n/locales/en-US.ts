@@ -909,6 +909,18 @@ export default {
   help: {
     menu: 'Help',
     about: 'About VeloTerm',
+    manual: 'User Manual',
+    manualTitle: 'VeloTerm User Manual',
+    sectionsCount: 'Features',
+    searchPlaceholder: 'Search features, commands, steps...',
+    noResults: 'No matching features found',
+    prevSection: 'Previous',
+    nextSection: 'Next',
+    toggleSidebar: 'Toggle Sidebar',
+    collapseSidebar: 'Collapse Sidebar',
+    expandSidebar: 'Expand Sidebar',
+    enterFullscreen: 'Fullscreen',
+    exitFullscreen: 'Exit Fullscreen',
   },
   about: {
     version: 'version',

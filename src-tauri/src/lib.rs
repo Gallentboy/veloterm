@@ -181,8 +181,12 @@ pub fn run() {
 	            tools::jq::execute_jq_filter,
 	        ])
         .on_menu_event(|app, event| {
-            if event.id().as_ref() == "veloterm-about" {
+            use tauri::Emitter;
+            let id = event.id().as_ref();
+            if id == "veloterm-about" {
                 about::show_about(app);
+            } else if id == "veloterm-manual" {
+                let _ = app.emit("open-manual", ());
             }
         })
         .on_window_event(|window, event| {
