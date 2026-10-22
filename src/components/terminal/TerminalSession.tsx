@@ -1256,6 +1256,30 @@ export function TerminalSession({
         })
       : undefined;
 
+    // 终端就绪钩子监听**必须在 transport.create 之前注册**：listen() 是异步
+    // IPC 注册，若放到 create 之后（原实现），快速握手（自动恢复会话、已保存
+    // 密码、本地网络）时后端可能在监听就绪前就发出 shell-ready 事件 → 事件
+    // 丢失 → hookInjector.shellReady 永远 false → 钩子命令永不执行。
+    // 回调里再取 terminalId（那时 create 已完成、registry 已写入），不影响语义。
+    const readyCommandIdForHook = resolvedHost?.readyCommandId ?? null;
+    if (readyCommandIdForHook != null) {
+      void onSshKind('shell-ready', (event) => {
+        if (isEntryDisposed) return;
+        const myTerminalId = terminalSessionRegistry.getTerminalId(sessionId);
+        if (myTerminalId === null || event.sessionId !== myTerminalId) return;
+        hookInjector.shellReady = true;
+        hookOnOutput();
+      })
+        .then((unlisten) => {
+          if (isEntryDisposed) {
+            unlisten();
+            return;
+          }
+          registryDisposers.push({ dispose: unlisten });
+        })
+        .catch(() => undefined);
+    }
+
     void transport
       .create({
         sessionId,
@@ -1367,28 +1391,10 @@ export function TerminalSession({
         // 终端就绪钩子：主机配置引用了命令库命令（仅存主键 id）时，等 shell 首屏
         // 输出静止后再把命令作为终端输入发出（等价于用户敲入并回车）。
         // 不能创建后立即发：命令字节若在 readline 接管 tty 前到达，会被内核回显
-        // + readline 重绘各显示一次，用户会看到命令出现两遍。命令已被删则静默跳过
-        const readyCommandId = resolvedHost?.readyCommandId ?? null;
+        // + readline 重绘各显示一次，用户会看到命令出现两遍。命令已被删则静默跳过。
+        // 注意 shell-ready 监听已在 transport.create 之前注册（见上方注释）。
+        const readyCommandId = readyCommandIdForHook;
         if (readyCommandId != null) {
-          // shell 通道真正就绪（认证全部完成后首个 shell 输出）才允许注入：
-          // 认证期的 kbd-int 提示同样走输出流，若按输出计时会把钩子命令当成
-          // 密码提交（见 hookOnOutput 注释）。监听失败则 hookInjector.shellReady
-          // 永不置位 → 钩子静默不发（宁可不用，不可误发密码）
-          void onSshKind('shell-ready', (event) => {
-            if (isEntryDisposed) return;
-            const myTerminalId = terminalSessionRegistry.getTerminalId(sessionId);
-            if (myTerminalId === null || event.sessionId !== myTerminalId) return;
-            hookInjector.shellReady = true;
-            hookOnOutput();
-          })
-            .then((unlisten) => {
-              if (isEntryDisposed) {
-                unlisten();
-                return;
-              }
-              registryDisposers.push({ dispose: unlisten });
-            })
-            .catch(() => undefined);
           void listCommands()
             .then((all) => all.find((cmd) => cmd.id === readyCommandId))
             .then((cmd) => {
