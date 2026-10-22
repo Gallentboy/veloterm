@@ -141,12 +141,17 @@ jobs:
           # x264 头文件与静态库路径
           $env:INCLUDE = "$x264Dir\include;$env:INCLUDE"
           $env:LIB = "$x264Dir\lib;$env:LIB"
-          # x264 的 .pc 文件（ffmpeg configure 经 pkg-config 探测 --enable-libx264）
-          $env:PKG_CONFIG_PATH = "$x264Dir\lib\pkgconfig"
-          Write-Host "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH"
-          # 确认 x264.pc 存在
+          # x264 的 .pc 文件（ffmpeg configure 经 pkg-config 探测 --enable-libx264）。
+          # MSYS2 的 pkg-config 只认 Unix 正斜杠路径（C:\foo → /c/foo）——用 cygpath 转换
           if (-not (Test-Path "$x264Dir\lib\pkgconfig\x264.pc")) {
             throw "x264.pc 未找到: $x264Dir\lib\pkgconfig\x264.pc"
+          }
+          $env:PKG_CONFIG_PATH = & "$msysBin\cygpath.exe" -u "$x264Dir\lib\pkgconfig"
+          Write-Host "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH (cygpath 转换后)"
+          # 验证 pkg-config 能找到 x264（configure 前自检，早失败好过模糊报错）
+          & "$msysBin\pkg-config.exe" --exists x264
+          if ($LASTEXITCODE -ne 0) {
+            throw "pkg-config 找不到 x264（PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH）"
           }
 
           cd src-tauri/vendor/ffmpeg
