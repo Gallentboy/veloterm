@@ -147,28 +147,21 @@ jobs:
           # x264 头文件与静态库路径
           $env:INCLUDE = "$x264Dir\include;$env:INCLUDE"
           $env:LIB = "$x264Dir\lib;$env:LIB"
-          # x264 的 .pc 文件（ffmpeg configure 经 pkg-config 探测 --enable-libx264）。
-          # MSYS2 的 pkg-config 只认 Unix 正斜杠路径（C:\foo → /c/foo）——手工转换
-          if (-not (Test-Path "$x264Dir\lib\pkgconfig\x264.pc")) {
-            throw "x264.pc 未找到: $x264Dir\lib\pkgconfig\x264.pc"
-          }
-          $pkgDir = "$x264Dir\lib\pkgconfig"
-          $env:PKG_CONFIG_PATH = $pkgDir.Replace('\', '/') -replace '^([A-Z]):', { '/' + $_.Groups[1].Value.ToLower() }
-          Write-Host "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH (手工 Unix 化)"
-          # 验证：pkgconf 包提供 pkg-config.exe（MSYS2 的 pkgconf 是 pkg-config 实现）
-          $pkgConfig = "$msysBin\pkg-config.exe"
-          if (-not (Test-Path $pkgConfig)) { $pkgConfig = "$msysBin\pkgconf.exe" }
-          if (-not (Test-Path $pkgConfig)) { throw "pkg-config/pkgconf 未找到: $msysBin" }
-          & $pkgConfig --exists x264
-          if ($LASTEXITCODE -ne 0) {
-            throw "pkg-config 找不到 x264（PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH）"
-          }
+          # 绕过 pkg-config：ffmpeg 的 --enable-libx264 默认经 pkg-config 探测，
+          # MSYS2 的 pkg-config 环境在 runner 上不稳（pkgconf 安装位/路径转换反复出问题）。
+          # 直接用 --extra-cflags/--extra-ldflags 给路径 + --extra-libs 给 .lib 名。
+          if (-not (Test-Path "$x264Dir\include\x264.h")) { throw "x264.h 未找到: $x264Dir\include" }
+          if (-not (Test-Path "$x264Dir\lib\libx264.lib")) { throw "libx264.lib 未找到: $x264Dir\lib" }
+          Write-Host "x264 ready: include=$x264Dir\include lib=$x264Dir\lib"
 
           cd src-tauri/vendor/ffmpeg
 
           # ffmpeg configure 需要 POSIX shell 执行；--toolchain=msvc 让 cc=cl/ar=lib
           # --disable-asm 绕开 nasm（x264 汇编已由 vcpkg 预编进 .lib）
           # --enable-pic：静态库日后可包 DLL
+          # x264 路径：--extra-cflags/--extra-ldflags 直接给（不经 pkg-config）
+          $x264Inc = ($x264Dir + "\include").Replace('\', '/')
+          $x264Lib = ($x264Dir + "\lib").Replace('\', '/')
           & sh.exe -c @"
             ./configure \
               --toolchain=msvc \
@@ -180,6 +173,9 @@ jobs:
               --enable-encoder=libx264 --enable-libx264 --enable-gpl \
               --enable-protocol=file --enable-filter=fps,scale,format,null,pad,crop \
               --enable-pic \
+              --extra-cflags="-I$x264Inc" \
+              --extra-ldflags="/LIBPATH:$x264Lib" \
+              --extra-libs=libx264.lib \
               --prefix=`$(pwd)/build
           "@
           if ($LASTEXITCODE -ne 0) { throw "configure 失败" }
