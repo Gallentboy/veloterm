@@ -1,0 +1,58 @@
+##########################################################
+#            OBFlow Secret Scan Ignore List              #
+##########################################################
+# Above the segmentation lines there are suspected privacy information #
+# Please use the file name as the first line and the igored information #
+# should be started with tab. #
+# Under the segmentation lines there are the folders which you need to ignore #
+##########################################################
+**
+  http://www.gnu.org/licenses/
+  http://www.gnu.org/licenses
+  http://license.coscl.org.cn/MulanPubL-2.0
+  https://open.oceanbase.com/
+  https://open.oceanbase.com
+  https://github.com/oceanbase/oceanbase
+  https://github.com/oceanbase/oceanbase/issues
+  http://www.mysql.com/downloads
+  http://dev.mysql.com/doc/refman/5.7/en/source-installation.html
+  http://dev.mysql.com/doc/refman/5.7/en/
+  http://www.gnu.org/licenses/
+  https://gw.alipayobjects.com/zos/bmw-prod/d6c1a0b7-c714-4429-8a33-2b394a5c1bf1.svg
+  https://www.oceanbase.com/)
+  https://www.oceanbase.com/docs)
+  http://tools.ietf.org/html/rfc1950
+  http://java.sun.com/developer/technicalArticles/Programming/compression/
+  http://search.cpan.org/~pmqs/IO-Compress-Zlib/
+  http://docs.python.org/library/zlib.html
+  http://tools.ietf.org/html/...
+  http://tools.ietf.org/html/rfc1951
+  http://tools.ietf.org/html/rfc1950
+  http://msdn.microsoft.com/en-us/library/windows/desktop/ms738586(v=vs.85).aspx
+  https://mariadb.com/kb/en/library/eof_packet/
+  https://mariadb.com/kb/en/library/2-binlog-event-header/
+  https://mariadb.com/kb/en/mariadb/configuring-mariadb-with-mycnf/
+  https://dev.mysql.com/doc/refman/8.0/en/datetime.html
+  https://jira.mariadb.org
+  https://facebook.github.io/watchman/)
+  https://mirrors.aliyun.com/oceanbase/development-kit/el/7/aarch64/
+  https://mirrors.aliyun.com/oceanbase/development-kit/el/8/x86_64/
+  https://mirrors.aliyun.com/oceanbase/development-kit/el/8/aarch64/
+  https://mirrors.aliyun.com/oceanbase/development-kit/el/7/x86_64/
+  someUser
+  Passw@rd2
+**/*.c
+  http://www.gnu.org/licenses/
+  http://www.gnu.org/licenses
+--------------------------------------------------------
+# Should use GLOB wildcard to config and analysis the ignored folder
+# The root patch shold start with '/'
+/BUILD/**
+/.secignore
+/azure-pipelines.yml
+/.git/**
+--------------------------------------------------------
+# Config the ignored fold to escape the Chinese scan by GLOB wildcard
+**/*.md
+/tools/**
+/test/test.conf

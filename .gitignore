@@ -58,6 +58,9 @@ src-tauri/qalc-build/
 src-tauri/nmap-build/
 # vim 的官方 VIMDLL 构建目录（build-tools.mjs 产出：src 副本内 nmake in-tree 构建）
 src-tauri/vim-build/
+# obconnector-c 的 MSVC+CMake 构建目录（build-tools.mjs 的 obclient 段产出：
+# 上游树构建 + veloterm-win 冒烟工程）
+src-tauri/obclient-build/
 # 本地第三方源码目录（如 warpgate）：内容不进库；曾被 git add 误记为无 .gitmodules
 # 的 gitlink（幽灵 submodule），actions/checkout 清理时报 fatal: No url found
 thirdpart/
