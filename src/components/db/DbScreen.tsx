@@ -217,7 +217,17 @@ export function DbScreen({ isVisible = true }: { isVisible?: boolean }) {
                       <Database className="size-3.5 shrink-0 text-terminal-cyan" />
                       <span className="min-w-0 flex-1 truncate">{conn.name}</span>
                       <span className="shrink-0 font-mono text-[10px] text-foreground-subtlest">
-                        {conn.engine}
+                        {conn.engine === 'oceanbase'
+                          ? `${t('dbHosts.engineOceanbase')}${
+                              conn.mode
+                                ? ` · ${t(
+                                    conn.mode === 'oracle'
+                                      ? 'dbHosts.obModeOracle'
+                                      : 'dbHosts.obModeMysql',
+                                  )}`
+                                : ''
+                            }`
+                          : conn.engine}
                       </span>
                     </button>
                   ))

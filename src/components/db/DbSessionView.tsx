@@ -85,6 +85,12 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 /** 可展开子层的节点类型（分组/表/视图可展开；函数/过程/序列/列是叶子） */
 const EXPANDABLE_KINDS = new Set(['database', 'schema', 'group', 'table', 'view']);
 
+/** OB 的 Oracle 租户模式与 Oracle 同方言：SELECT 需 FROM DUAL、无 LIMIT
+ * （用 ROWNUM）、标识符不用反引号；OB MySQL 租户模式则完全走 MySQL 方言。 */
+function isOracleDialect(engine: DbSessionMeta['engine'], mode: string | null): boolean {
+  return engine === 'oracle' || (engine === 'oceanbase' && mode === 'oracle');
+}
+
 function nodeIcon(kind: CatalogNode['kind'], className?: string) {
   switch (kind) {
     case 'database':
@@ -200,9 +206,10 @@ export function DbSessionView({
         const sessionMeta = await dbConnect(connection.id);
         sessionIdRef.current = sessionMeta.sessionId;
         setMeta(sessionMeta);
-        // 引擎适配的欢迎语句：Oracle 无 FROM 不可查（SELECT 1 报 ORA-00923），
-        // 换 SELECT 1 FROM DUAL。函数式 setSql 读最新值，仅初始占位未动时替换
-        if (sessionMeta.engine === 'oracle') {
+        // 引擎适配的欢迎语句：Oracle 方言无 FROM 不可查（SELECT 1 报 ORA-00923），
+        // 换 SELECT 1 FROM DUAL（含 OB Oracle 租户模式）。函数式 setSql 读最新值，
+        // 仅初始占位未动时替换
+        if (isOracleDialect(sessionMeta.engine, sessionMeta.mode)) {
           setSql((prev) => (prev === 'SELECT 1;' ? 'SELECT 1 FROM DUAL;' : prev));
         }
         onBaseTitle(`${sessionMeta.name} · ${connection.host}`);
@@ -321,8 +328,11 @@ export function DbSessionView({
         const name = node.name;
         const target = schema ? `${schema}.${name}` : name;
         // 限定符一律不加引号；取前 200 行的方言差异只在限行子句——
-        // Oracle 无 LIMIT 且 11.x 只认 ROWNUM（FETCH FIRST 需 12c+）
-        const limit = meta?.engine === 'oracle' ? 'WHERE ROWNUM <= 200' : 'LIMIT 200';
+        // Oracle 方言无 LIMIT 且 11.x 只认 ROWNUM（FETCH FIRST 需 12c+）
+        const limit =
+          meta && isOracleDialect(meta.engine, meta.mode)
+            ? 'WHERE ROWNUM <= 200'
+            : 'LIMIT 200';
         setSql(`SELECT * FROM ${target} ${limit};`);
         return;
       }
@@ -370,8 +380,13 @@ export function DbSessionView({
     (node: CatalogNode) => {
       if (node.kind !== 'table' || !meta) return;
       const schema = node.key.split('.')[0] ?? '';
+      // OB MySQL 租户模式与 MySQL 同走反引号限定符；其余（PG / Oracle /
+      // OB Oracle 租户模式）走双引号
+      const mysqlDialect =
+        meta.engine === 'mysql' ||
+        (meta.engine === 'oceanbase' && meta.mode !== 'oracle');
       const sql =
-        meta.engine === 'mysql'
+        mysqlDialect
           ? `CREATE INDEX \`idx_${node.name}\` ON \`${schema}\`.\`${node.name}\` (\`col\`);`
           : `CREATE INDEX idx_${node.name} ON "${schema}"."${node.name}" (col);`;
       setSql(sql);
@@ -633,6 +648,13 @@ export function DbSessionView({
         <span className="max-w-44 truncate text-ui-sm font-medium text-foreground">
           {meta.name}
         </span>
+        {/* OceanBase：引擎 + 租户模式标识（meta.mode 驱动）；server_version 原样直显 */}
+        {meta.engine === 'oceanbase' ? (
+          <span className="hidden shrink-0 rounded bg-surface px-1.5 py-px font-mono text-[9px] text-foreground-subtle lg:inline">
+            {t('dbHosts.engineOceanbase')} ·{' '}
+            {t(meta.mode === 'oracle' ? 'dbHosts.obModeOracle' : 'dbHosts.obModeMysql')}
+          </span>
+        ) : null}
         <span className="hidden max-w-64 truncate font-mono text-ui-xs text-foreground-subtle lg:block">
           {meta.serverVersion}
         </span>

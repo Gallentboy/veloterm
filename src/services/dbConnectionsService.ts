@@ -5,12 +5,14 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-export type DbEngineKind = 'mysql' | 'postgres' | 'oracle';
+export type DbEngineKind = 'mysql' | 'postgres' | 'oracle' | 'oceanbase';
 
 export interface DbConnectionRecord {
   id: number;
   name: string;
   engine: DbEngineKind;
+  /** OceanBase 专有：租户模式 'mysql' | 'oracle'（其他引擎恒 null） */
+  mode: string | null;
   host: string;
   port: number;
   database: string | null;
@@ -61,6 +63,8 @@ export interface DbSessionMeta {
   connectionId: number;
   name: string;
   engine: DbEngineKind;
+  /** OceanBase 专有：租户模式 'mysql' | 'oracle'（其他引擎 null） */
+  mode: string | null;
   database: string | null;
   serverVersion: string;
   readonly: boolean;
