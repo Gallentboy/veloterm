@@ -15,8 +15,8 @@
 # - **vcpkg 静态 triplet**（x64-windows-static / arm64-windows-static）：
 #   x264 静态库自包含链入，零运行时 DLL 依赖。vcpkg 二进制缓存走
 #   GitHub Packages NuGet 源（与 publish 同源）。
-# - **--disable-asm**：裁剪集不需要汇编（x264 的汇编已由 vcpkg 预编），
-#   绕开 nasm/yasm 在 CI runner 的安装与路径问题。
+# - **启用 asm**（pacman 装 nasm）：ffmpeg 自身的 x86 SIMD（scale/format 等
+#   滤镜）需要汇编器；x264 的汇编由 vcpkg 预编进 .lib，与此无关。
 # - **MSYS2 仅作 shell 工具层**（make/sh）：ffmpeg configure 需要 POSIX
 #   shell；MSYS2 的 link.exe 与 MSVC 的 link.exe 冲突 → 改名绕开。
 #
@@ -124,10 +124,13 @@ jobs:
             }
           }
           if (-not $pacman) { throw "pacman 未找到" }
-          & $pacman -S --noconfirm --needed pkgconf make
-          if ($LASTEXITCODE -ne 0) { throw "pacman 安装 pkgconf/make 失败" }
+          # nasm：ffmpeg 的 x86 SIMD（scale/format 等滤镜）需要汇编器。
+          # 此前为省事加了 --disable-asm 关掉全部 asm，代价是丢掉 ffmpeg 自身
+          # 的 SIMD 加速；现装 nasm 启用（x264 的汇编由 vcpkg 预编，与此无关）
+          & $pacman -S --noconfirm --needed pkgconf make nasm
+          if ($LASTEXITCODE -ne 0) { throw "pacman 安装 pkgconf/make/nasm 失败" }
           $msysBin = Split-Path $pacman -Parent
-          foreach ($exe in @("pkg-config.exe", "pkgconf.exe", "make.exe", "sh.exe")) {
+          foreach ($exe in @("pkg-config.exe", "pkgconf.exe", "make.exe", "sh.exe", "nasm.exe")) {
             $p = Join-Path $msysBin $exe
             Write-Host "$exe : $(if (Test-Path $p) { 'OK' } else { 'MISSING' })"
           }
@@ -191,14 +194,13 @@ jobs:
           cd src-tauri/vendor/ffmpeg
 
           # ffmpeg configure 需要 POSIX shell 执行；--toolchain=msvc 让 cc=cl/ar=lib
-          # --disable-asm 绕开 nasm（x264 汇编已由 vcpkg 预编进 .lib）
+          # 不再 --disable-asm：nasm 已装，ffmpeg 自身 x86 SIMD（scale/format）启用
           # --enable-pic：静态库日后可包 DLL
           & sh.exe -c @"
             ./configure \
               --toolchain=msvc \
               --disable-everything --disable-shared --enable-static \
               --disable-doc --disable-network --disable-autodetect \
-              --disable-asm \
               --enable-demuxer=gif --enable-decoder=gif --enable-parser=gif \
               --enable-muxer=mp4 \
               --enable-encoder=libx264 --enable-libx264 --enable-gpl \
