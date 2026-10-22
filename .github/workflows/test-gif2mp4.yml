@@ -141,6 +141,13 @@ jobs:
           # x264 头文件与静态库路径
           $env:INCLUDE = "$x264Dir\include;$env:INCLUDE"
           $env:LIB = "$x264Dir\lib;$env:LIB"
+          # x264 的 .pc 文件（ffmpeg configure 经 pkg-config 探测 --enable-libx264）
+          $env:PKG_CONFIG_PATH = "$x264Dir\lib\pkgconfig"
+          Write-Host "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH"
+          # 确认 x264.pc 存在
+          if (-not (Test-Path "$x264Dir\lib\pkgconfig\x264.pc")) {
+            throw "x264.pc 未找到: $x264Dir\lib\pkgconfig\x264.pc"
+          }
 
           cd src-tauri/vendor/ffmpeg
 
@@ -156,7 +163,7 @@ jobs:
               --enable-demuxer=gif --enable-decoder=gif --enable-parser=gif \
               --enable-muxer=mp4 \
               --enable-encoder=libx264 --enable-libx264 --enable-gpl \
-              --enable-protocol=file --enable-filter=fps,scale,format \
+              --enable-protocol=file --enable-filter=fps,scale,format,null,pad,crop \
               --enable-pic \
               --prefix=`$(pwd)/build
           "@
@@ -265,7 +272,7 @@ jobs:
             --enable-demuxer=gif --enable-decoder=gif --enable-parser=gif \
             --enable-muxer=mp4 \
             --enable-encoder=libx264 --enable-libx264 --enable-gpl \
-            --enable-protocol=file --enable-filter=fps,scale,format \
+            --enable-protocol=file --enable-filter=fps,scale,format,null,pad,crop \
             --enable-pic \
             --extra-libs="$X264_PREFIX/lib/libx264.a" \
             --prefix="$PWD/build"

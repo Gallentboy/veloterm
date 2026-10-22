@@ -39,7 +39,7 @@ MP4」封装成一个纯 C ABI 函数（libavfilter 管线：gif demux → decod
   --enable-demuxer=gif --enable-decoder=gif --enable-parser=gif \
   --enable-muxer=mp4 \
   --enable-encoder=libx264 --enable-libx264 --enable-gpl \
-  --enable-protocol=file --enable-filter=fps,scale,format \
+  --enable-protocol=file --enable-filter=fps,scale,format,null,pad,crop \
   --enable-pic \
   --extra-libs=/opt/homebrew/Cellar/x264/r3222/lib/libx264.a \
   --prefix="$PWD/build"
