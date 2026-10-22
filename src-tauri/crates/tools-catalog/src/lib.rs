@@ -140,7 +140,8 @@ pub const PLATFORM_COMMANDS: &[&str] = &[
 /// 与 nping（报文探测，二者同属 Nmap 项目、与 nmapffi 共用依赖）
 /// + urlcoding 库封装的 urlencode/urldecode
 /// + data-encoding 家族的 base32hex/base64url/hex/hexupper + vendor 源码静态链入的
-/// zoxide（smarter cd）与 dog（DNS 客户端）
+/// zoxide（smarter cd）与 dog（DNS 客户端）+ sysinfo 数据源（free_impl.rs）
+/// 自研的 free（GNU procps free 兼容子集：内存/交换查看）
 /// + 官方 VIMDLL 形态 vim64.dll 动态导入的 vim（随包 vim-runtime/ 数据树，
 /// OWN_ARGV 家族：仅硬链接短名模式可用）——base32/base64 已由跨平台清单的
 /// uutils 实现覆盖，不重复收录；stdbuf 不收录：其机制是给子进程设
@@ -149,8 +150,8 @@ pub const PLATFORM_COMMANDS: &[&str] = &[
 /// libstdbuf.dll 直接报错退出），test-commands 全命令验证车道实测恒失败
 #[cfg(target_os = "windows")]
 pub const PLATFORM_COMMANDS: &[&str] = &[
-    "base32hex", "base64url", "bc", "dog", "fzf", "hex", "hexupper", "jq", "ncat",
-    "nmap", "nping", "openssl", "qalc", "telnet", "urldecode", "urlencode",
+    "base32hex", "base64url", "bc", "dog", "free", "fzf", "hex", "hexupper", "jq",
+    "ncat", "nmap", "nping", "openssl", "qalc", "telnet", "urldecode", "urlencode",
     "vim", "yq", "zoxide",
 ];
 
