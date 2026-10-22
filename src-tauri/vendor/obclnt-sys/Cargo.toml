@@ -1,0 +1,25 @@
+# obclnt-sys：OceanBase Connector/C（libobclient）的原始 C API 绑定
+#
+# 形态对齐 vendor/gif2mp4-sys：库本体由 vendor/obconnector-c 树事先构建
+# （Windows 走 scripts/build-obclient.mjs 车道，macOS 走上游 build.sh），
+# 本 crate 的 build.rs 只做档案校验与链接旗标——「库预编译好提供」，
+# 不编译任何 C 代码。extern 声明为手写（本仓库无 bindgen 先例，goffi/
+# qalc/vim 的 FFI 均手写），来源与升级口径见 src/lib.rs 模块头与 README。
+#
+# vendor 树被根 workspace exclude，本 crate 以 path 依赖形态进 app 的
+# 依赖图（gif2mp4-sys / jpegxl-sys 同先例），不属于工具 crate 家族。
+
+[package]
+name = "obclnt-sys"
+version = "0.1.0"
+edition = "2021"
+description = "Raw C API bindings for OceanBase Connector/C (libobclient, in-tree vendor/obconnector-c)"
+license = "LGPL-2.1"
+publish = false
+links = "obclnt"
+build = "build.rs"
+
+[dependencies]
+
+[lib]
+name = "obclnt_sys"
