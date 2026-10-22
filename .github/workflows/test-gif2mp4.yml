@@ -216,8 +216,9 @@ jobs:
           & make.exe $makeArg
           if ($LASTEXITCODE -ne 0) { throw "make 失败" }
 
-      # 收集 .lib 族：改名为 build.rs 期望的无 lib 前缀形态
-      # （ffmpeg 产 libavcodec.lib → 收集为 avcodec.lib）
+      # 收集 .lib 族。MSVC 下 configure 设 LIBPREF=""（configure:6209）——
+      # 静态库产物就叫 avcodec.lib，没有 lib 前缀，与 build.rs 期望一致，
+      # 无需改名（此前误按 MinGW 的 lib*.a 形态找 libavcodec.lib，必然缺）
       - name: Collect static libraries
         shell: pwsh
         run: |
@@ -226,26 +227,34 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path out | Out-Null
 
-          # ffmpeg 树内 7 件（lib<name>.lib → <name>.lib）
+          # ffmpeg 树内 7 件（<name>.lib 直接原名，MSVC 无 lib 前缀）
           $libMap = @{
-            'libgif2mp4/libgif2mp4.lib' = 'gif2mp4.lib'
-            'libavfilter/libavfilter.lib' = 'avfilter.lib'
-            'libswscale/libswscale.lib' = 'swscale.lib'
-            'libavformat/libavformat.lib' = 'avformat.lib'
-            'libavcodec/libavcodec.lib' = 'avcodec.lib'
-            'libswresample/libswresample.lib' = 'swresample.lib'
-            'libavutil/libavutil.lib' = 'avutil.lib'
+            'libgif2mp4/gif2mp4.lib' = 'gif2mp4.lib'
+            'libavfilter/avfilter.lib' = 'avfilter.lib'
+            'libswscale/swscale.lib' = 'swscale.lib'
+            'libavformat/avformat.lib' = 'avformat.lib'
+            'libavcodec/avcodec.lib' = 'avcodec.lib'
+            'libswresample/swresample.lib' = 'swresample.lib'
+            'libavutil/avutil.lib' = 'avutil.lib'
           }
           foreach ($entry in $libMap.GetEnumerator()) {
             $src = "src-tauri/vendor/ffmpeg/$($entry.Key)"
-            if (-not (Test-Path $src)) { throw "缺少产物: $src" }
+            if (-not (Test-Path $src)) {
+              # 诊断：列出该目录实际产物，便于定位命名差异
+              $dir = Split-Path $src -Parent
+              $actual = if (Test-Path $dir) { (Get-ChildItem $dir -Filter *.lib | Select-Object -ExpandProperty Name) -join ', ' } else { '(目录不存在)' }
+              throw "缺少产物: $src`n  该目录下的 .lib: $actual"
+            }
             Copy-Item $src "out/$($entry.Value)"
             Write-Host "collect: $($entry.Value) ($([math]::Round((Get-Item $src).Length/1KB)) KB)"
           }
 
-          # x264 从 vcpkg（libx264.lib → x264.lib）
+          # x264 从 vcpkg（vcpkg 的静态库命名带 lib 前缀：libx264.lib）
           $x264 = "$x264Dir\lib\libx264.lib"
-          if (-not (Test-Path $x264)) { throw "缺少 x264: $x264" }
+          if (-not (Test-Path $x264)) {
+            $actual = if (Test-Path "$x264Dir\lib") { (Get-ChildItem "$x264Dir\lib" -Filter *.lib | Select-Object -ExpandProperty Name) -join ', ' } else { '(目录不存在)' }
+            throw "缺少 x264: $x264`n  vcpkg lib 目录下的 .lib: $actual"
+          }
           Copy-Item $x264 "out/x264.lib"
           Write-Host "collect: x264.lib ($([math]::Round((Get-Item $x264).Length/1KB)) KB)"
 
