@@ -83,34 +83,47 @@ jobs:
           & $nuget setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$env:FEED_URL"
 
       # 装 x264 静态库（vcpkg 静态 triplet → 纯 .lib，零 DLL 依赖）
+      # VCPKG_BUILD_TYPE 环境变量对 manifest 模式无效——须写进 triplet 文件
+      # （test-libjxl / publish 用 env 有效是因为它们走 classic 模式 install
+      #   <port>:<triplet>，这里同型……但静态 triplet 的 cmake 变量更可靠）
       - name: Install x264 via vcpkg
         shell: pwsh
-        env:
-          VCPKG_BUILD_TYPE: release
         run: |
           $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
+          # 在 triplet 文件里声明只编 release（省一半时间）
+          $tripletFile = "$vcpkgRoot\triplets\${{ matrix.triplet }}.cmake"
+          Add-Content -Path $tripletFile -Value "`r`nset(VCPKG_BUILD_TYPE release)"
+          Write-Host "triplet 已追加 release-only: $tripletFile"
           git config --global --add safe.directory "$vcpkgRoot"
-          git -C "$vcpkgRoot" fetch origin master
-          if ($LASTEXITCODE -ne 0) { Write-Host "git fetch 补历史失败（exit $LASTEXITCODE），继续安装" }
           & "$vcpkgRoot\vcpkg.exe" install "x264:${{ matrix.triplet }}" "--x-install-root=$vcpkgRoot\installed"
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install x264 失败" }
 
-      # MSYS2 仅作 shell 工具层（make/sh/pkg-config）：ffmpeg configure 需要
-      # POSIX shell。link.exe 冲突 → 改名绕开（Wiki 的「常见坑」第一条）
-      - name: Setup MSYS2 build tools
+      # MSYS2 标准接法：setup-msys2 action 装 make（runner 可能预装也可能
+      # 没有、路径不保证 C:\msys64），MSYS 环境装最小工具集
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          install: make
+          update: false
+
+      # link.exe 冲突：MSYS2 的 GNU link 与 MSVC 的 link 同名（Wiki 常见坑）
+      - name: Resolve MSYS2 link.exe conflict
         shell: pwsh
         run: |
-          # MSYS2 已预装在 runner；确认 make/sh 存在
-          $msysBin = "C:\msys64\usr\bin"
-          if (-not (Test-Path "$msysBin\make.exe")) { throw "MSYS2 make 未找到: $msysBin" }
-          if (-not (Test-Path "$msysBin\sh.exe")) { throw "MSYS2 sh 未找到: $msysBin" }
-          # link.exe 冲突：MSYS2 的 GNU link 与 MSVC 的 link 同名
+          $msysBin = "${{ env.MSYS2_LOCATION }}\usr\bin"
+          if (-not (Test-Path $msysBin)) {
+            # setup-msys2 的默认安装位（runner image 版本不同可能路径不同）
+            $msysBin = (Get-ChildItem "C:\msys64\usr\bin","D:\msys64\usr\bin" -ErrorAction SilentlyContinue | Select-Object -First 1)?.DirectoryName
+          }
+          if (-not $msysBin -or -not (Test-Path "$msysBin\make.exe")) {
+            throw "MSYS2 未找到（期望 C:\msys64 或 D:\msys64），make.exe 不存在"
+          }
+          Write-Host "MSYS2 bin: $msysBin"
           if (Test-Path "$msysBin\link.exe") {
             Rename-Item "$msysBin\link.exe" "link.exe.bak" -Force
-            Write-Host "已改名 MSYS2 link.exe → link.exe.bak（避免与 MSVC link.exe 冲突）"
+            Write-Host "已改名 link.exe → link.exe.bak（避免与 MSVC link.exe 冲突）"
           }
-          # 同理 sh.exe 可能与 Git Bash 的 sh 冲突，不处理——configure 用 sh 即可
-          Write-Host "MSYS2 tools OK: $msysBin"
+          "MSYS2_BIN=$msysBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # 构建 ffmpeg + libgif2mp4（与 macOS 裁剪集同参数 + MSVC 工具链）
       - name: Build ffmpeg with libgif2mp4
@@ -118,7 +131,7 @@ jobs:
         run: |
           $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
           $x264Dir = "$vcpkgRoot\installed\${{ matrix.triplet }}"
-          $msysBin = "C:\msys64\usr\bin"
+          $msysBin = $env:MSYS2_BIN
 
           # 环境拼装：MSVC（已在 PATH，由 msvc-dev-cmd 设置）+ MSYS2 shell 工具
           $env:PATH = "$msysBin;$env:PATH"
