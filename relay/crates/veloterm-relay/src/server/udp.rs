@@ -128,6 +128,7 @@ fn sweep_period(idle_timeout: Duration) -> Duration {
 }
 
 /// 服务器当前时间（毫秒，UNIX 纪元起）：验窗与错误回执的时间基准。
+#[inline(always)]
 fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
 }

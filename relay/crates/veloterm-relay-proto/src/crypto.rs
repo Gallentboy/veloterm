@@ -94,12 +94,14 @@ impl DirectionCipher {
         Self { cipher: ChaCha20Poly1305::new(Key::from_slice(key)), counter: 0 }
     }
 
+    #[inline(always)]
     fn nonce(&self) -> Nonce {
         let mut n = [0u8; 12];
         n[4..].copy_from_slice(&self.counter.to_be_bytes());
         Nonce::from(n)
     }
 
+    #[inline]
     fn seal(&mut self, plaintext: &[u8]) -> Vec<u8> {
         let mut buf = plaintext.to_vec();
         let tag: Tag = self
@@ -113,6 +115,7 @@ impl DirectionCipher {
         out
     }
 
+    #[inline]
     fn open(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, ()> {
         if ciphertext.len() < 16 {
             return Err(());

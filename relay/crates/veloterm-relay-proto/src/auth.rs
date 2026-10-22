@@ -33,6 +33,7 @@ impl Secret {
         Self(bytes)
     }
 
+    #[inline(always)]
     pub fn as_bytes(&self) -> &[u8; SECRET_LEN] {
         &self.0
     }
@@ -56,6 +57,7 @@ impl Secret {
 }
 
 /// 常数时间比较，防时序侧信道逐字节猜测证明值。
+#[inline]
 pub fn const_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -130,6 +132,7 @@ pub fn verify_stream_proof(
 }
 
 /// UDP 数据报证明：绑定 key_id + 服务器相对时间戳（客户端已用时间同步抵消钟差）。
+#[inline]
 pub fn udp_data_proof(secret: &Secret, key_id: u8, time_ms: u64) -> [u8; PROOF_LEN] {
     let key_id_bytes = [key_id];
     hmac_parts(

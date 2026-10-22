@@ -143,6 +143,7 @@ impl ZmodemDetector {
 }
 
 /// 子串查找（tail 很小，朴素实现足够）
+#[inline(always)]
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;

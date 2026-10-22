@@ -193,6 +193,7 @@ impl ZmodemBridge {
     }
 
     /// 结束标志（传输任务在引擎退出后置位；宿主轮询此值恢复透传）
+    #[inline(always)]
     pub fn finished_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.finished)
     }

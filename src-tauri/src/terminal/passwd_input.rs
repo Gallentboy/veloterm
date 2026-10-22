@@ -103,6 +103,7 @@ impl PasswdInputLog {
     }
 
     /// 全局访问点
+    #[inline(always)]
     pub fn global() -> &'static Self {
         &GLOBAL
     }

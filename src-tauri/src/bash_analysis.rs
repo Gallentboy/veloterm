@@ -304,6 +304,7 @@ fn insert_symbol(
     }
 }
 
+#[inline]
 fn has_function_ancestor(node: Node) -> bool {
     let mut parent = node.parent();
     while let Some(p) = parent {
@@ -332,6 +333,7 @@ fn command_name_at(node: Node, source: &str) -> Option<String> {
     None
 }
 
+#[inline(always)]
 fn text_of<'a>(node: Node, source: &'a str) -> Option<&'a str> {
     node.utf8_text(source.as_bytes()).ok()
 }

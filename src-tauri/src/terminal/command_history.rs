@@ -382,6 +382,7 @@ fn now_millis() -> i64 {
 
 // ===== 采集开关（kv 持久化，db 初始化时回灌） =====
 
+#[inline(always)]
 pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
