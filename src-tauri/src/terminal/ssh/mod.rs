@@ -161,6 +161,11 @@ impl SshTerminalSession {
             // 回 ZRINIT」的全流程。下载（ZRQINIT）不受此限制
             let mut last_upload_end: Option<std::time::Instant> = None;
             let mut zmodem_active: Option<crate::terminal::zmodem::ZmodemBridge> = None;
+            // ── trzsz 传输态（tsz/trz；与 ZMODEM 并列的第二条通道）──
+            // 探测命中后接管输出流；结束/取消后恢复透传，残尾经 TailFilter 清洗
+            let mut trzsz_detector = crate::terminal::trzsz::TrszszDetector::new();
+            let mut trzsz_tail = crate::terminal::trzsz::TrszszTailFilter::new();
+            let mut trzsz_active: Option<crate::terminal::trzsz::TrzszBridge> = None;
             // 生命周期便捷发射（emitter 为 None 时静默跳过）
             let emit =
                 |kind: LifecycleKind, error: Option<&str>, reason: Option<DisconnectReason>| {
@@ -217,6 +222,16 @@ impl SshTerminalSession {
                             zmodem_active = None;
                             zmodem_detector.reset();
                             log::debug!("[ZMODEM] session {id} transfer ended, passthrough restored");
+                        }
+                        // trzsz 同款兜底：取消/失败后服务器可能不再输出，
+                        // 靠 tick 清理并开启残尾过滤窗口（否则终端永久卡死）
+                        if let Some(bridge) = trzsz_active.as_ref()
+                            && bridge.finished_flag().load(std::sync::atomic::Ordering::Relaxed)
+                        {
+                            trzsz_active = None;
+                            trzsz_detector.reset();
+                            trzsz_tail.arm();
+                            log::debug!("[TRZSZ] session {id} transfer ended, passthrough restored");
                         }
                         continue;
                     }
@@ -285,6 +300,109 @@ impl SshTerminalSession {
                             }
                         }
                         // （改密提示词扫描已在分支开头执行，见上）
+                        // ── trzsz 探测（tsz/trz）：先于 ZMODEM——触发串是
+                        // 终端输出里的明文标记（`\x1b7\x07::TRZSZ:TRANSFER:…`），
+                        // 与 ZMODEM 的二进制帧不冲突；命中后接管输出流 ──
+                        if let Some(bridge) = trzsz_active.as_ref() {
+                            if bridge.finished_flag().load(std::sync::atomic::Ordering::Relaxed) {
+                                trzsz_active = None;
+                                trzsz_detector.reset();
+                                trzsz_tail.arm();
+                            } else if bridge.feed(&data) {
+                                // 喂入成功：确认引擎仍活着（feed 只保证通道未关，
+                                // 引擎可能已在收尾），finished 已置位则本块回落透传
+                                if !bridge.finished_flag().load(std::sync::atomic::Ordering::Relaxed) {
+                                    continue;
+                                }
+                                trzsz_active = None;
+                                trzsz_detector.reset();
+                                trzsz_tail.arm();
+                            } else {
+                                trzsz_active = None;
+                                trzsz_detector.reset();
+                                trzsz_tail.arm();
+                            }
+                        }
+                        // 残尾过滤：传输刚结束时服务器可能补发少量协议残帧
+                        let mut data = trzsz_tail.filter(&data);
+                        if data.is_empty() {
+                            continue;
+                        }
+                        if let Some(app) = app_handle.clone() {
+                            match trzsz_detector.feed(&data) {
+                                crate::terminal::trzsz::FeedOutcome::Passthrough(visible) => {
+                                    // 未命中：可见字节继续走下方既有 ZMODEM
+                                    // 探测与微批透传（正常文本零行为变化）
+                                    if visible.is_empty() {
+                                        continue;
+                                    }
+                                    data = visible;
+                                }
+                                crate::terminal::trzsz::FeedOutcome::Triggered {
+                                    display,
+                                    info,
+                                    rest,
+                                } => {
+                                    // 触发前的正常输出先显示
+                                    if !display.is_empty() {
+                                        let mut to_send = std::mem::take(&mut pending_output);
+                                        to_send.extend_from_slice(&display);
+                                        crate::terminal::command_history::tap_output(
+                                            id as i64,
+                                            lifecycle_host_id.map(|v| v as i64),
+                                            &mut to_send,
+                                        );
+                                        if !to_send.is_empty() && on_output.send(to_send).is_err()
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    let sid = format!("terminal-{id}");
+                                    let direction = info.direction();
+                                    let (bridge, inbound_rx) =
+                                        crate::terminal::trzsz::TrzszBridge::new(
+                                            sid, direction,
+                                        );
+                                    let (out_tx, mut out_rx) =
+                                        tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+                                    let cmd_tx = relay_command_tx.clone();
+                                    let chan = shell_channel_id;
+                                    tokio::spawn(async move {
+                                        while let Some(bytes) = out_rx.recv().await {
+                                            let _ = cmd_tx.send((
+                                                RCCommand::Channel(
+                                                    chan,
+                                                    ChannelOperation::Data(bytes.into()),
+                                                ),
+                                                None,
+                                            ));
+                                        }
+                                    });
+                                    log::info!(
+                                        "[TRZSZ] session {} detected {} (mode={}, version={})",
+                                        id,
+                                        direction,
+                                        info.mode as char,
+                                        info.version
+                                    );
+                                    if !rest.is_empty() {
+                                        let _ = bridge.feed(&rest);
+                                    }
+                                    trzsz_active = Some(bridge.clone());
+                                    trzsz_detector.reset();
+                                    crate::terminal::trzsz::start_transfer(
+                                        app,
+                                        direction,
+                                        info,
+                                        inbound_rx,
+                                        out_tx,
+                                        bridge,
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+                        // 无 app handle（测试/无头）：上面 Passthrough 已透传
                         // 未命中：探测（命中则建桥、启动传输任务）
                         let detection = zmodem_detector.feed(&data);
                         if matches!(detection, crate::terminal::zmodem::Detection::Swallow) {

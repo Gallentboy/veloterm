@@ -6,4 +6,5 @@ pub mod passwd_input;
 pub mod resource_monitor;
 pub mod session;
 pub mod ssh;
+pub mod trzsz;
 pub mod zmodem;
