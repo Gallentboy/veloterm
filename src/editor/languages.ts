@@ -1,10 +1,10 @@
 /**
- * 自建 Monaco 语言支持（nginx / dockerfile / docker-compose / batch / sql）
- * 的统一幂等注册入口，顺带一次性对齐内置 html 语言的 worker 侧格式化缺省
- * （htmlDefaults.format 缺省 insertSpaces=false 出 TAB，与编辑器空格缩进
- * 约定相悖）。各语言模块自身另有幂等与数据懒加载（独立 async chunk，不
- * 打开对应文件的会话零数据成本）；宿主（编辑器面板 / SFTP 预览 / diff
- * 弹窗）只需调用本函数一次。bash 补全因需宿主模型关联
+ * 自建 Monaco 语言支持（nginx / dockerfile / docker-compose / batch / sql /
+ * systemd / crontab）的统一幂等注册入口，顺带一次性对齐内置 html 语言的
+ * worker 侧格式化缺省（htmlDefaults.format 缺省 insertSpaces=false 出 TAB，
+ * 与编辑器空格缩进约定相悖）。各语言模块自身另有幂等与数据懒加载（独立
+ * async chunk，不打开对应文件的会话零数据成本）；宿主（编辑器面板 /
+ * SFTP 预览 / diff 弹窗）只需调用本函数一次。bash 补全因需宿主模型关联
  * （registerBashHostModel）不并入，仍由宿主各自调用。
  *
  * html/css 的补全/hover 等智能走 Monaco 内置的 html/css worker
@@ -16,9 +16,11 @@ import type * as MonacoNs from 'monaco-editor';
 
 import { ensureBatchLanguage } from './batchLanguage';
 import { ensureComposeLanguage } from './composeLanguage';
+import { ensureCrontabLanguage } from './crontabLanguage';
 import { ensureDockerfileLanguage } from './dockerfileLanguage';
 import { ensureNginxLanguage } from './nginxLanguage';
 import { ensureSqlLanguage } from './sqlLanguage';
+import { ensureSystemdLanguage } from './systemdLanguage';
 
 let htmlDefaultsAligned = false;
 
@@ -55,5 +57,7 @@ export function ensureExtendedLanguages(monaco: typeof MonacoNs): void {
   ensureComposeLanguage(monaco);
   ensureBatchLanguage(monaco);
   ensureSqlLanguage(monaco);
+  ensureSystemdLanguage(monaco);
+  ensureCrontabLanguage(monaco);
   alignHtmlDefaults(monaco);
 }
