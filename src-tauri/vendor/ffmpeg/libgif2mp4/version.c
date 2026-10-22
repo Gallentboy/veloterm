@@ -13,7 +13,6 @@ unsigned gif2mp4_library_version(void)
 {
     return GIF2MP4_VERSION_INT;
 }
-
 const char *gif2mp4_library_configuration(void)
 {
     return FFMPEG_CONFIGURATION;
