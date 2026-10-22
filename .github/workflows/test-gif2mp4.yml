@@ -110,8 +110,28 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: MSYS
-          install: make pkgconf
           update: false
+
+      # 用 MSYS2 的 pacman 显式装 pkgconf（setup-msys2 的 install 参数
+      # 在此 runner 上没落到 MSYS 根，改用 pacman 直装并立即验证）
+      - name: Install pkgconf via pacman
+        shell: pwsh
+        run: |
+          $pacman = (Get-Command pacman.exe -ErrorAction SilentlyContinue)?.Source
+          if (-not $pacman) {
+            foreach ($dir in @("C:\msys64\usr\bin", "D:\msys64\usr\bin")) {
+              if (Test-Path "$dir\pacman.exe") { $pacman = "$dir\pacman.exe"; break }
+            }
+          }
+          if (-not $pacman) { throw "pacman 未找到" }
+          & $pacman -S --noconfirm --needed pkgconf make
+          if ($LASTEXITCODE -ne 0) { throw "pacman 安装 pkgconf/make 失败" }
+          $msysBin = Split-Path $pacman -Parent
+          foreach ($exe in @("pkg-config.exe", "pkgconf.exe", "make.exe", "sh.exe")) {
+            $p = Join-Path $msysBin $exe
+            Write-Host "$exe : $(if (Test-Path $p) { 'OK' } else { 'MISSING' })"
+          }
+          "MSYS2_BIN=$msysBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       # link.exe 冲突：MSYS2 的 GNU link 与 MSVC 的 link 同名（Wiki 常见坑）。
       # 定位 MSYS2 bin：pacman.exe 是 MSYS2 独有（MinGW/Git Bash 无此文件）
@@ -147,21 +167,32 @@ jobs:
           # x264 头文件与静态库路径
           $env:INCLUDE = "$x264Dir\include;$env:INCLUDE"
           $env:LIB = "$x264Dir\lib;$env:LIB"
-          # 绕过 pkg-config：ffmpeg 的 --enable-libx264 默认经 pkg-config 探测，
-          # MSYS2 的 pkg-config 环境在 runner 上不稳（pkgconf 安装位/路径转换反复出问题）。
-          # 直接用 --extra-cflags/--extra-ldflags 给路径 + --extra-libs 给 .lib 名。
-          if (-not (Test-Path "$x264Dir\include\x264.h")) { throw "x264.h 未找到: $x264Dir\include" }
-          if (-not (Test-Path "$x264Dir\lib\libx264.lib")) { throw "libx264.lib 未找到: $x264Dir\lib" }
-          Write-Host "x264 ready: include=$x264Dir\include lib=$x264Dir\lib"
+          # x264 的 pkg-config 元数据：MSYS2 的 pkg-config 只认 Unix 正斜杠
+          # 路径（C:\foo → /c/foo），PowerShell 手工转换（不依赖 cygpath）
+          if (-not (Test-Path "$x264Dir\lib\pkgconfig\x264.pc")) {
+            throw "x264.pc 未找到: $x264Dir\lib\pkgconfig\x264.pc"
+          }
+          $pkgDir = "$x264Dir\lib\pkgconfig"
+          $env:PKG_CONFIG_PATH = $pkgDir.Replace('\', '/') -replace '^([A-Z]):', { '/' + $_.Groups[1].Value.ToLower() }
+          Write-Host "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH"
+          # 自检：pkg-config 必须能解析 x264（configure 的 require_pkg_config 硬依赖它）
+          $pkgConfig = @("$msysBin\pkg-config.exe", "$msysBin\pkgconf.exe") |
+            Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $pkgConfig) { throw "pkg-config/pkgconf 未找到: $msysBin" }
+          Write-Host "using $pkgConfig"
+          & $pkgConfig --exists x264
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "--- pkg-config 诊断 ---"
+            & $pkgConfig --debug --exists x264 2>&1 | Select-Object -First 30 | ForEach-Object { Write-Host $_ }
+            throw "pkg-config 找不到 x264"
+          }
+          Write-Host "pkg-config x264: $(& $pkgConfig --modversion x264)"
 
           cd src-tauri/vendor/ffmpeg
 
           # ffmpeg configure 需要 POSIX shell 执行；--toolchain=msvc 让 cc=cl/ar=lib
           # --disable-asm 绕开 nasm（x264 汇编已由 vcpkg 预编进 .lib）
           # --enable-pic：静态库日后可包 DLL
-          # x264 路径：--extra-cflags/--extra-ldflags 直接给（不经 pkg-config）
-          $x264Inc = ($x264Dir + "\include").Replace('\', '/')
-          $x264Lib = ($x264Dir + "\lib").Replace('\', '/')
           & sh.exe -c @"
             ./configure \
               --toolchain=msvc \
@@ -173,9 +204,6 @@ jobs:
               --enable-encoder=libx264 --enable-libx264 --enable-gpl \
               --enable-protocol=file --enable-filter=fps,scale,format,null,pad,crop \
               --enable-pic \
-              --extra-cflags="-I$x264Inc" \
-              --extra-ldflags="/LIBPATH:$x264Lib" \
-              --extra-libs=libx264.lib \
               --prefix=`$(pwd)/build
           "@
           if ($LASTEXITCODE -ne 0) { throw "configure 失败" }
