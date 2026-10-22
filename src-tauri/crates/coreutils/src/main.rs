@@ -29,7 +29,9 @@
 //! vim（仅 Windows：vim 源码 vendor/vim 走上游官方 VIMDLL 形态，nmake 产出
 //! vim64.dll 运行时加载 FFI 直调 VimMain，数据树随包放安装根 vim-runtime/，
 //! 见 vim_impl.rs；属 OWN_ARGV 家族，仅硬链接短名模式可用）；
-//! which / ps / top 为自研（unix_extras.rs / ps.rs / top.rs）。
+//! which / ps / top 为自研（unix_extras.rs / ps.rs / top.rs）；free
+//! （内存/交换查看，GNU procps free 兼容子集）为 sysinfo 数据源自研
+//! （free_impl.rs，仅注册进 Windows 清单，同 data-encoding 家族的门控形态）。
 //!
 //! 安装侧：主程序启动时在 `tools/` 下为本二进制创建硬链接短名入口
 //! （`ls.exe`/`grep.exe`/…），PATH 注入后用户直接敲短名即用；无任何 .bat 转发，
@@ -38,6 +40,7 @@
 mod coreutils;
 mod dll_paths;
 mod encodings_impl;
+mod free_impl;
 mod goffi_impl;
 mod ncat_impl;
 mod nmap_impl;

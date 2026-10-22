@@ -25,7 +25,9 @@
 //! 家族的门控形态）；zoxide 由 vendor 源码（ajeetdsouza/zoxide）静态链入
 //! （lib.rs 可注入入口，eza 同型，仅进 Windows 清单）；dog 由 vendor 源码
 //! （ogham/dog，DNS 客户端）静态链入（lib.rs 可注入入口，eza/zoxide 同型，
-//! 仅进 Windows 清单，TLS 走 native-tls 无需 OpenSSL）。
+//! 仅进 Windows 清单，TLS 走 native-tls 无需 OpenSSL）；free（GNU procps
+//! free 兼容子集，内存/交换查看）由 sysinfo 数据源自研（free_impl.rs，
+//! 仅进 Windows 清单，同 data-encoding 家族的门控形态）。
 //! chcon/runcon 依赖 SELinux，不集成。
 
 use std::ffi::OsString;
@@ -100,6 +102,10 @@ fn run_uutils(name: &str, args: &[OsString]) -> i32 {
         "false" => uu_false::uumain(it),
         "fmt" => uu_fmt::uumain(it),
         "fold" => uu_fold::uumain(it),
+        // free（GNU procps free 兼容子集）：sysinfo 数据源自研（free_impl.rs）。
+        // 同 data-encoding 家族：仅注册进 Windows 命令清单，分发臂跨平台编译，
+        // macOS 单测直接经 run_uutils 验证接线与行为（见 free_dispatch_and_behavior）
+        "free" => crate::free_impl::run(args),
         "grep" => uu_grep::uumain(it),
         "head" => uu_head::uumain(it),
         "hex" => crate::encodings_impl::enc_main(it),
@@ -725,6 +731,26 @@ mod tests {
             run_uutils("dog", &s(&[ns.as_str(), "example.com", "--tcp", "--colour", "never"])),
             1
         );
+    }
+
+    /// free 接线与行为：命令仅注册进 Windows 清单（同 data-encoding 家族），
+    /// 绕过清单直接验证分发臂 → free_impl::run 的通路；真实输出行为（GNU
+    /// 对齐/单位换算/-h 缩放/-t 合计行）由 free_impl 自带的参数化单测覆盖。
+    /// 注意 GNU free 的 -h 是 --human（procps 家族惯例），与 ps/top 相反。
+    #[test]
+    fn free_dispatch_and_behavior() {
+        let s = |v: &[&str]| -> Vec<OsString> { v.iter().map(OsString::from).collect() };
+
+        assert_eq!(run_uutils("free", &s(&["--version"])), 0);
+        assert_eq!(run_uutils("free", &s(&["-V"])), 0);
+        assert_eq!(run_uutils("free", &s(&["--help"])), 0);
+        // 正常出表（含 -h 人类可读）也应退出 0
+        assert_eq!(run_uutils("free", &s(&[])), 0);
+        assert_eq!(run_uutils("free", &s(&["-h"])), 0);
+        assert_eq!(run_uutils("free", &s(&["-m", "-t"])), 0);
+        // GNU 语义：多单位选项与非法选项/操作数退出 1
+        assert_eq!(run_uutils("free", &s(&["-m", "-g"])), 1);
+        assert_eq!(run_uutils("free", &s(&["--veloterm-invalid-flag"])), 1);
     }
 
     #[test]
