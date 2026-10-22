@@ -529,8 +529,16 @@ ENDIF()
 
 SIGN_TARGET(libobclnt)
 
+# veloterm patch (Windows ARM64): upstream hardcodes /machine:x64 for any
+# 8-byte-pointer MSVC build - ARM64 objects are also 8-byte pointers, so
+# lib.exe archives them into an x64-target archive (LNK1112). Dispatch the
+# librarian machine type by target processor instead.
 IF(CMAKE_SIZEOF_VOID_P EQUAL 8 AND MSVC)
-  SET_TARGET_PROPERTIES(obclnt PROPERTIES STATIC_LIBRARY_FLAGS "/machine:x64")
+  IF(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
+    SET_TARGET_PROPERTIES(obclnt PROPERTIES STATIC_LIBRARY_FLAGS "/machine:ARM64")
+  ELSE()
+    SET_TARGET_PROPERTIES(obclnt PROPERTIES STATIC_LIBRARY_FLAGS "/machine:x64")
+  ENDIF()
 ENDIF()
 
 IF(CMAKE_SYSTEM_NAME MATCHES "Linux" OR

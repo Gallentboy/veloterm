@@ -59,28 +59,34 @@ app 侧暂无 sys-crate / FFI 消费方，本段只在车道验证（产物不�
 `src-tauri/binaries/`）。接线时：加 `vendor/obclient-sys`（发链接旗标）+
 `db_browser` 引擎第三臂。
 
-## 本地修补（两处源码 + 一处构建旗标，升级时重放）
+## 本地修补（三处源码 + 一处构建旗标，升级时重放）
 
 上游从未发布过 Windows 产物（GitHub releases 只有 Linux RPM + macOS 包），
-MSVC 编译有三处坑：
+MSVC 编译有四处坑：
 
 1. `libmariadb/ob_protocol20.c`：静态 mutex + init_flag 双检锁 → Windows 臂
    改 `INIT_ONCE`（`INIT_ONCE_STATIC_INIT` 静态可构造，语义等价），POSIX 臂
    原样保留（`#ifdef _WIN32` 分枝）；受回调引用的数组声明前置
 2. `libmariadb/ob_full_link_trace.c`：同型同改
-3. **构建旗标**（非源码修补）：MSVC 的 C `inline`（ma_global.h 在 _MSC_VER
+3. `libmariadb/CMakeLists.txt`（obclnt 静态库的 STATIC_LIBRARY_FLAGS）：上游
+   对 8 字节指针的 MSVC 构建硬编码 `/machine:x64`——ARM64 对象同为 8 字节
+   指针，lib.exe 被迫按 x64 归档（LNK1112）。改为按目标处理器分派
+   （ARM64 → `/machine:ARM64`），x64 分支保持原样
+4. **构建旗标**（非源码修补）：MSVC 的 C `inline`（ma_global.h 在 _MSC_VER
    下映射为 `__inline`）不发射外部符号，`ob_serialize.c` 的 40 个
    `encode_*/decode_*` inline 定义被其他编译单元引用即 LNK2019（CI 实测
    `encode_i64`/`decode_i64`，ob_object.c 等还有同类隐患）。解法走上游
    ma_global.h 自带的逃生开关 `-DHAVE_BROKEN_INLINE`（`#undef inline` /
    `#define inline` 空），经 env `CFLAGS` 注入（见
-   `scripts/build-obclient.mjs` 的配置调用注释）
+   `scripts/build-obclient.mjs` 的配置调用注释）；win-arm64 腿另降 `/O1`
+   （windows-11-arm 的 MSVC 后端在 /O2 代码生成阶段确定性崩溃——CL.exe
+   0xC0000005，编译器缺陷非源码问题，x64 腿 /O2 全绿）
 
 其余源码零改动（OB 增量代码的 `_WIN32` 守卫齐全，实测仅上述遗漏）。
 
 ## 升级
 
 换整树（对照上游 release，`rpm/libobclient-VER.txt` 取新版本）→ 全树扫描
-确认零 CRLF → **重放上述两处 INIT_ONCE 补丁**（构建旗标在脚本里无需重放）
-→ 重跑车道。veloterm 侧资产：本目录（veloterm-win/）、
+确认零 CRLF → **重放上述三处源码补丁**（构建旗标在脚本里无需重放）→
+重跑车道。veloterm 侧资产：本目录（veloterm-win/）、
 `scripts/build-obclient.mjs`、外层 .gitattributes 规则。
