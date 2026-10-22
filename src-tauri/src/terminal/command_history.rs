@@ -408,17 +408,11 @@ pub fn init_enabled_from_db(pool: &DbPool) {
     }
 }
 
-/// 持久化开关到 kv（由命令层调用；写库失败不影响内存态）
+/// 持久化开关到 kv（由命令层调用；写库失败不影响内存态）。
+/// 走 db::set_kv（app_kv.updated_at NOT NULL，裸 INSERT 漏该列会约束失败）
 pub fn persist_enabled(pool: &DbPool, enabled: bool) {
-    let Ok(conn) = pool.get() else {
-        return;
-    };
     let value = if enabled { "1" } else { "0" };
-    let _ = conn.execute(
-        "INSERT INTO app_kv (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        rusqlite::params![ENABLED_KV_KEY, value],
-    );
+    let _ = crate::db::set_kv(pool, ENABLED_KV_KEY, value);
 }
 
 // ===== 查询 / 清理（命令层调用） =====
