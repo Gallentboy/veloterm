@@ -60,7 +60,9 @@ export function CastPlayerModal({ recording, onClose }: CastPlayerModalProps) {
     const term = new XTerm({
       cols: recording.header.width,
       rows: recording.header.height,
-      fontSize: 12,
+      // 与主终端同参（TerminalSession 默认 13；后端不回填 profile 字段，
+      // 主终端实际生效的即是这套默认值）——现感需与真终端一致
+      fontSize: 13,
       fontFamily: PLAYER_FONT_FAMILY,
       cursorBlink: false,
       scrollback: PLAYER_SCROLLBACK_LINES,
@@ -129,9 +131,13 @@ export function CastPlayerModal({ recording, onClose }: CastPlayerModalProps) {
       className="w-[780px]"
     >
       <div className="flex min-h-0 flex-col gap-3">
+        {/* terminal-xterm-shell 与主终端同款：背景由主题背景填满（不能另加
+            bg-black/p-2——主题背景非黑时会露出黑边）、滚动条走同一套
+            xterm-scrollable-element 细胶囊样式；overflow-hidden 交给
+            xterm 自管，容器不二次滚动 */}
         <div
           ref={containerRef}
-          className="max-h-[55vh] min-h-0 overflow-auto rounded-md border border-border bg-black p-2"
+          className="terminal-xterm-shell max-h-[55vh] min-h-0 overflow-hidden rounded-md border border-border"
         />
         <div className="flex flex-wrap items-center gap-2 text-ui-sm text-foreground-subtle">
           <button
