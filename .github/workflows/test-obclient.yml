@@ -1,6 +1,7 @@
 # 目标（单一）：obconnector-c（OceanBase libobclient）的 Windows x64 编译验证
 # 车道（MSVC + CMake + vcpkg OpenSSL 静态库），见 src-tauri/vendor/obconnector-c/
-# veloterm-win/README.md 与 scripts/build-tools.mjs 的 obclient 段。
+# veloterm-win/README.md 与 scripts/build-obclient.mjs（独立脚本，不经
+# build-tools.mjs——其尾段 nmap 无条件构建，与 obclient 无关）。
 # app 侧数据库驱动的 vendor（OB Oracle 模式私有协议层），尚未接线消费——本
 # 车道验证「MSVC 能编通 + 静态库可链可跑（冒烟）」并留存产物。
 # 依赖：CMake/VS（runner 自带）+ OpenSSL 静态库（vcpkg manifest 安装，与
@@ -81,9 +82,9 @@ jobs:
           echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
-      # obclient 段：上游树 CMake 配置 + Release 构建 + 产物断言 + 静态链冒烟
-      - name: Build obconnector-c (obclient segment)
-        run: node scripts/build-tools.mjs --only obclient
+      # obclient 构建：上游树 CMake 配置 + Release 构建 + 产物断言 + 静态链冒烟
+      - name: Build obconnector-c
+        run: node scripts/build-obclient.mjs
 
       - name: Upload obclient artifact
         uses: actions/upload-artifact@v7
