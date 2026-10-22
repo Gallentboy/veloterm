@@ -208,10 +208,12 @@ jobs:
           "@
           if ($LASTEXITCODE -ne 0) { throw "configure 失败" }
 
-          # 并行核数：按逻辑处理器数（CI runner 通常 2-4 核）
+          # 并行核数：按逻辑处理器数（CI runner 通常 2-4 核）。
+          # PowerShell 会把 `-j4` 当自己的参数解析 → 用字符串拼接传参
           $jobs = [Environment]::ProcessorCount
-          Write-Host "make -j$jobs (ProcessorCount=$jobs)"
-          & make.exe -j$jobs
+          $makeArg = "-j$jobs"
+          Write-Host "make $makeArg (ProcessorCount=$jobs)"
+          & make.exe $makeArg
           if ($LASTEXITCODE -ne 0) { throw "make 失败" }
 
       # 收集 .lib 族：改名为 build.rs 期望的无 lib 前缀形态
