@@ -90,8 +90,14 @@ jobs:
         shell: pwsh
         run: |
           $vcpkgRoot = if ($env:VCPKG_INSTALLATION_ROOT) { "$env:VCPKG_INSTALLATION_ROOT" } else { "C:\vcpkg" }
-          # 在 triplet 文件里声明只编 release（省一半时间）
+          # 在 triplet 文件里声明只编 release（省一半时间）。
+          # 注意路径：官方 triplet 在 triplets/，community 在 triplets/community/
+          # （x64-windows-static 官方、arm64-windows-static community）
           $tripletFile = "$vcpkgRoot\triplets\${{ matrix.triplet }}.cmake"
+          if (-not (Test-Path $tripletFile)) {
+            $tripletFile = "$vcpkgRoot\triplets\community\${{ matrix.triplet }}.cmake"
+          }
+          if (-not (Test-Path $tripletFile)) { throw "triplet 文件未找到: ${{ matrix.triplet }}" }
           Add-Content -Path $tripletFile -Value "`r`nset(VCPKG_BUILD_TYPE release)"
           Write-Host "triplet 已追加 release-only: $tripletFile"
           git config --global --add safe.directory "$vcpkgRoot"
