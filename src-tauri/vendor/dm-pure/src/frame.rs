@@ -26,6 +26,9 @@ pub const CMD_EXECUTE: i16 = 5;
 pub const CMD_EXEC_COMPLETE: i16 = 4;
 pub const CMD_FETCH: i16 = 44;
 pub const CMD_BIND: i16 = 13;
+/// 「还有后续帧」续帧标志（官方 JDBC 的 `ad.e(ad)` 读帧循环以此判定是否
+/// 继续读下一帧：`if (cmd != 269) break;`）。veloterm 补丁 #1。
+pub const CMD_MORE_RESULTS: i16 = 269;
 pub const MAX_MSG_LEN: usize = 0x2000_0000;
 
 /// 构造 64 字节帧头。`opts` 为参数区内容（最多 44 字节），其余补零。

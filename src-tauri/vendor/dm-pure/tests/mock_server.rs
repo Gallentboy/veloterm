@@ -244,9 +244,50 @@ fn mock_server_fetch_loop(listener: TcpListener) -> thread::JoinHandle<()> {
     })
 }
 
+/// 会话命令（SET SCHEMA / SET NAMES 等）回归：服务器只回 cmd=0 终态帧、
+/// 不产生 cmd=187 结果帧。veloterm 补丁 #1 之前，execute 的读帧循环以
+/// 「等到 187」为终止条件，遇到这种回包会永久阻塞到 socket 超时
+/// （实测 60s 后 EAGAIN → -6852 网络异常）。
 #[test]
-fn e2e_fetch_loop_large_nonparam() {
+fn e2e_session_command_no_result_frame() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = FrameReader::new(stream.try_clone().unwrap());
+
+        // 握手 + 登录（复用现有回放）
+        let _ = reader.read_frame().unwrap();
+        stream.write_all(&mock_responses::RESP0).unwrap();
+        let _ = reader.read_frame().unwrap();
+        stream.write_all(&mock_responses::RESP1).unwrap();
+        // 会话查询
+        let _ = reader.read_frame().unwrap();
+        stream.write_all(&mock_responses::RESP2).unwrap();
+
+        // SET SCHEMA：cmd=5 → 只回 cmd=0 终态帧（无 187）
+        let f = reader.read_frame().unwrap();
+        assert_eq!(f.cmd, 5);
+        assert!(f.body.starts_with(b"SET SCHEMA"));
+        stream.write_all(&mock_responses::RESP4).unwrap();
+        // 客户端随后补发的 cmd=4（释放语句）→ 再回一个终态帧
+        let _ = reader.read_frame().unwrap();
+        stream.write_all(&mock_responses::CMD4_RESP2).unwrap();
+    });
+
+    let mut c = DmClient::new(&addr.ip().to_string(), addr.port(), "SYSDBA", "password");
+    c.connect().expect("连接失败");
+    // 关键断言：不阻塞、不报错，按「影响 0 行」的成功返回
+    let r = c
+        .execute("SET SCHEMA TEST", &[])
+        .expect("会话命令应成功返回，而不是阻塞到超时");
+    assert_eq!(r.affected(), Some(0), "会话命令应返回影响 0 行");
+    c.close();
+    handle.join().unwrap();
+}
+
+#[test]
+fn e2e_fetch_loop_large_nonparam() {    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = mock_server_fetch_loop(listener);
 

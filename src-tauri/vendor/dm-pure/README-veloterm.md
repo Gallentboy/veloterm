@@ -20,11 +20,11 @@
 
 ## 树内补丁清单
 
-**当前零代码补丁。** 后续补丁按「文件 / 位置 / 改动 / 依据」四段追加到本节，升级时逐条重放。
+后续补丁按「文件 / 位置 / 改动 / 依据」四段追加到本节，升级时逐条重放。
 
 | # | 文件 | 改动 | 依据 |
 | - | ---- | ---- | ---- |
-| — | — | （暂无） | — |
+| 1 | `src/client.rs`（`execute` 读帧循环）、`src/frame.rs`（新增 `CMD_MORE_RESULTS`） | 读帧终止条件由「等到 `cmd == 187` 结果帧」改为官方的「`cmd != 269` 即停」；无 187 时若存在终态帧（`cmd == 0`）按 `ExecuteResult::Affected(0)` 成功返回，不再报「执行未产生有效结果帧」 | **官方 JDBC 驱动反编译实证**（`DmJdbcDriver8.jar` 的 `dm.jdbc.a.a.e(ad)`）：读帧循环为 `read header(64) → len=buf[4..6] → cmd=buf[6..10] → if(len>0) read body → if(cmd != 269) break`，269(0x10D) 是续帧标志。原实现等 187，对 `SET SCHEMA` / `SET NAMES` / `ALTER SESSION` 这类**只回 cmd=0 终态帧**的会话命令会永久阻塞 → 60s socket 超时 → `EAGAIN` → `[CODE:-6852] 网络异常`（实测：达梦工作台切换当前库卡死转圈）。官方 JDBC 对这些语句同样返回 updateCount=0 的成功。回归测试：`tests/mock_server.rs::e2e_session_command_no_result_frame` |
 
 ## 相对上游删除的文件
 

@@ -11,7 +11,7 @@ use encoding_rs::{Encoding, EUC_KR, GB18030, UTF_8};
 use crate::crypto::{compute_session_key, new_client_keypair, SymmCipher, DES_CFB, DH_P_HEX};
 use crate::frame::{
     CMD_BIND, CMD_EXECUTE, CMD_EXEC_COMPLETE, CMD_FETCH, CMD_HANDSHAKE, CMD_LOGIN,
-    CMD_SESSION_QUERY, Frame, FrameReader,
+    CMD_MORE_RESULTS, CMD_SESSION_QUERY, Frame, FrameReader,
 };
 use crate::result::{
     decode_out_value, decode_scalar, encode_date, encode_datetime, encode_datetime2,
@@ -574,21 +574,25 @@ impl DmClient {
             }
         }
 
-        // 读取响应序列：结果帧为 cmd=187（结果集或影响行数）；cmd=0 是中间状态帧，继续读
+        // 读取响应序列（**按官方 JDBC 驱动的循环语义**，见 veloterm 补丁 #1）：
+        // 官方 dm.jdbc.a.a.e(ad) 的读帧循环以 `cmd != 269` 为终止条件——269
+        // (0x10D) 是「还有后续帧」的续帧标志，其他 cmd 读完当前帧即退出。
+        // 原实现「等到 cmd=187 才停」对 SET SCHEMA / SET NAMES 这类会话命令
+        // 会永久阻塞：它们只回 cmd=0 终态帧、永不产生 187 → 读到 60s socket
+        // 超时（EAGAIN / -6852 网络异常）。
         let mut frames: Vec<Frame> = prep_frames;
-        for _ in 0..4 {
-            // 若 cmd=13 响应已含结果帧（cmd=187），不再阻塞读取
-            if frames.iter().any(|x| x.cmd == 187) {
-                break;
-            }
-            let f = self.read_frame()?;
-            if f.retcode != 0 && f.retcode != 111 && f.retcode != 100 {
-                return Err(self.server_error(&f));
-            }
-            let is187 = f.cmd == 187;
-            frames.push(f);
-            if is187 {
-                break;
+        // 已有 187（参数化路径的 cmd=13 响应里可能直接带结果帧）时不再读
+        if !frames.iter().any(|x| x.cmd == 187) {
+            loop {
+                let f = self.read_frame()?;
+                if f.retcode != 0 && f.retcode != 111 && f.retcode != 100 {
+                    return Err(self.server_error(&f));
+                }
+                let cont = f.cmd == CMD_MORE_RESULTS;
+                frames.push(f);
+                if !cont {
+                    break;
+                }
             }
         }
 
@@ -676,7 +680,19 @@ impl DmClient {
         if params.is_empty() {
             let _ = self.send(CMD_EXEC_COMPLETE, &[0u8; 44], &[], stmt).and_then(|_| self.read_frame());
         }
-        result.ok_or_else(|| DmError::protocol("执行未产生有效结果帧"))
+        // 无结果帧（无 187）是**合法**的：SET SCHEMA / SET NAMES / ALTER SESSION
+        // 这类会话命令只回 cmd=0 终态帧，没有结果集也没有影响行数。官方 JDBC
+        // 对这些语句同样只返回 updateCount=0 的成功结果。veloterm 补丁 #1：
+        // 原实现此处报「执行未产生有效结果帧」，导致会话命令全部失败。
+        match result {
+            Some(r) => Ok(r),
+            // 终态帧存在且 retcode 已在上面的循环里校验过（非 0/111/100 早就
+            // 返回 server_error 了），到这说明服务器明确回了成功
+            None if frames.iter().any(|f| f.cmd == 0 || f.cmd == CMD_MORE_RESULTS) => {
+                Ok(ExecuteResult::Affected(0))
+            }
+            None => Err(DmError::protocol("执行未产生有效结果帧")),
+        }
     }
 
     /// 惰性查询：只拉第一帧（fetchSize 行），返回 (cols, state)。
