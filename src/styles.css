@@ -273,6 +273,41 @@ body {
   background: var(--color-border-hover) !important;
 }
 
+/* scrollbar-slim 的一半粗细（3px）：引擎选择行等「单行内容的横滑」场景——
+   5px 滚动条在行内上下撑高视觉突兀；轨道/滑块配色与 slim 同源 */
+.scrollbar-hair {
+  scrollbar-width: thin !important;
+}
+
+.scrollbar-hair::-webkit-scrollbar {
+  width: 3px !important;
+  height: 3px !important;
+}
+
+/* hover 时微涨到 4px：既保留细条观感，又扩大可抓取热区（WebKit 系
+   ::-webkit-scrollbar 支持 :hover；Firefox 的 scrollbar-width 无法
+   动态变粗，保持 thin 不变——本应用两运行时均为 WebKit/Chromium） */
+.scrollbar-hair::-webkit-scrollbar:hover {
+  width: 4px !important;
+  height: 4px !important;
+}
+
+.scrollbar-hair::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+
+.scrollbar-hair::-webkit-scrollbar-thumb {
+  min-height: 16px !important;
+  min-width: 16px !important;
+  border: none !important;
+  border-radius: 9999px !important;
+  background: var(--color-border) !important;
+}
+
+.scrollbar-hair::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-hover) !important;
+}
+
 /*
  * xterm 6 的自绘滚动条（VS Code 风格 .xterm-scrollable-element > .scrollbar）：
  * 颜色走主题钩子（terminalTheme 的 scrollbarSlider* 字段），
