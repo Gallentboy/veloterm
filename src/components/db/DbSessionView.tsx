@@ -975,10 +975,16 @@ export function DbSessionView({
       </div>
 
       {connectError ? (
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-destructive/20 bg-destructive/5 px-3 py-1 text-ui-xs text-destructive">
-          <AlertCircle className="size-3 shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{connectError}</span>
-          <button type="button" onClick={() => setConnectError(null)} className="opacity-70 hover:opacity-100">
+        <div className="flex shrink-0 items-start gap-1.5 border-b border-destructive/20 bg-destructive/5 px-3 py-1 text-ui-xs text-destructive">
+          <AlertCircle className="mt-0.5 size-3 shrink-0" />
+          {/* Oracle 错误是三行结构化文案（代码解释 / 原因 / 处理建议），
+              用 pre-wrap 保留换行；其余引擎的单行错误也自然兼容 */}
+          <span className="min-w-0 flex-1 whitespace-pre-wrap break-all">{connectError}</span>
+          <button
+            type="button"
+            onClick={() => setConnectError(null)}
+            className="shrink-0 opacity-70 hover:opacity-100"
+          >
             ✕
           </button>
         </div>

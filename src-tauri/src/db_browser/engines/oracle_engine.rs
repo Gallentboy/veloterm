@@ -46,24 +46,33 @@ pub(crate) fn oracle_error_text(code: i32) -> Option<OracleErrorText> {
     })
 }
 
-/// 把全量表的 cause/action 压成一行补充说明（拼在错误文案后）。
-/// 两者都空时返回空串（精简表命中即此情形）。
+/// 把中文解释组装成结构化三行：
 ///
-/// 不做长度截断：错误原因与处理建议是给用户看诊断信息，截断会丢关键步骤
-/// （实测中位数 70 字符、最长 1459 字符，完整输出更有用）。
-fn detail_suffix(text: &OracleErrorText) -> String {
-    let mut parts: Vec<&str> = Vec::new();
+/// ```text
+/// ORA-00942：表或视图不存在
+/// 原因：输入的表或视图不存在，使用了此处不允许的同义词……
+/// 处理建议：请检查以下各项: - 表名或视图名的拼写。……
+/// ```
+///
+/// 三段齐全时用三行（前端用 `whitespace-pre-wrap` 展示）；精简表只有
+/// message 时退化为单行 `ORA-xxxxx：摘要`——没有原因/建议就不留空行。
+///
+/// 不做长度截断：原因与处理建议是给用户看的诊断信息，截断会丢关键步骤
+///（实测中位数 70 字符、最长 1459 字符，完整输出更有用）。
+fn format_error_text(code: i32, text: &OracleErrorText, args: &str) -> String {
+    let mut out = format!("ORA-{code:05}：{}", text.message);
     if !text.cause.is_empty() {
-        parts.push(text.cause);
+        out.push_str("\n原因：");
+        out.push_str(text.cause);
     }
     if !text.action.is_empty() {
-        parts.push(text.action);
+        out.push_str("\n处理建议：");
+        out.push_str(text.action);
     }
-    if parts.is_empty() {
-        String::new()
-    } else {
-        format!("（{}）", parts.join(" "))
+    if !args.is_empty() {
+        out.push_str(args);
     }
+    out
 }
 
 /// oracle_async::Error → 展示文案。
@@ -85,19 +94,25 @@ pub(crate) fn oracle_err(e: oracle_async::Error) -> String {
             if raw.contains("No message file") || raw.contains("not found;") {
                 let args = extract_error_arguments(raw);
                 return match text {
-                    Some(t) => format!(
-                        "ORA-{code:05}：{}{}{}",
-                        t.message,
-                        detail_suffix(&t),
-                        args
-                    ),
+                    Some(t) => format_error_text(code, &t, &args),
                     None => format!("ORA-{code:05}：详见 Oracle 官方错误文档{args}"),
                 };
             }
             match text {
-                // 服务器原文可读：原文 + 中文解释（避免原文已含该中文时重复）
+                // 服务器原文可读：原文一行 + 中文解释（避免原文已含该中文时重复）
                 Some(t) if !raw.contains(t.message) => {
-                    format!("ORA-{code:05}: {raw}（{}{}）", t.message, detail_suffix(&t))
+                    let mut out = format!("ORA-{code:05}: {raw}");
+                    out.push_str("\n中文：");
+                    out.push_str(t.message);
+                    if !t.cause.is_empty() {
+                        out.push_str("\n原因：");
+                        out.push_str(t.cause);
+                    }
+                    if !t.action.is_empty() {
+                        out.push_str("\n处理建议：");
+                        out.push_str(t.action);
+                    }
+                    out
                 }
                 _ => {
                     if raw.is_empty() {
@@ -117,15 +132,23 @@ pub(crate) fn oracle_err(e: oracle_async::Error) -> String {
                 let code_str = &msg[pos + 4..];
                 let digits: String = code_str.chars().take_while(|c| c.is_ascii_digit()).collect();
                 if let Some(text) = digits.parse::<i32>().ok().and_then(oracle_error_text) {
+                    let code = digits.parse::<i32>().unwrap_or(0);
                     if msg.contains("No message file") {
-                        return format!(
-                            "ORA-{:05}：{}{}",
-                            digits.parse::<i32>().unwrap_or(0),
-                            text.message,
-                            detail_suffix(&text)
-                        );
+                        return format_error_text(code, &text, "");
                     }
-                    return format!("{msg}（{}{}）", text.message, detail_suffix(&text));
+                    // 非 Server 变体的文本通常已含服务器原文：原文一行 + 中文解释
+                    let mut out = msg;
+                    out.push_str("\n中文：");
+                    out.push_str(text.message);
+                    if !text.cause.is_empty() {
+                        out.push_str("\n原因：");
+                        out.push_str(text.cause);
+                    }
+                    if !text.action.is_empty() {
+                        out.push_str("\n处理建议：");
+                        out.push_str(text.action);
+                    }
+                    return out;
                 }
             }
             msg
