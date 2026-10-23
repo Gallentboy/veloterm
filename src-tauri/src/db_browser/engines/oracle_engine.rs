@@ -27,6 +27,7 @@ pub(crate) fn oracle_client_dir() -> Result<Option<String>, String> {
 /// oracle::Error → 展示文案。DPI-1047 = Oracle 客户端库缺失（运行期依赖
 /// Instant Client），追加安装提示——这是 rust-oracle 形态下最常见的环境错。
 /// 缺消息文件形态（macOS 包现实，见 oracle_missing_message_hint）先兜底。
+#[inline]
 pub(crate) fn oracle_err(e: oracle::Error) -> String {
     if let Some(mapped) = oracle_missing_message_hint(&e) {
         return mapped;
@@ -72,6 +73,7 @@ fn oracle_missing_message_hint(e: &oracle::Error) -> Option<String> {
 
 /// 常见 ORA 错误码内置文案（仅覆盖本应用高频路径：连接/认证/SQL 执行）。
 /// 未收录的码在 oracle_err 里回落为纯码 + 官方文档链接，不会误导。
+#[inline(always)]
 pub(crate) fn oracle_ora_hint(code: i32) -> Option<&'static str> {
     Some(match code {
         1 => "违反唯一约束",
@@ -164,12 +166,14 @@ pub(crate) fn ob_oracle_usernames(conn: &mut obclient::ObConn) -> Result<Vec<Str
 
 /// SQL 字符串字面量单引号翻倍（obclient 臂无绑定参数，目录 SQL 的过滤值
 /// 内联拼接——Oracle 单引号转义规则）。
+#[inline(always)]
 pub(crate) fn ob_quote_literal(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
 /// OB 单元格 → 展示字符串（None = NULL 列；字节流 lossy 转串，与
 /// emit 流式臂的展示语义一致）。
+#[inline(always)]
 pub(crate) fn ob_cell_string(cell: &Option<Vec<u8>>) -> String {
     match cell {
         None => "NULL".to_string(),
@@ -178,6 +182,7 @@ pub(crate) fn ob_cell_string(cell: &Option<Vec<u8>>) -> String {
 }
 
 /// Row 按列取字符串（SqlValue 的 Display 内置 NULL 处理与各类型形态；越界列回 NULL）
+#[inline(always)]
 pub(crate) fn oracle_row_string(row: &oracle::Row, i: usize) -> String {
     row.sql_values()
         .get(i)

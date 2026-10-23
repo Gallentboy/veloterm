@@ -3803,6 +3803,7 @@ const REDIS_ELEMENT_CAP: usize = 200;
 const REDIS_STREAM_CAP: usize = 100;
 
 /// `db3` / `3` → 3（大小写不敏感的前缀剥离）。空串/不可解析 → None。
+#[inline]
 pub(crate) fn parse_redis_db(value: &str) -> Option<u32> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -3978,6 +3979,7 @@ fn native_roots_pem() -> Result<String, String> {
 }
 
 
+#[inline]
 fn format_float(v: f64) -> String {
     if v.fract() == 0.0 && v.is_finite() && v.abs() < 1e15 {
         // 整数值去掉 .0（与 sqlite_viewer 一致）
