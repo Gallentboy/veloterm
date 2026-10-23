@@ -666,6 +666,12 @@ pub(crate) struct MysqlOpts {
     /// Sending passwords as cleartext may be a security problem in some configurations. Please
     /// consider using TLS or encrypted tunnels for server connection.
     enable_cleartext_plugin: bool,
+
+    /// veloterm 分叉新增：握手时上报 OB 能力位（connect attrs 携带
+    /// OBCLIENT_CAP_OB_PROTOCOL_V2），服务端在 OK 包 session-track 回显确认后
+    /// 切换为 ob20 包格式（对 OceanBase Oracle 租户；默认 false——对普通
+    /// MySQL 服务器无副作用，能力位不会回显，连接保持标准形态）。
+    ob_protocol20: bool,
 }
 
 /// Mysql connection options.
@@ -979,6 +985,11 @@ impl Opts {
         self.inner.mysql_opts.prefer_socket
     }
 
+    /// 是否启用 OceanBase 2.0 协议层（veloterm 分叉新增，见字段说明）
+    pub fn ob_protocol20(&self) -> bool {
+        self.inner.mysql_opts.ob_protocol20
+    }
+
     /// Path to unix socket (or named pipe on Windows) (defaults to `None`).
     ///
     /// # Connection URL
@@ -1126,6 +1137,7 @@ impl Default for MysqlOpts {
             tcp_nodelay: true,
             local_infile_handler: None,
             pool_opts: Default::default(),
+            ob_protocol20: false,
             conn_ttl: None,
             stmt_cache_size: DEFAULT_STMT_CACHE_SIZE,
             ssl_opts: None,
@@ -1356,6 +1368,12 @@ impl OptsBuilder {
     /// Defines `prefer_socket` option. See [`Opts::prefer_socket`].
     pub fn prefer_socket<T: Into<Option<bool>>>(mut self, prefer_socket: T) -> Self {
         self.opts.prefer_socket = prefer_socket.into().unwrap_or(true);
+        self
+    }
+
+    /// Defines `ob_protocol20` option. See [`Opts::ob_protocol20`].
+    pub fn ob_protocol20<T: Into<Option<bool>>>(mut self, ob_protocol20: T) -> Self {
+        self.opts.ob_protocol20 = ob_protocol20.into().unwrap_or(false);
         self
     }
 
