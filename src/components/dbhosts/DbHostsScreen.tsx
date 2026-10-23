@@ -4,6 +4,7 @@
  * onConnectConnection 派发 window 事件跳数据库工作台页自动开 tab。
  * 页头另有「Oracle 客户端」设置弹层：Oracle 引擎运行期 dlopen Instant
  * Client，用户可指定库目录（进程级一次初始化，改目录需重启生效）。
+ * SQLite 引擎表单以数据库文件路径 + 加密方式（SQLCipher）取代主机/端口/SSL。
  * SSH 隧道（P1）未接入。
  */
 
@@ -38,9 +39,11 @@ import {
   oracleClientDirGet,
   oracleClientDirPick,
   oracleClientDirSet,
+  sqliteFilePick,
   type DbConnectionRecord,
   type DbConnectionTestResult,
   type DbEngineKind,
+  type SqliteEncryptionMode,
 } from '@/services/dbConnectionsService';
 import { cn } from '@/lib/utils';
 
@@ -48,13 +51,24 @@ const ENGINE_DEFAULT_PORTS: Record<DbEngineKind, number> = {
   mysql: 3306,
   postgres: 5432,
   oracle: 1521,
+  sqlite: 0,
 };
 
 const ENGINE_LABELS: Record<DbEngineKind, string> = {
   mysql: 'MySQL',
   postgres: 'PostgreSQL',
   oracle: 'Oracle',
+  sqlite: 'SQLite',
 };
+
+/** SQLite 加密方式（sqlcipher-raw 的 password 填 64 位十六进制原始密钥） */
+const SQLITE_ENCRYPTION_MODES: Array<{ value: SqliteEncryptionMode; labelKey: string }> = [
+  { value: 'none', labelKey: 'dbHosts.encryption_none' },
+  { value: 'sqlcipher4', labelKey: 'dbHosts.encryption_sqlcipher4' },
+  { value: 'sqlcipher3', labelKey: 'dbHosts.encryption_sqlcipher3' },
+  { value: 'sqlcipher2', labelKey: 'dbHosts.encryption_sqlcipher2' },
+  { value: 'sqlcipher-raw', labelKey: 'dbHosts.encryption_sqlcipher_raw' },
+];
 
 const SSL_MODES: Array<{ value: DbConnectionRecord['sslMode']; labelKey: string }> = [
   { value: 'disable', labelKey: 'dbHosts.ssl_disable' },
@@ -134,6 +148,8 @@ export function DbHostsScreen({
     port: 3306,
     database: null,
     serviceName: null,
+    dbPath: null,
+    encryptionMode: 'none',
     username: null,
     password: null,
     sslMode: 'disable',
@@ -230,9 +246,11 @@ export function DbHostsScreen({
                   ) : null}
                 </span>
                 <span className="truncate font-mono text-ui-xs text-foreground-subtle">
-                  {ENGINE_LABELS[record.engine]} · {record.host}:{record.port}
-                  {record.database ? `/${record.database}` : ''} ·{' '}
-                  {t(`dbHosts.ssl_${record.sslMode.replace('-', '_')}`)}
+                  {record.engine === 'sqlite'
+                    ? `${ENGINE_LABELS[record.engine]} · ${record.dbPath ?? ':memory:'}`
+                    : `${ENGINE_LABELS[record.engine]} · ${record.host}:${record.port}${
+                        record.database ? `/${record.database}` : ''
+                      } · ${t(`dbHosts.ssl_${record.sslMode.replace('-', '_')}`)}`}
                 </span>
               </div>
               <span className="flex shrink-0 items-center gap-0.5">
@@ -508,6 +526,11 @@ function DbConnectionFormDialog({
   const [port, setPort] = useState(String(node?.port ?? 3306));
   const [database, setDatabase] = useState(node?.database ?? '');
   const [serviceName, setServiceName] = useState(node?.serviceName ?? '');
+  // SQLite：文件路径（留空 = 内存库）+ 加密方式
+  const [dbPath, setDbPath] = useState(node?.dbPath ?? '');
+  const [encryptionMode, setEncryptionMode] = useState<SqliteEncryptionMode>(
+    node?.encryptionMode ?? 'none',
+  );
   const [username, setUsername] = useState(node?.username ?? '');
   // 回显已存密码（默认掩码，点眼睛可查看明文——PasswordInput 自带切换）；
   // 用户不动它保存即原值写回；主动清空保存则保留库中旧值（后端 None=保留语义）
@@ -528,25 +551,55 @@ function DbConnectionFormDialog({
         ? t('dbHosts.databaseLabelPg')
         : t('dbHosts.databaseLabelOracle');
 
-  // Oracle：服务名必填（连库必需）；database 降为可选的初始 schema
+  const isSqlite = engine === 'sqlite';
+
+  // SQLite 原始密钥必须 64 位十六进制（前端先挡一层，后端仍会校验）
+  const rawKeyOk =
+    encryptionMode !== 'sqlcipher-raw' || /^[0-9a-fA-F]{64}$/.test(password.trim());
+  // 编辑态留空 = 保留库中旧口令（后端 fill_password_from_store 会补）——
+  // 但前提是旧记录本来就有口令（旧记录不加密时库里没有口令可保留，
+  // 改成加密后必须重新填，否则保存成功、连接时才报「需要提供口令」）
+  const hasStoredKey = node != null && node.encryptionMode !== 'none';
+  const sqlitePasswordOk =
+    encryptionMode === 'none' || password.length > 0 || (hasStoredKey && password.length === 0);
+
+  // Oracle：服务名必填（连库必需）；database 降为可选的初始 schema。
+  // SQLite 无主机/端口概念（dbPath 留空 = 内存库），校验走口令分支。
   const canSave =
     !saving &&
     name.trim().length > 0 &&
-    host.trim().length > 0 &&
-    (engine !== 'oracle' || serviceName.trim().length > 0);
+    (isSqlite
+      ? rawKeyOk && sqlitePasswordOk
+      : host.trim().length > 0 && (engine !== 'oracle' || serviceName.trim().length > 0));
+
+  // 测试连接：SQLite 允许内存库（不加密时 dbPath 可留空），其余引擎仍需主机
+  const canTest = isSqlite
+    ? dbPath.trim().length > 0 || encryptionMode === 'none'
+    : host.trim().length > 0;
 
   const buildRecord = (): DbConnectionRecord => ({
     id: node?.id ?? 0,
     name: name.trim(),
     engine,
-    host: host.trim(),
-    port: Number.parseInt(port, 10) || ENGINE_DEFAULT_PORTS[engine],
-    database: database.trim() || null,
+    host: isSqlite ? '' : host.trim(),
+    port: isSqlite ? 0 : Number.parseInt(port, 10) || ENGINE_DEFAULT_PORTS[engine],
+    database: isSqlite ? null : database.trim() || null,
     serviceName: engine === 'oracle' ? serviceName.trim() || null : null,
-    username: username.trim() || null,
-    // 留空 = 更新时保留旧值（后端语义）；新建时空值即无密码
-    password: password.length > 0 || node == null ? password || null : null,
-    sslMode,
+    dbPath: isSqlite ? dbPath.trim() || null : null,
+    encryptionMode: isSqlite ? encryptionMode : 'none',
+    username: isSqlite ? null : username.trim() || null,
+    // 留空 = 更新时保留旧值（后端语义）；新建时空值即无密码。
+    // 例外：SQLite 从加密改回不加密时必须显式清空——否则库里残留的旧口令
+    // 会被带去打开明文库，SQLCipher 直接报 NOTADB（「口令错误或不是加密数据库」）
+    password:
+      isSqlite && encryptionMode === 'none'
+        ? node != null
+          ? ''
+          : null
+        : password.length > 0 || node == null
+          ? password || null
+          : null,
+    sslMode: isSqlite ? 'disable' : sslMode,
     sshHostId: null,
     envLevel,
     readonly,
@@ -556,7 +609,7 @@ function DbConnectionFormDialog({
   });
 
   const handleTest = async () => {
-    if (!host.trim() || testing) return;
+    if (!canTest || testing) return;
     setTesting(true);
     setTestResult(null);
     try {
@@ -601,7 +654,7 @@ function DbConnectionFormDialog({
             variant="outline"
             size="lg"
             className="h-8 px-3 text-ui-base"
-            disabled={!host.trim() || testing}
+            disabled={!canTest || testing}
             onClick={() => void handleTest()}
           >
             {testing ? (
@@ -638,13 +691,15 @@ function DbConnectionFormDialog({
 
         <FormField label={t('dbHosts.engineLabel')}>
           <div className="flex gap-1.5">
-            {(['mysql', 'postgres', 'oracle'] as const).map((kind) => (
+            {(['mysql', 'postgres', 'oracle', 'sqlite'] as const).map((kind) => (
               <button
                 key={kind}
                 type="button"
                 onClick={() => {
                   setEngine(kind);
                   setPort(String(ENGINE_DEFAULT_PORTS[kind]));
+                  // SQLite 无 TLS：切过去时把 SSL 归一为 disable，避免把 require 存进库
+                  if (kind === 'sqlite') setSslMode('disable');
                 }}
                 className={cn(
                   'flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-ui-xs transition-colors',
@@ -660,28 +715,110 @@ function DbConnectionFormDialog({
           </div>
         </FormField>
 
-        <div className="flex gap-3">
-          <div className="min-w-0 flex-[2]">
-            <FormField label={t('dbHosts.hostLabel')}>
-              <TextInput
-                value={host}
-                onChange={(e) => setHost(e.target.value)}
-                placeholder="10.0.0.5"
-                className="font-mono"
-              />
+        {isSqlite ? (
+          <>
+            <FormField label={t('dbHosts.dbPathLabel')} hint={t('dbHosts.dbPathMemoryHint')}>
+              <div className="flex gap-1.5">
+                <TextInput
+                  value={dbPath}
+                  onChange={(e) => setDbPath(e.target.value)}
+                  placeholder={t('dbHosts.dbPathPlaceholder')}
+                  className="font-mono"
+                />
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  className="size-8 shrink-0 rounded-md"
+                  onClick={() => {
+                    void sqliteFilePick()
+                      .then((picked) => {
+                        if (picked) setDbPath(picked);
+                      })
+                      .catch(() => undefined);
+                  }}
+                  aria-label={t('dbHosts.dbPathBrowse')}
+                  title={t('dbHosts.dbPathPickTitle')}
+                >
+                  <FolderOpen className="size-3.5" />
+                </Button>
+              </div>
             </FormField>
+
+            <div className="flex gap-3">
+              <div className="min-w-0 flex-1">
+                <FormField label={t('dbHosts.encryptionLabel')}>
+                  <SelectMenu
+                    value={encryptionMode}
+                    onChange={(v) => setEncryptionMode(v as SqliteEncryptionMode)}
+                    options={SQLITE_ENCRYPTION_MODES.map((m) => ({
+                      value: m.value,
+                      label: t(m.labelKey),
+                    }))}
+                  />
+                </FormField>
+              </div>
+              {/* 不加密时无需口令（条件渲染而非 disabled，语义更直接） */}
+              {encryptionMode !== 'none' ? (
+                <div className="min-w-0 flex-1">
+                  <FormField
+                    label={t('dbHosts.sqlitePasswordLabel')}
+                    hint={
+                      hasStoredKey && password.length === 0
+                        ? t('dbHosts.sqlitePasswordKeepHint')
+                        : t('dbHosts.sqlitePasswordHint')
+                    }
+                  >
+                    <PasswordInput
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder={
+                        hasStoredKey && password.length === 0
+                          ? t('dbHosts.passwordKeep')
+                          : '••••••'
+                      }
+                    />
+                  </FormField>
+                </div>
+              ) : null}
+            </div>
+
+            {/* 与 canSave 同一判定：加密但既没填、库里也没旧口令时提示 */}
+            {encryptionMode !== 'none' && !sqlitePasswordOk ? (
+              <span className="text-ui-xs text-destructive">
+                {t('dbHosts.sqlitePasswordRequired')}
+              </span>
+            ) : null}
+            {encryptionMode === 'sqlcipher-raw' && password.length > 0 && !rawKeyOk ? (
+              <span className="text-ui-xs text-destructive">
+                {t('dbHosts.sqliteRawKeyInvalid')}
+              </span>
+            ) : null}
+            <p className="text-ui-xs text-foreground-subtlest">{t('dbHosts.sqliteFileHint')}</p>
+          </>
+        ) : (
+          <div className="flex gap-3">
+            <div className="min-w-0 flex-[2]">
+              <FormField label={t('dbHosts.hostLabel')}>
+                <TextInput
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  placeholder="10.0.0.5"
+                  className="font-mono"
+                />
+              </FormField>
+            </div>
+            <div className="w-24 shrink-0">
+              <FormField label={t('dbHosts.portLabel')}>
+                <TextInput
+                  value={port}
+                  onChange={(e) => setPort(e.target.value)}
+                  placeholder="3306"
+                  className="font-mono"
+                />
+              </FormField>
+            </div>
           </div>
-          <div className="w-24 shrink-0">
-            <FormField label={t('dbHosts.portLabel')}>
-              <TextInput
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-                placeholder="3306"
-                className="font-mono"
-              />
-            </FormField>
-          </div>
-        </div>
+        )}
 
         {/* Oracle：服务名行（必填，连库必需；SSL 同行）；MySQL/PG 无此行 */}
         {engine === 'oracle' ? (
@@ -708,73 +845,80 @@ function DbConnectionFormDialog({
           </div>
         ) : null}
 
-        <div className="flex gap-3">
-          <div className="min-w-0 flex-1">
-            <FormField label={dbLabel}>
-              <DatabasePickerField
-                value={database}
-                onChange={setDatabase}
-                canLoad={
-                  engine === 'oracle'
-                    ? host.trim().length > 0 && serviceName.trim().length > 0
-                    : host.trim().length > 0
-                }
-                buildRecord={() => buildRecord()}
-                connectionId={node?.id}
-                placeholder={
-                  engine === 'oracle'
-                    ? t('dbHosts.schemaPlaceholder')
-                    : t('dbHosts.databasePlaceholder')
-                }
-                pickLabel={
-                  engine === 'oracle' ? t('dbHosts.pickSchema') : t('dbHosts.pickDatabase')
-                }
-              />
-            </FormField>
-          </div>
-          {engine !== 'oracle' ? (
-            <div className="w-36 shrink-0">
-              <FormField label={t('dbHosts.sslLabel')}>
-                <SelectMenu
-                  value={sslMode}
-                  onChange={(v) => setSslMode(v as DbConnectionRecord['sslMode'])}
-                  options={SSL_MODES.map((m) => ({ value: m.value, label: t(m.labelKey) }))}
+        {isSqlite ? null : (
+          <div className="flex gap-3">
+            <div className="min-w-0 flex-1">
+              <FormField label={dbLabel}>
+                <DatabasePickerField
+                  value={database}
+                  onChange={setDatabase}
+                  canLoad={
+                    engine === 'oracle'
+                      ? host.trim().length > 0 && serviceName.trim().length > 0
+                      : host.trim().length > 0
+                  }
+                  buildRecord={() => buildRecord()}
+                  connectionId={node?.id}
+                  placeholder={
+                    engine === 'oracle'
+                      ? t('dbHosts.schemaPlaceholder')
+                      : t('dbHosts.databasePlaceholder')
+                  }
+                  pickLabel={
+                    engine === 'oracle' ? t('dbHosts.pickSchema') : t('dbHosts.pickDatabase')
+                  }
                 />
               </FormField>
             </div>
-          ) : null}
-        </div>
+            {engine !== 'oracle' ? (
+              <div className="w-36 shrink-0">
+                <FormField label={t('dbHosts.sslLabel')}>
+                  <SelectMenu
+                    value={sslMode}
+                    onChange={(v) => setSslMode(v as DbConnectionRecord['sslMode'])}
+                    options={SSL_MODES.map((m) => ({ value: m.value, label: t(m.labelKey) }))}
+                  />
+                </FormField>
+              </div>
+            ) : null}
+          </div>
+        )}
 
-        <div className="flex gap-3">
-          <div className="min-w-0 flex-1">
-            <FormField label={t('dbHosts.userLabel')}>
-              <TextInput
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="root"
-                className="font-mono"
-              />
-            </FormField>
+        {/* SQLite 无用户名/密码凭证：口令字段已在上面的加密区块接管 */}
+        {isSqlite ? null : (
+          <div className="flex gap-3">
+            <div className="min-w-0 flex-1">
+              <FormField label={t('dbHosts.userLabel')}>
+                <TextInput
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="root"
+                  className="font-mono"
+                />
+              </FormField>
+            </div>
+            <div className="min-w-0 flex-1">
+              <FormField
+                label={t('dbHosts.passwordLabel')}
+                hint={
+                  node != null && password.length === 0
+                    ? t('dbHosts.passwordClearedHint')
+                    : node != null
+                      ? t('dbHosts.passwordSavedHint')
+                      : undefined
+                }
+              >
+                <PasswordInput
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={
+                    node != null && password.length === 0 ? t('dbHosts.passwordKeep') : '••••••'
+                  }
+                />
+              </FormField>
+            </div>
           </div>
-          <div className="min-w-0 flex-1">
-            <FormField
-              label={t('dbHosts.passwordLabel')}
-              hint={
-                node != null && password.length === 0
-                  ? t('dbHosts.passwordClearedHint')
-                  : node != null
-                    ? t('dbHosts.passwordSavedHint')
-                    : undefined
-              }
-            >
-              <PasswordInput
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder={node != null && password.length === 0 ? t('dbHosts.passwordKeep') : '••••••'}
-              />
-            </FormField>
-          </div>
-        </div>
+        )}
 
         <div className="flex gap-3">
           <div className="w-36 shrink-0">

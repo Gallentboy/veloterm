@@ -1,6 +1,7 @@
 //! 引擎层：MySQL（mysql_async）/ PostgreSQL（tokio-postgres）/ Oracle
-//!（vendor rust-oracle，官方 ODPI-C 绑定、同步 API，经 with_oracle 包裹）
-//! 的 enum 分发。不用 dyn trait —— async fn in trait 非 dyn-compatible，
+//!（vendor rust-oracle，官方 ODPI-C 绑定、同步 API，经 with_oracle 包裹）/
+//! SQLite（rusqlite，bundled-sqlcipher——支持 PRAGMA key 加密）四引擎的
+//! enum 分发。不用 dyn trait —— async fn in trait 非 dyn-compatible，
 //! 多变体 enum 是最轻的分发形态。
 //!
 //! TLS 四档映射（客户端实现视角）：
@@ -14,10 +15,21 @@
 //! TCPS 协议（证书校验粒度由 Instant Client 侧配置决定，四档统一开启
 //! TCPS、不回退明文）。
 //!
+//! SQLite 侧说明：本地文件库（db_path 空 = :memory:），打开不带 CREATE 标志
+//!（文件不存在即报错，绝不静默建空库）；加密走 SQLCipher 的 PRAGMA key
+//!（sqlcipher2/3 在 key 之后设 cipher_compatibility——SQLCipher 的该 pragma
+//! 要求 codec 已由 key 附加，反过来会被静默忽略；sqlcipher4 即默认档位，
+//! sqlcipher-raw 直接给 x'<64 位十六进制>' 原始密钥字面量）。rusqlite 的
+//! Connection 是 Send 非 Sync，所有阻塞调用经 with_sqlite 的 spawn_blocking
+//! 包裹（与 with_oracle 同型）；取消经 progress handler——每 1000 条 VDBE
+//! 指令轮询会话标志，命中即 SQLITE_INTERRUPT（exec_streaming 映射为
+//! cancelled=true，不是错误）。
+//!
 //! rustls provider 全局唯一（aws-lc-rs，见 Cargo.toml 约束），MySQL 侧用
 //! mysql_async 的 default-rustls feature 同源。
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -122,12 +134,65 @@ pub struct TableDetail {
 /// MySQL 列结构行：name / column_type / is_nullable / default / comment
 type MySqlColumnRow = (String, String, String, Option<String>, Option<String>);
 
+/// SQLite 引擎（本地文件库）。rusqlite::Connection 是 Send 非 Sync，
+/// 所有阻塞调用经 spawn_blocking 包裹（与 Oracle 的 with_oracle 同型）。
+pub struct SqliteEngine {
+    conn: rusqlite::Connection,
+    /// 会话取消标志：progress handler 每 1000 条 VDBE 指令轮询一次
+    cancelled: Arc<AtomicBool>,
+}
+
+impl SqliteEngine {
+    /// 绑定会话层取消标志并安装 progress handler（命中即中断当前语句）。
+    /// 标志用 Arc 共享：C 回调只拿到裸指针，Arc 的所有权留在 self.cancelled
+    /// 里保证指针在连接存活期间一直有效（rusqlite 的安全包装 progress_handler
+    /// 在 hooks feature 下才导出，本工程未启用，故直接经 ffi 注册）。
+    fn bind_cancel(&mut self, flag: Arc<AtomicBool>) {
+        // 幂等：同一标志已绑定过（handler 已装好）则无需重复注册
+        if Arc::ptr_eq(&self.cancelled, &flag) {
+            return;
+        }
+        // 先注册（指向局部 flag 的堆数据，此刻仍归本函数所有），再交给
+        // self.cancelled 持有：两步之间没有 SQLite 执行，回调不会被触发，
+        // 不会出现悬垂指针窗口。
+        let flag_ptr = Arc::as_ptr(&flag) as *mut std::os::raw::c_void;
+        // SAFETY: 回调只对该地址做原子读；地址有效性由 self.cancelled 的 Arc 保证。
+        unsafe {
+            rusqlite::ffi::sqlite3_progress_handler(
+                self.conn.handle(),
+                1000,
+                Some(sqlite_progress_trampoline),
+                flag_ptr,
+            );
+        }
+        self.cancelled = flag;
+    }
+}
+
+/// progress handler 的 C 回调：返回非 0 即中断当前语句（SQLITE_INTERRUPT）。
+unsafe extern "C" fn sqlite_progress_trampoline(
+    ctx: *mut std::os::raw::c_void,
+) -> std::os::raw::c_int {
+    if ctx.is_null() {
+        return 0;
+    }
+    // SAFETY: ctx 由 bind_cancel 传入，指向存活的 AtomicBool（见该处说明）。
+    let flag = unsafe { &*(ctx as *const AtomicBool) };
+    if flag.load(std::sync::atomic::Ordering::Relaxed) {
+        1
+    } else {
+        0
+    }
+}
+
 /// 引擎实例：一会话一连接（单查询工作台模型，不做池）。Closed 为优雅关闭后的占位。
-/// Oracle 为同步驱动（rust-oracle 无 async），持有连接经 with_oracle 包裹调用。
+/// Oracle 为同步驱动（rust-oracle 无 async），持有连接经 with_oracle 包裹调用；
+/// SQLite 同为同步驱动（rusqlite），经 with_sqlite 包裹调用。
 pub enum DbEngine {
     MySql(mysql_async::Conn),
     Postgres(tokio_postgres::Client),
     Oracle(oracle::Connection),
+    Sqlite(SqliteEngine),
     Closed,
 }
 
@@ -138,6 +203,7 @@ impl DbEngine {
             "mysql" => Self::connect_mysql(record).await,
             "postgres" => Self::connect_postgres(record).await,
             "oracle" => Self::connect_oracle(record).await,
+            "sqlite" => Self::connect_sqlite(record).await,
             other => Err(format!("不支持的数据库引擎：{other}")),
         }
     }
@@ -147,6 +213,15 @@ impl DbEngine {
         let taken = std::mem::replace(self, DbEngine::Closed);
         if let DbEngine::MySql(conn) = taken {
             let _ = conn.disconnect().await;
+        }
+        // SQLite：rusqlite::Connection 的 Drop 即 sqlite3_close（文件句柄与加密
+        // codec 一并释放），无需显式动作
+    }
+
+    /// 绑定会话取消标志（仅 SQLite 生效：progress handler 轮询；其它引擎空操作）。
+    pub fn bind_cancel_flag(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        if let DbEngine::Sqlite(engine) = self {
+            engine.bind_cancel(flag);
         }
     }
 
@@ -302,6 +377,157 @@ impl DbEngine {
         Ok((DbEngine::Oracle(conn), version))
     }
 
+    /// 建 SQLite 连接：本地文件库（db_path 空 = :memory:），可选 SQLCipher
+    /// 加密。打开不带 CREATE 标志（文件不存在直接报错，不静默建空库）。
+    /// 加密参数顺序以 SQLCipher 源码为准：先 key（附加 codec 上下文）再
+    /// cipher_compatibility（该 pragma 只在 codec 已存在时生效）；KDF 惰性，
+    /// 首次读页才派生，故 key 之后、任何页访问之前设档位仍然有效。打开 +
+    /// 密钥校验会做 PBKDF2（SQLCipher 4 默认 256000 轮），整体放进
+    /// spawn_blocking。
+    async fn connect_sqlite(record: &DbConnectionRecord) -> Result<(DbEngine, String), String> {
+        let path = record
+            .db_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(":memory:")
+            .to_string();
+        let readonly = record.readonly;
+        let mode = record.encryption_mode.trim().to_string();
+        let password = record
+            .password
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        // 口令校验前置（不进阻塞线程，错误信息与加密方式一并给出）
+        let key_material = if mode == "none" {
+            None
+        } else if !matches!(
+            mode.as_str(),
+            "sqlcipher4" | "sqlcipher3" | "sqlcipher2" | "sqlcipher-raw"
+        ) {
+            return Err(format!("不支持的 SQLite 加密方式：{mode}"));
+        } else if password.is_empty() {
+            return Err("SQLite 加密数据库需要提供口令".to_string());
+        } else if mode == "sqlcipher-raw" {
+            // 原始密钥：SQLCipher 只认 x'<hex>' 字面量形态（长度恰为 key_sz*2+3
+            // 才走直用分支，否则会被当成口令做 PBKDF2）。要求 64 位十六进制
+            //（256-bit 密钥），不接受 96 位（key+salt）形态以免误解。
+            let hex = password
+                .strip_prefix("x'")
+                .and_then(|s| s.strip_suffix('\''))
+                .unwrap_or(password.as_str())
+                .trim();
+            if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err("SQLite 原始密钥必须是 64 位十六进制字符串".to_string());
+            }
+            Some(format!("x'{hex}'"))
+        } else {
+            Some(password)
+        };
+        let encrypted = key_material.is_some();
+        let (conn, version) = tokio::task::spawn_blocking(move || {
+            let flags = if readonly {
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_URI
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            } else {
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                    | rusqlite::OpenFlags::SQLITE_OPEN_URI
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            };
+            let conn = rusqlite::Connection::open_with_flags(&path, flags)
+                .map_err(|e| format!("SQLite 打开失败：{e}（{path}）"))?;
+            // 加密设置。顺序以 SQLCipher 源码为准（sqlite3.c 的
+            // sqlcipher_codec_pragma）：cipher_compatibility 分支要求 codec 上下文
+            // 已存在（`if(ctx)`），而 codec 由 PRAGMA key 经 sqlcipherCodecAttach
+            // 建立——所以必须先 key 再 compatibility，反过来 compatibility 会被
+            // 静默忽略（KDF 是惰性的：attach 只存口令，首次读页才派生密钥，故
+            // key 之后、任何页访问之前设 compatibility 仍然生效）。
+            if let Some(key) = key_material {
+                conn.pragma_update(None, "key", key.as_str())
+                    .map_err(|e| format!("SQLite 设置加密口令失败：{e}"))?;
+                let compat = match mode.as_str() {
+                    "sqlcipher2" => Some(2),
+                    "sqlcipher3" => Some(3),
+                    // sqlcipher4 即 SQLCipher 4 默认档位；raw 由密钥字面量决定，
+                    // 两者都不动 compatibility
+                    _ => None,
+                };
+                if let Some(v) = compat {
+                    conn.pragma_update(None, "cipher_compatibility", v)
+                        .map_err(|e| format!("SQLite 设置加密兼容档位失败：{e}"))?;
+                }
+            }
+            // 并发写锁等待（失败无副作用，忽略即可）
+            let _ = conn.busy_timeout(Duration::from_secs(5));
+            // 密钥校验：读 sqlite_master 即触发首块解密——口令错/非加密库在此
+            // 暴露（SQLITE_NOTADB），不留到用户第一条查询才报
+            if let Err(e) = conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(())) {
+                if matches!(
+                    e.sqlite_error_code(),
+                    Some(rusqlite::ffi::ErrorCode::NotADatabase)
+                ) {
+                    return Err(format!(
+                        "SQLite 打开失败：口令错误或不是加密数据库（{path}）"
+                    ));
+                }
+                return Err(format!("SQLite 打开失败：{e}（{path}）"));
+            }
+            let mut version = conn
+                .query_row("SELECT sqlite_version()", [], |row| row.get::<_, String>(0))
+                .map(|v| format!("SQLite {v}"))
+                .unwrap_or_else(|_| "SQLite".to_string());
+            if encrypted {
+                version.push_str(" · SQLCipher");
+            }
+            Ok::<_, String>((conn, version))
+        })
+        .await
+        .map_err(|e| format!("SQLite 连接任务失败：{e}"))??;
+        Ok((
+            DbEngine::Sqlite(SqliteEngine {
+                conn,
+                cancelled: Arc::new(AtomicBool::new(false)),
+            }),
+            version,
+        ))
+    }
+
+    /// 同步 SQLite 连接的阻塞包裹：连接取出 → spawn_blocking 内执行闭包 →
+    /// 连接归还（错误也归还；panic/取消置 Closed 由会话层重建）。与
+    /// with_oracle 同型——rusqlite 的 Connection 是 Send 非 Sync，不能跨
+    /// await 直接持有。
+    async fn with_sqlite<T, F>(&mut self, f: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce(&rusqlite::Connection) -> Result<T, String> + Send + 'static,
+    {
+        let taken = std::mem::replace(self, DbEngine::Closed);
+        let DbEngine::Sqlite(engine) = taken else {
+            *self = taken;
+            return Err("连接已关闭".to_string());
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            let r = f(&engine.conn);
+            (r, engine)
+        })
+        .await
+        .map_err(|e| format!("SQLite 任务失败：{e}"));
+        match result {
+            Ok((r, engine)) => {
+                *self = DbEngine::Sqlite(engine);
+                r
+            }
+            Err(e) => {
+                // JoinError（panic/取消）：连接已无法取回，置 Closed 由会话层重建
+                *self = DbEngine::Closed;
+                Err(e)
+            }
+        }
+    }
+
     /// 同步 Oracle 连接的阻塞包裹：连接取出 → spawn_blocking 内执行闭包 →
     /// 连接归还（错误/取消也归还，避免连接丢失）。闭包内可直接调用同步 API。
     async fn with_oracle<T, F>(&mut self, f: F) -> Result<T, String>
@@ -367,6 +593,12 @@ impl DbEngine {
                 // 见 oracle_usernames），切换走 select_database 的 CURRENT_SCHEMA
                 self.with_oracle(|conn| oracle_usernames(conn)).await
             }
+            DbEngine::Sqlite(_) => {
+                // 已附加的库（PRAGMA database_list 的 name 列：main/temp 及
+                // ATTACH 进来的库）。SQLite 无连接级切库，前端对 SQLite 隐藏
+                // 该选择器，此处仅为命令兼容
+                self.with_sqlite(sqlite_database_names).await
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -401,6 +633,11 @@ impl DbEngine {
                     Ok(())
                 })
                 .await
+            }
+            DbEngine::Sqlite(_) => {
+                // SQLite 无连接级切库（对象树顶层已是 database_list 的附加库），
+                // 会话层只更新元信息；不报错以保持命令语义一致
+                Ok(())
             }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
@@ -721,6 +958,170 @@ impl DbEngine {
                 })
                 .await
             }
+            DbEngine::Sqlite(_) => {
+                // DDL 直接取 sqlite_master.sql（建表原句，含列定义与约束）；
+                // 内部表（sqlite_ 前缀）sql 为 NULL 时降级用列元数据拼装。
+                // 列结构 PRAGMA table_info；索引 PRAGMA index_list + index_info
+                //（后者按 seqno 排序拼列名——index_list 只给索引名不给列）
+                let schema_o = schema.to_string();
+                let table_o = table.to_string();
+                self.with_sqlite(move |conn| {
+                    let schema_q = quote_ident(&schema_o)?;
+                    let table_lit = quote_string_literal(&table_o);
+                    let sql = format!(
+                        "SELECT sql FROM {schema_q}.sqlite_master \
+                         WHERE name = ?1 AND type IN ('table','view')"
+                    );
+                    let ddl = conn
+                        .query_row(&sql, [&table_o], |row| row.get::<_, Option<String>>(0))
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
+
+                    let col_sql = format!("PRAGMA {schema_q}.table_info({table_lit})");
+                    // table_info 列序：cid(0) name(1) type(2) notnull(3)
+                    // dflt_value(4) pk(5)。语句/行迭代器放进块作用域，出块即释放
+                    //（Statement 借用 conn，不能与后续 prepare 同时活跃）
+                    let columns: Vec<Vec<String>> = {
+                        let mut stmt = conn
+                            .prepare(&col_sql)
+                            .map_err(|e| format!("SQLite 查询列结构失败：{e}"))?;
+                        let mut rows = stmt
+                            .query_map([], |row| {
+                                Ok((
+                                    row.get::<_, String>(1)?,
+                                    row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                                    row.get::<_, i64>(3)?,
+                                    row.get::<_, Option<String>>(4)?,
+                                    row.get::<_, i64>(5)?,
+                                ))
+                            })
+                            .map_err(|e| format!("SQLite 查询列结构失败：{e}"))?;
+                        let mut out: Vec<Vec<String>> = Vec::new();
+                        for row in rows.by_ref() {
+                            let (name, data_type, notnull, dflt, pk) =
+                                row.map_err(|e| format!("SQLite 读取列结构失败：{e}"))?;
+                            out.push(vec![
+                                name,
+                                data_type,
+                                if notnull == 0 {
+                                    "YES".into()
+                                } else {
+                                    "NO".into()
+                                },
+                                dflt.unwrap_or_else(|| "NULL".into()),
+                                pk.to_string(),
+                            ]);
+                        }
+                        out
+                    };
+
+                    let idx_sql = format!("PRAGMA {schema_q}.index_list({table_lit})");
+                    // index_list 列序：seq(0) name(1) unique(2) origin(3) partial(4)
+                    let raw_indexes: Vec<(String, i64)> = {
+                        let mut stmt = conn
+                            .prepare(&idx_sql)
+                            .map_err(|e| format!("SQLite 查询索引失败：{e}"))?;
+                        let mut rows = stmt
+                            .query_map([], |row| {
+                                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+                            })
+                            .map_err(|e| format!("SQLite 查询索引失败：{e}"))?;
+                        let mut out: Vec<(String, i64)> = Vec::new();
+                        for row in rows.by_ref() {
+                            out.push(row.map_err(|e| format!("SQLite 读取索引失败：{e}"))?);
+                        }
+                        out
+                    };
+
+                    let mut indexes: Vec<Vec<String>> = Vec::with_capacity(raw_indexes.len());
+                    for (index_name, unique) in raw_indexes {
+                        let info_sql = format!(
+                            "PRAGMA {schema_q}.index_info({})",
+                            quote_string_literal(&index_name)
+                        );
+                        // index_info 列序：seqno(0) cid(1) name(2)。表达式索引的
+                        // 列名是 NULL（源码 sqlite3VdbeMultiLoad 传 0 → OP_Null），
+                        // 跳过——否则空项会混进列清单
+                        let mut cols: Vec<(i64, String)> = {
+                            let mut stmt = conn
+                                .prepare(&info_sql)
+                                .map_err(|e| format!("SQLite 查询索引列失败：{e}"))?;
+                            let mut rows = stmt
+                                .query_map([], |row| {
+                                    Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(2)?))
+                                })
+                                .map_err(|e| format!("SQLite 查询索引列失败：{e}"))?;
+                            let mut out: Vec<(i64, String)> = Vec::new();
+                            for row in rows.by_ref() {
+                                let (seqno, name) =
+                                    row.map_err(|e| format!("SQLite 读取索引列失败：{e}"))?;
+                                if let Some(name) = name.filter(|n| !n.is_empty()) {
+                                    out.push((seqno, name));
+                                }
+                            }
+                            out
+                        };
+                        cols.sort_by_key(|(seqno, _)| *seqno);
+                        let joined = cols
+                            .into_iter()
+                            .map(|(_, name)| name)
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        indexes.push(vec![
+                            index_name,
+                            if unique != 0 {
+                                "UNIQUE".into()
+                            } else {
+                                String::new()
+                            },
+                            joined,
+                        ]);
+                    }
+
+                    // DDL 降级：内部表/异常形态无 sql 文本，用列元数据拼装
+                    let ddl = if ddl.trim().is_empty() {
+                        let q = |v: &str| format!("\"{}\"", v.replace('"', "\"\""));
+                        let lines: Vec<String> = columns
+                            .iter()
+                            .map(|c| {
+                                let mut line = format!(
+                                    "  {} {}",
+                                    q(c.first().unwrap_or(&String::new())),
+                                    c.get(1).cloned().unwrap_or_default()
+                                );
+                                if c.get(2).map(|v| v == "NO").unwrap_or(false) {
+                                    line.push_str(" NOT NULL");
+                                }
+                                line
+                            })
+                            .collect();
+                        format!(
+                            "CREATE TABLE {}.{} (\n{}\n);",
+                            q(&schema_o),
+                            q(&table_o),
+                            lines.join(",\n")
+                        )
+                    } else {
+                        ddl
+                    };
+
+                    Ok(TableDetail {
+                        ddl,
+                        column_headers: vec![
+                            "Column".into(),
+                            "Type".into(),
+                            "Nullable".into(),
+                            "Default".into(),
+                            "PK".into(),
+                        ],
+                        columns,
+                        index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
+                        indexes,
+                    })
+                })
+                .await
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -901,6 +1302,11 @@ impl DbEngine {
                 })
                 .await
             }
+            DbEngine::Sqlite(_) => {
+                // SQLite 无函数/过程/序列对象（树上也不会出现这些分组），
+                // 此处仅防御性拒绝
+                Err(format!("SQLite 不支持 {kind} 对象"))
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -965,6 +1371,22 @@ impl DbEngine {
                 // 顶层 = schema（用户）：版本适配滤系统账号（oracle_usernames）
                 self.with_oracle(|conn| {
                     Ok(oracle_usernames(conn)?
+                        .into_iter()
+                        .map(|name| CatalogNode {
+                            key: name.clone(),
+                            name,
+                            kind: "schema".to_string(),
+                            detail: None,
+                        })
+                        .collect())
+                })
+                .await
+            }
+            DbEngine::Sqlite(_) => {
+                // 顶层 = 已附加的库（main/temp + ATTACH），与 PG/Oracle 的
+                // schema 顶层同形
+                self.with_sqlite(|conn| {
+                    Ok(sqlite_database_names(conn)?
                         .into_iter()
                         .map(|name| CatalogNode {
                             key: name.clone(),
@@ -1133,6 +1555,50 @@ impl DbEngine {
                 })
                 .await
             }
+            DbEngine::Sqlite(_) => {
+                // SQLite 只有表/视图两类（无函数/过程/序列）：计数取
+                // sqlite_master 的 type 分组，sqlite_% 前缀是内部表不计数
+                let schema_o = schema.to_string();
+                self.with_sqlite(move |conn| {
+                    let schema_q = quote_ident(&schema_o)?;
+                    let sql = format!(
+                        "SELECT type, COUNT(*) FROM {schema_q}.sqlite_master \
+                         WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' \
+                         GROUP BY type"
+                    );
+                    let counts: Vec<(String, i64)> = {
+                        let mut stmt = conn
+                            .prepare(&sql)
+                            .map_err(|e| format!("SQLite 查询对象计数失败：{e}"))?;
+                        let mut rows = stmt
+                            .query_map([], |row| {
+                                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                            })
+                            .map_err(|e| format!("SQLite 查询对象计数失败：{e}"))?;
+                        let mut out: Vec<(String, i64)> = Vec::new();
+                        for row in rows.by_ref() {
+                            out.push(row.map_err(|e| format!("SQLite 读取对象计数失败：{e}"))?);
+                        }
+                        out
+                    };
+                    let count_of = |kind: &str| {
+                        counts
+                            .iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case(kind))
+                            .map(|(_, c)| *c)
+                            .unwrap_or(0)
+                    };
+                    Ok(group_nodes(
+                        &schema_o,
+                        count_of("table"),
+                        count_of("view"),
+                        0,
+                        0,
+                        0,
+                    ))
+                })
+                .await
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -1250,6 +1716,50 @@ impl DbEngine {
                 })
                 .await
             }
+            DbEngine::Sqlite(_) => {
+                // sqlite_master 按 type 列（table/view）；函数/过程/序列在 SQLite
+                // 不存在，直接返回空清单（树上也不会出现这些分组）
+                let obj_type = match group {
+                    ObjectGroup::Table => "table",
+                    ObjectGroup::View => "view",
+                    ObjectGroup::Function | ObjectGroup::Procedure | ObjectGroup::Sequence => {
+                        return Ok(Vec::new());
+                    }
+                }
+                .to_string();
+                let schema_o = schema.to_string();
+                let kind_o = kind.clone();
+                self.with_sqlite(move |conn| {
+                    let schema_q = quote_ident(&schema_o)?;
+                    let sql = format!(
+                        "SELECT name FROM {schema_q}.sqlite_master \
+                         WHERE type = ?1 AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                    );
+                    let names: Vec<String> = {
+                        let mut stmt = conn
+                            .prepare(&sql)
+                            .map_err(|e| format!("SQLite 查询对象清单失败：{e}"))?;
+                        let mut rows = stmt
+                            .query_map([&obj_type], |row| row.get::<_, String>(0))
+                            .map_err(|e| format!("SQLite 查询对象清单失败：{e}"))?;
+                        let mut out: Vec<String> = Vec::new();
+                        for row in rows.by_ref() {
+                            out.push(row.map_err(|e| format!("SQLite 读取对象清单失败：{e}"))?);
+                        }
+                        out
+                    };
+                    Ok(names
+                        .into_iter()
+                        .map(|name| CatalogNode {
+                            key: format!("{schema_o}.{name}"),
+                            name,
+                            kind: kind_o.clone(),
+                            detail: None,
+                        })
+                        .collect())
+                })
+                .await
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -1326,6 +1836,48 @@ impl DbEngine {
                                 oracle_row_string(&row, 1),
                             )
                         })
+                        .map(|(name, data_type)| CatalogNode {
+                            key: format!("{schema_o}.{table_o}.{name}"),
+                            name,
+                            kind: "column".to_string(),
+                            detail: Some(data_type),
+                        })
+                        .collect())
+                })
+                .await
+            }
+            DbEngine::Sqlite(_) => {
+                // table_info 覆盖表与视图；列序即 cid 顺序。pragma 的表名参数
+                // 是字符串字面量（不是标识符），用 quote_string_literal 转义
+                let schema_o = schema.to_string();
+                let table_o = table.to_string();
+                self.with_sqlite(move |conn| {
+                    let schema_q = quote_ident(&schema_o)?;
+                    let sql = format!(
+                        "PRAGMA {schema_q}.table_info({})",
+                        quote_string_literal(&table_o)
+                    );
+                    // table_info 列序：cid(0) name(1) type(2) …
+                    let cols: Vec<(String, String)> = {
+                        let mut stmt = conn
+                            .prepare(&sql)
+                            .map_err(|e| format!("SQLite 查询列清单失败：{e}"))?;
+                        let mut rows = stmt
+                            .query_map([], |row| {
+                                Ok((
+                                    row.get::<_, String>(1)?,
+                                    row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                                ))
+                            })
+                            .map_err(|e| format!("SQLite 查询列清单失败：{e}"))?;
+                        let mut out: Vec<(String, String)> = Vec::new();
+                        for row in rows.by_ref() {
+                            out.push(row.map_err(|e| format!("SQLite 读取列清单失败：{e}"))?);
+                        }
+                        out
+                    };
+                    Ok(cols
+                        .into_iter()
                         .map(|(name, data_type)| CatalogNode {
                             key: format!("{schema_o}.{table_o}.{name}"),
                             name,
@@ -1559,6 +2111,75 @@ impl DbEngine {
                     .await;
                 // 取消信号在语句间由会话层判定；本语句执行中收到通知时
                 // 无法中断阻塞线程，下一轮语句开始前生效
+                let _ = cancel_notify;
+                result
+            }
+            DbEngine::Sqlite(_) => {
+                // 同步引擎：整个执行（含行流迭代与回调发射）移入 spawn_blocking，
+                // 回调直接在阻塞线程内调用。取消是协作式的——会话层的
+                // db_query_cancel 置 AtomicBool 后，progress handler（每 1000 条
+                // VDBE 指令轮询一次）让当前语句以 SQLITE_INTERRUPT 中止；本臂把
+                // 该错误分类为 cancelled=true 的正常摘要，而不是执行错误。
+                let sql_o = sql.to_string();
+                let result = self
+                    .with_sqlite(move |conn| {
+                        // 每个可能被中断的调用点都过这一层：中断 → 取消摘要（保留
+                        // 已读行数与列名），其它 → 带前缀的错误。判据是
+                        // sqlite_is_interrupt 的错误码，不靠错误文案匹配。
+                        let mut summary = ExecSummary::default();
+                        macro_rules! step {
+                            ($e:expr) => {
+                                match $e {
+                                    Ok(v) => v,
+                                    Err(e) if sqlite_is_interrupt(&e) => {
+                                        summary.cancelled = true;
+                                        return Ok(summary);
+                                    }
+                                    Err(e) => return Err(sqlite_err(e)),
+                                }
+                            };
+                        }
+                        let mut stmt = step!(conn.prepare(&sql_o));
+                        let col_count = stmt.column_count();
+                        if col_count == 0 {
+                            // DML / DDL / PRAGMA 赋值：无结果集，affected = changes
+                            let affected = step!(stmt.execute([]));
+                            return Ok(ExecSummary {
+                                affected: Some(affected as u64),
+                                ..Default::default()
+                            });
+                        }
+                        summary.columns =
+                            stmt.column_names().iter().map(|s| s.to_string()).collect();
+                        on_columns(&summary.columns);
+                        let mut rows = step!(stmt.query([]));
+                        let mut batch: Vec<Vec<String>> = Vec::with_capacity(ROWS_PER_BATCH);
+                        while summary.rows_read < max_rows {
+                            let next = step!(rows.next());
+                            let Some(row) = next else { break };
+                            let cells: Vec<String> = (0..summary.columns.len())
+                                .map(|i| sqlite_cell(row, i))
+                                .collect();
+                            batch.push(cells);
+                            summary.rows_read += 1;
+                            if batch.len() >= ROWS_PER_BATCH {
+                                on_rows(std::mem::take(&mut batch));
+                            }
+                        }
+                        if !batch.is_empty() {
+                            on_rows(std::mem::take(&mut batch));
+                        }
+                        if summary.rows_read >= max_rows {
+                            // 再探一行判定截断（max_rows 恰好等于总行数时不算截断）
+                            if step!(rows.next()).is_some() {
+                                summary.truncated = true;
+                            }
+                        }
+                        Ok(summary)
+                    })
+                    .await;
+                // cancel_notify 在 SQLite 臂不参与（取消走 progress handler 的
+                // 协作中断，见上）；保留参数以对齐统一签名
                 let _ = cancel_notify;
                 result
             }
@@ -1928,6 +2549,78 @@ fn format_float(v: f64) -> String {
     } else {
         format!("{v}")
     }
+}
+
+// ── SQLite 辅助 ───────────────────────────────────────────────────────────
+
+/// SQLite 单元格取值：类型驱动（NULL/BLOB 占位、整数去 .0，与 sqlite_viewer
+/// 的展示语义对齐）。取值失败按 NULL 兜底（不中断整行）。
+fn sqlite_cell(row: &rusqlite::Row<'_>, i: usize) -> String {
+    match row.get_ref(i) {
+        Ok(rusqlite::types::ValueRef::Null) => "NULL".to_string(),
+        Ok(rusqlite::types::ValueRef::Integer(v)) => v.to_string(),
+        Ok(rusqlite::types::ValueRef::Real(v)) => format_float(v),
+        Ok(rusqlite::types::ValueRef::Text(bytes)) => String::from_utf8_lossy(bytes).into_owned(),
+        Ok(rusqlite::types::ValueRef::Blob(b)) => format!("<BLOB {} bytes>", b.len()),
+        Err(_) => "NULL".to_string(),
+    }
+}
+
+/// rusqlite 错误 → 展示文案（统一前缀，与另三引擎的「引擎名：」口径一致）
+fn sqlite_err(e: rusqlite::Error) -> String {
+    format!("SQLite：{e}")
+}
+
+/// 是否被 progress handler 中断（SQLITE_INTERRUPT）。取消映射靠它而不是
+/// 错误文案匹配——口令错等其它失败仍按错误上报。
+fn sqlite_is_interrupt(e: &rusqlite::Error) -> bool {
+    matches!(
+        e.sqlite_error_code(),
+        Some(rusqlite::ffi::ErrorCode::OperationInterrupted)
+    )
+}
+
+/// 标识符转义（schema 名拼进 SQL）：仅「首字符字母/下划线 + 其余 [A-Za-z0-9_]」
+/// 可裸用，其余一律双引号包裹并把内部 `"` 双写。禁止裸拼用户输入。
+fn quote_ident(name: &str) -> Result<String, String> {
+    if name.is_empty() {
+        return Err("SQLite 无效的库名（空）".to_string());
+    }
+    if name.contains('\0') {
+        return Err("SQLite 无效的库名（含空字符）".to_string());
+    }
+    let mut chars = name.chars();
+    let head_ok = chars
+        .next()
+        .map(|c| c.is_ascii_alphabetic() || c == '_')
+        .unwrap_or(false);
+    if head_ok && chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Ok(name.to_string())
+    } else {
+        Ok(format!("\"{}\"", name.replace('"', "\"\"")))
+    }
+}
+
+/// 字符串字面量转义（PRAGMA 的表/索引名参数是字面量不是标识符）：单引号
+/// 包裹，内部 `'` 双写。
+fn quote_string_literal(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "''"))
+}
+
+/// 已附加的库名（PRAGMA database_list 的 name 列：main/temp 及 ATTACH 的库）。
+/// 列序：seq(0) name(1) file(2)。
+fn sqlite_database_names(conn: &rusqlite::Connection) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare("PRAGMA database_list")
+        .map_err(|e| format!("SQLite 查询库清单失败：{e}"))?;
+    let mut rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| format!("SQLite 查询库清单失败：{e}"))?;
+    let mut names: Vec<String> = Vec::new();
+    for row in rows.by_ref() {
+        names.push(row.map_err(|e| format!("SQLite 读取库清单失败：{e}"))?);
+    }
+    Ok(names)
 }
 
 fn mysql_value_to_string(value: &mysql_async::Value) -> String {

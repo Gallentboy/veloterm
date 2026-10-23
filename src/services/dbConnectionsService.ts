@@ -1,11 +1,26 @@
 /**
  * 数据库工作台连接库：侧栏「数据库主机」页 CRUD + 会话/目录/查询 invoke 封装。
  * 类型与后端 db_browser 模块的 serde camelCase 契约一一对应。
+ * SQLite 引擎复用 password 作为加密口令、dbPath 为库文件路径。
  */
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-export type DbEngineKind = 'mysql' | 'postgres' | 'oracle';
+export type DbEngineKind = 'mysql' | 'postgres' | 'oracle' | 'sqlite';
+
+/**
+ * SQLite 加密方式（后端 db.rs 的 encryption_mode 列）：
+ * - none：明文 SQLite
+ * - sqlcipher4：SQLCipher 4 默认参数（PBKDF2-HMAC-SHA512 / 256000 轮）
+ * - sqlcipher3 / sqlcipher2：兼容旧版 SQLCipher 生成的库（cipher_compatibility）
+ * - sqlcipher-raw：原始密钥，password 填 64 位十六进制（不经 KDF）
+ */
+export type SqliteEncryptionMode =
+  | 'none'
+  | 'sqlcipher4'
+  | 'sqlcipher3'
+  | 'sqlcipher2'
+  | 'sqlcipher-raw';
 
 export interface DbConnectionRecord {
   id: number;
@@ -16,8 +31,13 @@ export interface DbConnectionRecord {
   database: string | null;
   /** Oracle 专有：服务名（连库必需）。database 在 Oracle 语义 = 初始 schema */
   serviceName: string | null;
+  /** SQLite 专有：数据库文件路径（绝对路径或 file: URI）；null = 内存库 */
+  dbPath: string | null;
+  /** SQLite 专有加密方式（仅 engine='sqlite' 有意义）；其它引擎恒为 'none' */
+  encryptionMode: SqliteEncryptionMode;
   username: string | null;
-  /** null = 更新时保留库中旧值（表单未改动不回传）；明文存 SQLCipher 库 */
+  /** null = 更新时保留库中旧值（表单未改动不回传）；明文存 SQLCipher 库。
+   * engine='sqlite' 时语义 = 加密口令（原始密钥模式为 64 位十六进制） */
   password: string | null;
   sslMode: 'disable' | 'prefer' | 'require' | 'verify-full';
   sshHostId: number | null;
@@ -61,6 +81,7 @@ export interface DbSessionMeta {
   connectionId: number;
   name: string;
   engine: DbEngineKind;
+  /** engine='sqlite' 时固定为 'main'（SQLite 无连接级库概念，对象树顶层为已附加库） */
   database: string | null;
   serverVersion: string;
   readonly: boolean;
@@ -211,4 +232,11 @@ export function oracleClientDirSet(dir: string | null): Promise<void> {
 /** 目录选择对话框（rfd）：取消返回 null */
 export function oracleClientDirPick(): Promise<string | null> {
   return invoke('oracle_client_dir_pick');
+}
+
+// ── SQLite 数据库文件选择（rfd）──
+
+/** 选择本地 SQLite 数据库文件；取消返回 null */
+export function sqliteFilePick(): Promise<string | null> {
+  return invoke('sqlite_file_pick');
 }

@@ -7,9 +7,12 @@
 //!   手写状态机分号分割（字符串 / 注释 / 反引号内的分号不算），只读判定退回
 //!   前缀白名单（sqlite_viewer 同型）。sqlparser 只是增强路径而非硬依赖——
 //!   工作台绝不能因为「解析器不认识这条方言」就拒绝执行。
+//!
+//! SQLite 方言经 SQLiteDialect 解析；PRAGMA 的只读判定按「有无赋值」区分
+//! （无值 = 只读查询，带值 = 写操作）。
 
 use sqlparser::ast::Statement;
-use sqlparser::dialect::{Dialect, MySqlDialect, PostgreSqlDialect};
+use sqlparser::dialect::{Dialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 
 /// 语句的只读判定结果。
@@ -20,13 +23,15 @@ pub struct SplitStatement {
     pub parsed: bool,
 }
 
-/// 按引擎取方言。Oracle 无专属方言（sqlparser 0.53 已无 OracleDialect），
-/// 走 PostgreSqlDialect 主路——常规 SELECT/WITH 能解析（只读判定走 AST），
-/// Oracle 特有语法（CONNECT BY 等）解析失败自然落入降级路，双路设计本就
-/// 容忍方言缺失（绝不能因解析器不认识就拒绝执行）。
+/// 按引擎取方言。SQLite 走 SQLiteDialect（PRAGMA / AUTOINCREMENT / 双引号
+/// 标识符都能正确解析）。Oracle 仍无专属方言（sqlparser 0.53 已无
+/// OracleDialect），走 PostgreSqlDialect 主路——常规 SELECT/WITH 能解析
+/// （只读判定走 AST），Oracle 特有语法（CONNECT BY 等）解析失败自然落入
+/// 降级路，双路设计本就容忍方言缺失（绝不能因解析器不认识就拒绝执行）。
 pub fn dialect_for_engine(engine: &str) -> &'static dyn Dialect {
     match engine {
         "mysql" => &MySqlDialect {},
+        "sqlite" => &SQLiteDialect {},
         _ => &PostgreSqlDialect {},
     }
 }
@@ -34,6 +39,8 @@ pub fn dialect_for_engine(engine: &str) -> &'static dyn Dialect {
 /// 分割多语句。空语句（仅空白/注释）被丢弃。
 /// Oracle：含 PL/SQL 块（词界 BEGIN/DECLARE）的文本整段作单条语句——
 /// 块内的分号（IF/END IF、逐语句 DML）不是语句边界，朴素分割会撕裂。
+/// SQLite：触发器体（BEGIN...END）目前按分号分割，多语句编辑器里请整段
+/// 单独执行。
 pub fn split_statements(engine: &str, sql: &str) -> Vec<SplitStatement> {
     let trimmed = sql.trim();
     if trimmed.is_empty() {
@@ -270,6 +277,55 @@ pub fn split_by_semicolon(sql: &str) -> Vec<String> {
 /// 版本间变体增删的漂移影响）。
 const READONLY_KIND_PREFIXES: &[&str] = &["Query", "Explain", "Show", "Analyze"];
 
+/// 纯查询型 PRAGMA（无副作用，即使带括号参数也放行）。只收**不可设置**的
+/// 内省指令——可设置的（cache_size / schema_version / page_size / user_version /
+/// application_id / mmap_size / max_page_count / encoding …）不在此列，它们
+/// 落到下面的 `value.is_none()` 判定：无值当查询放行、带值当写拒绝。
+const READONLY_PRAGMAS: &[&str] = &[
+    "table_info",
+    "table_xinfo",
+    "table_list",
+    "index_info",
+    "index_xinfo",
+    "index_list",
+    "foreign_key_list",
+    "database_list",
+    "collation_list",
+    "function_list",
+    "module_list",
+    "pragma_list",
+    "compile_options",
+    "integrity_check",
+    "quick_check",
+    "freelist_count",
+    "data_version",
+    "sqlite_version",
+];
+
+/// 无条件判写的 PRAGMA：
+/// - 加密族：只读会话里没有合法用途，且 `PRAGMA key` 的裸形态语义不明确
+/// - 维护动作族：即便无值也会落盘（`optimize` 写 sqlite_stat1、
+///   `incremental_vacuum` 释放页、`wal_checkpoint` 回写 WAL）
+/// 其余双态指令（`foreign_keys` / `journal_mode` / `synchronous` …）交给
+/// `value.is_none()` 判定：无值是查询、带值是写。
+const WRITE_PRAGMAS: &[&str] = &[
+    "key",
+    "rekey",
+    "cipher",
+    "cipher_migrate",
+    "cipher_compatibility",
+    "cipher_page_size",
+    "cipher_kdf_iter",
+    "cipher_hmac_algorithm",
+    "cipher_kdf_algorithm",
+    "cipher_plaintext_header_size",
+    "cipher_salt",
+    "cipher_default_kdf_iter",
+    "optimize",
+    "incremental_vacuum",
+    "wal_checkpoint",
+];
+
 /// 只读白名单判定。parsed=false（降级路）时走前缀白名单（大小写不敏感）。
 pub fn statement_is_readonly(engine: &str, stmt: &SplitStatement) -> bool {
     let sql = stmt.sql.trim_start();
@@ -289,13 +345,43 @@ pub fn statement_is_readonly(engine: &str, stmt: &SplitStatement) -> bool {
 }
 
 fn statement_kind_readonly(stmt: &Statement) -> bool {
+    // PRAGMA 双态：无值 = 查询型（只读）；带值 = 设置型（写）。
+    // 例外是「内省型」PRAGMA——它们的括号形态（PRAGMA table_info('t')）在
+    // sqlparser 里同样落进 value，但语义仍是查询，故按名字白名单放行。
+    // 写型 PRAGMA 的括号形态（PRAGMA journal_mode('WAL')）不在白名单内，
+    // 仍判为写，不给只读会话留后门。
+    if let Statement::Pragma { name, value, .. } = stmt {
+        let pragma = pragma_name(name);
+        // 内省型：括号形态也是查询，直接放行
+        if READONLY_PRAGMAS.contains(&pragma.as_str()) {
+            return true;
+        }
+        // 加密族：无论有无赋值一律拒绝——只读会话里没有合法用途，
+        // 且 PRAGMA key 的裸形态语义不明确，保守处理
+        if WRITE_PRAGMAS.contains(&pragma.as_str()) {
+            return false;
+        }
+        // 其余双态指令：无值 = 查询（PRAGMA foreign_keys），带值 = 写
+        return value.is_none();
+    }
     let kind = format!("{stmt:?}");
     let name = kind.split([' ', '(']).next().unwrap_or("");
     READONLY_KIND_PREFIXES.iter().any(|p| name.starts_with(p))
 }
 
+/// PRAGMA 名（`PRAGMA [schema.]name` 的末段，小写；ObjectName 是 Vec<Ident>）。
+fn pragma_name(name: &sqlparser::ast::ObjectName) -> String {
+    name.0
+        .last()
+        .map(|ident| ident.value.to_lowercase())
+        .unwrap_or_default()
+}
+
 /// 降级前缀白名单：SELECT / WITH / EXPLAIN / SHOW / DESC / DESCRIBE / TABLE /
 /// VALUES（sqlite_viewer 同型语义）。
+/// 有意不含 PRAGMA：降级路无法区分查询型（PRAGMA table_info(t)）与设置型
+/// （PRAGMA journal_mode=WAL），宁可解析失败时拒绝；SQLite 的 PRAGMA 基本
+/// 都能被 SQLiteDialect 解析，走 AST 主路即可。
 fn prefix_readonly(sql: &str) -> bool {
     let upper = sql.to_uppercase();
     ["SELECT", "WITH", "EXPLAIN", "SHOW", "DESC", "DESCRIBE", "TABLE", "VALUES"]

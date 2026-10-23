@@ -201,7 +201,8 @@ export function DbSessionView({
         sessionIdRef.current = sessionMeta.sessionId;
         setMeta(sessionMeta);
         // 引擎适配的欢迎语句：Oracle 无 FROM 不可查（SELECT 1 报 ORA-00923），
-        // 换 SELECT 1 FROM DUAL。函数式 setSql 读最新值，仅初始占位未动时替换
+        // 换 SELECT 1 FROM DUAL。函数式 setSql 读最新值，仅初始占位未动时替换。
+        // SQLite/MySQL/PG 的 SELECT 1 均合法，沿用默认占位，不做分支
         if (sessionMeta.engine === 'oracle') {
           setSql((prev) => (prev === 'SELECT 1;' ? 'SELECT 1 FROM DUAL;' : prev));
         }
@@ -314,14 +315,23 @@ export function DbSessionView({
   );
 
   // 点击表/视图节点 → 生成查询语句；双击函数/过程 → 拉取定义展示
+  // 方言差异：标识符引用 MySQL 反引号、SQLite 双引号（PG/Oracle 保持不加引号的
+  // 既有手感）；限行子句 Oracle 用 ROWNUM、MySQL/PG/SQLite 均用 LIMIT 200
   const handleNodeClick = useCallback(
     (node: CatalogNode) => {
       if (node.kind === 'table' || node.kind === 'view') {
         const schema = node.key.split('.')[0] ?? '';
         const name = node.name;
-        const target = schema ? `${schema}.${name}` : name;
-        // 限定符一律不加引号；取前 200 行的方言差异只在限行子句——
-        // Oracle 无 LIMIT 且 11.x 只认 ROWNUM（FETCH FIRST 需 12c+）
+        // 标识符引用按方言：MySQL 反引号；SQLite 双引号（PG/Oracle 现有行为不加引号，
+        // 保持原样不动，避免影响既有会话手感）
+        const quote = (ident: string) =>
+          meta?.engine === 'mysql'
+            ? `\`${ident.replace(/`/g, '``')}\``
+            : meta?.engine === 'sqlite'
+              ? `"${ident.replace(/"/g, '""')}"`
+              : ident;
+        const target = schema ? `${quote(schema)}.${quote(name)}` : quote(name);
+        // 限行子句同样按方言：Oracle 无 LIMIT 且 11.x 只认 ROWNUM（FETCH FIRST 需 12c+）
         const limit = meta?.engine === 'oracle' ? 'WHERE ROWNUM <= 200' : 'LIMIT 200';
         setSql(`SELECT * FROM ${target} ${limit};`);
         return;
@@ -365,7 +375,11 @@ export function DbSessionView({
     [detailLoading],
   );
 
-  /** 右键菜单：创建索引骨架（按引擎方言生成，插入编辑器补列名后执行） */
+  /**
+   * 右键菜单：创建索引骨架（按引擎方言生成，插入编辑器补列名后执行）
+   * 方言差异：MySQL 全反引号；SQLite 双引号（索引名也加引号，避免与关键字或
+   * 大小写混用时的解析歧义）；PG/Oracle 沿用原有形态
+   */
   const insertCreateIndexTemplate = useCallback(
     (node: CatalogNode) => {
       if (node.kind !== 'table' || !meta) return;
@@ -373,7 +387,9 @@ export function DbSessionView({
       const sql =
         meta.engine === 'mysql'
           ? `CREATE INDEX \`idx_${node.name}\` ON \`${schema}\`.\`${node.name}\` (\`col\`);`
-          : `CREATE INDEX idx_${node.name} ON "${schema}"."${node.name}" (col);`;
+          : meta.engine === 'sqlite'
+            ? `CREATE INDEX "idx_${node.name}" ON "${schema}"."${node.name}" (col);`
+            : `CREATE INDEX idx_${node.name} ON "${schema}"."${node.name}" (col);`;
       setSql(sql);
     },
     [meta],
@@ -482,7 +498,8 @@ export function DbSessionView({
     }
   }, [running, rowCap, sql]);
 
-  // 切换当前数据库：MySQL=USE；PG=重连（后端换引擎）；切换后刷新对象树
+  // 切换当前数据库：MySQL=USE；PG=重连（后端换引擎）；切换后刷新对象树。
+  // SQLite 无连接级切库（后端为空操作），UI 侧下拉已禁用，此函数不会被触发
   const handleUseDatabase = useCallback(
     async (database: string) => {
       const sessionId = sessionIdRef.current;
@@ -645,7 +662,8 @@ export function DbSessionView({
             {t('db.writable')}
           </span>
         )}
-        {/* 当前数据库切换：MySQL=USE / PG=重连（自绘下拉，原生 select 弹层由系统绘制观感不可控） */}
+        {/* 当前数据库切换：MySQL=USE / PG=重连（自绘下拉，原生 select 弹层由系统绘制观感不可控）；
+            SQLite 无连接级库概念（固定 main，ATTACH 库由对象树呈现），切换无意义故禁用但保留展示 */}
         <div className="flex items-center gap-1">
           <span className="hidden text-ui-xs text-foreground-subtlest select-none sm:inline">
             {t('db.currentDatabase')}
@@ -661,7 +679,7 @@ export function DbSessionView({
                   : databases
               ).map((db) => ({ value: db, label: db }))}
               onChange={(db) => void handleUseDatabase(db)}
-              disabled={databases.length === 0}
+              disabled={databases.length === 0 || meta.engine === 'sqlite'}
               placeholder="—"
               aria-label={t('db.currentDatabase')}
               className="max-w-40"
