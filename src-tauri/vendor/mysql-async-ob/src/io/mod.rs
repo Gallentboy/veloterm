@@ -64,6 +64,71 @@ macro_rules! with_interrupted {
 mod read_packet;
 mod socket;
 mod write_packet;
+pub(crate) mod ob20_codec;
+
+use ob20_codec::Ob20Codec;
+
+/// 连接 codec：握手阶段是标准 mysql 包编解码；服务端确认 OB 能力位后
+/// （`Stream::enable_ob20`）整体切换为 ob20 形态（外层压缩帧 + ob20 包）。
+/// 读写管道（Framed）的类型因此统一到本枚举。
+pub(crate) enum ConnCodec {
+    Plain(PacketCodec),
+    Ob20(Ob20Codec),
+}
+
+impl ConnCodec {
+    pub(crate) fn reset_seq_id(&mut self) {
+        match self {
+            Self::Plain(c) => c.reset_seq_id(),
+            Self::Ob20(c) => c.reset_seq_id(),
+        }
+    }
+
+    pub(crate) fn sync_seq_id(&mut self) {
+        match self {
+            Self::Plain(c) => c.sync_seq_id(),
+            Self::Ob20(c) => c.sync_seq_id(),
+        }
+    }
+
+    pub(crate) fn set_max_allowed_packet(&mut self, max: usize) {
+        match self {
+            Self::Plain(c) => c.max_allowed_packet = max,
+            Self::Ob20(c) => c.set_max_allowed_packet(max),
+        }
+    }
+
+    pub(crate) fn compress(&mut self, level: crate::Compression) {
+        match self {
+            Self::Plain(c) => c.compress(level),
+            // ob20 自带 zlib 压缩（外层帧内），MySQL 压缩协议层不再叠加
+            Self::Ob20(c) => c.set_compression_level(level.level()),
+        }
+    }
+}
+
+impl Decoder for ConnCodec {
+    type Item = PooledBuf;
+    type Error = IoError;
+
+    fn decode(&mut self, src: &mut BytesMut) -> std::result::Result<Option<Self::Item>, IoError> {
+        match self {
+            Self::Plain(c) => c.decode(src),
+            Self::Ob20(c) => c.decode(src),
+        }
+    }
+}
+
+impl Encoder<PooledBuf> for ConnCodec {
+    type Error = IoError;
+
+    fn encode(&mut self, item: PooledBuf, dst: &mut BytesMut) -> std::result::Result<(), IoError> {
+        match self {
+            Self::Plain(c) => c.encode(item, dst),
+            Self::Ob20(c) => c.encode(item, dst),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct PacketCodec {
@@ -330,7 +395,7 @@ impl AsyncWrite for Endpoint {
 /// A Stream, connected to MySql server.
 pub struct Stream {
     closed: bool,
-    pub(crate) codec: Option<Box<Framed<Endpoint, PacketCodec>>>,
+    pub(crate) codec: Option<Box<Framed<Endpoint, ConnCodec>>>,
 }
 
 impl fmt::Debug for Stream {
@@ -350,7 +415,7 @@ impl Stream {
 
         Self {
             closed: false,
-            codec: Box::new(Framed::new(endpoint, PacketCodec::default())).into(),
+            codec: Box::new(Framed::new(endpoint, ConnCodec::Plain(PacketCodec::default()))).into(),
         }
     }
 
@@ -399,7 +464,11 @@ impl Stream {
 
         Ok(Stream {
             closed: false,
-            codec: Box::new(Framed::new(tcp_stream.into(), PacketCodec::default())).into(),
+            codec: Box::new(Framed::new(
+                tcp_stream.into(),
+                ConnCodec::Plain(PacketCodec::default()),
+            ))
+            .into(),
         })
     }
 
@@ -423,6 +492,18 @@ impl Stream {
         let codec = Framed::new(io, codec);
         self.codec = Some(Box::new(codec));
         Ok(())
+    }
+
+    /// 握手完成后切换为 ob20 形态（保留 endpoint，丢弃 Plain codec 的序号
+    /// 状态——ob20 codec 自带独立计数）。调用前提：服务端已在 OK 包的
+    /// session-track 里回显 OBCLIENT_CAP_OB_PROTOCOL_V2。
+    pub(crate) fn enable_ob20(&mut self, connection_id: u32, max_allowed_packet: usize) {
+        let codec = self.codec.take().unwrap();
+        let FramedParts { io, .. } = codec.into_parts();
+        self.codec = Some(Box::new(Framed::new(
+            io,
+            ConnCodec::Ob20(Ob20Codec::new(connection_id, max_allowed_packet)),
+        )));
     }
 
     #[cfg(any(feature = "native-tls-tls", feature = "rustls-tls"))]
@@ -449,7 +530,7 @@ impl Stream {
 
     pub(crate) fn set_max_allowed_packet(&mut self, max_allowed_packet: usize) {
         if let Some(codec) = self.codec.as_mut() {
-            codec.codec_mut().max_allowed_packet = max_allowed_packet;
+            codec.codec_mut().set_max_allowed_packet(max_allowed_packet);
         }
     }
 

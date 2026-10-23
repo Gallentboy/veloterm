@@ -250,7 +250,10 @@ pub fn wrap_packet(ctx: &Ob20Ctx, mysql_payload: &[u8], complen_for_checksum: u3
 /// 与 libobclient 的 `decode_protocol20_header` 同语义；头内 checksum 为 0
 /// 的旧服务端跳过校验）。返回 (头, MySQL 包体)——extra 区被跳过不解析
 /// （本驱动不消费全链路追踪/会话同步信息）。
-pub fn unwrap_packet(prefix7: &[u8; 7], bytes: &[u8]) -> Result<(Ob20Header, &[u8]), Ob20Error> {
+pub fn unwrap_packet<'a>(
+    prefix7: &[u8; 7],
+    bytes: &'a [u8],
+) -> Result<(Ob20Header, &'a [u8]), Ob20Error> {
     if bytes.len() < OB20_HEADER_SIZE {
         return Err(Ob20Error::TooShort);
     }
@@ -286,28 +289,27 @@ pub fn unwrap_packet(prefix7: &[u8; 7], bytes: &[u8]) -> Result<(Ob20Header, &[u
         }
     }
 
-    // payload 区 = extra 区（可选）+ MySQL 包 + 4B 尾包
-    if bytes.len() < OB20_HEADER_SIZE + header.payload_len as usize {
+    // payload 区 = extra 区（可选，长度域不含自身 4 字节）+ MySQL 包；
+    // 头的 payload_len 不含头与尾包，尾包紧跟其后
+    if bytes.len() < OB20_HEADER_SIZE + header.payload_len as usize + OB20_TAILER_SIZE {
         return Err(Ob20Error::PayloadLengthMismatch {
             header_says: header.payload_len as usize,
             actual: bytes.len() - OB20_HEADER_SIZE,
         });
     }
     let mut payload_start = OB20_HEADER_SIZE;
-    let mut extra_end = payload_start;
     if header.flags.has(Ob20Flags::EXTRA_INFO_EXIST) {
-        let extra_len =
-            le32(payload_start) as usize + OB20_EXTRAINFO_LENGTH_SIZE;
-        extra_end = payload_start + extra_len;
+        let extra_len = le32(payload_start) as usize + OB20_EXTRAINFO_LENGTH_SIZE;
+        let extra_end = payload_start + extra_len;
         if extra_end > bytes.len() {
             return Err(Ob20Error::BadExtraInfoLength(extra_len));
         }
         payload_start = extra_end;
     }
-    let tailer_at = OB20_HEADER_SIZE + header.payload_len as usize - OB20_TAILER_SIZE;
-    if tailer_at < payload_start || tailer_at > bytes.len() {
+    let tailer_at = OB20_HEADER_SIZE + header.payload_len as usize;
+    if tailer_at < payload_start || tailer_at + OB20_TAILER_SIZE > bytes.len() {
         return Err(Ob20Error::PayloadLengthMismatch {
-            header_says: header.payload_len,
+            header_says: header.payload_len as usize,
             actual: bytes.len() - OB20_HEADER_SIZE,
         });
     }
@@ -320,6 +322,242 @@ pub fn unwrap_packet(prefix7: &[u8; 7], bytes: &[u8]) -> Result<(Ob20Header, &[u
         });
     }
     Ok((header, &bytes[payload_start..tailer_at]))
+}
+
+/// 从 OK 包的 session_state_info（CLIENT_SESSION_TRACK 的 info 段）里找
+/// `ob_capability_flag` 系统变量的十进制 u64 值——服务端经此把确认后的 OB
+/// 能力位回显给客户端（libobclient 在 `read_ok_packet` 的
+/// SESSION_TRACK_SYSTEM_VARIABLES 分支解析，NLS 格式变量同路捎带）。
+///
+/// 线格式：`[type:1][entry_len:lenenc][entry]...`；type 0（系统变量）的
+/// entry = `[name_len:lenenc][name][value_len:lenenc][value]`。
+pub fn scan_capability_flag(session_state_info: &[u8]) -> Option<u64> {
+    let mut pos = 0;
+    while pos < session_state_info.len() {
+        let entry_type = *session_state_info.get(pos)?;
+        pos += 1;
+        let entry_len = lenenc(session_state_info, &mut pos)?;
+        let entry_end = pos.checked_add(entry_len)?;
+        if entry_end > session_state_info.len() {
+            return None;
+        }
+        let entry = &session_state_info[..entry_end];
+        if entry_type == 0 {
+            // SESSION_TRACK_SYSTEM_VARIABLES：name/value 对
+            let name_len = lenenc(entry, &mut pos)?;
+            let name_start = pos;
+            pos = pos.checked_add(name_len)?;
+            let name = entry.get(name_start..pos)?;
+            if name == b"ob_capability_flag" {
+                let value_len = lenenc(entry, &mut pos)?;
+                let value_start = pos;
+                pos = pos.checked_add(value_len)?;
+                let text = std::str::from_utf8(entry.get(value_start..pos)?).ok()?;
+                return text.trim().parse::<u64>().ok();
+            }
+        }
+        pos = entry_end;
+    }
+    None
+}
+
+/// MySQL lenenc 整数（返回值，游标前进）；越界返回 None
+fn lenenc(buf: &[u8], pos: &mut usize) -> Option<usize> {
+    let first = *buf.get(*pos)?;
+    match first {
+        0xFB => {
+            *pos += 1;
+            Some(0)
+        }
+        0xFC..=0xFE => {
+            let width = match first {
+                0xFC => 2,
+                0xFD => 3,
+                _ => 8,
+            };
+            let mut len = 0usize;
+            for i in 1..=width {
+                len |= (*buf.get(*pos + i)? as usize) << (8 * (i - 1));
+            }
+            *pos += width + 1;
+            Some(len)
+        }
+        len => {
+            *pos += 1;
+            Some(len as usize)
+        }
+    }
+}
+
+/// SM3 密码散列（GB/T 32905-2016）与 `ob_sm3_password` 认证插件的应答算法。
+///
+/// SM3 标准实现（国密哈希，32 字节输出）；认证算法对照 obconnector-c 的
+/// `plugins/auth/ob_sm3_pw.c::ma_sm3_scramble`——与 mysql_native_password 的
+/// 三步 SHA1 舞蹈同构，只是哈希换 SM3：
+/// `d1 = SM3(password)`；`d2 = SM3(d1)`；`r = SM3(d2 || salt)`；应答 `= d1 ⊕ r`。
+pub mod sm3 {
+    const IV: [u32; 8] = [
+        0x7380_166F, 0x4914_B2B9, 0x1724_42D7, 0xDA8A_0600, 0xA96F_30BC, 0x1631_38AA, 0xE38D_EE4D,
+        0xB0FB_0E4E,
+    ];
+
+    fn t_j(j: usize) -> u32 {
+        if j < 16 {
+            0x79CC_4519
+        } else {
+            0x7A87_9D8A
+        }
+    }
+
+    fn p0(x: u32) -> u32 {
+        x ^ x.rotate_left(9) ^ x.rotate_left(17)
+    }
+
+    fn p1(x: u32) -> u32 {
+        x ^ x.rotate_left(15) ^ x.rotate_left(23)
+    }
+
+    fn ff_j(j: usize, x: u32, y: u32, z: u32) -> u32 {
+        if j < 16 {
+            x ^ y ^ z
+        } else {
+            (x & y) | (x & z) | (y & z)
+        }
+    }
+
+    fn gg_j(j: usize, x: u32, y: u32, z: u32) -> u32 {
+        if j < 16 {
+            x ^ y ^ z
+        } else {
+            (x & y) | (!x & z)
+        }
+    }
+
+    /// SM3 摘要（32 字节）
+    pub fn sm3(message: &[u8]) -> [u8; 32] {
+        // 填充：0x80 + 0* + 64 位大端比特长度（与 SHA-256 同形，长度域不反转）
+        let bit_len = (message.len() as u64).wrapping_mul(8);
+        let mut padded = message.to_vec();
+        padded.push(0x80);
+        while padded.len() % 64 != 56 {
+            padded.push(0);
+        }
+        padded.extend_from_slice(&bit_len.to_be_bytes());
+
+        let mut v = IV;
+        for block in padded.chunks_exact(64) {
+            let mut w = [0u32; 68];
+            for (i, word) in w.iter_mut().take(16).enumerate() {
+                *word = u32::from_be_bytes([
+                    block[i * 4],
+                    block[i * 4 + 1],
+                    block[i * 4 + 2],
+                    block[i * 4 + 3],
+                ]);
+            }
+            for i in 16..68 {
+                w[i] = p1(w[i - 16] ^ w[i - 9] ^ w[i - 3].rotate_left(15))
+                    ^ w[i - 13].rotate_left(7)
+                    ^ w[i - 6];
+            }
+            let mut w1 = [0u32; 64];
+            for (i, word) in w1.iter_mut().enumerate() {
+                *word = w[i] ^ w[i + 4];
+            }
+
+            let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = v;
+            for j in 0..64 {
+                let ss1 = (a.rotate_left(12))
+                    .wrapping_add(e)
+                    .wrapping_add(t_j(j).rotate_left((j as u32) % 32))
+                    .rotate_left(7);
+                let ss2 = ss1 ^ a.rotate_left(12);
+                let tt1 = ff_j(j, a, b, c)
+                    .wrapping_add(d)
+                    .wrapping_add(ss2)
+                    .wrapping_add(w1[j]);
+                let tt2 = gg_j(j, e, f, g)
+                    .wrapping_add(h)
+                    .wrapping_add(ss1)
+                    .wrapping_add(w[j]);
+                d = c;
+                c = b.rotate_left(9);
+                b = a;
+                a = tt1;
+                h = g;
+                g = f.rotate_left(19);
+                f = e;
+                e = p0(tt2);
+            }
+            v[0] ^= a;
+            v[1] ^= b;
+            v[2] ^= c;
+            v[3] ^= d;
+            v[4] ^= e;
+            v[5] ^= f;
+            v[6] ^= g;
+            v[7] ^= h;
+        }
+
+        let mut out = [0u8; 32];
+        for (i, word) in v.iter().enumerate() {
+            out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+        }
+        out
+    }
+
+    /// ob_sm3_password 插件应答（32 字节）；salt 是握手包的 20 字节 nonce
+    pub fn ob_sm3_scramble(password: &[u8], salt: &[u8]) -> [u8; 32] {
+        let d1 = sm3(password);
+        let d2 = sm3(&d1);
+        let mut tail = d2.to_vec();
+        tail.extend_from_slice(salt);
+        let r = sm3(&tail);
+        let mut out = [0u8; 32];
+        for i in 0..32 {
+            out[i] = d1[i] ^ r[i];
+        }
+        out
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// 国密标准向量：SM3("abc")（GB/T 32905-2016 附录 A）
+        #[test]
+        fn sm3_standard_vector() {
+            let digest = sm3(b"abc");
+            assert_eq!(
+                hex(&digest),
+                "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0"
+            );
+        }
+
+        /// 多块消息（跨 64 字节分组边界）与单块结果长度一致、确定性
+        #[test]
+        fn sm3_multiblock_deterministic() {
+            let long: Vec<u8> = std::iter::repeat(b'x').take(200).collect();
+            assert_eq!(sm3(&long), sm3(&long));
+            assert_eq!(sm3(&long).len(), 32);
+            // 空消息
+            assert_eq!(sm3(b"").len(), 32);
+        }
+
+        /// 认证应答：长度 32、确定、与 salt 相关
+        #[test]
+        fn ob_sm3_scramble_shape() {
+            let salt = [7u8; 20];
+            let a = ob_sm3_scramble(b"secret", &salt);
+            assert_eq!(a.len(), 32);
+            assert_eq!(a, ob_sm3_scramble(b"secret", &salt));
+            assert_ne!(a, ob_sm3_scramble(b"secret", &[8u8; 20]));
+        }
+
+        fn hex(bytes: &[u8]) -> String {
+            bytes.iter().map(|b| format!("{b:02x}")).collect()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -360,11 +598,7 @@ mod tests {
         assert_eq!(header.request_id, ctx.request_id);
         assert_eq!(header.payload_len as usize, mysql_packet.len());
         assert!(!header.flags.has(Ob20Flags::EXTRA_INFO_EXIST));
-        assert_eq!(header.header_checksum, {
-            let mut h22 = &packet[..22];
-            let _ = &mut h22;
-            header_checksum(&prefix7, h22)
-        });
+        assert_eq!(header.header_checksum, header_checksum(&prefix7, &packet[..22]));
 
         // 篡改头字节 → CRC16 失败
         let mut broken = packet.clone();
@@ -393,10 +627,10 @@ mod tests {
     fn unwrap_skips_extra_info() {
         let ctx = Ob20Ctx::new(42);
         let mysql_packet = [0x02, 0x00, 0x00, 0x00, 0x0E];
-        // 手工组装：头(EXTRA_INFO_EXIST) + extra_len + extra + payload + crc32
+        // 手工组装：头(EXTRA_INFO_EXIST) + extra_len(不含自身 4 字节) + extra + payload + crc32
         let extra_body = [0xD1, 0x07, 0x02, 0x00, 0xAA, 0xBB]; // TRACE_INFO=2001, len=2
-        let extra_total = (OB20_EXTRAINFO_LENGTH_SIZE + extra_body.len()) as u32;
-        let payload_len = extra_total as usize + mysql_packet.len() + OB20_TAILER_SIZE;
+        let extra_total = OB20_EXTRAINFO_LENGTH_SIZE + extra_body.len();
+        let payload_len = extra_total + mysql_packet.len();
         let flags = Ob20Flags(Ob20Flags::EXTRA_INFO_EXIST | Ob20Flags::IS_NEW_EXTRA_INFO);
 
         let mut prefix7 = [0u8; 7];
@@ -416,7 +650,7 @@ mod tests {
         let checksum = header_checksum(&prefix7, &out);
         out.extend_from_slice(&checksum.to_le_bytes());
 
-        out.extend_from_slice(&extra_total.to_le_bytes());
+        out.extend_from_slice(&(extra_body.len() as u32).to_le_bytes());
         out.extend_from_slice(&extra_body);
         out.extend_from_slice(&mysql_packet);
         let crc = crc32fast::hash(&out[OB20_HEADER_SIZE..]);
@@ -464,5 +698,44 @@ mod tests {
             cap_value.parse::<u64>().unwrap(),
             caps::OBPROXY_DEFAULT_CAPABILITY_FLAG
         );
+    }
+
+    /// OK 包 session-track 的能力回显扫描：标准格式命中、多变量穿插命中、
+    /// 无关变量/坏输入不误报
+    #[test]
+    fn scan_capability_flag_from_session_state() {
+        fn entry(t: u8, data: &[u8]) -> Vec<u8> {
+            let mut v = vec![t];
+            if data.len() < 251 {
+                v.push(data.len() as u8);
+            } else {
+                v.push(0xFC);
+                v.extend_from_slice(&(data.len() as u16).to_le_bytes());
+            }
+            v.extend_from_slice(data);
+            v
+        }
+        fn sysvar(name: &str, value: &str) -> Vec<u8> {
+            let mut d = vec![name.len() as u8];
+            d.extend_from_slice(name.as_bytes());
+            d.push(value.len() as u8);
+            d.extend_from_slice(value.as_bytes());
+            d
+        }
+
+        // 单变量：ob_capability_flag = 0x10340（含 OB_PROTOCOL_V2 位）
+        let mut info = entry(0, &sysvar("ob_capability_flag", "66368"));
+        assert_eq!(scan_capability_flag(&info), Some(66368));
+
+        // 前置无关变量 + 目标变量 + 尾随其它类型条目
+        let mut mixed = entry(0, &sysvar("character_set_client", "utf8mb4"));
+        mixed.extend(entry(0, &sysvar("ob_capability_flag", "256")));
+        mixed.extend(entry(1, b"test"));
+        assert_eq!(scan_capability_flag(&mixed), Some(256));
+
+        // 无目标变量 → None；空输入 → None；截断输入 → None
+        assert_eq!(scan_capability_flag(&entry(0, &sysvar("nls_date_format", "YYYY-MM-DD"))), None);
+        assert_eq!(scan_capability_flag(&[]), None);
+        assert_eq!(scan_capability_flag(&[0, 200]), None);
     }
 }

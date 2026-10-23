@@ -122,6 +122,9 @@ struct ConnInner {
     /// One-time connection-level infile handler.
     infile_handler:
         Option<Pin<Box<dyn Future<Output = crate::Result<InfileData>> + Send + Sync + 'static>>>,
+    /// 服务端在 OK 包 session-track 回显的 OB 能力位（ob_capability_flag）；
+    /// 含 OB_PROTOCOL_V2 位时握手后切 ob20（veloterm 分叉新增）
+    ob_capability: u64,
 }
 
 impl fmt::Debug for ConnInner {
@@ -171,6 +174,7 @@ impl ConnInner {
             infile_handler: None,
             reset_upon_returning_to_a_pool: false,
             active_since: Instant::now(),
+            ob_capability: 0,
         }
     }
 
@@ -275,6 +279,13 @@ impl Conn {
 
     /// Handles OK packet.
     pub(crate) fn handle_ok(&mut self, ok_packet: OkPacket<'static>) {
+        // OB 能力回显：SESSION_TRACK_SYSTEM_VARIABLES 里的 ob_capability_flag
+        //（十进制文本 u64）；含 OB_PROTOCOL_V2 位时切换 ob20（见 switch_to_ob20）
+        if let Some(state) = ok_packet.session_state_info_ref() {
+            if let Some(cap) = crate::ob20::scan_capability_flag(state) {
+                self.inner.ob_capability = cap;
+            }
+        }
         self.inner.status = ok_packet.status_flags();
         self.inner.last_err_packet = None;
         self.inner.last_ok_packet = Some(ok_packet);
@@ -561,11 +572,45 @@ impl Conn {
         }
     }
 
+    /// ob_sm3_password 插件的认证应答（SM3 三步舞蹈，32 字节借道 Sha2 载体）；
+    /// 非 SM3 插件返回 None（调用方回退到上游 gen_data）
+    fn ob_sm3_auth_data(&self) -> Option<mysql_common::packets::AuthPluginData<'static>> {
+        if !matches!(&self.inner.auth_plugin, AuthPlugin::Other(n) if n.as_ref() == b"ob_sm3_password")
+        {
+            return None;
+        }
+        match self.inner.opts.pass() {
+            Some(pass) if !pass.is_empty() => Some(
+                mysql_common::packets::AuthPluginData::Sha2(crate::ob20::sm3::ob_sm3_scramble(
+                    pass.as_bytes(),
+                    &self.inner.nonce,
+                )),
+            ),
+            _ => None,
+        }
+    }
+
     async fn do_handshake_response(&mut self) -> Result<()> {
-        let auth_data = self
-            .inner
-            .auth_plugin
-            .gen_data(self.inner.opts.pass(), &self.inner.nonce);
+        let auth_data = self.ob_sm3_auth_data().or_else(|| {
+            self.inner
+                .auth_plugin
+                .gen_data(self.inner.opts.pass(), &self.inner.nonce)
+        });
+
+        // OB 能力位上报：connect attrs 携带 OB_PROTOCOL_V2 等（服务端确认后
+        // 在 OK 包回显，handle_ok 捕获，switch_to_ob20 切换）；非 OB 场景不上报
+        let connect_attrs = if self.inner.opts.ob_protocol20() {
+            let mut attrs = std::collections::HashMap::new();
+            for (k, v) in crate::ob20::caps::driver_connect_attrs(concat!(
+                env!("CARGO_PKG_VERSION"),
+                "-veloterm"
+            )) {
+                attrs.insert(k.to_string(), v);
+            }
+            Some(attrs)
+        } else {
+            None
+        };
 
         let handshake_response = HandshakeResponse::new(
             auth_data.as_deref(),
@@ -574,7 +619,7 @@ impl Conn {
             self.inner.opts.db_name().map(|x| x.as_bytes()),
             Some(self.inner.auth_plugin.borrow()),
             self.capabilities(),
-            Default::default(), // TODO: Add support
+            connect_attrs,
             self.inner
                 .opts
                 .max_allowed_packet()
@@ -608,6 +653,8 @@ impl Conn {
 
             self.inner.auth_plugin = auth_switch_request.auth_plugin().clone().into_owned();
 
+            // ob_sm3_password：SM3 应答（其余插件回退上游 gen_data）
+            let sm3_data = self.ob_sm3_auth_data();
             let plugin_data = match &self.inner.auth_plugin {
                 x @ AuthPlugin::CachingSha2Password => {
                     x.gen_data(self.inner.opts.pass(), &self.inner.nonce)
@@ -629,7 +676,9 @@ impl Conn {
                         return Err(DriverError::CleartextPluginDisabled.into());
                     }
                 }
-                x @ AuthPlugin::Other(_) => x.gen_data(self.inner.opts.pass(), &self.inner.nonce),
+                x @ AuthPlugin::Other(_) => {
+                    sm3_data.or_else(|| x.gen_data(self.inner.opts.pass(), &self.inner.nonce))
+                }
             };
 
             if let Some(plugin_data) = plugin_data {
@@ -667,6 +716,11 @@ impl Conn {
                         Err(DriverError::CleartextPluginDisabled.into())
                     }
                 }
+                // ob_sm3_password：应答后等服务端 OK/ERR，与 native 同路
+                AuthPlugin::Other(ref name) if name.as_ref() == b"ob_sm3_password" => {
+                    self.continue_mysql_native_password_auth().await?;
+                    Ok(())
+                }
                 AuthPlugin::Other(ref name) => Err(DriverError::UnknownAuthPlugin {
                     name: String::from_utf8_lossy(name.as_ref()).to_string(),
                 }
@@ -684,6 +738,26 @@ impl Conn {
                 if let Some(stream) = self.inner.stream.as_mut() {
                     stream.compress(compression);
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// 握手后按服务端能力回显切换 ob20：opts 开启且 OB_PROTOCOL_V2 位被
+    /// 服务端确认时，把读写管道整体换成 Ob20Codec（外层压缩帧 + ob20 包）。
+    /// 顺序必须在认证完成之后（libobclient 同此：run_plugin_auth 成功后才
+    /// net->use_ob20protocol = TRUE）。
+    fn switch_to_ob20(&mut self) -> Result<()> {
+        if self.inner.opts.ob_protocol20()
+            && self.inner.ob_capability & crate::ob20::caps::OBCLIENT_CAP_OB_PROTOCOL_V2 != 0
+        {
+            let max_allowed_packet = self
+                .inner
+                .opts
+                .max_allowed_packet()
+                .unwrap_or(DEFAULT_MAX_ALLOWED_PACKET);
+            if let Some(stream) = self.inner.stream.as_mut() {
+                stream.enable_ob20(self.inner.id, max_allowed_packet);
             }
         }
         Ok(())
@@ -943,6 +1017,7 @@ impl Conn {
             conn.do_handshake_response().await?;
             conn.continue_auth().await?;
             conn.switch_to_compression()?;
+            conn.switch_to_ob20()?;
             conn.read_settings().await?;
             conn.reconnect_via_socket_if_needed().await?;
             conn.run_init_commands().await?;
