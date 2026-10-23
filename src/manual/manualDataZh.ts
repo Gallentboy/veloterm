@@ -875,7 +875,7 @@ VeloTerm 原生集成系统级伪终端（PTY）。在 macOS / Linux 上直接�
 ### 达梦 DM8 专项
 - **兼容模式**：达梦实例的 MySQL / Oracle 兼容由服务器侧 \`dm.ini\` 的 \`COMPATIBLE_MODE\` 决定，客户端无法切换。表单里的「兼容模式」选项**只影响客户端 SQL 方言**（语句分割、只读判定、取行语法 ROWNUM/LIMIT、欢迎语句 FROM DUAL），选错不影响连接，只影响部分语句写法。
 - **初始 Schema**：达梦的「库名」字段语义是登录后的默认 schema（对应 Oracle 的 CURRENT_SCHEMA），可留空。
-- **对象树**：无论哪种兼容模式，统一走达梦固有的 Oracle 风格数据字典（\`ALL_USERS\` / \`ALL_TABLES\` / \`ALL_VIEWS\` / \`ALL_OBJECTS\` / \`ALL_SEQUENCES\`）——兼容模式只增不删这些视图。
+- **对象树**：schema 清单取自达梦元数据基表 \`SYSOBJECTS\`（\`TYPE$ = 'SCH'\`）——达梦的用户与模式可分离（可建与用户名不同的模式），\`ALL_USERS\` 会漏掉独立命名的业务模式；表/视图/函数/过程/序列走 \`ALL_TABLES\` / \`ALL_VIEWS\` / \`ALL_OBJECTS\` / \`ALL_SEQUENCES\` 字典。兼容模式只增不删这些视图。
 - **零外部依赖**：驱动为纯 Rust 协议实现，无需安装达梦 Instant Client 或 libdmdpi，开箱即用。
 
 ### 实用技巧 / 注意事项

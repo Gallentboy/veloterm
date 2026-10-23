@@ -1136,11 +1136,10 @@ impl DbEngine {
                 self.with_obclient(ob_oracle_usernames).await
             }
             DbEngine::Dameng(_) => {
-                // 达梦的「库」层即 schema（Oracle 风格字典），切换走 SET SCHEMA；
-                // 不滤系统账号——达梦的实例级账号清单远比 Oracle 短，且工作台
-                // 需要能看到 SYS/SYSDBA 等库供排查
-                self.with_dameng(|client| dm_query_strings(client, DM_ALL_USERS_SQL, &[]))
-                    .await
+                // 达梦的「库」层即 schema，清单取 SYSOBJECTS 的模式对象
+                //（TYPE$='SCH'，见 DM_SCHEMAS_SQL 注释）。不滤系统 schema——
+                // 工作台需要能看到 SYS/SYSDBA 等库供排查
+                self.with_dameng(dm_schema_names).await
             }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
@@ -2326,9 +2325,10 @@ impl DbEngine {
                 .await
             }
             DbEngine::Dameng(_) => {
-                // 达梦「库」层即 schema（Oracle 风格），kind 与 Oracle 臂一致
+                // 达梦「库」层即 schema（SYSOBJECTS 权威清单，见 dm_schema_names
+                // 注释），kind 与 Oracle 臂一致
                 self.with_dameng(|client| {
-                    Ok(dm_query_strings(client, DM_ALL_USERS_SQL, &[])?
+                    Ok(dm_schema_names(client)?
                         .into_iter()
                         .map(|name| CatalogNode {
                             key: name.clone(),
@@ -5483,9 +5483,18 @@ fn emit_oracle_rows<F1, F2>(
 
 // ── 达梦（dm-pure）辅助：同步驱动 + Oracle 风格数据字典 ──────────────────
 
-/// 达梦 schema（用户）清单：Oracle 兼容与 MySQL 兼容模式下都存在该字典视图
-///（达梦两者共用一套数据字典，只差语法层兼容）。
-const DM_ALL_USERS_SQL: &str = "SELECT USERNAME FROM ALL_USERS ORDER BY USERNAME";
+/// 达梦 schema（模式）清单：SYSOBJECTS 是达梦的元数据基表，`TYPE$ = 'SCH'`
+/// 即模式对象——这是清单的权威来源。
+///
+/// **不能用 ALL_USERS**：达梦的用户与模式可分离（`CREATE SCHEMA xxx
+/// AUTHORIZATION user` 可建与用户名不同的模式，一个用户也可挂多个模式），
+/// `ALL_USERS` 只列用户、会漏掉独立命名的业务模式。
+const DM_SCHEMAS_SQL: &str = "SELECT NAME FROM SYSOBJECTS WHERE TYPE$ = 'SCH'";
+
+/// 达梦 schema 清单查询（`list_databases` 与 `catalog_root` 共用）。
+fn dm_schema_names(client: &mut dm_pure::DmClient) -> Result<Vec<String>, String> {
+    dm_query_strings(client, DM_SCHEMAS_SQL, &[])
+}
 
 /// 达梦标识符校验（拼进 SET SCHEMA 前）：同 Oracle 的普通标识符字符集
 /// [A-Za-z0-9_$#]，非空。防止拼接注入。
