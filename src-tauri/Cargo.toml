@@ -225,10 +225,13 @@ tokio-postgres-rustls = "0.14"
 # tls-rustls-insecure 不可省：prefer/require 档要求「加密但接受任意证书」，
 # redis-rs 的 ConnectionAddr::TcpTls{insecure:true} 在缺该 feature 时直接运行期
 # 报错（见 engines.rs 的 connect_redis）；verify-full 走系统根证书。
+# cluster-async：Redis Cluster 拓扑（extra_options.topology=cluster）的
+# MultiplexedClusterConnection——MOVED/ASK 重定向与按 slot 路由由其内部处理。
 redis = { version = "1.7.1", default-features = false, features = [
   "tokio-comp",
   "tokio-rustls-comp",
   "tls-rustls-insecure",
+  "cluster-async",
   "streams",
 ] }
 # SQL 语句分割 + 只读白名单判定（数据库工作台的多语句执行与写防护）。

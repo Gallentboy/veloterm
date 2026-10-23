@@ -404,6 +404,7 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           readonly INTEGER NOT NULL DEFAULT 1,
           color TEXT,
           compatible_mode TEXT,
+          extra_options TEXT,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
       );",
@@ -480,6 +481,18 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
     {
         return Err(format!(
             "failed to apply db_connections column migration `compatible_mode`: {e}"
+        ));
+    }
+
+    // extra_options：引擎专属扩展配置（JSON 文本）。当前仅 Redis 消费（拓扑 /
+    // 节点清单 / 哨兵 master 名 / mTLS 证书路径），其他引擎恒 NULL；结构由
+    // db_browser::engines 的 RedisExtraOptions 定义（见 docs/redis-engine.md）
+    if let Err(e) = conn.execute_batch(
+        "ALTER TABLE db_connections ADD COLUMN extra_options TEXT",
+    ) && !e.to_string().contains("duplicate column")
+    {
+        return Err(format!(
+            "failed to apply db_connections column migration `extra_options`: {e}"
         ));
     }
 
@@ -1067,6 +1080,11 @@ pub struct DbConnectionRecord {
     /// 其他引擎忽略此字段（OceanBase 的同概念字段是 mode）。
     #[serde(default)]
     pub compatible_mode: Option<String>,
+    /// 引擎专属扩展配置（JSON 文本）。当前仅 Redis 消费：拓扑（single/cluster/
+    /// sentinel）+ 节点清单 + 哨兵 master 名 + mTLS 客户端证书/私钥 PEM 路径。
+    /// 其他引擎恒 None；结构由 db_browser::engines 的 RedisExtraOptions 定义。
+    #[serde(default)]
+    pub extra_options: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -1160,7 +1178,7 @@ fn validate_db_connection(record: &DbConnectionRecord) -> Result<(), String> {
 
 const DB_CONNECTION_COLUMNS: &str = "id, name, engine, host, port, database, username, password, \
      ssl_mode, ssh_host_id, env_level, readonly, color, created_at, updated_at, service_name, \
-     mode, db_path, encryption_mode, compatible_mode";
+     mode, db_path, encryption_mode, compatible_mode, extra_options";
 
 fn row_to_db_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbConnectionRecord> {
     Ok(DbConnectionRecord {
@@ -1187,6 +1205,7 @@ fn row_to_db_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbConnectio
             .filter(|s| !s.is_empty())
             .unwrap_or_else(default_encryption_mode),
         compatible_mode: row.get(19)?,
+        extra_options: row.get(20)?,
     })
 }
 
@@ -1240,8 +1259,8 @@ pub fn save_db_connection(
             "INSERT INTO db_connections \
              (name, engine, host, port, database, username, password, ssl_mode, ssh_host_id, \
               env_level, readonly, color, created_at, updated_at, service_name, mode, \
-              db_path, encryption_mode, compatible_mode) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14,?15,?16,?17,?18)",
+              db_path, encryption_mode, compatible_mode, extra_options) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14,?15,?16,?17,?18,?19)",
             params![
                 record.name.trim(),
                 record.engine,
@@ -1261,6 +1280,7 @@ pub fn save_db_connection(
                 record.db_path,
                 record.encryption_mode,
                 record.compatible_mode,
+                record.extra_options,
             ],
         )
         .map_err(|e| format!("failed to insert db connection: {e}"))?;
@@ -1272,7 +1292,8 @@ pub fn save_db_connection(
                 "UPDATE db_connections SET name=?2, engine=?3, host=?4, port=?5, database=?6, \
                  username=?7, password=?8, ssl_mode=?9, ssh_host_id=?10, env_level=?11, \
                  readonly=?12, color=?13, updated_at=?14, service_name=?15, mode=?16, \
-                 db_path=?17, encryption_mode=?18, compatible_mode=?19 WHERE id=?1",
+                 db_path=?17, encryption_mode=?18, compatible_mode=?19, extra_options=?20 \
+                 WHERE id=?1",
                 params![
                     record.id,
                     record.name.trim(),
@@ -1293,6 +1314,7 @@ pub fn save_db_connection(
                     record.db_path,
                     record.encryption_mode,
                     record.compatible_mode,
+                    record.extra_options,
                 ],
             )
         } else {
@@ -1300,7 +1322,7 @@ pub fn save_db_connection(
                 "UPDATE db_connections SET name=?2, engine=?3, host=?4, port=?5, database=?6, \
                  username=?7, ssl_mode=?8, ssh_host_id=?9, env_level=?10, readonly=?11, \
                  color=?12, updated_at=?13, service_name=?14, mode=?15, db_path=?16, \
-                 encryption_mode=?17, compatible_mode=?18 WHERE id=?1",
+                 encryption_mode=?17, compatible_mode=?18, extra_options=?19 WHERE id=?1",
                 params![
                     record.id,
                     record.name.trim(),
@@ -1320,6 +1342,7 @@ pub fn save_db_connection(
                     record.db_path,
                     record.encryption_mode,
                     record.compatible_mode,
+                    record.extra_options,
                 ],
             )
         }
@@ -2724,6 +2747,7 @@ mod tests {
                 db_path: None,
                 encryption_mode: "none".to_string(),
                 compatible_mode: None,
+                extra_options: None,
                 username: Some("root".to_string()),
                 password: Some("secret".to_string()),
                 ssl_mode: "require".to_string(),
@@ -2759,6 +2783,7 @@ mod tests {
                 db_path: None,
                 encryption_mode: "none".to_string(),
                 compatible_mode: None,
+                extra_options: None,
                 username: None,
                 password: None,
                 ssl_mode: "disable".to_string(),
@@ -2804,6 +2829,7 @@ mod tests {
                 db_path: None,
                 encryption_mode: "none".to_string(),
                 compatible_mode: None,
+                extra_options: None,
                 username: None,
                 password: None,
                 ssl_mode: "disable".to_string(),
