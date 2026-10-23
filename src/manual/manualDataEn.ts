@@ -854,22 +854,29 @@ A lightweight gRPC interactive test bench supporting official Server Reflection,
       {
         id: 'db-connections',
         title: 'Connection Library & Testing',
-        badge: 'MySQL/PG',
-        keywords: ['Database', 'MySQL', 'PostgreSQL', 'Oracle', 'Connection', 'SSL', 'TLS', 'Read-only'],
+        badge: 'MySQL/PG/DM',
+        keywords: ['Database', 'MySQL', 'PostgreSQL', 'Oracle', 'Dameng', 'DM8', 'Compatibility', 'Connection', 'SSL', 'TLS', 'Read-only'],
         content: `### Overview
-Built-in native MySQL and PostgreSQL connectivity (pure Rust drivers, TLS via rustls; Oracle reserved for a later release). Passwords live in the SQLCipher-encrypted store, with environment tiers and a read-only guard toggle.
+Built-in connectivity for MySQL, PostgreSQL, Oracle and Dameng DM8 (MySQL/PG use pure-Rust async drivers, Oracle loads ODPI-C at runtime, Dameng uses the vendored pure-Rust DM8 protocol driver). Passwords live in the SQLCipher-encrypted store, with environment tiers and a read-only guard toggle.
 
 ### Entry & Shortcuts
 - **Entry**: Create or edit connections on the "DB Hosts" page in the sidebar.
 
 ### Core Steps
-1. Click "New Connection" and pick an engine (MySQL / PostgreSQL; default port 3306 / 5432 auto-filled).
+1. Click "New Connection" and pick an engine (MySQL 3306 / PostgreSQL 5432 / Oracle 1521 / Dameng 5236; the default port is auto-filled).
 2. Fill in host, port, database, username and password; choose an SSL mode:
    - **Disable**: plaintext;
    - **Prefer/Require TLS**: encrypted without certificate verification (self-signed intranet certs);
    - **Verify Full**: validation against system root certificates (managed cloud databases).
+   - **Dameng does not support TLS** (the driver only encrypts login); this selector is disabled for it.
 3. Set the environment tier (dev/test/staging/prod) and the "Read-only session" toggle (on by default: writes are rejected by a backend AST whitelist).
 4. "Test" before saving: connect, fetch the server version, disconnect, and report the round-trip in milliseconds.
+
+### Dameng DM8 Notes
+- **Compatibility mode**: whether a Dameng instance is MySQL- or Oracle-compatible is decided server-side by \`COMPATIBLE_MODE\` in \`dm.ini\`; clients cannot switch it. The form's "Compatibility" option only affects the **client-side SQL dialect** (statement splitting, read-only checks, ROWNUM vs LIMIT, FROM DUAL in the starter query). A wrong choice never breaks the connection.
+- **Initial schema**: the "database" field means the default schema after login (Oracle's CURRENT_SCHEMA); it may be left empty.
+- **Catalog tree**: in both compatibility modes the tree uses Dameng's native Oracle-style dictionaries (\`ALL_USERS\` / \`ALL_TABLES\` / \`ALL_VIEWS\` / \`ALL_OBJECTS\` / \`ALL_SEQUENCES\`) — compatibility mode only adds to these views, never removes them.
+- **Zero external dependencies**: the driver is a pure-Rust protocol implementation; no Dameng Instant Client or libdmdpi needed.
 
 ### Tips & Notes
 - On edit, an empty password field keeps the stored one (passwords are never echoed back).

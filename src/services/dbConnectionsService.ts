@@ -6,7 +6,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-export type DbEngineKind = 'mysql' | 'postgres' | 'oracle' | 'oceanbase' | 'sqlite';
+export type DbEngineKind = 'mysql' | 'postgres' | 'oracle' | 'oceanbase' | 'sqlite' | 'dameng';
 
 /**
  * SQLite 加密方式（后端 db.rs 的 encryption_mode 列）：
@@ -37,6 +37,9 @@ export interface DbConnectionRecord {
   dbPath: string | null;
   /** SQLite 专有加密方式（仅 engine='sqlite' 有意义）；其它引擎恒为 'none' */
   encryptionMode: SqliteEncryptionMode;
+  /** 仅达梦有意义：客户端侧方言选择（服务器行为由 dm.ini 的 COMPATIBLE_MODE 决定）。
+   *  null/undefined = 按 oracle 处理。 */
+  compatibleMode: 'oracle' | 'mysql' | null;
   username: string | null;
   /** null = 更新时保留库中旧值（表单未改动不回传）；明文存 SQLCipher 库。
    * engine='sqlite' 时语义 = 加密口令（原始密钥模式为 64 位十六进制） */
@@ -85,6 +88,8 @@ export interface DbSessionMeta {
   engine: DbEngineKind;
   /** OceanBase 专有：租户模式 'mysql' | 'oracle'（其他引擎 null） */
   mode: string | null;
+  /** 达梦的客户端侧兼容模式；其他引擎为 null（前端据此选方言语法） */
+  compatibleMode: 'oracle' | 'mysql' | null;
   /** engine='sqlite' 时固定为 'main'（SQLite 无连接级库概念，对象树顶层为已附加库） */
   database: string | null;
   serverVersion: string;

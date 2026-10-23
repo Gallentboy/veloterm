@@ -10,6 +10,12 @@
 //!
 //! SQLite 方言经 SQLiteDialect 解析；PRAGMA 的只读判定按「有无赋值」区分
 //! （无值 = 只读查询，带值 = 写操作）。
+//!
+//! 达梦（dameng）的兼容模式决定客户端侧方言：服务器行为由 dm.ini 的
+//! COMPATIBLE_MODE 决定、驱动不感知，故由调用方按连接记录把引擎串传成
+//! `"dameng"`（Oracle 兼容，默认）或 `"dameng:mysql"`（MySQL 兼容）。
+//! Oracle 兼容模式无 sqlparser 专属方言，与 Oracle 引擎同法走 PostgreSqlDialect
+//! 主路（常规 SELECT/WITH 能解析，达梦特有语法解析失败自然落入降级路）。
 
 use sqlparser::ast::Statement;
 use sqlparser::dialect::{Dialect, MySqlDialect, PostgreSqlDialect, SQLiteDialect};
@@ -28,12 +34,24 @@ pub struct SplitStatement {
 /// OracleDialect），走 PostgreSqlDialect 主路——常规 SELECT/WITH 能解析
 /// （只读判定走 AST），Oracle 特有语法（CONNECT BY 等）解析失败自然落入
 /// 降级路，双路设计本就容忍方言缺失（绝不能因解析器不认识就拒绝执行）。
+///
+/// 达梦两种兼容模式：`"dameng"`（Oracle 兼容，默认）与 Oracle 同路；
+/// `"dameng:mysql"`（MySQL 兼容）走 MySqlDialect——达梦 MySQL 兼容模式认
+/// 反引号标识符，用 PG 方言会把合法语句判成解析失败、只读判定退回前缀白名单。
 pub fn dialect_for_engine(engine: &str) -> &'static dyn Dialect {
     match engine {
-        "mysql" => &MySqlDialect {},
+        "mysql" | "dameng:mysql" => &MySqlDialect {},
         "sqlite" => &SQLiteDialect {},
         _ => &PostgreSqlDialect {},
     }
+}
+
+/// 达梦 Oracle 兼容（含裸 `"dameng"` 与显式 `"dameng:oracle"` 两种写法）：
+/// 服务器侧是 PL/SQL 语义，语句分割要做块整段化。
+fn is_plsql_engine(engine: &str) -> bool {
+    engine == "oracle"
+        || engine == "dameng"
+        || engine.strip_prefix("dameng:").is_some_and(|m| m != "mysql")
 }
 
 /// 分割多语句。空语句（仅空白/注释）被丢弃。
@@ -41,12 +59,16 @@ pub fn dialect_for_engine(engine: &str) -> &'static dyn Dialect {
 /// 块内的分号（IF/END IF、逐语句 DML）不是语句边界，朴素分割会撕裂。
 /// SQLite：触发器体（BEGIN...END）目前按分号分割，多语句编辑器里请整段
 /// 单独执行。
+///
+/// 达梦 Oracle 兼容模式同样支持 PL/SQL 块，故与 oracle 同路
+///（`"dameng:mysql"` 不做整段化：MySQL 兼容模式的过程体语法不同，且
+/// MySQL 引擎本身也不整段化）。
 pub fn split_statements(engine: &str, sql: &str) -> Vec<SplitStatement> {
     let trimmed = sql.trim();
     if trimmed.is_empty() {
         return Vec::new();
     }
-    if engine == "oracle" && contains_plsql_block(trimmed) {
+    if is_plsql_engine(engine) && contains_plsql_block(trimmed) {
         return vec![SplitStatement {
             sql: trimmed.to_string(),
             parsed: false,
@@ -76,7 +98,7 @@ pub fn split_statements(engine: &str, sql: &str) -> Vec<SplitStatement> {
     }
 }
 
-/// 词边界 PL/SQL 块检测（仅 Oracle 引擎使用）：跳过字符串/注释后扫描，
+/// 词边界 PL/SQL 块检测（Oracle 与达梦 Oracle 兼容模式使用）：跳过字符串/注释后扫描，
 /// 出现独立的 BEGIN 或 DECLARE 关键词即视为含块。普通 SQL 几乎不含裸
 /// BEGIN（MySQL 事务缩写也仅限 mysql 引擎）；字符串/注释里的字面量
 /// 'BEGIN' 不误判。CREATE OR REPLACE PROCEDURE/FUNCTION 体含 BEGIN，
@@ -504,5 +526,31 @@ mod tests {
         // 非 Oracle 引擎不受 PL/SQL 整段化影响
         let mysql_sql = "SELECT 'BEGIN' ; SELECT 2";
         assert_eq!(split_statements("mysql", mysql_sql).len(), 2);
+    }
+
+    /// 达梦两模式：Oracle 兼容走 PG 主路 + PL/SQL 整段化，MySQL 兼容走
+    /// MySqlDialect（反引号可解析）且不做 PL/SQL 整段化
+    #[test]
+    fn dameng_dialects_follow_compat_mode() {
+        let parts = split_statements("dameng", "SELECT 1 FROM DUAL; SELECT 2 FROM DUAL");
+        assert_eq!(parts.len(), 2);
+        assert!(parts.iter().all(|p| p.parsed));
+        // Oracle 兼容的 PL/SQL 匿名块：整段单条（块内分号不是边界）
+        let block = "BEGIN\n  UPDATE t SET x = 1;\nEND;";
+        assert_eq!(split_statements("dameng", block).len(), 1);
+        // MySQL 兼容：反引号标识符能解析（MySqlDialect），多语句正常分割
+        let parts = split_statements("dameng:mysql", "SELECT `a` FROM t; SELECT 2");
+        assert_eq!(parts.len(), 2);
+        assert!(parts.iter().all(|p| p.parsed));
+        // 显式 "dameng:oracle" 与裸 "dameng" 同语义（PL/SQL 整段化仍生效）
+        assert_eq!(
+            split_statements("dameng:oracle", "BEGIN\n  UPDATE t SET x = 1;\nEND;").len(),
+            1
+        );
+        // 只读判定与方言同源
+        let bad = split_statements("dameng:mysql", "DELETE FROM t");
+        assert!(!bad.iter().all(|s| statement_is_readonly("dameng:mysql", s)));
+        let ok = split_statements("dameng", "SELECT 1 FROM DUAL");
+        assert!(ok.iter().all(|s| statement_is_readonly("dameng", s)));
     }
 }

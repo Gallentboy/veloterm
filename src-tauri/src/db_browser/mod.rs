@@ -57,6 +57,10 @@ pub struct DbSessionMeta {
     /// OceanBase 专有：租户模式（Some("mysql") / Some("oracle")，其他引擎
     /// 恒 None；前端据此展示模式徽标，sqlsplit 方言键映射也消费它）
     pub mode: Option<String>,
+    /// 达梦的客户端侧兼容模式（'oracle' | 'mysql'）；其他引擎恒 null。
+    /// 前端据此选方言语法（ROWNUM vs LIMIT、FROM DUAL 等），db_query 的
+    /// 方言键映射也消费它（与 mode 的分工：mode 属 OceanBase，此处属达梦）
+    pub compatible_mode: Option<String>,
     pub database: Option<String>,
     pub server_version: String,
     pub readonly: bool,
@@ -215,12 +219,16 @@ pub async fn db_connect(
     } else {
         record.database.clone()
     };
+    // 达梦的兼容模式在结构体构造前算好（name/env_level 等 move 字段后
+    // record 不可再借用）；db_query 的方言键映射消费它
+    let dameng_dialect = record.dameng_dialect();
     let meta = DbSessionMeta {
         session_id: session_id.clone(),
         connection_id: record.id,
         name: record.name,
         engine: record.engine.clone(),
         mode: record.mode.clone(),
+        compatible_mode: dameng_dialect.map(str::to_string),
         database,
         server_version,
         readonly: record.readonly,
@@ -324,12 +332,18 @@ pub async fn db_query(
             .meta
             .read()
             .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
-        // OceanBase 双模式的方言/只读白名单映射：Oracle 模式继承 oracle
-        // 方言（PL/SQL 块整段化、只读白名单同源），MySQL 模式继承 mysql
-        // 方言；sqlsplit.rs 零改动，映射只在这里（合成键与真实引擎同名）
+        // 双模式引擎的方言/只读白名单映射（合成键与真实引擎同名或 dameng:xxx）：
+        // - OceanBase：Oracle 模式继承 oracle 方言（PL/SQL 块整段化、只读
+        //   白名单同源），MySQL 模式继承 mysql 方言；
+        // - 达梦：compatible_mode 展开为 dameng:oracle / dameng:mysql（sqlsplit
+        //   侧的两个方言分支）；空值归 oracle（达梦默认部署多为 Oracle 兼容）
         let key = match (meta.engine.as_str(), meta.mode.as_deref()) {
             ("oceanbase", Some("oracle")) => "oracle".to_string(),
             ("oceanbase", _) => "mysql".to_string(),
+            ("dameng", _) => format!(
+                "dameng:{}",
+                meta.compatible_mode.as_deref().unwrap_or("oracle")
+            ),
             (other, _) => other.to_string(),
         };
         (meta.readonly, key)
@@ -551,15 +565,12 @@ pub async fn db_use_database(
             let mut old = std::mem::replace(&mut *engine, new_engine);
             old.close().await;
         }
-        DbEngine::Oracle(_) => {
-            // Oracle 切换 = ALTER SESSION SET CURRENT_SCHEMA（只改名字解析，
-            // 不重连、不动连接记录的 service_name）；元信息仍展示服务名
+        DbEngine::Oracle(_) | DbEngine::Dameng(_) => {
+            // Oracle / 达梦切 schema = 会话级 SET SCHEMA（只改名字解析，不重连、
+            // 不动连接记录）；不走下方 meta 重写分支的 early-return，统一落到
+            // 尾部的 database 更新（原 Oracle 臂在此 early-return，导致切换后
+            // 元信息永远停在初始 schema——顺带修正）
             engine.select_database(&db_name).await?;
-            let meta = session
-                .meta
-                .read()
-                .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
-            return Ok(meta.clone());
         }
         DbEngine::Sqlite(_) => {
             // SQLite 无连接级切库：对象树顶层已是 database_list 的附加库，

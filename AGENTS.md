@@ -15,14 +15,16 @@
 
 ## 验证门禁
 
-提交前的最低验证口径（macOS 本机）：
+**门禁口径（默认局部，全量需显式指令）**：改了哪个模块就跑哪个模块的门禁——Rust 侧一律 `-p <crate>` + 范围过滤（如 `cargo check -p app --lib`、`cargo test -p app --lib <模块名>`、`cargo clippy -p app --all-targets`；工具链侧 `cargo test -p coreutils`），**严禁默认跑 `--workspace` 全量**（慢且 vendor 噪音大）；仅当用户明确要求全量门禁时才按下表执行。前端 `pnpm run typecheck` / `build` 本身是项目级命令，不在此限。测试同理：只跑改动模块的测试过滤项，不跑 workspace 全量测试。
+
+全量验证口径（macOS 本机，仅用户显式指定时执行）：
 
 | 检查 | 命令 | 要求 |
 | --- | --- | --- |
 | 前端类型 | `pnpm run typecheck` | 零错误 |
 | 前端构建 | `pnpm run build` | 成功 |
 | Rust 编译 | `cargo check --workspace --all-targets`（在 `src-tauri/`） | 零错误 |
-| Rust 测试 | `cargo test --workspace` | 全绿（app 221 + coreutils 54 + tools-catalog 1 为当前基线） |
+| Rust 测试 | `cargo test --workspace` | 全绿（app 284 + coreutils 67 + tools-catalog 1 为当前基线，2026-10-23 OB 接入后实测） |
 | Lint | `cargo clippy --workspace --all-targets` | 自有代码零警告 |
 
 冒烟构建用 **debug**（`cargo build -p coreutils`），release 太慢。已知例外：在 src-tauri 根用 `-p openssl-app` 跑测试会触发 cargo 对 `cfg(windows)` 门控成员的 resolver panic（cargo 的 bug），改在 `vendor/openssl-app` 目录内独立跑（jq-app / bc-app 同此约定）。
