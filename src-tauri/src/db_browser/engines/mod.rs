@@ -4506,6 +4506,42 @@ mod tests {
         assert!(oracle_error_text(70000).is_none());
     }
 
+    /// 三行结构化文案：第一行 `ORA-xxxxx：解释`，第二行 `原因：`，第三行
+    /// `处理建议：`；精简表（无 cause/action）退化为单行
+    #[test]
+    fn oracle_err_formats_three_lines() {
+        use oracle_async::OracleError;
+
+        // 缺消息文件形态（服务器没装 .msb）：完整三行
+        let e = oracle_async::Error::Server(OracleError {
+            code: 942,
+            message: "ORA-00942: Message 942 not found; No message file for product=RDBMS, \
+                      facility=ORA; arguments: [EMP]"
+                .into(),
+        });
+        let msg = oracle_err(e);
+        let lines: Vec<&str> = msg.lines().collect();
+        assert!(lines.len() >= 3, "应为三行以上，实际 {} 行：{msg}", lines.len());
+        let (first, second, third) = match (lines.first(), lines.get(1), lines.get(2)) {
+            (Some(a), Some(b), Some(c)) => (*a, *b, *c),
+            _ => unreachable!("len >= 3 已断言"),
+        };
+        assert!(
+            first.starts_with("ORA-00942："),
+            "首行应为代码+解释：{first}"
+        );
+        assert!(first.contains("表或视图不存在"), "首行应含中文解释：{first}");
+        assert!(second.starts_with("原因："), "第二行应为原因：{second}");
+        assert!(
+            third.starts_with("处理建议："),
+            "第三行应为处理建议：{third}"
+        );
+        // arguments 段保留（缺消息文件时唯一的定位信息）
+        assert!(msg.contains("EMP"), "应保留 arguments 定位信息：{msg}");
+        // 不应残留英文噪音
+        assert!(!msg.contains("No message file"), "应剥掉缺消息文件尾巴：{msg}");
+    }
+
     /// 达梦值字符串化/数值归一/标识符校验的纯函数边界（连库行为无法在无
     /// 服务端环境测试，这里只锁展示与防注入逻辑）
     #[test]
