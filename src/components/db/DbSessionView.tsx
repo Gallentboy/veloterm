@@ -14,15 +14,19 @@ import {
   Boxes,
   Braces,
   ChevronRight,
+  Clock,
   Copy,
   Database,
   Eye,
   Folder,
   Layers,
+  Link,
   ListOrdered,
   Loader2,
+  Package,
   Play,
   RefreshCw,
+  ScrollText,
   Search,
   Sigma,
   Square,
@@ -126,6 +130,10 @@ const OBJECT_KINDS = new Set([
   'procedure',
   'sequence',
   'trigger',
+  'synonym',
+  'package',
+  'event',
+  'rule',
 ]);
 
 /** OB 的 Oracle 租户模式与 Oracle 同方言：SELECT 需 FROM DUAL、无 LIMIT
@@ -164,6 +172,14 @@ function nodeIcon(kind: CatalogNode['kind'], className?: string) {
       return <ListOrdered className={cn('size-3.5 shrink-0 text-terminal-yellow', className)} />;
     case 'trigger':
       return <Zap className={cn('size-3.5 shrink-0 text-terminal-red', className)} />;
+    case 'synonym':
+      return <Link className={cn('size-3.5 shrink-0 text-terminal-cyan', className)} />;
+    case 'package':
+      return <Package className={cn('size-3.5 shrink-0 text-terminal-yellow', className)} />;
+    case 'event':
+      return <Clock className={cn('size-3.5 shrink-0 text-terminal-blue', className)} />;
+    case 'rule':
+      return <ScrollText className={cn('size-3.5 shrink-0 text-terminal-magenta', className)} />;
     case 'column':
       return <AlignLeft className={cn('size-3 shrink-0 text-foreground-subtlest', className)} />;
     default:
@@ -206,7 +222,7 @@ export function DbSessionView({
   // 函数/过程定义视图（对象树双击拉取；新查询执行时让位给结果面板）
   const [objectDef, setObjectDef] = useState<{
     name: string;
-    kind: 'function' | 'procedure' | 'sequence' | 'trigger';
+    kind: 'function' | 'procedure' | 'sequence' | 'trigger' | 'synonym' | 'package' | 'event' | 'rule';
     def: ObjectDefinition;
   } | null>(null);
   const [defLoading, setDefLoading] = useState(false);
@@ -504,7 +520,11 @@ export function DbSessionView({
         node.kind === 'function' ||
         node.kind === 'procedure' ||
         node.kind === 'sequence' ||
-        node.kind === 'trigger'
+        node.kind === 'trigger' ||
+        node.kind === 'synonym' ||
+        node.kind === 'package' ||
+        node.kind === 'event' ||
+        node.kind === 'rule'
       ) {
         const sessionId = sessionIdRef.current;
         if (!sessionId || defLoading) return;
@@ -789,6 +809,10 @@ export function DbSessionView({
                 'procedure',
                 'sequence',
                 'trigger',
+                'synonym',
+                'package',
+                'event',
+                'rule',
               ].includes(branch.node.kind)
             ) {
               e.preventDefault();
@@ -1369,6 +1393,14 @@ export function DbSessionView({
                     <Sigma className="size-3.5 shrink-0 text-terminal-magenta" />
                   ) : objectDef.kind === 'trigger' ? (
                     <Zap className="size-3.5 shrink-0 text-terminal-red" />
+                  ) : objectDef.kind === 'synonym' ? (
+                    <Link className="size-3.5 shrink-0 text-terminal-cyan" />
+                  ) : objectDef.kind === 'package' ? (
+                    <Package className="size-3.5 shrink-0 text-terminal-yellow" />
+                  ) : objectDef.kind === 'event' ? (
+                    <Clock className="size-3.5 shrink-0 text-terminal-blue" />
+                  ) : objectDef.kind === 'rule' ? (
+                    <ScrollText className="size-3.5 shrink-0 text-terminal-magenta" />
                   ) : (
                     <Braces className="size-3.5 shrink-0 text-terminal-magenta" />
                   )}

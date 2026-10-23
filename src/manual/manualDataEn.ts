@@ -888,7 +888,7 @@ Built-in connectivity for MySQL, PostgreSQL, Oracle and Dameng DM8 (MySQL/PG use
         badge: 'SQL',
         keywords: ['SQL Workbench', 'Query', 'Catalog', 'Schema', 'Cancel', 'Result Sets'],
         content: `### Overview
-A multi-session tab workbench: a lazily loaded catalog tree on the left (database/schema → object groups: tables / views / materialized views / functions / procedures / triggers / sequences, with counts and empty groups hidden → columns of tables/views; resizable), a Monaco SQL editor (static completion) and streaming result grids (per-statement tabs, sorting, filtering, TSV copy) on the right.
+A multi-session tab workbench: a lazily loaded catalog tree on the left (database/schema → object groups: tables / views / materialized views / functions / procedures / triggers / sequences / synonyms / packages / events / rules, with counts and empty groups hidden → columns of tables/views; resizable), a Monaco SQL editor (static completion) and streaming result grids (per-statement tabs, sorting, filtering, TSV copy) on the right.
 
 Groups follow each engine's capabilities (same sources as the open-source DBeaver implementation): MySQL reads \`information_schema\` TABLES / ROUTINES / TRIGGERS; PostgreSQL uses \`pg_catalog\` (pg_class by relkind for tables/views/materialized views/sequences, pg_proc by prokind for functions/procedures, pg_trigger excluding internal triggers); Oracle and Dameng use \`all_objects\` / the \`SYSOBJECTS\` base table. Double-clicking a function/procedure/sequence/trigger fetches its full definition (\`SHOW CREATE TRIGGER\`, \`pg_get_triggerdef\`, \`all_source\`, and \`DBMS_METADATA.GET_DDL\` respectively).
 
