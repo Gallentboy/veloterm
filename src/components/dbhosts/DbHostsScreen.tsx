@@ -910,34 +910,38 @@ function DbConnectionFormDialog({
             <p className="text-ui-xs text-foreground-subtlest">{t('dbHosts.sqliteFileHint')}</p>
           </>
         ) : (
-          <div className="flex gap-3">
-            <div className="min-w-0 flex-[2]">
-              <FormField label={t('dbHosts.hostLabel')}>
-                <TextInput
-                  value={host}
-                  onChange={(e) => setHost(e.target.value)}
-                  placeholder="10.0.0.5"
-                  className="font-mono"
-                />
-              </FormField>
+          <>
+            <div className="flex gap-3">
+              <div className="min-w-0 flex-[2]">
+                <FormField label={t('dbHosts.hostLabel')}>
+                  <TextInput
+                    value={host}
+                    onChange={(e) => setHost(e.target.value)}
+                    placeholder="10.0.0.5"
+                    className="font-mono"
+                  />
+                </FormField>
+              </div>
+              <div className={cn('shrink-0', engine === 'oceanbase' ? 'w-32' : 'w-24')}>
+                <FormField label={t('dbHosts.portLabel')}>
+                  <TextInput
+                    value={port}
+                    onChange={(e) => setPort(e.target.value)}
+                    placeholder={String(ENGINE_DEFAULT_PORTS[engine])}
+                    className="font-mono"
+                  />
+                </FormField>
+              </div>
             </div>
-            <div className={cn('shrink-0', engine === 'oceanbase' ? 'w-32' : 'w-24')}>
-              <FormField label={t('dbHosts.portLabel')}>
-                <TextInput
-                  value={port}
-                  onChange={(e) => setPort(e.target.value)}
-                  placeholder={String(ENGINE_DEFAULT_PORTS[engine])}
-                  className="font-mono"
-                />
-                {/* OceanBase：直连 2881 / 经 obproxy 2883 的端口提示 */}
-                {engine === 'oceanbase' ? (
-                  <span className="text-ui-xs leading-snug text-foreground-subtlest select-none">
-                    {t('dbHosts.obPortHint')}
-                  </span>
-                ) : null}
-              </FormField>
-            </div>
-          </div>
+            {/* OceanBase：直连 2881 / 经 obproxy 2883 的端口提示——窄端口列
+                放不下整句，作整行提示置于 host/port 行下方（sqliteFileHint
+                同型） */}
+            {engine === 'oceanbase' ? (
+              <p className="text-ui-xs text-foreground-subtlest select-none">
+                {t('dbHosts.obPortHint')}
+              </p>
+            ) : null}
+          </>
         )}
 
         {/* Oracle：服务名行（必填，连库必需；SSL 同行）；MySQL/PG 无此行 */}
@@ -995,11 +999,10 @@ function DbConnectionFormDialog({
             {engine !== 'oracle' ? (
               <div className="w-36 shrink-0">
                 {/* 达梦只有登录加密、没有 TLS 链路；OB Oracle 租户模式 P0 仅
-                    disable——两者的下拉都禁用并固定 disable */}
-                <FormField
-                  label={t('dbHosts.sslLabel')}
-                  hint={obOracleTlsLocked ? t('dbHosts.obOracleTlsHint') : undefined}
-                >
+                    disable——两者的下拉都禁用并固定 disable；提示作下拉下方
+                    独立行（达梦同型）——不用 FormField 的 hint（长文案会把
+                    label 行撑高折行，与左列错位） */}
+                <FormField label={t('dbHosts.sslLabel')}>
                   <SelectMenu
                     value={obOracleTlsLocked || engine === 'dameng' ? 'disable' : sslMode}
                     onChange={(v) => setSslMode(v as DbConnectionRecord['sslMode'])}
@@ -1007,9 +1010,13 @@ function DbConnectionFormDialog({
                     disabled={obOracleTlsLocked || engine === 'dameng'}
                   />
                 </FormField>
-                {engine === 'dameng' ? (
+                {obOracleTlsLocked || engine === 'dameng' ? (
                   <p className="mt-1 text-ui-xs text-foreground-subtlest">
-                    {t('dbHosts.sslUnsupportedDameng')}
+                    {t(
+                      obOracleTlsLocked
+                        ? 'dbHosts.obOracleTlsHint'
+                        : 'dbHosts.sslUnsupportedDameng',
+                    )}
                   </p>
                 ) : null}
               </div>
