@@ -53,6 +53,10 @@ pub struct Conn {
     pub(crate) db_version_major: u32,
     /// 0x3B 回包的完整 banner（OCI 同源）——展示层用它保持与原生 OCI 一致
     pub(crate) db_version_info: String,
+    /// NLS 会话参数（连接末尾加载；失败为 None，不阻断连接）。
+    /// Box 化：NlsData 是 13 个 String（~312B），内联会把 Conn 撑回 760B
+    /// （体积守卫 conn_stays_compact 会拦下）
+    pub(crate) nls: Option<Box<routines::nls::NlsData>>,
     pub(crate) in_buffer: BytesMut,
     /// 在途请求的已发包缓冲：TNS 协议规定服务端可随时回 RESEND（类型 11）
     /// 要求客户端重传当前消息的全部包——监听器把连接转交给专用进程后这是
@@ -108,6 +112,11 @@ impl Conn {
             warn!("DB version query failed (non-fatal): {e}");
         }
 
+        // Stage 6: NLS 会话参数（go-ora 同口径：失败不阻断）。
+        // 注：出参路径在 11g 真机上尚未跑通（见 AGENTS.md 已知边界），
+        // 失败时静默跳过，不影响连接与后续查询。
+        let _ = routines::nls::LoadNlsRoutine::new().call(&mut conn).await;
+
         info!(
             "Connected successfully to Oracle database. Version: {}, Session ID: {}, Serial: {}",
             conn.server_version_str, conn.session_id, conn.serial_num
@@ -149,6 +158,7 @@ impl Conn {
             db_version_text: String::new(),
             db_version_major: 0,
             db_version_info: String::new(),
+            nls: None,
             in_buffer: BytesMut::with_capacity(8192),
             in_flight: Vec::new(),
         })
@@ -379,6 +389,47 @@ impl Conn {
         Transaction::new(self).await
     }
 
+    /// 协议级提交（go-ora Tx.Commit：simpleObject operationID 0x0E）
+    ///
+    /// 与 SQL 文本 `COMMIT` 的差别：不占语句解析/游标资源，服务端直接
+    /// 提交当前事务并回 Summary；go-ora 在提交后把 autoCommit 置真。
+    pub async fn commit(&mut self) -> Result<()> {
+        self.simple_object(0x0E).await
+    }
+
+    /// 协议级回滚（go-ora Tx.Rollback：simpleObject operationID 0x0F）
+    pub async fn rollback(&mut self) -> Result<()> {
+        self.simple_object(0x0F).await
+    }
+
+    /// simpleObject 执行（go-ora simpleObject.exec：`[3, opID, 0]` + 读 4/9）
+    async fn simple_object(&mut self, operation_id: u8) -> Result<()> {
+        let mut w = TtcWriter::new();
+        w.put_bytes(&[3, operation_id, 0]);
+        self.send_writer(w).await?;
+        loop {
+            let msg = self.get_byte().await?;
+            if msg == 4 {
+                let s = routines::summary::read_summary(self).await?;
+                if s.ret_code != 0 {
+                    let msg_str = String::from_utf8_lossy(&s.error_message.unwrap_or_default())
+                        .to_string();
+                    return Err(Error::Server(crate::error::OracleError {
+                        code: s.ret_code,
+                        message: msg_str,
+                    }));
+                }
+                break;
+            }
+            if msg == 9 {
+                routines::summary::read_end_of_call(self).await?;
+                break;
+            }
+        }
+        trace!("simpleObject 0x{operation_id:02X} done");
+        Ok(())
+    }
+
     /// Send a TNS Marker packet (type 12, marker 0) to abort the current running operation.
     pub async fn break_connection(&mut self) -> Result<()> {
         warn!("Sending TNS Break Marker packet to Oracle server");
@@ -432,6 +483,11 @@ impl Conn {
     /// 完整版本 banner（OCI 同源，如 "Oracle Database 11g … Release 11.2.0.4.0 …"）
     pub fn db_version_banner(&self) -> &str {
         &self.db_version_info
+    }
+
+    /// NLS 会话参数（连接时加载；未加载成功为 None）
+    pub fn nls(&self) -> Option<&routines::nls::NlsData> {
+        self.nls.as_deref()
     }
 
     /// 数据库主版本（未取得为 0）

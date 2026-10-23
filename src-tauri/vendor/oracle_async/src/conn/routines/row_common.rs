@@ -10,6 +10,7 @@ use crate::conn::Conn;
 use crate::error::{Error, Result};
 use crate::io::TtcReader;
 use crate::proto::tns_types::TnsType;
+use crate::proto::decode_ext;
 use crate::proto::{
     oracle_date::{decode_date, decode_datetime, decode_datetime_tz},
     oracle_number::decode_number_to_decimal,
@@ -285,7 +286,9 @@ pub async fn read_bitvector(conn: &mut Conn, column_count: usize) -> Result<Vec<
         .collect())
 }
 
-/// 单元格 CLR 字节 → 强类型值（文本按列字符集解码：852=GBK 等）
+/// 单元格 CLR 字节 → 强类型值（文本按列字符集解码：852=GBK 等）。
+/// 逐单元格调用，内联收益明确（与 engines 的单元格辅助同一口径）。
+#[inline]
 pub fn decode_cell(tns: &TnsType, b: &[u8], charset_id: u32) -> OracleValue {
     match tns {
         TnsType::Number => match decode_number_to_decimal(b) {
@@ -308,6 +311,34 @@ pub fn decode_cell(tns: &TnsType, b: &[u8], charset_id: u32) -> OracleValue {
             Err(_) => OracleValue::Binary(b.to_vec()),
         },
         TnsType::Raw | TnsType::LongRaw => OracleValue::Binary(b.to_vec()),
+        // 扩展类型（proto/decode_ext 的 go-ora 逐字节复刻）
+        TnsType::Boolean => match decode_ext::decode_boolean(b) {
+            Some(v) => OracleValue::Boolean(v),
+            None => OracleValue::Binary(b.to_vec()),
+        },
+        TnsType::IntervalYm | TnsType::IntervalYmDty => match decode_ext::decode_interval_ym(b) {
+            Some(s) => OracleValue::Text(s),
+            None => OracleValue::Binary(b.to_vec()),
+        },
+        TnsType::IntervalDs | TnsType::IntervalDsDty => match decode_ext::decode_interval_ds(b) {
+            Some(s) => OracleValue::Text(s),
+            None => OracleValue::Binary(b.to_vec()),
+        },
+        TnsType::BFloat | TnsType::IBFloat => match decode_ext::decode_binary_float(b) {
+            Some(v) => OracleValue::Float(v as f64),
+            None => OracleValue::Binary(b.to_vec()),
+        },
+        TnsType::BDouble | TnsType::IBDouble => match decode_ext::decode_binary_double(b) {
+            Some(v) => OracleValue::Float(v),
+            None => OracleValue::Binary(b.to_vec()),
+        },
+        TnsType::Vector => match decode_ext::decode_vector(b) {
+            Some(s) => OracleValue::Text(s),
+            None => OracleValue::Binary(b.to_vec()),
+        },
+        TnsType::URowid => OracleValue::Text(decode_ext::decode_urowid_hex(b)),
+        TnsType::Json => OracleValue::Text(charset::decode(b, charset_id)),
+        TnsType::XmlType | TnsType::OciXmlType => OracleValue::Text(charset::decode(b, charset_id)),
         _ => OracleValue::Text(charset::decode(b, charset_id)),
     }
 }

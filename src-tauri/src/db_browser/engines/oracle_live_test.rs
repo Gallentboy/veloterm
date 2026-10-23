@@ -42,7 +42,6 @@ async fn oracle_live_connect_and_select() {
 
     println!("live target: {user}@{host}:{port}/{service:?} (schema={schema:?})");
 
-
     let mut opts = oracle_async::Opts::builder()
         .host(host)
         .port(port as u16)
@@ -110,6 +109,105 @@ async fn oracle_live_connect_and_select() {
     let clob_val = format!("{}", row.values().first().unwrap_or(&oracle_async::OracleValue::Null));
     println!("clob cell: {clob_val}");
     assert_eq!(clob_val, "hello-clob-inline");
+
+    // ── 绑定参数（P0-2）：数字/字符串/日期三种占位符，真机执行 ──
+    use oracle_async::{BindParam, BindValue};
+    let mut rs = oc
+        .query_with_params(
+            "SELECT :1 + 1 AS SUM_VAL, :2 || '-suffix' AS STR_VAL, \
+             TO_CHAR(:3, 'YYYY-MM-DD') AS DATE_VAL FROM dual",
+            vec![
+                BindParam::input(BindValue::Int(41)),
+                BindParam::input(BindValue::Text("bind".into())),
+                BindParam::input(BindValue::Date(
+                    chrono::NaiveDate::from_ymd_opt(2026, 10, 24).unwrap(),
+                )),
+            ],
+        )
+        .await
+        .expect("绑定参数查询失败");
+    let row = rs.next_row().await.expect("绑参行读取失败").expect("应有 1 行");
+    let sum_val = format!("{}", row.values().first().unwrap_or(&oracle_async::OracleValue::Null));
+    let str_val = format!("{}", row.values().get(1).unwrap_or(&oracle_async::OracleValue::Null));
+    let date_val = format!("{}", row.values().get(2).unwrap_or(&oracle_async::OracleValue::Null));
+    println!("bind params -> sum={sum_val}, str={str_val}, date={date_val}");
+    assert_eq!(sum_val, "42", "数字绑定应得 42");
+    assert_eq!(str_val, "bind-suffix", "字符串绑定应拼接成功");
+    assert_eq!(date_val, "2026-10-24", "日期绑定应正确");
+
+    // 中文绑定（852=GBK 服务器字符集编码路径）
+    let mut rs = oc
+        .query_with_params(
+            "SELECT :1 AS CN FROM dual",
+            vec![BindParam::input(BindValue::Text("中文绑定".into()))],
+        )
+        .await
+        .expect("中文绑定查询失败");
+    let cn = format!(
+        "{}",
+        rs.next_row().await.expect("中文绑定行读取失败").expect("应有 1 行")
+            .values()
+            .first()
+            .unwrap_or(&oracle_async::OracleValue::Null)
+    );
+    println!("bind chinese -> {cn}");
+    assert_eq!(cn, "中文绑定", "中文绑定经 GBK 编码往返应无损");
+
+    // ── NLS 会话参数（P2-4，连接时自动加载；走 OUT 参数回读路径）──
+    match oc.nls() {
+        Some(nls) => println!(
+            "nls: date_format={:?}, timestamp={:?}, numeric={:?}, sort={:?}",
+            nls.date_format, nls.timestamp, nls.numeric_chars, nls.sort
+        ),
+        None => println!("nls: 未加载（非致命）"),
+    }
+    assert!(oc.nls().is_some(), "NLS 应已加载（OUT 参数回读）");
+    assert!(
+        !oc.nls().unwrap().date_format.is_empty(),
+        "NLS_DATE_FORMAT 不应为空"
+    );
+
+    // ── 协议级 COMMIT / ROLLBACK（P2-6：simpleObject 0x0E / 0x0F）──
+    oc.commit().await.expect("协议级 COMMIT 失败");
+    oc.rollback().await.expect("协议级 ROLLBACK 失败");
+    println!("protocol commit/rollback: ok");
+
+    // ── 扩展类型解码（P2-1）：INTERVAL / BINARY_DOUBLE（11g 无 BOOLEAN 类型）──
+    let mut rs = oc
+        .query(
+            "SELECT INTERVAL '1-2' YEAR TO MONTH AS IYM, \
+                    INTERVAL '3 04:05:06.000007' DAY TO SECOND AS IDS, \
+                    CAST(1.5 AS BINARY_DOUBLE) AS BD FROM dual",
+        )
+        .await
+        .expect("扩展类型查询失败");
+    if let Some(row) = rs.next_row().await.expect("扩展类型行读取失败") {
+        let vals: Vec<String> = row.values().iter().map(|v| v.to_string()).collect();
+        println!("ext types -> {vals:?}");
+        assert!(vals.first().map(|s| s.contains("01-02")).unwrap_or(false), "INTERVAL YM 解码");
+        assert!(vals.get(1).map(|s| s.starts_with("+03")).unwrap_or(false), "INTERVAL DS 解码");
+        assert_eq!(vals.get(2).map(|s| s.as_str()), Some("1.5"), "BINARY_DOUBLE 解码");
+    }
+
+    // ── NUMBER 编码（P2-2）：Decimal/负数/小数绑定回读 ──
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+    let mut rs = oc
+        .query_with_params(
+            "SELECT :1 + 0, :2 + 0 FROM dual",
+            vec![
+                BindParam::input(BindValue::Number(Decimal::from_str("123.456").unwrap())),
+                BindParam::input(BindValue::Float(-0.5)),
+            ],
+        )
+        .await
+        .expect("NUMBER 编码绑定失败");
+    let row = rs.next_row().await.expect("NUMBER 行读取失败").expect("应有 1 行");
+    let d1 = format!("{}", row.values().first().unwrap_or(&oracle_async::OracleValue::Null));
+    let d2 = format!("{}", row.values().get(1).unwrap_or(&oracle_async::OracleValue::Null));
+    println!("number encode -> {d1}, {d2}");
+    assert_eq!(d1, "123.456", "Decimal 绑定应保精度");
+    assert_eq!(d2, "-0.5", "f64 负数绑定");
 
     // ── 目录/定义链路（对象树详情的真实口径，自动发现真实对象）──
     if let Some(schema) = schema.filter(|s| !s.is_empty()) {

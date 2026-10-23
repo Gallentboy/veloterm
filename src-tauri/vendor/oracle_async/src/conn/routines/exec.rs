@@ -26,12 +26,18 @@ pub struct ExecResponse {
     pub has_more_rows: bool,
     /// PL/SQL 匿名块的隐式结果集（dbms_sql.return_result，Msg 27）
     pub implicit: Vec<ImplicitCursor>,
+    /// 出参回读值（下标与传入的 params 对齐；Input 位置为 Null）
+    pub output_values: Vec<crate::queryable::OracleValue>,
 }
 
 pub struct ExecRoutine<'a> {
     pub sql: &'a str,
     pub is_select: bool,
     pub prefetch_rows: u32,
+    /// 绑定参数（空 = 无绑定，走原有内联路径）
+    pub params: Vec<super::bind::BindParam>,
+    /// 自动提交（DML/PLSQL 时置 exeOp 的 0x100 位，go-ora autoCommit）
+    pub auto_commit: bool,
 }
 
 impl<'a> ExecRoutine<'a> {
@@ -40,7 +46,32 @@ impl<'a> ExecRoutine<'a> {
             sql,
             is_select,
             prefetch_rows,
+            params: Vec::new(),
+            auto_commit: false,
         }
+    }
+
+    /// 带绑定参数构造（参数个数须与 SQL 占位符一致，由调用方或
+    /// bind::validate_param_count 校验）
+    pub fn with_params(
+        sql: &'a str,
+        is_select: bool,
+        prefetch_rows: u32,
+        params: Vec<super::bind::BindParam>,
+    ) -> Self {
+        Self {
+            sql,
+            is_select,
+            prefetch_rows,
+            params,
+            auto_commit: false,
+        }
+    }
+
+    /// 设置自动提交（DML/PLSQL 生效）
+    pub fn auto_commit(mut self, on: bool) -> Self {
+        self.auto_commit = on;
+        self
     }
 }
 
@@ -57,11 +88,25 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
         writer.put_bytes(&[3, 0x5E, 0]);
 
         // exeOp（go-ora getExeOption 位定义，真机 trace 锚定）：
-        // bit0 = parse、bit5 = execute、bit15(0x8000) = 非 PLSQL 无 RETURNING、
-        // bit18(0x40000) = PLSQL。首次执行恒 parse+execute：
-        // SELECT/DML/DDL = 0x8021，PLSQL = 0x40021（不带 0x8000）。
+        // bit0 = parse、bit3(0x8) = 有绑定参数、bit5 = execute、
+        // bit8(0x100) = autoCommit（DML/PLSQL）、
+        // bit10(0x400) = PLSQL/有 RETURNING 且有参数时的参数重定义标志、
+        // bit15(0x8000) = 非 PLSQL 无 RETURNING、bit18(0x40000) = PLSQL。
+        // 首次执行：SELECT/DML/DDL = 0x8021，PLSQL = 0x40021；
+        // 带参数再加 0x8（真机：普通带参查询 0x8029），
+        // PLSQL 带参数再加 0x400（真机：NLS 块为 0x40529，缺它服务器断连）。
         // 注意 0x40 是「既不 parse 也不 execute」标志，不可误置（真机 ORA-01002）。
-        let exe_op: u64 = if is_plsql { 0x40021 } else { 0x8021 };
+        let has_params = !self.params.is_empty();
+        let mut exe_op: u64 = if is_plsql { 0x40021 } else { 0x8021 };
+        if has_params {
+            exe_op |= 0x8;
+            if is_plsql {
+                exe_op |= 0x400;
+            }
+        }
+        if self.auto_commit && matches!(stmt_type, StmtType::Dml | StmtType::PlSql) {
+            exe_op |= 0x100;
+        }
         writer.put_uint(exe_op, 4, true, true);
         writer.put_uint(0, 2, true, true); // cursorID = 0 (new cursor)
         writer.put_byte(1); // new cursor flag
@@ -85,8 +130,15 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
 
         // Long fetch size（go-ora INLINE 模式 0x3FFFFFFF，真机 trace 锚定）
         writer.put_uint(0x3FFF_FFFF, 4, true, true);
-        // Parameters (none in basic statement)
-        writer.put_bytes(&[0, 0]);
+        // 参数段标记（go-ora basicWrite：`if len(Pars)>0 && !define` 才写
+        // 1 + 压缩个数；否则两个 0）。真机锚定：三参查询此处为 01 01 03。
+        // 参数**值**在 al8i4 之后的 MsgCode 7 段写（bind::write_params）。
+        if has_params {
+            writer.put_byte(1);
+            writer.put_uint(self.params.len() as u64, 2, true, true);
+        } else {
+            writer.put_bytes(&[0, 0]);
+        }
         // Define flags
         writer.put_bytes(&[0, 0, 0, 0, 0]);
         writer.put_bytes(&[0, 0]);
@@ -128,9 +180,23 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
             writer.put_uint(val, 4, true, true);
         }
 
+        // 绑定参数段（go-ora writePars）：参数定义 + MsgCode 7 值段，
+        // 位置在 al8i4 之后（与 define 列定义体同一位置约定）
+        if !self.params.is_empty() {
+            super::bind::write_params(
+                &mut writer,
+                &self.params,
+                conn.server_charset as u32,
+                conn.ttc_version,
+                true,
+            )?;
+        }
+
         debug!(
-            "Sending TTCOEXEC (Op {exe_op:#07x}, {:?}) for SQL: '{}'",
-            stmt_type, self.sql
+            "Sending TTCOEXEC (Op {exe_op:#07x}, {:?}, {} param(s)) for SQL: '{}'",
+            stmt_type,
+            self.params.len(),
+            self.sql
         );
         conn.send_writer(writer).await?;
 
@@ -142,6 +208,9 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
         let mut implicit: Vec<ImplicitCursor> = Vec::new();
         // Msg 8 的前两个 int4 = 快照 SCN（LOB 预取轮的 al8i4[5]/[6] 需回放）
         let mut scn: [u64; 2] = [0; 2];
+        // 出参（OUT/INOUT）回读值，下标与 params 对齐
+        let mut output_values: Vec<crate::queryable::OracleValue> =
+            vec![crate::queryable::OracleValue::Null; self.params.len()];
 
         let (cursor_id, rows_affected);
         loop {
@@ -163,6 +232,35 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                     super::row_common::read_row_header(conn).await?;
                 }
                 7 => {
+                    // 行数据到达。有出参（OUT/INOUT）时本消息体是「出参值区」
+                    // 而非行数据（go-ora case 7 的 containOutputPars 分支）：
+                    // 按序读每个非 Input 参数的 CLR，再跟一个压缩 int2。
+                    if !self.params.is_empty()
+                        && self
+                            .params
+                            .iter()
+                            .any(|p| p.direction != super::bind::Direction::Input)
+                    {
+                        for (idx, p) in self.params.iter().enumerate() {
+                            if p.direction == super::bind::Direction::Input {
+                                continue;
+                            }
+                            let raw = conn.read_clr().await?;
+                            let value = match raw {
+                                Some(b) => super::row_common::decode_cell(
+                                    &p.data_type.unwrap_or(crate::proto::TnsType::NChar),
+                                    &b,
+                                    conn.server_charset as u32,
+                                ),
+                                None => crate::queryable::OracleValue::Null,
+                            };
+                            output_values[idx] = value;
+                            // 每个出参值后跟一个压缩 int2（go-ora
+                            // calculateParameterValue 尾段）
+                            let _ = conn.read_ci(2).await?;
+                        }
+                        continue;
+                    }
                     // Row data row arrival
                     let cols_arc = Arc::new(columns.clone());
                     let row = super::row_common::read_row(conn, &cols_arc, &bit_vector).await?;
@@ -457,6 +555,7 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
             cursor_id,
             has_more_rows,
             implicit,
+            output_values,
         })
     }
 }
