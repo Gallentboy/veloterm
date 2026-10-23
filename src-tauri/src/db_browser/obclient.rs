@@ -77,11 +77,12 @@ impl ObConn {
     /// 建连（阻塞 C 调用，调用方须在 spawn_blocking 内）：
     /// 1. 进程级库初始化；2. mysql_init + 选项（utf8mb4 字符集、连接超时）；
     /// 3. mysql_real_connect（client_flag 声明懂 Oracle 模式 + 多语句/多结果
-    ///    集/插件认证）；4. 轻探测 `SELECT 1 FROM DUAL WHERE ROWNUM <= 1`
-    ///    确认租户确为 Oracle 模式（ROWNUM 是 Oracle 专属语法，MySQL 模式
-    ///    租户必报错）；5. database 参数 = 初始 schema 语义（不传给
-    ///    real_connect——其内部走 USE，对 Oracle 模式租户无效），非空则
-    ///    连接成功后 ALTER SESSION SET CURRENT_SCHEMA。
+    ///    集/插件认证）；4. 租户模式检测 `SHOW VARIABLES LIKE
+    ///    'ob_compatibility_mode'`（取 Value 列判 ORACLE——SHOW 语句两种
+    ///    模式租户都接受，探测本身不产生方言报错；不通过时只报「检测
+    ///    失败」不透传服务端错误文本）；5. database 参数 = 初始 schema
+    ///    语义（不传给 real_connect——其内部走 USE，对 Oracle 模式租户
+    ///    无效），非空则连接成功后 ALTER SESSION SET CURRENT_SCHEMA。
     ///
     /// 返回 (连接, 服务端版本串)。
     pub fn connect(
@@ -137,25 +138,30 @@ impl ObConn {
             }
         }
 
-        // 轻探测：确认租户为 Oracle 模式（ROWNUM 语法 MySQL 模式不认）。
-        // 探测失败直接返回 Err 引导用户检查模式设置——比「连上后满屏语法
-        // 报错」的体验更干净
-        if let Err(probe_err) = conn.exec("SELECT 1 FROM DUAL WHERE ROWNUM <= 1") {
-            return Err(format!(
-                "OceanBase 连接成功但租户可能不是 Oracle 模式，请检查连接模式设置（探测失败：{probe_err}）"
-            ));
+        // 租户模式检测：SHOW VARIABLES LIKE 'ob_compatibility_mode' 的
+        // Value 列（MYSQL / ORACLE——SHOW 语句两种模式租户都接受，探测
+        // 本身不产生方言报错）。查询失败或值非 ORACLE 一律只报「检测
+        // 失败」：不透传服务端错误文本（trace id 等原始报错对用户没有
+        // 增量信息，模式对不上时引导检查设置即可）
+        let mut mode_ok = false;
+        if conn
+            .exec("SHOW VARIABLES LIKE 'ob_compatibility_mode'")
+            .is_ok()
+            && let Ok(res) = conn.take_use_result()
+        {
+            if let Some(row) = conn.fetch_row_cells(res) {
+                // 列序：Variable_name, Value —— 取第二列判 ORACLE
+                mode_ok = row
+                    .get(1)
+                    .and_then(|v| v.as_ref())
+                    .is_some_and(|v| v.eq_ignore_ascii_case(b"ORACLE"));
+            }
+            conn.drain_result(res);
         }
-        match conn.take_use_result() {
-            Ok(res) => {
-                // use 形态结果集先排空再释放（未读完即 free 会卡住连接的
-                // 多结果集状态机，后续语句报「命令不同步」）
-                conn.drain_result(res);
-            }
-            Err(_) => {
-                return Err(
-                    "OceanBase 连接成功但租户可能不是 Oracle 模式，请检查连接模式设置".to_string(),
-                );
-            }
+        if !mode_ok {
+            return Err(
+                "OceanBase 连接成功但租户模式检测失败（非 Oracle 模式租户），请检查租户模式与路由设置".to_string(),
+            );
         }
 
         let version = unsafe {
