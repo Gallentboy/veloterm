@@ -6,7 +6,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-export type DbEngineKind = 'mysql' | 'postgres' | 'oracle' | 'sqlite';
+export type DbEngineKind = 'mysql' | 'postgres' | 'oracle' | 'oceanbase' | 'sqlite';
 
 /**
  * SQLite 加密方式（后端 db.rs 的 encryption_mode 列）：
@@ -26,6 +26,8 @@ export interface DbConnectionRecord {
   id: number;
   name: string;
   engine: DbEngineKind;
+  /** OceanBase 专有：租户模式 'mysql' | 'oracle'（其他引擎恒 null） */
+  mode: string | null;
   host: string;
   port: number;
   database: string | null;
@@ -81,6 +83,8 @@ export interface DbSessionMeta {
   connectionId: number;
   name: string;
   engine: DbEngineKind;
+  /** OceanBase 专有：租户模式 'mysql' | 'oracle'（其他引擎 null） */
+  mode: string | null;
   /** engine='sqlite' 时固定为 'main'（SQLite 无连接级库概念，对象树顶层为已附加库） */
   database: string | null;
   serverVersion: string;

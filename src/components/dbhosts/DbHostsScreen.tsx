@@ -51,6 +51,7 @@ const ENGINE_DEFAULT_PORTS: Record<DbEngineKind, number> = {
   mysql: 3306,
   postgres: 5432,
   oracle: 1521,
+  oceanbase: 2881,
   sqlite: 0,
 };
 
@@ -58,8 +59,22 @@ const ENGINE_LABELS: Record<DbEngineKind, string> = {
   mysql: 'MySQL',
   postgres: 'PostgreSQL',
   oracle: 'Oracle',
+  oceanbase: 'OceanBase',
   sqlite: 'SQLite',
 };
+
+/** 连接条目的引擎显示名：OceanBase 附带租户模式后缀（如「OceanBase · Oracle 模式」） */
+function engineDisplayLabel(
+  record: Pick<DbConnectionRecord, 'engine' | 'mode'>,
+  t: (key: string) => string,
+): string {
+  if (record.engine === 'oceanbase' && record.mode) {
+    return `${ENGINE_LABELS.oceanbase} · ${t(
+      record.mode === 'oracle' ? 'dbHosts.obModeOracle' : 'dbHosts.obModeMysql',
+    )}`;
+  }
+  return ENGINE_LABELS[record.engine];
+}
 
 /** SQLite 加密方式（sqlcipher-raw 的 password 填 64 位十六进制原始密钥） */
 const SQLITE_ENCRYPTION_MODES: Array<{ value: SqliteEncryptionMode; labelKey: string }> = [
@@ -144,6 +159,7 @@ export function DbHostsScreen({
     id: 0,
     name: '',
     engine: 'mysql',
+    mode: null,
     host: '',
     port: 3306,
     database: null,
@@ -221,7 +237,9 @@ export function DbHostsScreen({
                     ? 'text-terminal-cyan'
                     : record.engine === 'postgres'
                       ? 'text-terminal-blue'
-                      : 'text-terminal-red',
+                      : record.engine === 'oracle'
+                        ? 'text-terminal-red'
+                        : 'text-terminal-magenta',
                 )}
               />
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -248,7 +266,7 @@ export function DbHostsScreen({
                 <span className="truncate font-mono text-ui-xs text-foreground-subtle">
                   {record.engine === 'sqlite'
                     ? `${ENGINE_LABELS[record.engine]} · ${record.dbPath ?? ':memory:'}`
-                    : `${ENGINE_LABELS[record.engine]} · ${record.host}:${record.port}${
+                    : `${engineDisplayLabel(record, t)} · ${record.host}:${record.port}${
                         record.database ? `/${record.database}` : ''
                       } · ${t(`dbHosts.ssl_${record.sslMode.replace('-', '_')}`)}`}
                 </span>
@@ -522,6 +540,10 @@ function DbConnectionFormDialog({
   const { t } = useTranslation();
   const [name, setName] = useState(node?.name ?? '');
   const [engine, setEngine] = useState<DbEngineKind>(node?.engine ?? 'mysql');
+  // OceanBase 专有：租户模式（MySQL / Oracle 二选一）；非 oceanbase 引擎恒 null
+  const [mode, setMode] = useState<string | null>(
+    node?.engine === 'oceanbase' ? (node.mode === 'oracle' ? 'oracle' : 'mysql') : null,
+  );
   const [host, setHost] = useState(node?.host ?? '');
   const [port, setPort] = useState(String(node?.port ?? 3306));
   const [database, setDatabase] = useState(node?.database ?? '');
@@ -549,7 +571,16 @@ function DbConnectionFormDialog({
       ? t('dbHosts.databaseLabelMysql')
       : engine === 'postgres'
         ? t('dbHosts.databaseLabelPg')
-        : t('dbHosts.databaseLabelOracle');
+        : engine === 'oracle'
+          ? t('dbHosts.databaseLabelOracle')
+          : mode === 'oracle'
+            ? t('dbHosts.databaseLabelObOracle')
+            : t('dbHosts.databaseLabelObMysql');
+
+  // Oracle / OB Oracle 租户模式按 Oracle 语义展示 database 字段（初始 Schema）
+  const isOracleSemantics = engine === 'oracle' || (engine === 'oceanbase' && mode === 'oracle');
+  // OB Oracle 租户模式后端 P0 仅支持非加密连接（disable）
+  const obOracleTlsLocked = engine === 'oceanbase' && mode === 'oracle';
 
   const isSqlite = engine === 'sqlite';
 
@@ -581,6 +612,7 @@ function DbConnectionFormDialog({
     id: node?.id ?? 0,
     name: name.trim(),
     engine,
+    mode: engine === 'oceanbase' ? (mode === 'oracle' ? 'oracle' : 'mysql') : null,
     host: isSqlite ? '' : host.trim(),
     port: isSqlite ? 0 : Number.parseInt(port, 10) || ENGINE_DEFAULT_PORTS[engine],
     database: isSqlite ? null : database.trim() || null,
@@ -599,7 +631,8 @@ function DbConnectionFormDialog({
         : password.length > 0 || node == null
           ? password || null
           : null,
-    sslMode: isSqlite ? 'disable' : sslMode,
+    // SQLite 无 TLS、OB Oracle 租户模式 P0 仅 disable——两者都强制归一
+    sslMode: isSqlite || obOracleTlsLocked ? 'disable' : sslMode,
     sshHostId: null,
     envLevel,
     readonly,
@@ -607,6 +640,18 @@ function DbConnectionFormDialog({
     createdAt: 0,
     updatedAt: 0,
   });
+
+  /** 切换 OB 租户模式：端口仍是任一引擎默认值（用户未自定义）时归位 2881；
+   * Oracle 租户模式后端 P0 仅支持 disable，切入即强制回落 */
+  const switchObMode = (next: 'mysql' | 'oracle') => {
+    if (mode === next) return;
+    setMode(next);
+    const portNum = Number.parseInt(port, 10);
+    if (Object.values(ENGINE_DEFAULT_PORTS).includes(portNum)) {
+      setPort(String(ENGINE_DEFAULT_PORTS.oceanbase));
+    }
+    if (next === 'oracle') setSslMode('disable');
+  };
 
   const handleTest = async () => {
     if (!canTest || testing) return;
@@ -691,7 +736,7 @@ function DbConnectionFormDialog({
 
         <FormField label={t('dbHosts.engineLabel')}>
           <div className="flex gap-1.5">
-            {(['mysql', 'postgres', 'oracle', 'sqlite'] as const).map((kind) => (
+            {(['mysql', 'postgres', 'oracle', 'oceanbase', 'sqlite'] as const).map((kind) => (
               <button
                 key={kind}
                 type="button"
@@ -700,6 +745,11 @@ function DbConnectionFormDialog({
                   setPort(String(ENGINE_DEFAULT_PORTS[kind]));
                   // SQLite 无 TLS：切过去时把 SSL 归一为 disable，避免把 require 存进库
                   if (kind === 'sqlite') setSslMode('disable');
+                  // 切到 oceanbase 时归一化租户模式（null → 'mysql'，已选则保留）；
+                  // 切离时不清空——buildRecord 按 engine 门控，非 oceanbase 恒 null
+                  if (kind === 'oceanbase') {
+                    setMode((cur) => (cur === 'oracle' ? 'oracle' : 'mysql'));
+                  }
                 }}
                 className={cn(
                   'flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-ui-xs transition-colors',
@@ -714,6 +764,30 @@ function DbConnectionFormDialog({
             ))}
           </div>
         </FormField>
+
+        {/* OceanBase：租户模式分段选择（MySQL / Oracle 二选一，决定方言与凭据格式）；
+            引擎按钮组的缩小版形态 */}
+        {engine === 'oceanbase' ? (
+          <FormField label={t('dbHosts.obModeLabel')} hint={t('dbHosts.obModeHint')}>
+            <div className="flex gap-1.5">
+              {(['mysql', 'oracle'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => switchObMode(m)}
+                  className={cn(
+                    'flex flex-1 items-center justify-center rounded-md border px-2 py-1 text-ui-xs transition-colors',
+                    (mode ?? 'mysql') === m
+                      ? 'border-primary/60 bg-primary/10 font-semibold text-foreground'
+                      : 'border-border/70 text-foreground-subtle hover:bg-hover hover:text-foreground',
+                  )}
+                >
+                  {t(m === 'mysql' ? 'dbHosts.obModeMysql' : 'dbHosts.obModeOracle')}
+                </button>
+              ))}
+            </div>
+          </FormField>
+        ) : null}
 
         {isSqlite ? (
           <>
@@ -807,14 +881,20 @@ function DbConnectionFormDialog({
                 />
               </FormField>
             </div>
-            <div className="w-24 shrink-0">
+            <div className={cn('shrink-0', engine === 'oceanbase' ? 'w-32' : 'w-24')}>
               <FormField label={t('dbHosts.portLabel')}>
                 <TextInput
                   value={port}
                   onChange={(e) => setPort(e.target.value)}
-                  placeholder="3306"
+                  placeholder={String(ENGINE_DEFAULT_PORTS[engine])}
                   className="font-mono"
                 />
+                {/* OceanBase：直连 2881 / 经 obproxy 2883 的端口提示 */}
+                {engine === 'oceanbase' ? (
+                  <span className="text-ui-xs leading-snug text-foreground-subtlest select-none">
+                    {t('dbHosts.obPortHint')}
+                  </span>
+                ) : null}
               </FormField>
             </div>
           </div>
@@ -860,23 +940,27 @@ function DbConnectionFormDialog({
                   buildRecord={() => buildRecord()}
                   connectionId={node?.id}
                   placeholder={
-                    engine === 'oracle'
+                    isOracleSemantics
                       ? t('dbHosts.schemaPlaceholder')
                       : t('dbHosts.databasePlaceholder')
                   }
                   pickLabel={
-                    engine === 'oracle' ? t('dbHosts.pickSchema') : t('dbHosts.pickDatabase')
+                    isOracleSemantics ? t('dbHosts.pickSchema') : t('dbHosts.pickDatabase')
                   }
                 />
               </FormField>
             </div>
             {engine !== 'oracle' ? (
               <div className="w-36 shrink-0">
-                <FormField label={t('dbHosts.sslLabel')}>
+                <FormField
+                  label={t('dbHosts.sslLabel')}
+                  hint={obOracleTlsLocked ? t('dbHosts.obOracleTlsHint') : undefined}
+                >
                   <SelectMenu
-                    value={sslMode}
+                    value={obOracleTlsLocked ? 'disable' : sslMode}
                     onChange={(v) => setSslMode(v as DbConnectionRecord['sslMode'])}
                     options={SSL_MODES.map((m) => ({ value: m.value, label: t(m.labelKey) }))}
+                    disabled={obOracleTlsLocked}
                   />
                 </FormField>
               </div>
@@ -892,7 +976,7 @@ function DbConnectionFormDialog({
                 <TextInput
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="root"
+                  placeholder={engine === 'oceanbase' ? t('dbHosts.obUserPlaceholder') : 'root'}
                   className="font-mono"
                 />
               </FormField>

@@ -378,10 +378,12 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
       -- 数据库工作台连接库（侧栏「数据库主机」页）：一台引擎实例一条记录。
       -- password 明文存 SQLCipher 库（zk_credentials 同级安全水位）；
       -- ssh_host_id 指向 hosts 表（经该主机的跳板链+中继建隧道，空 = 直连）；
-      -- engine: 'mysql' | 'postgres' | 'oracle' | 'sqlite'（oracle 走 vendor rust-oracle；
-      -- sqlite 为本地文件库：db_path = 数据库文件路径（空 = 内存库 :memory:），
-      -- password = 加密口令（sqlcipher-raw 模式填 64 位十六进制原始密钥），
-      -- encryption_mode = 加密方式（none | sqlcipher4 | sqlcipher3 | sqlcipher2 | sqlcipher-raw），
+      -- engine: 'mysql' | 'postgres' | 'oracle' | 'oceanbase' | 'sqlite'（oracle 走 vendor
+      -- rust-oracle；oceanbase 按 mode 列分双模式：'mysql' 复用 mysql_async 臂，
+      -- 'oracle' 走 vendor obclnt-sys/libobclient；sqlite 为本地文件库：
+      -- db_path = 数据库文件路径（空 = 内存库 :memory:），password = 加密口令
+      -- （sqlcipher-raw 模式填 64 位十六进制原始密钥），encryption_mode = 加密方式
+      -- （none | sqlcipher4 | sqlcipher3 | sqlcipher2 | sqlcipher-raw），
       -- host/port/ssl_mode 对 sqlite 不参与连接）。
       CREATE TABLE IF NOT EXISTS db_connections (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -391,6 +393,7 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           port INTEGER NOT NULL,
           database TEXT,
           service_name TEXT,
+          mode TEXT,
           db_path TEXT,
           encryption_mode TEXT NOT NULL DEFAULT 'none',
           username TEXT,
@@ -444,6 +447,14 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
     // 初始 schema）分离，不做老记录回退（老 Oracle 记录需补填服务名后才能连）
     if let Err(e) =
         conn.execute_batch("ALTER TABLE db_connections ADD COLUMN service_name TEXT")
+        && !e.to_string().contains("duplicate column")
+    {
+        return Err(format!("failed to apply db_connections column migration: {e}"));
+    }
+
+    // mode：OceanBase 专有——租户模式（'mysql' | 'oracle'，engine='oceanbase' 时
+    // 必填，其他引擎恒 NULL）；连接层据此分 mysql_async / obclient 两条臂
+    if let Err(e) = conn.execute_batch("ALTER TABLE db_connections ADD COLUMN mode TEXT")
         && !e.to_string().contains("duplicate column")
     {
         return Err(format!("failed to apply db_connections column migration: {e}"));
@@ -994,7 +1005,8 @@ pub fn delete_zk_host(pool: &DbPool, id: usize) -> Result<(), String> {
 // ===== `db_connections`：数据库工作台连接库（侧栏「数据库主机」页）=====
 
 /// 数据库连接记录（对应 `db_connections` 表）。engine 限定 'mysql' | 'postgres'
-/// | 'oracle' | 'sqlite'（sqlite 为本地文件库，host/port/ssl_mode 不参与连接）。
+/// | 'oracle' | 'oceanbase' | 'sqlite'（sqlite 为本地文件库，host/port/ssl_mode
+/// 不参与连接；oceanbase 按 mode 分双模式）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DbConnectionRecord {
@@ -1009,6 +1021,10 @@ pub struct DbConnectionRecord {
     /// 老记录无此字段时服务名在 database 里，连接层兼容回退
     #[serde(default)]
     pub service_name: Option<String>,
+    /// OceanBase 专有：租户模式——Some("mysql") 走 mysql_async 臂（标准 MySQL
+    /// 线缆协议）、Some("oracle") 走 obclnt-sys/libobclient 臂；其他引擎恒 None
+    #[serde(default)]
+    pub mode: Option<String>,
     /// SQLite 专有：数据库文件路径（绝对路径，或 file: URI；空/None = 内存库 :memory:）
     #[serde(default)]
     pub db_path: Option<String>,
@@ -1060,9 +1076,12 @@ fn default_db_readonly() -> bool {
 }
 
 impl DbConnectionRecord {
-    /// engine 合法性（mysql / postgres / oracle 三引擎 + sqlite 本地文件库，共四引擎）
+    /// engine 合法性（mysql / postgres / oracle / oceanbase / sqlite 五引擎）
     pub fn supported_engine(&self) -> bool {
-        matches!(self.engine.as_str(), "mysql" | "postgres" | "oracle" | "sqlite")
+        matches!(
+            self.engine.as_str(),
+            "mysql" | "postgres" | "oracle" | "oceanbase" | "sqlite"
+        )
     }
 }
 
@@ -1090,12 +1109,19 @@ fn validate_db_connection(record: &DbConnectionRecord) -> Result<(), String> {
     ) {
         return Err(format!("无效的 SSL 模式：{}", record.ssl_mode));
     }
+    // OceanBase 必须二选一租户模式；其他引擎的 mode 忽略（恒 None 的契约由
+    // 前端保证，这里不做反向拒绝——避免旧前端残留字段阻断保存）
+    if record.engine == "oceanbase"
+        && !matches!(record.mode.as_deref(), Some("mysql") | Some("oracle"))
+    {
+        return Err("OceanBase 需要选择租户模式（MySQL/Oracle）".to_string());
+    }
     Ok(())
 }
 
 const DB_CONNECTION_COLUMNS: &str = "id, name, engine, host, port, database, username, password, \
      ssl_mode, ssh_host_id, env_level, readonly, color, created_at, updated_at, service_name, \
-     db_path, encryption_mode";
+     mode, db_path, encryption_mode";
 
 fn row_to_db_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbConnectionRecord> {
     Ok(DbConnectionRecord {
@@ -1115,9 +1141,10 @@ fn row_to_db_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbConnectio
         created_at: row.get(13)?,
         updated_at: row.get(14)?,
         service_name: row.get(15)?,
-        db_path: row.get(16)?,
+        mode: row.get(16)?,
+        db_path: row.get(17)?,
         encryption_mode: row
-            .get::<_, Option<String>>(17)?
+            .get::<_, Option<String>>(18)?
             .filter(|s| !s.is_empty())
             .unwrap_or_else(default_encryption_mode),
     })
@@ -1172,9 +1199,9 @@ pub fn save_db_connection(
         conn.execute(
             "INSERT INTO db_connections \
              (name, engine, host, port, database, username, password, ssl_mode, ssh_host_id, \
-              env_level, readonly, color, created_at, updated_at, service_name, db_path, \
-              encryption_mode) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14,?15,?16)",
+              env_level, readonly, color, created_at, updated_at, service_name, mode, \
+              db_path, encryption_mode) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14,?15,?16,?17)",
             params![
                 record.name.trim(),
                 record.engine,
@@ -1190,6 +1217,7 @@ pub fn save_db_connection(
                 record.color,
                 now,
                 record.service_name,
+                record.mode,
                 record.db_path,
                 record.encryption_mode,
             ],
@@ -1202,8 +1230,8 @@ pub fn save_db_connection(
             conn.execute(
                 "UPDATE db_connections SET name=?2, engine=?3, host=?4, port=?5, database=?6, \
                  username=?7, password=?8, ssl_mode=?9, ssh_host_id=?10, env_level=?11, \
-                 readonly=?12, color=?13, updated_at=?14, service_name=?15, db_path=?16, \
-                 encryption_mode=?17 WHERE id=?1",
+                 readonly=?12, color=?13, updated_at=?14, service_name=?15, mode=?16, \
+                 db_path=?17, encryption_mode=?18 WHERE id=?1",
                 params![
                     record.id,
                     record.name.trim(),
@@ -1220,6 +1248,7 @@ pub fn save_db_connection(
                     record.color,
                     now,
                     record.service_name,
+                    record.mode,
                     record.db_path,
                     record.encryption_mode,
                 ],
@@ -1228,8 +1257,8 @@ pub fn save_db_connection(
             conn.execute(
                 "UPDATE db_connections SET name=?2, engine=?3, host=?4, port=?5, database=?6, \
                  username=?7, ssl_mode=?8, ssh_host_id=?9, env_level=?10, readonly=?11, \
-                 color=?12, updated_at=?13, service_name=?14, db_path=?15, \
-                 encryption_mode=?16 WHERE id=?1",
+                 color=?12, updated_at=?13, service_name=?14, mode=?15, db_path=?16, \
+                 encryption_mode=?17 WHERE id=?1",
                 params![
                     record.id,
                     record.name.trim(),
@@ -1245,6 +1274,7 @@ pub fn save_db_connection(
                     record.color,
                     now,
                     record.service_name,
+                    record.mode,
                     record.db_path,
                     record.encryption_mode,
                 ],
@@ -2647,6 +2677,7 @@ mod tests {
                 port: 3306,
                 database: Some("app".to_string()),
                 service_name: None,
+                mode: None,
                 db_path: None,
                 encryption_mode: "none".to_string(),
                 username: Some("root".to_string()),
@@ -2668,17 +2699,19 @@ mod tests {
         let listed = list_db_connections(&pool).expect("list_db_connections should succeed");
         assert_eq!(listed, vec![created.clone()]);
 
-        // 2. 更新：改端口/engine；password=None 保留库中旧值（表单未改动不回传）
+        // 2. 更新：改为 OceanBase MySQL 模式（mode 落库回读）；password=None
+        // 保留库中旧值（表单未改动不回传）
         let updated = save_db_connection(
             &pool,
             DbConnectionRecord {
                 id: created.id,
-                name: "prod-pg".to_string(),
-                engine: "postgres".to_string(),
+                name: "prod-ob".to_string(),
+                engine: "oceanbase".to_string(),
                 host: "10.0.0.6".to_string(),
-                port: 5432,
+                port: 2881,
                 database: None,
                 service_name: None,
+                mode: Some("mysql".to_string()),
                 db_path: None,
                 encryption_mode: "none".to_string(),
                 username: None,
@@ -2693,8 +2726,10 @@ mod tests {
             },
         )
         .expect("save_db_connection update should succeed");
-        assert_eq!(updated.name, "prod-pg");
-        assert_eq!(updated.port, 5432);
+        assert_eq!(updated.name, "prod-ob");
+        assert_eq!(updated.port, 2881);
+        assert_eq!(updated.engine, "oceanbase");
+        assert_eq!(updated.mode.as_deref(), Some("mysql"), "mode 应落库并回读");
         assert_eq!(
             updated.password.as_deref(),
             Some("secret"),
@@ -2720,6 +2755,7 @@ mod tests {
                 port: 3306,
                 database: None,
                 service_name: None,
+                mode: None,
                 db_path: None,
                 encryption_mode: "none".to_string(),
                 username: None,
@@ -2740,6 +2776,13 @@ mod tests {
         mssql.engine = "mysql".to_string();
         mssql.ssl_mode = "uber-secure".to_string();
         assert!(save_db_connection(&pool, mssql).is_err());
+        // OceanBase 缺 mode / 非法 mode 拒绝（其他引擎 mode 恒 None 的契约
+        // 不做反向拒绝——见 validate_db_connection 注）
+        let mut ob_bad = updated.clone();
+        ob_bad.mode = None;
+        assert!(save_db_connection(&pool, ob_bad.clone()).is_err());
+        ob_bad.mode = Some("sqlserver".to_string());
+        assert!(save_db_connection(&pool, ob_bad).is_err());
 
         // 5. 删除幂等
         delete_db_connection(&pool, updated.id).expect("delete should succeed");
