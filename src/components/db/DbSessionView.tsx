@@ -200,9 +200,13 @@ export function DbSessionView({
         const sessionMeta = await dbConnect(connection.id);
         sessionIdRef.current = sessionMeta.sessionId;
         setMeta(sessionMeta);
-        // 引擎适配的欢迎语句：Oracle 无 FROM 不可查（SELECT 1 报 ORA-00923），
-        // 换 SELECT 1 FROM DUAL。函数式 setSql 读最新值，仅初始占位未动时替换
-        if (sessionMeta.engine === 'oracle') {
+        // 引擎适配的欢迎语句：Oracle / 达梦 Oracle 兼容模式无 FROM 不可查
+        // （SELECT 1 报 ORA-00923），换 SELECT 1 FROM DUAL。函数式 setSql
+        // 读最新值，仅初始占位未动时替换
+        const needsDual =
+          sessionMeta.engine === 'oracle' ||
+          (sessionMeta.engine === 'dameng' && sessionMeta.compatibleMode !== 'mysql');
+        if (needsDual) {
           setSql((prev) => (prev === 'SELECT 1;' ? 'SELECT 1 FROM DUAL;' : prev));
         }
         onBaseTitle(`${sessionMeta.name} · ${connection.host}`);
@@ -322,7 +326,12 @@ export function DbSessionView({
         const target = schema ? `${schema}.${name}` : name;
         // 限定符一律不加引号；取前 200 行的方言差异只在限行子句——
         // Oracle 无 LIMIT 且 11.x 只认 ROWNUM（FETCH FIRST 需 12c+）
-        const limit = meta?.engine === 'oracle' ? 'WHERE ROWNUM <= 200' : 'LIMIT 200';
+        // 取行语法按方言分派：Oracle / 达梦 Oracle 兼容用 ROWNUM，
+        // 其余（MySQL / PG / 达梦 MySQL 兼容）用 LIMIT
+        const useRownum =
+          meta?.engine === 'oracle' ||
+          (meta?.engine === 'dameng' && meta.compatibleMode !== 'mysql');
+        const limit = useRownum ? 'WHERE ROWNUM <= 200' : 'LIMIT 200';
         setSql(`SELECT * FROM ${target} ${limit};`);
         return;
       }
