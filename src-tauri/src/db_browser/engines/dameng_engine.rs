@@ -18,12 +18,14 @@ use super::format_float;
 const DM_SCHEMAS_SQL: &str = "SELECT NAME FROM SYSOBJECTS WHERE TYPE$ = 'SCH'";
 
 /// 达梦 schema 清单查询（`list_databases` 与 `catalog_root` 共用）。
+#[inline]
 pub(crate) fn dm_schema_names(client: &mut dm_pure::DmClient) -> Result<Vec<String>, String> {
     dm_query_strings(client, DM_SCHEMAS_SQL, &[])
 }
 
 /// 达梦标识符校验（拼进 SET SCHEMA 前）：同 Oracle 的普通标识符字符集
 /// [A-Za-z0-9_$#]，非空。防止拼接注入。
+#[inline(always)]
 pub(crate) fn dm_valid_identifier(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -71,6 +73,7 @@ pub(crate) fn dm_query_rows(
 
 /// 单值查询的便捷形态：取首行首列并字符串化（无结果返回 None）。
 /// 元数据查询（版本、DDL）大多走这条路径。
+#[inline]
 pub(crate) fn dm_query_first_string(
     client: &mut dm_pure::DmClient,
     sql: &str,
@@ -85,6 +88,7 @@ pub(crate) fn dm_query_first_string(
 /// 服务端版本/路径上会以 BLOB 字节返回——此时按 UTF-8 容错解码（不能走
 /// dm_value_to_string 的 `<BLOB N bytes>` 占位，否则 DDL 面板只剩占位符）。
 /// NULL 返回空串（调用方按「无内容」处理：DDL 降级、版本回退）。
+#[inline]
 pub(crate) fn dm_text_at(row: &[dm_pure::Value], i: usize) -> String {
     match row.get(i) {
         Some(dm_pure::Value::Bytes(b)) | Some(dm_pure::Value::Raw(b)) => {
@@ -96,6 +100,7 @@ pub(crate) fn dm_text_at(row: &[dm_pure::Value], i: usize) -> String {
 }
 
 /// 取首列字符串清单（schema/对象名列表查询用）。
+#[inline]
 pub(crate) fn dm_query_strings(
     client: &mut dm_pure::DmClient,
     sql: &str,
@@ -106,6 +111,7 @@ pub(crate) fn dm_query_strings(
 }
 
 /// 行按列取字符串（越界列回 NULL，与 oracle_row_string 同语义）。
+#[inline(always)]
 pub(crate) fn dm_row_string(row: &[dm_pure::Value], i: usize) -> String {
     row.get(i)
         .map(dm_value_to_string)
@@ -113,12 +119,14 @@ pub(crate) fn dm_row_string(row: &[dm_pure::Value], i: usize) -> String {
 }
 
 /// 行按列取 i64（计数/元数据数值列；取不到回 0）。
+#[inline(always)]
 pub(crate) fn dm_row_i64(row: &[dm_pure::Value], i: usize) -> i64 {
     row.get(i).map(dm_value_to_i64).unwrap_or(0)
 }
 
 /// 数值变体统一取 i64：COUNT(*) 的返回类型随服务器/驱动路径漂移
 ///（BigInt / Int / Decimal 字符串均见过），统一归一。非数值回 0。
+#[inline]
 pub(crate) fn dm_value_to_i64(value: &dm_pure::Value) -> i64 {
     use dm_pure::Value as V;
     match value {
@@ -141,6 +149,7 @@ pub(crate) fn dm_value_to_i64(value: &dm_pure::Value) -> i64 {
 
 /// 达梦单元格字符串化（与 sqlite_viewer / MySQL 臂展示语义对齐）：
 /// NULL 字面量、二进制给长度占位（不把 BLOB 原字节倒进表格）、整数去 .0。
+#[inline]
 pub(crate) fn dm_value_to_string(value: &dm_pure::Value) -> String {
     use dm_pure::Value as V;
     match value {

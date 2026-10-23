@@ -74,6 +74,7 @@ pub(crate) fn redis_extra_options(raw: Option<&str>) -> RedisExtraOptions {
 }
 
 /// 会话元信息捎带的拓扑标签（db_connect 消费，前端据此禁用集群切库）
+#[inline]
 pub fn redis_topology_of(raw: Option<&str>) -> Option<&'static str> {
     match redis_extra_options(raw).topology.as_str() {
         "cluster" => Some("cluster"),
@@ -116,6 +117,7 @@ pub(crate) fn redis_node_list(extra: &RedisExtraOptions) -> Result<Vec<(String, 
 
 /// TLS 四档 → ConnectionAddr（prefer/require 加密但不校验证书，语义与
 /// MySQL/PG 臂一致：绝不回退明文；verify-full 走系统根证书）
+#[inline]
 pub(crate) fn redis_addr(host: &str, port: u16, ssl_mode: &str) -> redis::ConnectionAddr {
     if ssl_mode == "disable" {
         redis::ConnectionAddr::Tcp(host.to_string(), port)
@@ -184,6 +186,7 @@ pub(crate) fn redis_tls_certs(extra: &RedisExtraOptions) -> Result<Option<redis:
     }
 }
 
+#[inline(always)]
 pub(crate) fn redis_db_index(value: Option<&str>) -> u32 {
     value.and_then(parse_redis_db).unwrap_or(0)
 }
@@ -191,6 +194,7 @@ pub(crate) fn redis_db_index(value: Option<&str>) -> u32 {
 /// Redis 连接错误文案：认证类错误追加排查提示（NOAUTH 未提供密码 /
 /// WRONGPASS 密码错 / AUTH 一般性失败；云实例还会给 NOAUTH Authentication
 /// required 或 NOPERM）。
+#[inline(always)]
 pub(crate) fn redis_connect_error(message: &str) -> String {
     let auth_hint = ["NOAUTH", "WRONGPASS", "AUTH", "NOPERM"]
         .iter()
@@ -211,6 +215,7 @@ pub(crate) async fn redis_version(conn: &mut RedisConn) -> Option<String> {
 }
 
 /// INFO 文本里取 `field:value`（INFO 是 CRLF 分隔的纯文本）
+#[inline]
 fn redis_info_field(info: &str, field: &str) -> Option<String> {
     info.lines()
         .filter_map(|line| line.trim().split_once(':'))
@@ -401,6 +406,7 @@ pub(crate) async fn redis_inspect_block(
 }
 
 /// 值类型 → 长度命令（未知类型无长度概念）
+#[inline(always)]
 fn redis_length_command(type_name: &str) -> Option<&'static str> {
     Some(match type_name {
         "string" => "STRLEN",
@@ -415,6 +421,7 @@ fn redis_length_command(type_name: &str) -> Option<&'static str> {
 
 /// 该类型最自然的读取命令（object_definition 的 call_template；key 按
 /// Redis 命令行习惯加引号转义，含空格/引号也能直接执行）
+#[inline]
 pub(crate) fn redis_read_command(key: &str, type_name: &str) -> String {
     let k = redis_quote_arg(key);
     match type_name {
@@ -429,6 +436,7 @@ pub(crate) fn redis_read_command(key: &str, type_name: &str) -> String {
 
 /// 命令行参数引号（与前端 redisQuote 同规则：含空白/引号/反斜杠时用双引号
 /// 包裹并转义 `"` 与 `\`）
+#[inline(always)]
 fn redis_quote_arg(value: &str) -> String {
     if value
         .chars()
@@ -589,11 +597,13 @@ async fn redis_flat_strings(
 }
 
 /// 单个值 → 展示文本（nil 渲染成 "(nil)"，其余同 redis_value_string）
+#[inline(always)]
 fn redis_value_text(value: &redis::Value) -> String {
     redis_value_string(value).unwrap_or_else(|| "(nil)".to_string())
 }
 
 /// stream 消息的字段数组 [f1,v1,f2,v2,…] → "f1=v1 f2=v2"
+#[inline]
 fn redis_stream_fields(value: &redis::Value) -> Option<String> {
     let redis::Value::Array(fields) = value else {
         return None;
@@ -612,6 +622,7 @@ fn redis_stream_fields(value: &redis::Value) -> Option<String> {
 /// 单个 redis::Value → 字符串（None 表示该值无法表达成文本，调用方跳过）。
 /// BulkString 非法 UTF-8（二进制值，Redis 允许任意字节）渲染为 `<N bytes>`
 /// ——直接 lossy 会把二进制内容替换成一片 U+FFFD，反而不可读。
+#[inline]
 pub(crate) fn redis_value_string(value: &redis::Value) -> Option<String> {
     Some(match value {
         redis::Value::Nil => return None,
@@ -638,6 +649,7 @@ pub(crate) fn redis_value_string(value: &redis::Value) -> Option<String> {
 /// CONFIG GET 与 XINFO 同型。刻意只收这三个——把 CLIENT/SLOWLOG/COMMAND
 /// 之类一并算进来会把它们「偶数长度的普通列表」误读成键值对（如
 /// COMMAND COUNT 之外的结果），宁可平铺成 index/value 也不误配。
+#[inline(always)]
 fn redis_pairs_by_command(command: &str) -> bool {
     matches!(command, "HGETALL" | "CONFIG" | "XINFO")
 }
@@ -646,6 +658,7 @@ fn redis_pairs_by_command(command: &str) -> bool {
 /// 刻意不做「偶数长度数组按 k=v 配对」的猜测——MGET/LRANGE 的两元素结果
 /// 会被误读成键值对；只有明确知道是字段组的调用方（XRANGE 消息体，见
 /// redis_stream_fields）才做配对。
+#[inline]
 fn redis_cell(value: &redis::Value) -> String {
     match value {
         redis::Value::Array(items) | redis::Value::Set(items) => {
