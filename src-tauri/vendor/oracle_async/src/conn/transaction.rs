@@ -20,15 +20,16 @@ impl<'a> Transaction<'a> {
     }
 
     pub async fn commit(mut self) -> Result<()> {
-        debug!("Committing transaction");
-        self.conn.exec("COMMIT").await?;
+        debug!("Committing transaction (protocol-level 0x0E)");
+        // go-ora Tx.Commit：协议级 simpleObject 0x0E，不走 SQL 文本
+        self.conn.commit().await?;
         self.committed = true;
         Ok(())
     }
 
     pub async fn rollback(mut self) -> Result<()> {
-        debug!("Rolling back transaction");
-        self.conn.exec("ROLLBACK").await?;
+        debug!("Rolling back transaction (protocol-level 0x0F)");
+        self.conn.rollback().await?;
         self.committed = true;
         Ok(())
     }
@@ -63,5 +64,21 @@ impl<'a> Queryable for Transaction<'a> {
 
     async fn exec(&mut self, query: &str) -> Result<u64> {
         self.conn.exec(query).await
+    }
+
+    async fn query_with_params<'b>(
+        &'b mut self,
+        query: &str,
+        params: Vec<crate::conn::routines::bind::BindParam>,
+    ) -> Result<QueryResult<'b>> {
+        self.conn.query_with_params(query, params).await
+    }
+
+    async fn exec_with_params(
+        &mut self,
+        query: &str,
+        params: Vec<crate::conn::routines::bind::BindParam>,
+    ) -> Result<u64> {
+        self.conn.exec_with_params(query, params).await
     }
 }

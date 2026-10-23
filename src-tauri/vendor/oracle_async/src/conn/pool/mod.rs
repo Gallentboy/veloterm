@@ -121,6 +121,22 @@ impl Queryable for PooledConn {
     async fn exec(&mut self, query: &str) -> Result<u64> {
         self.deref_mut().exec(query).await
     }
+
+    async fn query_with_params<'a>(
+        &'a mut self,
+        query: &str,
+        params: Vec<crate::conn::routines::bind::BindParam>,
+    ) -> Result<QueryResult<'a>> {
+        self.deref_mut().query_with_params(query, params).await
+    }
+
+    async fn exec_with_params(
+        &mut self,
+        query: &str,
+        params: Vec<crate::conn::routines::bind::BindParam>,
+    ) -> Result<u64> {
+        self.deref_mut().exec_with_params(query, params).await
+    }
 }
 
 #[async_trait]
@@ -136,5 +152,24 @@ impl Queryable for Pool {
     async fn exec(&mut self, query: &str) -> Result<u64> {
         let mut conn = self.get_conn().await?;
         conn.exec(query).await
+    }
+
+    async fn query_with_params<'a>(
+        &'a mut self,
+        _query: &str,
+        _params: Vec<crate::conn::routines::bind::BindParam>,
+    ) -> Result<QueryResult<'a>> {
+        Err(Error::Protocol(
+            "pool-level streaming query requires borrowing a connection with get_conn()".into(),
+        ))
+    }
+
+    async fn exec_with_params(
+        &mut self,
+        query: &str,
+        params: Vec<crate::conn::routines::bind::BindParam>,
+    ) -> Result<u64> {
+        let mut conn = self.get_conn().await?;
+        conn.exec_with_params(query, params).await
     }
 }
