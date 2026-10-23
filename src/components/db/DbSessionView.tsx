@@ -82,6 +82,11 @@ interface StatementResult {
 const ROW_CAP_OPTIONS = [1000, 5000, 20000, 50000];
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/** Redis 命令参数转义：含空白/引号/反斜杠时用双引号包裹并转义 */
+function redisQuote(value: string): string {
+  return /[\s"'\\]/.test(value) ? `"${value.replace(/(["\\])/g, '\\$1')}"` : value;
+}
+
 /** 可展开子层的节点类型（分组/表/视图可展开；函数/过程/序列/列是叶子） */
 const EXPANDABLE_KINDS = new Set(['database', 'schema', 'group', 'table', 'view']);
 
@@ -201,9 +206,12 @@ export function DbSessionView({
         sessionIdRef.current = sessionMeta.sessionId;
         setMeta(sessionMeta);
         // 引擎适配的欢迎语句：Oracle 无 FROM 不可查（SELECT 1 报 ORA-00923），
-        // 换 SELECT 1 FROM DUAL。函数式 setSql 读最新值，仅初始占位未动时替换
+        // 换 SELECT 1 FROM DUAL；Redis 不认 SQL，换 PING。函数式 setSql 读最新值，
+        // 仅初始占位未动时替换
         if (sessionMeta.engine === 'oracle') {
           setSql((prev) => (prev === 'SELECT 1;' ? 'SELECT 1 FROM DUAL;' : prev));
+        } else if (sessionMeta.engine === 'redis') {
+          setSql((prev) => (prev === 'SELECT 1;' ? 'PING' : prev));
         }
         onBaseTitle(`${sessionMeta.name} · ${connection.host}`);
         // 可切换库清单与对象树并行拉取
@@ -316,6 +324,26 @@ export function DbSessionView({
   // 点击表/视图节点 → 生成查询语句；双击函数/过程 → 拉取定义展示
   const handleNodeClick = useCallback(
     (node: CatalogNode) => {
+      // Redis：table 节点即 key，detail 携带值类型（string/hash/...），据此出命令。
+      // node.name 是裸 key（node.key 形如 "db0.{key}"，不能按 . 切分）
+      if (meta?.engine === 'redis' && node.kind === 'table') {
+        const type = node.detail ?? 'string';
+        const k = redisQuote(node.name);
+        const cmd =
+          type === 'hash'
+            ? `HGETALL ${k}`
+            : type === 'list'
+              ? `LRANGE ${k} 0 -1`
+              : type === 'set'
+                ? `SMEMBERS ${k}`
+                : type === 'zset'
+                  ? `ZRANGE ${k} 0 -1 WITHSCORES`
+                  : type === 'stream'
+                    ? `XRANGE ${k} - +`
+                    : `GET ${k}`;
+        setSql(cmd);
+        return;
+      }
       if (node.kind === 'table' || node.kind === 'view') {
         const schema = node.key.split('.')[0] ?? '';
         const name = node.name;

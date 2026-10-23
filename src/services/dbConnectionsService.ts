@@ -1,11 +1,13 @@
 /**
  * 数据库工作台连接库：侧栏「数据库主机」页 CRUD + 会话/目录/查询 invoke 封装。
+ * 四引擎（MySQL / PostgreSQL / Oracle / Redis）共用同一套记录与会话接口，
+ * 引擎差异只落在 database 字段语义与后端实现。
  * 类型与后端 db_browser 模块的 serde camelCase 契约一一对应。
  */
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-export type DbEngineKind = 'mysql' | 'postgres' | 'oracle';
+export type DbEngineKind = 'mysql' | 'postgres' | 'oracle' | 'redis';
 
 export interface DbConnectionRecord {
   id: number;
@@ -13,8 +15,9 @@ export interface DbConnectionRecord {
   engine: DbEngineKind;
   host: string;
   port: number;
+  /** MySQL/PG=库名；Oracle=初始 schema；Redis=逻辑库（db0..dbN，缺省 db0） */
   database: string | null;
-  /** Oracle 专有：服务名（连库必需）。database 在 Oracle 语义 = 初始 schema */
+  /** Oracle 专有：服务名（连库必需）。database 在 Oracle 语义 = 初始 schema；Redis 恒为 null */
   serviceName: string | null;
   username: string | null;
   /** null = 更新时保留库中旧值（表单未改动不回传）；明文存 SQLCipher 库 */
@@ -78,8 +81,9 @@ export function dbDisconnect(sessionId: string): Promise<void> {
 export interface CatalogNode {
   key: string;
   name: string;
-  /** database（MySQL 顶层）| schema（PG 顶层）| group | table | view
-   *  | function | procedure | sequence | column；group 的 key 形如 `{schema}#{group}` */
+  /** database（MySQL / Redis 顶层）| schema（PG 顶层）| group | table | view
+   *  | function | procedure | sequence | column；group 的 key 形如 `{schema}#{group}`；
+   *  Redis 的 table 节点 detail 承载值类型（string/hash/list/set/zset/stream） */
   kind: 'database' | 'schema' | 'group' | 'table' | 'view' | 'function' | 'procedure' | 'sequence' | 'column';
   detail: string | null;
 }

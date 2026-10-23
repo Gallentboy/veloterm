@@ -531,6 +531,11 @@ pub async fn db_use_database(
                 .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
             return Ok(meta.clone());
         }
+        DbEngine::Redis { .. } => {
+            // Redis 切换 = SELECT n（连接级状态，不重连）；元信息里 database
+            // 存的也是逻辑库名（"db3"），与对象树顶层节点名一致
+            engine.select_database(&db_name).await?;
+        }
         DbEngine::Closed => return Err("连接已关闭".to_string()),
     }
     // 更新并返回元信息（PG 重连路径里 server_version 可能变化，MySQL 保持原值）

@@ -204,6 +204,20 @@ rust_decimal = { version = "1", default-features = false, features = [
 pg-uuid = { package = "uuid", version = "0.8" }
 # PostgreSQL 的 rustls MakeConnector（provider 由全局 rustls/aws-lc-rs 决定）
 tokio-postgres-rustls = "0.14"
+# redis：纯 Rust 异步 Redis 客户端（RESP2/RESP3）。tokio-comp = tokio 异步连接；
+# tokio-rustls-comp = tokio 流上的 rustls 传输（它已含 tls-rustls；只开 tls-rustls
+# 时 Tokio 运行时缺 connect_tcp_tls 实现，redis 自身编译不过——E0046 实测踩过）。
+# rustls 与工程同一份 0.23，provider 由全局 aws-lc-rs 决定——严禁启用 native-tls
+# 或 ring 变体，双 provider 会运行期 panic。
+# tls-rustls-insecure 不可省：prefer/require 档要求「加密但接受任意证书」，
+# redis-rs 的 ConnectionAddr::TcpTls{insecure:true} 在缺该 feature 时直接运行期
+# 报错（见 engines.rs 的 connect_redis）；verify-full 走系统根证书。
+redis = { version = "1.7.1", default-features = false, features = [
+  "tokio-comp",
+  "tokio-rustls-comp",
+  "tls-rustls-insecure",
+  "streams",
+] }
 # SQL 语句分割 + 只读白名单判定（数据库工作台的多语句执行与写防护）。
 # 解析失败时降级到手写分号分割器（字符串/注释内的分号不算），sqlparser
 # 只是增强路径而非硬依赖路径（方言特有语法不该把工作台卡死）。
