@@ -20,6 +20,10 @@
 
 pub mod engines;
 pub mod obclient;
+/// Oracle 19c 错误消息全量中文译文（构建期嵌入、零堆分配稀疏查找）。
+/// 数据是机器辅助翻译、非官方译文；查不到时调用方回落 engines 里的
+/// `oracle_ora_hint` 精简摘要表。
+pub mod oracle_messages;
 pub mod sqlsplit;
 
 use std::collections::HashMap;

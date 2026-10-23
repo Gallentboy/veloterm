@@ -6,6 +6,65 @@
 
 use oracle_async::Queryable;
 use crate::db_browser::obclient;
+use crate::db_browser::oracle_messages;
+
+/// 错误码的完整中文解释：优先查 19c 全量译文表（20362 条，含 message/
+/// cause/action），未收录时回落 80 条精简摘要表（一句话说明）。
+///
+/// 两个来源的差别：全量表给的是 Oracle 官方手册的完整三段（原因 + 处理
+/// 建议），精简表是人工提炼的一句话高频提示。精简表覆盖面窄但措辞更短，
+/// 适合直接拼进单行错误文案。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OracleErrorText {
+    /// 错误消息本身（如「表或视图不存在」）
+    pub message: &'static str,
+    /// 原因说明（全量表才有；精简表恒为空）
+    pub cause: &'static str,
+    /// 处理建议（全量表才有；精简表恒为空）
+    pub action: &'static str,
+}
+
+/// 查错误码的中文解释：全量表 → 精简表 → None。
+///
+/// `code` 为负数或超出 u16 范围时只走精简表（ORA 码本身是正数，负值属于
+/// 非 ORA 错误，不该进全量表）。
+#[inline]
+pub(crate) fn oracle_error_text(code: i32) -> Option<OracleErrorText> {
+    if let Ok(small) = u16::try_from(code)
+        && let Some(m) = oracle_messages::lookup(small)
+    {
+        return Some(OracleErrorText {
+            message: m.message,
+            cause: m.cause,
+            action: m.action,
+        });
+    }
+    oracle_ora_hint(code).map(|hint| OracleErrorText {
+        message: hint,
+        cause: "",
+        action: "",
+    })
+}
+
+/// 把全量表的 cause/action 压成一行补充说明（拼在错误文案后）。
+/// 两者都空时返回空串（精简表命中即此情形）。
+///
+/// 不做长度截断：错误原因与处理建议是给用户看诊断信息，截断会丢关键步骤
+/// （实测中位数 70 字符、最长 1459 字符，完整输出更有用）。
+fn detail_suffix(text: &OracleErrorText) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if !text.cause.is_empty() {
+        parts.push(text.cause);
+    }
+    if !text.action.is_empty() {
+        parts.push(text.action);
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("（{}）", parts.join(" "))
+    }
+}
 
 /// oracle_async::Error → 展示文案。
 ///
@@ -21,15 +80,25 @@ pub(crate) fn oracle_err(e: oracle_async::Error) -> String {
         oracle_async::Error::Server(ref db) => {
             let code = db.code;
             let raw = db.message.as_str();
-            let hint = oracle_ora_hint(code);
-            // 「缺消息文件」形态：服务器文案本身没有信息量，换成内置文案
+            let text = oracle_error_text(code);
+            // 「缺消息文件」形态：服务器文案本身没有信息量，换成内置中文文案
             if raw.contains("No message file") || raw.contains("not found;") {
-                let hint_txt = hint.unwrap_or("详见 Oracle 官方错误文档");
                 let args = extract_error_arguments(raw);
-                return format!("ORA-{code:05}：{hint_txt}{args}");
+                return match text {
+                    Some(t) => format!(
+                        "ORA-{code:05}：{}{}{}",
+                        t.message,
+                        detail_suffix(&t),
+                        args
+                    ),
+                    None => format!("ORA-{code:05}：详见 Oracle 官方错误文档{args}"),
+                };
             }
-            match hint {
-                Some(h) if !raw.contains(h) => format!("ORA-{code:05}: {raw}（{h}）"),
+            match text {
+                // 服务器原文可读：原文 + 中文解释（避免原文已含该中文时重复）
+                Some(t) if !raw.contains(t.message) => {
+                    format!("ORA-{code:05}: {raw}（{}{}）", t.message, detail_suffix(&t))
+                }
                 _ => {
                     if raw.is_empty() {
                         format!("ORA-{code:05}")
@@ -47,11 +116,16 @@ pub(crate) fn oracle_err(e: oracle_async::Error) -> String {
             if let Some(pos) = msg.find("ORA-") {
                 let code_str = &msg[pos + 4..];
                 let digits: String = code_str.chars().take_while(|c| c.is_ascii_digit()).collect();
-                if let Some(hint) = digits.parse::<i32>().ok().and_then(oracle_ora_hint) {
+                if let Some(text) = digits.parse::<i32>().ok().and_then(oracle_error_text) {
                     if msg.contains("No message file") {
-                        return format!("ORA-{:05}：{hint}", digits.parse::<i32>().unwrap_or(0));
+                        return format!(
+                            "ORA-{:05}：{}{}",
+                            digits.parse::<i32>().unwrap_or(0),
+                            text.message,
+                            detail_suffix(&text)
+                        );
                     }
-                    return format!("{msg}（{hint}）");
+                    return format!("{msg}（{}{}）", text.message, detail_suffix(&text));
                 }
             }
             msg

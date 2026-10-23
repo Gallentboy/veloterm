@@ -4482,6 +4482,30 @@ mod tests {
         assert!(msg.contains("ORA-20001"), "{msg}");
     }
 
+    /// 错误文案接入全量表后的行为：优先用 19c 全量译文（含 cause/action），
+    /// 未收录回落 80 条精简表
+    #[test]
+    fn oracle_error_text_prefers_full_table_then_falls_back() {
+        use crate::db_browser::engines::oracle_engine::oracle_error_text;
+
+        // 全量表命中：三段齐全（ORA-00942 在 19c 手册里有完整 cause/action）
+        let t = oracle_error_text(942).expect("ORA-00942 应有解释");
+        assert_eq!(t.message, "表或视图不存在");
+        assert!(!t.cause.is_empty(), "全量表应带 cause");
+        assert!(!t.action.is_empty(), "全量表应带 action");
+
+        // 精简表也收录的码：仍能查到且非空
+        let t = oracle_error_text(1002).expect("ORA-01002 应有解释");
+        assert!(!t.message.is_empty());
+
+        // 两个表都未收录
+        assert!(oracle_error_text(99999).is_none());
+
+        // 负数/超 u16 范围码不进全量表（转换失败），只可能走精简表
+        assert!(oracle_error_text(-1).is_none());
+        assert!(oracle_error_text(70000).is_none());
+    }
+
     /// 达梦值字符串化/数值归一/标识符校验的纯函数边界（连库行为无法在无
     /// 服务端环境测试，这里只锁展示与防注入逻辑）
     #[test]

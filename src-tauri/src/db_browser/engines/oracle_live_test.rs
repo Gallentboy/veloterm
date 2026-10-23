@@ -209,6 +209,38 @@ async fn oracle_live_connect_and_select() {
     assert_eq!(d1, "123.456", "Decimal 绑定应保精度");
     assert_eq!(d2, "-0.5", "f64 负数绑定");
 
+    // ── LOB（P2-3）：临时 CLOB 全流程 create → putString → getData → free ──
+    // 严格对齐 go-ora value_getter.go 的调用序列（不 open、不改 locator）；
+    // 任一步失败都会立刻体现在此处，不留给后续查询当脏流。
+    {
+        let mut lob = oracle_async::conn::routines::lob::create_temporary(&mut oc, true)
+            .await
+            .expect("创建临时 CLOB 失败");
+        println!("lob: created, locator {} bytes", lob.source_locator.len());
+        oracle_async::conn::routines::lob::put_string(&mut oc, &mut lob, "中文 LOB 写入测试 abc")
+            .await
+            .expect("putString 失败");
+        let back = oracle_async::conn::routines::lob::get_data(&mut oc, &mut lob)
+            .await
+            .expect("getData 失败");
+        // getData 返回服务器字符集原始字节（852=GBK），解码须走驱动同一套表
+        let text = oracle_async::proto::charset::decode(&back, lob.charset_id);
+        println!(
+            "lob: read back {} bytes (charset {}) -> {text:?}",
+            back.len(),
+            lob.charset_id
+        );
+        assert_eq!(text, "中文 LOB 写入测试 abc", "临时 CLOB 往返应一致");
+        oracle_async::conn::routines::lob::free_temporary(&mut oc, &mut lob)
+            .await
+            .expect("freeTemporary 失败");
+        println!("lob: freed");
+        // 释放后会话必须仍然干净：立刻跑一条查询验证流未错位
+        let mut rs = oc.query("SELECT 1 FROM dual").await.expect("LOB 后查询失败");
+        assert!(rs.next_row().await.expect("LOB 后行读取失败").is_some());
+        println!("lob: session still clean after free");
+    }
+
     // ── 目录/定义链路（对象树详情的真实口径，自动发现真实对象）──
     if let Some(schema) = schema.filter(|s| !s.is_empty()) {
         oc.exec(&format!("ALTER SESSION SET CURRENT_SCHEMA = {schema}"))
