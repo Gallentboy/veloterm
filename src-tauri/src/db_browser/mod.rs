@@ -1,11 +1,17 @@
-//! 数据库工作台（侧栏「数据库」菜单）：MySQL / PostgreSQL / Oracle 连接
-//! 管理、对象树浏览与流式 SQL 执行。会话模型与 ZkState 同型（tauri manage
-//! 注入 State + 会话表 + 前端按 sessionId 交互）；引擎层见 engines.rs
-//!（Oracle 走 vendor rust-oracle——官方 ODPI-C 绑定、同步 API 经
-//! with_oracle 的 spawn_blocking 包裹，运行期需 Oracle Instant Client，
-//! 支持 11.2–23ai；PL/SQL 匿名块经 sqlsplit 整段化后 execute +
-//! implicit_result，database 字段在 Oracle 语义 = 服务名，「切库」=
-//! CURRENT_SCHEMA）。
+//! 数据库工作台（侧栏「数据库」菜单）：MySQL / PostgreSQL / Oracle /
+//! OceanBase / SQLite 连接管理、对象树浏览与流式 SQL 执行。会话模型与
+//! ZkState 同型（tauri manage 注入 State + 会话表 + 前端按 sessionId
+//! 交互）；引擎层见 engines.rs（Oracle 走 vendor rust-oracle——官方
+//! ODPI-C 绑定、同步 API 经 with_oracle 的 spawn_blocking 包裹，运行期
+//! 需 Oracle Instant Client，支持 11.2–23ai；PL/SQL 匿名块经 sqlsplit
+//! 整段化后 execute + implicit_result，database 字段在 Oracle 语义 =
+//! 服务名，「切库」= CURRENT_SCHEMA；OceanBase 双模式——MySQL 模式租户
+//! 复用 mysql_async 臂、Oracle 模式租户走 vendor obclnt-sys/libobclient
+//!（obclient.rs 安全包装 + with_obclient 阻塞包裹，database 字段同
+//! Oracle 语义 = 初始 schema）；SQLite 是本地文件库——`password` 字段
+//! 语义 = 加密口令、`db_path` = 文件路径、`encryption_mode` =
+//! none/sqlcipher4/sqlcipher3/sqlcipher2/sqlcipher-raw，取消经 progress
+//! handler（引擎侧绑定会话的 cancelled 标志））。
 //!
 //! 现范围：直连（TLS 四档；Oracle 侧 TlsMode 两档、见 engines.rs 头注）、
 //! 对象树三层懒加载、多语句分割执行（Channel 流式回批）、只读拦截、取消
@@ -13,6 +19,7 @@
 //! 报错提示。
 
 pub mod engines;
+pub mod obclient;
 pub mod sqlsplit;
 
 use std::collections::HashMap;
@@ -47,6 +54,13 @@ pub struct DbSessionMeta {
     pub connection_id: usize,
     pub name: String,
     pub engine: String,
+    /// OceanBase 专有：租户模式（Some("mysql") / Some("oracle")，其他引擎
+    /// 恒 None；前端据此展示模式徽标，sqlsplit 方言键映射也消费它）
+    pub mode: Option<String>,
+    /// 达梦的客户端侧兼容模式（'oracle' | 'mysql'）；其他引擎恒 null。
+    /// 前端据此选方言语法（ROWNUM vs LIMIT、FROM DUAL 等），db_query 的
+    /// 方言键映射也消费它（与 mode 的分工：mode 属 OceanBase，此处属达梦）
+    pub compatible_mode: Option<String>,
     pub database: Option<String>,
     pub server_version: String,
     pub readonly: bool,
@@ -129,10 +143,17 @@ pub fn db_connection_delete(id: usize) -> Result<(), String> {
 }
 
 /// 编辑态表单密码留空（=保留旧密码语义）时从库里补上已存密码。
+///
+/// SQLite 例外：加密方式为 none 时不补——明文库不该带口令打开（SQLCipher
+/// 会对明文文件报 NOTADB「口令错误或不是加密数据库」）。用户把加密连接
+/// 改成不加密时，前端传空串正是要清掉残留口令，这里必须尊重该意图。
 fn fill_password_from_store(
     record: &mut DbConnectionRecord,
     connection_id: Option<usize>,
 ) -> Result<(), String> {
+    if record.engine == "sqlite" && record.encryption_mode == "none" {
+        return Ok(());
+    }
     if record.password.as_deref().map(str::is_empty).unwrap_or(true)
         && let Some(id) = connection_id.filter(|v| *v > 0)
         && let Ok(Some(Some(saved))) =
@@ -186,14 +207,29 @@ pub async fn db_connect(
             "SSH 隧道将在后续版本接入（当前配置指向主机 id={ssh_host_id}），请暂时改为直连"
         ));
     }
-    let (engine, server_version) = DbEngine::connect(&record).await?;
+    let (mut engine, server_version) = DbEngine::connect(&record).await?;
+    // SQLite 的取消走 progress handler：引擎侧需要会话的取消标志句柄，
+    // 故先建标志、绑进引擎，再随会话一起持有（其它引擎为无操作）
+    let cancelled = Arc::new(AtomicBool::new(false));
+    engine.bind_cancel_flag(cancelled.clone());
     let session_id = state.alloc_session_id();
+    // SQLite 没有连接级库概念：元信息固定展示 main（对象树顶层 = 已附加库）
+    let database = if record.engine == "sqlite" {
+        Some("main".to_string())
+    } else {
+        record.database.clone()
+    };
+    // 达梦的兼容模式在结构体构造前算好（name/env_level 等 move 字段后
+    // record 不可再借用）；db_query 的方言键映射消费它
+    let dameng_dialect = record.dameng_dialect();
     let meta = DbSessionMeta {
         session_id: session_id.clone(),
         connection_id: record.id,
         name: record.name,
         engine: record.engine.clone(),
-        database: record.database.clone(),
+        mode: record.mode.clone(),
+        compatible_mode: dameng_dialect.map(str::to_string),
+        database,
         server_version,
         readonly: record.readonly,
         env_level: record.env_level,
@@ -202,7 +238,7 @@ pub async fn db_connect(
         meta: std::sync::RwLock::new(meta.clone()),
         engine: tokio::sync::Mutex::new(engine),
         cancel: Arc::new(tokio::sync::Notify::new()),
-        cancelled: Arc::new(AtomicBool::new(false)),
+        cancelled,
     });
     state
         .sessions
@@ -291,28 +327,34 @@ pub async fn db_query(
     on_event: Channel<QueryEvent>,
 ) -> Result<(), String> {
     let session = state.get(&session_id)?;
-    let statements = sqlsplit::split_statements(
-        &session
-            .meta
-            .read()
-            .map_err(|_| "DB 会话元信息锁中毒".to_string())?
-            .engine
-            .clone(),
-        &sql,
-    );
-    if statements.is_empty() {
-        return Err("SQL 语句为空".to_string());
-    }
-    let (readonly, engine_kind) = {
+    let (readonly, dialect_key) = {
         let meta = session
             .meta
             .read()
             .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
-        (meta.readonly, meta.engine.clone())
+        // 双模式引擎的方言/只读白名单映射（合成键与真实引擎同名或 dameng:xxx）：
+        // - OceanBase：Oracle 模式继承 oracle 方言（PL/SQL 块整段化、只读
+        //   白名单同源），MySQL 模式继承 mysql 方言；
+        // - 达梦：compatible_mode 展开为 dameng:oracle / dameng:mysql（sqlsplit
+        //   侧的两个方言分支）；空值归 oracle（达梦默认部署多为 Oracle 兼容）
+        let key = match (meta.engine.as_str(), meta.mode.as_deref()) {
+            ("oceanbase", Some("oracle")) => "oracle".to_string(),
+            ("oceanbase", _) => "mysql".to_string(),
+            ("dameng", _) => format!(
+                "dameng:{}",
+                meta.compatible_mode.as_deref().unwrap_or("oracle")
+            ),
+            (other, _) => other.to_string(),
+        };
+        (meta.readonly, key)
     };
+    let statements = sqlsplit::split_statements(&dialect_key, &sql);
+    if statements.is_empty() {
+        return Err("SQL 语句为空".to_string());
+    }
     if readonly {
         for stmt in &statements {
-            if !sqlsplit::statement_is_readonly(&engine_kind, stmt) {
+            if !sqlsplit::statement_is_readonly(&dialect_key, stmt) {
                 let head: String = stmt.sql.chars().take(60).collect();
                 return Err(format!(
                     "会话为只读模式，禁止执行非查询语句：{head}{}",
@@ -477,7 +519,9 @@ pub async fn db_list_databases(
 }
 
 /// 用表单草稿参数（编辑态密码留空自动从库补）临时建连拉取可选数据库清单，
-/// 拉完即断——供连接表单的「数据库」下拉选择（也可手输）。
+/// 拉完即断——供连接表单的「数据库」下拉选择（也可手输）。SQLite 返回
+/// `PRAGMA database_list` 的附加库名（前端对 SQLite 隐藏该选择器，保留
+/// 命令兼容）。
 #[tauri::command]
 pub async fn db_list_databases_for_record(
     mut record: DbConnectionRecord,
@@ -521,9 +565,21 @@ pub async fn db_use_database(
             let mut old = std::mem::replace(&mut *engine, new_engine);
             old.close().await;
         }
-        DbEngine::Oracle(_) => {
-            // Oracle 切换 = ALTER SESSION SET CURRENT_SCHEMA（只改名字解析，
-            // 不重连、不动连接记录的 service_name）；元信息仍展示服务名
+        DbEngine::Oracle(_) | DbEngine::Dameng(_) => {
+            // Oracle / 达梦切 schema = 会话级 SET SCHEMA（只改名字解析，不重连、
+            // 不动连接记录）；不走下方 meta 重写分支的 early-return，统一落到
+            // 尾部的 database 更新（原 Oracle 臂在此 early-return，导致切换后
+            // 元信息永远停在初始 schema——顺带修正）
+            engine.select_database(&db_name).await?;
+        }
+        DbEngine::Sqlite(_) => {
+            // SQLite 无连接级切库：对象树顶层已是 database_list 的附加库，
+            // 这里只更新元信息供工具栏展示
+        }
+        DbEngine::ObOracle(_) => {
+            // OB Oracle 同 Oracle 臂：切换 = ALTER SESSION SET CURRENT_SCHEMA
+            //（不重连、不动连接记录）；元信息沿用现状不重写（meta 更新同
+            // Oracle 臂惯例）
             engine.select_database(&db_name).await?;
             let meta = session
                 .meta
@@ -580,6 +636,20 @@ pub async fn oracle_client_dir_pick() -> Result<Option<String>, String> {
     let picked = rfd::AsyncFileDialog::new()
         .set_title("选择 Oracle Instant Client 目录")
         .pick_folder()
+        .await;
+    Ok(picked.map(|h| h.path().to_string_lossy().into_owned()))
+}
+
+// ── SQLite 数据库文件选择（rfd）───────────────────────────────────────────
+
+/// 选择本地 SQLite 数据库文件；取消返回 None
+#[tauri::command]
+pub async fn sqlite_file_pick() -> Result<Option<String>, String> {
+    let picked = rfd::AsyncFileDialog::new()
+        .set_title("选择 SQLite 数据库文件")
+        .add_filter("SQLite 数据库", &["db", "sqlite", "sqlite3", "db3", "s3db"])
+        .add_filter("所有文件", &["*"])
+        .pick_file()
         .await;
     Ok(picked.map(|h| h.path().to_string_lossy().into_owned()))
 }

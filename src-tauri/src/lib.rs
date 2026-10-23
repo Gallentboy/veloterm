@@ -116,6 +116,7 @@ pub fn run() {
             db_browser::oracle_client_dir_get,
             db_browser::oracle_client_dir_set,
             db_browser::oracle_client_dir_pick,
+            db_browser::sqlite_file_pick,
             zk::zk_list,
             zk::zk_get,
             zk::zk_set_data,
