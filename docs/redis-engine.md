@@ -2,9 +2,11 @@
 
 > 数据库工作台在 MySQL / PostgreSQL / Oracle 之外的第四个引擎。复用现有工作台的连接表单、对象树懒加载、查询编辑器、结果表格与只读拦截，不新建独立页面。
 >
-> **驱动**：crates.io `redis = "1.7.1"`（纯 Rust 异步客户端），features `tokio-comp` + `tls-rustls` + `streams`。TLS 走 rustls 0.23，与 app 全局 aws-lc-rs provider 同源——**`native-tls` / `ring` 变体一律不得启用**，同进程出现两个 crypto provider 会在运行期 panic。
+> **驱动**：crates.io `redis = "1.7.1"`（纯 Rust 异步客户端），features `tokio-comp` + `tokio-rustls-comp` + `tls-rustls-insecure` + `cluster-async` + `streams`。TLS 走 rustls 0.23，与 app 全局 aws-lc-rs provider 同源——**`native-tls` / `ring` 变体一律不得启用**，同进程出现两个 crypto provider 会在运行期 panic；`cluster-async` 提供集群拓扑的异步连接（MOVED/ASK 重定向与 slot 路由）。
 >
-> **表结构**：零变更，复用 `db_connections` 原表（详见第 8 节与 `docs/redis-db-changes.sql`）。
+> **表结构**：一条新列 `db_connections.extra_options TEXT`（JSON，幂等 ALTER 自动补列；详见第 9 节与 `docs/redis-db-changes.sql`）。
+>
+> **拓扑**：单机（默认）/ 集群（Cluster）/ 哨兵（Sentinel），见第 2 节；拓扑与节点清单存在 extra_options 列。
 
 ---
 
@@ -21,7 +23,7 @@ Redis 不是关系型数据库：没有 schema、没有 SQL、没有列定义。
 | 查询语言 | SQL（sqlparser 分句） | 逐行原始 Redis 命令 |
 | 结果形状 | 行 × 列 | 由 `redis::Value` 形态决定（见第 4 节） |
 
-单会话仍是「一会话一连接、串行执行」模型，不做连接池。这直接决定了第 7 节的若干边界（阻塞命令、交互订阅）。
+单会话仍是「一会话一连接、串行执行」模型，不做连接池。这直接决定了第 8 节的若干边界（阻塞命令、交互订阅）。
 
 ---
 
@@ -44,6 +46,23 @@ Redis 不是关系型数据库：没有 schema、没有 SQL、没有列定义。
 | 环境 / 只读 / 颜色 | 否 | 与另三个引擎同义；**只读默认开启**（表列默认 1） | — |
 
 逻辑库取值只写库名（`db2`），不写数字、不写斜杠。`SELECT` 由引擎层在连接建立后执行。
+
+### 拓扑与 mTLS（extra_options）
+
+连接表单在引擎 = redis 时提供「拓扑」选择，配置落在 `extra_options` 列（JSON 文本，结构对应后端 `RedisExtraOptions`，serde camelCase）：
+
+| 字段 | 取值 | 说明 |
+|---|---|---|
+| `topology` | `single`（默认/缺省）\| `cluster` \| `sentinel` | 连接路径分发 |
+| `nodes` | `host:port` 数组 | 集群 = 种子节点（可只给一个，slot 表自动发现其余）；哨兵 = 哨兵节点地址 |
+| `masterName` | 字符串 | 哨兵拓扑必填：`SENTINEL get-master-addr-by-name` 解析当前 master |
+| `clientCertPath` / `clientKeyPath` | PEM 文件路径 | mTLS 客户端证书与私钥；两路径成对、仅 SSL ≠ disable 时生效 |
+
+行为要点：
+
+- **集群**：全部节点作为初始节点交给 redis-rs `ClusterClient`（cluster-async）；只认 db0（切库下拉禁用，`SELECT` 报错拦截）。**无 key 命令（SCAN/CONFIG/INFO/DBSIZE）只路由到单个节点**——对象树与大 key 分析在集群下是单节点口径；键操作命令（GET/HSET/DEL…）按 slot 全集群路由，MOVED/ASK 自动重定向。
+- **哨兵**：逐个哨兵问 `SENTINEL get-master-addr-by-name`，先答先得；解析出 master 后按单机拓扑连接（TLS 档位/凭据/mTLS 沿用连接记录）。主从切换后重连即指向新 master（不做运行期跟踪）。哨兵通常无认证：带凭据连失败时自动按无凭据重试一轮（master 的认证始终用记录凭据）。
+- **mTLS**：证书经 `Client::build_with_tls` 挂进地址（redis-rs 的 `TlsConnParams` 不对外构造，这是唯一通道）；集群侧先对单节点 build 再取回 `ConnectionInfo` 喂给 `ClusterClient`。自建 CA 请装进系统信任库（不开 root 证书路径字段）。
 
 ### SSL 与 URL 判定
 
@@ -144,8 +163,15 @@ EXPIRE user:1001 3600
 | Set（RESP3 的 `SMEMBERS`） | `member` | 每成员一行 |
 | 标量（Bulk / Simple String / Integer / Double / Boolean / BigNumber / Verbatim） | `result` | 单行单列 |
 | Nil | `result` | 单元格显示 `(nil)` |
+| **INFO 的 bulk 文本**（命令感知分支） | `field` / `value` | 按行拆 `# Section` 分节（占 field 列）与 `k:v` 行，不再整块塞一格 |
+| **SCAN 的 `[cursor, [key…]]`**（命令感知分支） | `cursor` / `key` | 游标只在首行首列出现；`'0'` 表示迭代完毕，空页保留一行游标供前端判断 |
 
 数组元素若自身是嵌套数组（如 `XRANGE` 的 entry、`CLIENT LIST` 之外的复合结构），按 JSON 文本压进单元格，不递归建表——需要拆字段时改用更窄的命令（如 `XRANGE k - + COUNT 10` 后自行取列）。
+
+### SCAN 游标翻页与命令补全
+
+- **翻页**：SCAN 结果的 footer 附「继续迭代 ▸」按钮，点击自动以首行游标执行 `SCAN <cursor> COUNT <原命令的 COUNT，缺省 100>`；游标为 `'0'`（迭代完毕）时隐藏。
+- **补全**：Redis 会话的查询编辑器模型语言换 plaintext（逐行命令不是 SQL），挂静态命令词表补全（`src/components/db/redisCommands.ts`，约 200 条按分组整理自 redis.io/commands，离线无网络依赖）。
 
 ### 行数上限与取消
 
@@ -211,19 +237,39 @@ EXPIRE user:1001 3600
 
 ---
 
-## 7. 已知边界
+## 7. 键管理 / 慢日志 / 大 Key 分析（UI）
+
+对象树右键 Redis key（写入口仅非只读会话显示；「键详情」即原有检视块）：
+
+| 入口 | 行为 | 后端 |
+|---|---|---|
+| 编辑值 | 按类型呈现表单（string=多行文本；hash/zset=两列行编辑；list=可上下移的行编辑；set=成员行编辑），保存 = **DEL + 按类型重写 + 恢复原 TTL** 的 MULTI/EXEC 原子管道（同 key 同 slot，集群下也成立）；保存后自动回看该键 | `redis_read_key` / `redis_write_key` |
+| 修改 TTL | 显示当前 TTL；输入秒数 `EXPIRE`，或「移除过期」`PERSIST` | dbQuery 组行命令（跨库时 SELECT 夹心） |
+| 删除键 | 确认弹窗 → `DEL` | dbQuery 组行命令 |
+
+安全闸：**成员超 5000（REDIS_EDIT_CAP）的键 truncated=true，表单只读禁存**——整体覆写语义下截断保存会丢数据；清空全部成员 = 删除该键；只读会话后端拒绝 `redis_write_key`。stream 等无表单语义的类型提示用命令。
+
+执行工具栏（Redis 会话专属，只读可用）：
+
+- **慢日志**：`SLOWLOG GET 200` 结构化为 id/时间/耗时/命令/客户端 五列表（可过滤、可刷新）；
+- **大 Key 分析**：SCAN 采样至多 1000 个 key，批量 `MEMORY USAGE` + `TYPE`，按内存倒序取前 50；footer 显示实扫数与「采样触及上限」标记。托管实例禁用 MEMORY USAGE 时单 key 按 0 字节计（排序靠后）。
+
+---
+
+## 8. 已知边界
 
 以下能力本期不做，各自的原因只有一条：
 
 | 不支持 | 原因 |
 |---|---|
-| 集群 / 哨兵（Cluster / Sentinel） | 只实现单机直连拓扑；`MOVED`/`ASK` 重定向与哨兵主从发现会改变「一会话一连接」的寻址前提，需要独立的路由层 |
-| pub/sub 交互订阅（`SUBSCRIBE` / `PSUBSCRIBE`） | 订阅会独占连接并持续推送，与串行「发一条等一条」的会话模型互斥 |
-| 阻塞命令（`BLPOP` / `BRPOP` / `BLMOVE` / `WAIT` 等） | 会挂死串行会话，后续命令全部排队等它超时 |
+| pub/sub 交互订阅（`SUBSCRIBE` / `PSUBSCRIBE`）、MONITOR 实时流 | 订阅会独占连接并持续推送，与串行「发一条等一条」的会话模型互斥 |
+| 阻塞命令（`BLPOP` / `BRPOP` / `BLMOVE` / `WAIT` 等） | 会挂死串行会话，后续命令全部排队等它超时（未做黑名单拦截：只读会话被白名单默认拒绝挡住，可写会话会真挂到超时/取消） |
 | Lua 脚本调试（`SCRIPT DEBUG`） | 调试是阻塞式交互会话，同 pub/sub 的连接独占问题 |
-| Streams 消费者组管理 | 无专用 UI（建组/认领/ack 的表单），只能用查询框裸命令（`XGROUP` / `XACK` / `XAUTOCLAIM`） |
-| 键的写入 / 删除 UI | 不提供表单式增删改，写操作一律走查询框裸命令；只读会话会拦截 |
+| Streams 消费者组管理 | 无专用表单（建组/认领/ack 只能用查询框裸命令 `XGROUP` / `XACK` / `XAUTOCLAIM`） |
 | 命令内分页 | 协议层无分页，`max_rows` 只在客户端截断显示，服务端回复仍完整返回 |
+| 集群下的全库枚举 | redis-rs 集群连接把无 key 命令（SCAN/CONFIG/INFO）路由到单个节点——对象树/大 key 分析是单节点口径；键操作命令全集群路由 |
+| 哨兵运行期主从切换跟踪 | 连接时解析一次 master 地址；故障转移后需重连（重连即指向新 master） |
+| RESP3 协商 | 保持 RESP2（老版本 Redis 无 HELLO）；值转换层对两种形态都兼容 |
 
 另有两个使用层面的注意点（不是缺陷）：
 
@@ -232,24 +278,23 @@ EXPIRE user:1001 3600
 
 ---
 
-## 8. 数据库变更
+## 9. 数据库变更
 
-**无表结构变更，老库无需迁移。**
+**一条新列，幂等 ALTER 应用启动自动补列，零手工迁移**：
 
 | 项 | 结论 |
 |---|---|
-| 新表 / 新列 | 无 |
-| 迁移脚本 | 无（`db_connections` 建表语句与幂等 ALTER 批次都不动） |
-| `database` 列 | 存 Redis 逻辑库 `dbN`（可空，空 = 连接时 db0） |
+| 新表 | 无 |
+| 新列 | `db_connections.extra_options TEXT`（可空 JSON）——引擎通用扩展槽位，当前仅 Redis 消费：拓扑/节点/master 名/mTLS 证书路径（结构 = 后端 `RedisExtraOptions`） |
+| 迁移脚本 | 无需手工执行（db.rs 幂等 ALTER 批次内置；核对语句见 `docs/redis-db-changes.sql`） |
+| `database` 列 | 存 Redis 逻辑库 `dbN`（可空，空 = 连接时 db0；集群恒 db0） |
 | `service_name` 列 | 对 Redis 恒为 `NULL`（该列是 Oracle 服务名专用） |
-| `engine` 列取值 | 新增 `'redis'`（原为 `'mysql'` / `'postgres'` / `'oracle'`，列本身是 TEXT，无 CHECK 约束） |
-| `port` | 表列无默认值，`6379` 只是表单缺省；直插记录需自带端口 |
-
-核对语句与「未来若需加列」的幂等 ALTER 模板见 `docs/redis-db-changes.sql`（只读核对可直接在 SQLCipher 库上跑；模板是注释态，不要执行）。
+| `engine` 列取值 | `'redis'`（列是 TEXT，无 CHECK 约束） |
+| `port` | 表列无默认值，`6379` 只是表单缺省；集群/哨兵拓扑下 host/port 仅展示用（真实地址在 extra_options.nodes） |
 
 ---
 
-## 9. 验证清单
+## 10. 验证清单
 
 > **需要真实 Redis 实例**（本机 `redis-server` 或容器均可，建议 6.x+ 以覆盖 ACL 与 RESP3 路径）。以下为人工冒烟步骤，门禁不依赖。
 
@@ -271,5 +316,18 @@ EXPIRE user:1001 3600
 | 14 | 打开只读会话，执行 `SET k v` | 被客户端拦截并提示「只读模式」；服务端未收到该命令（可在 `MONITOR` 侧确认） |
 | 15 | 只读会话执行 `CONFIG GET maxmemory` | 放行并返回结果 |
 | 16 | 只读会话执行 `CONFIG SET maxmemory 0` | 被拦截 |
-| 17 | 非只读会话执行 `BLPOP q 0` | 会话阻塞至超时或取消；验证第 7 节的串行模型预期 |
+| 17 | 非只读会话执行 `BLPOP q 0` | 会话阻塞至超时或取消；验证第 8 节的串行模型预期 |
 | 18 | 把 SSL 改为 `verify-full` 连自签实例 | 连接被拒并给出证书校验错误（不回退明文） |
+| 19 | 执行 `INFO memory` | 结果为 field/value 两列表，`# Memory` 分节行可见，不再整块塞一格 |
+| 20 | 执行 `SCAN 0 COUNT 100` | 表头 cursor/key，游标在首行；footer 出现「继续迭代 ▸」，点击后以该游标翻页；迭代完结（游标 0）后按钮消失 |
+| 21 | 查询框敲入 `HGET` | 补全弹出 hash 分组的命令建议（带参数骨架）；模型语言为 plaintext（SQL 高亮/补全不再出现） |
+| 22 | 右键某 key → 编辑值（非只读） | 表单按类型呈现；改值保存后对象树刷新、自动回看该键；TTL 保留（可先 EXPIRE 验证） |
+| 23 | 对 5000+ 成员的 key 打开编辑 | 表单只读并提示截断，保存按钮隐藏 |
+| 24 | 右键 key → 修改 TTL | 输入秒数应用后 `TTL k` 生效；「移除过期」后 TTL 回 -1 |
+| 25 | 右键 key → 删除键 | 确认后 key 从树上消失 |
+| 26 | 只读会话右键 key | 无编辑/TTL/删除菜单项；工具栏「慢日志/大 Key」仍可用 |
+| 27 | 工具栏「慢日志」 | 五列表呈现，可过滤可刷新 |
+| 28 | 工具栏「大 Key 分析」 | 按内存倒序 Top50，footer 显示实扫数 |
+| 29 | 新建集群连接（拓扑=集群，节点列表填种子节点） | 连接成功；切库下拉禁用（仅 db0）；键命令全集群路由；树/大 Key 为单节点口径 |
+| 30 | 新建哨兵连接（拓扑=哨兵，节点=哨兵地址，master 名必填） | 连接成功（解析当前 master）；master 名写错时报「哨兵未找到 master」 |
+| 31 | SSL=require + 证书/私钥路径（mTLS） | 握手携带客户端证书；只填其一时表单拒保存；disable + 证书时连接报配置矛盾 |
