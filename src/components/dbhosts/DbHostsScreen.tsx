@@ -642,6 +642,16 @@ function DbConnectionFormDialog({
   const [redisMasterName, setRedisMasterName] = useState(redisExtraInitial.masterName ?? '');
   const [redisCertPath, setRedisCertPath] = useState(redisExtraInitial.clientCertPath ?? '');
   const [redisKeyPath, setRedisKeyPath] = useState(redisExtraInitial.clientKeyPath ?? '');
+  // OB Oracle：驱动选择（rust = 纯 Rust 分叉；ffi = libobclient，缺省）
+  const [obDriver, setObDriver] = useState<'ffi' | 'rust'>(() => {
+    if (node?.engine !== 'oceanbase' || !node.extraOptions) return 'ffi';
+    try {
+      const parsed = JSON.parse(node.extraOptions) as { driver?: string };
+      return parsed.driver === 'rust' ? 'rust' : 'ffi';
+    } catch {
+      return 'ffi';
+    }
+  });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -725,7 +735,8 @@ function DbConnectionFormDialog({
     // 仅达梦有意义；其余引擎写 null（后端忽略该列）
     compatibleMode: engine === 'dameng' ? compatibleMode : null,
     // Redis：拓扑/节点/哨兵 master/mTLS 证书路径（JSON 文本）；证书路径
-    // 仅 TLS 档位下携带（disable + 证书是配置矛盾，后端直接报错）
+    // 仅 TLS 档位下携带（disable + 证书是配置矛盾，后端直接报错）。
+    // OB Oracle：driver 选择（rust = 纯 Rust 分叉驱动，ffi = libobclient）
     extraOptions:
       engine === 'redis'
         ? JSON.stringify({
@@ -736,7 +747,9 @@ function DbConnectionFormDialog({
               ? { clientCertPath: redisCertPath.trim(), clientKeyPath: redisKeyPath.trim() }
               : {}),
           })
-        : null,
+        : engine === 'oceanbase' && mode === 'oracle'
+          ? JSON.stringify({ driver: obDriver })
+          : null,
     username: isSqlite ? null : username.trim() || null,
     // 留空 = 更新时保留旧值（后端语义）；新建时空值即无密码。
     // 例外：SQLite 从加密改回不加密时必须显式清空——否则库里残留的旧口令
@@ -923,6 +936,25 @@ function DbConnectionFormDialog({
               ))}
             </div>
           </FormField>
+        ) : null}
+
+        {/* OB Oracle：驱动选择（rust = 纯 Rust 分叉驱动，含 OB20 协议层与 SM3
+            认证；ffi = libobclient）。仅 Oracle 租户模式下有意义——MySQL 租户
+            始终走标准 MySQL 协议 */}
+        {engine === 'oceanbase' && mode === 'oracle' ? (
+          <div className="flex flex-col gap-1.5">
+            <FormField label={t('dbHosts.obDriverLabel')} className="w-56">
+              <SelectMenu
+                value={obDriver}
+                onChange={(v) => setObDriver(v === 'rust' ? 'rust' : 'ffi')}
+                options={[
+                  { value: 'ffi', label: t('dbHosts.obDriverFfi') },
+                  { value: 'rust', label: t('dbHosts.obDriverRust') },
+                ]}
+              />
+            </FormField>
+            <p className="text-ui-xs text-foreground-subtlest">{t('dbHosts.obDriverHint')}</p>
+          </div>
         ) : null}
 
         {/* Redis：拓扑（单机/集群/哨兵）——地址存在 extra_options 的节点列表里，
