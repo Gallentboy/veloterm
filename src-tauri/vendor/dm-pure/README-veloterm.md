@@ -56,10 +56,15 @@ dm-pure = { path = "vendor/dm-pure" }
 驱动**不感知**达梦的兼容模式：它只做协议与编解码，SQL 语义完全由服务器解释。兼容模式是
 实例级配置（`dm.ini` 的 `COMPATIBLE_MODE`：2=Oracle，4=MySQL），客户端侧无法会话级切换。
 
-因此本工程的对象树 / 表详情 / 定义查询**统一走达梦固有的 Oracle 风格数据字典**
-（`ALL_USERS` / `ALL_TABLES` / `ALL_VIEWS` / `ALL_OBJECTS` / `ALL_SEQUENCES` /
+因此本工程的对象树 / 表详情 / 定义查询**统一走达梦的数据字典**
+（schema 清单取元数据基表 `SYSOBJECTS WHERE TYPE$ = 'SCH'`；表/视图/函数/过程/序列
+与列、源码、索引分别走 `ALL_TABLES` / `ALL_VIEWS` / `ALL_OBJECTS` / `ALL_SEQUENCES` /
 `ALL_TAB_COLUMNS` / `ALL_SOURCE` / `ALL_INDEXES`）——这些视图在两种兼容模式下都存在
 （兼容模式只增不删），一套查询覆盖两模式。
+
+**schema 清单不能用 `ALL_USERS`**：达梦的用户与模式可分离（`CREATE SCHEMA xxx
+AUTHORIZATION user` 可建与用户名不同的模式，一个用户也可挂多个模式），`ALL_USERS`
+只列用户、会漏掉独立命名的业务模式。
 
 连接表单里的「兼容模式」选项**只用于客户端侧方言选择**（SQL 编辑器高亮与语句分割方言、
 树右键生成语句的取行语法 `ROWNUM` vs `LIMIT`），不改变服务器行为。

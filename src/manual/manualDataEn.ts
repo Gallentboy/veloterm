@@ -875,7 +875,7 @@ Built-in connectivity for MySQL, PostgreSQL, Oracle and Dameng DM8 (MySQL/PG use
 ### Dameng DM8 Notes
 - **Compatibility mode**: whether a Dameng instance is MySQL- or Oracle-compatible is decided server-side by \`COMPATIBLE_MODE\` in \`dm.ini\`; clients cannot switch it. The form's "Compatibility" option only affects the **client-side SQL dialect** (statement splitting, read-only checks, ROWNUM vs LIMIT, FROM DUAL in the starter query). A wrong choice never breaks the connection.
 - **Initial schema**: the "database" field means the default schema after login (Oracle's CURRENT_SCHEMA); it may be left empty.
-- **Catalog tree**: in both compatibility modes the tree uses Dameng's native Oracle-style dictionaries (\`ALL_USERS\` / \`ALL_TABLES\` / \`ALL_VIEWS\` / \`ALL_OBJECTS\` / \`ALL_SEQUENCES\`) — compatibility mode only adds to these views, never removes them.
+- **Catalog tree**: the schema list comes from Dameng's metadata base table \`SYSOBJECTS\` (\`TYPE$ = 'SCH'\`) — users and schemas are separable in Dameng (a schema may be named differently from its owner), so \`ALL_USERS\` would miss independently named business schemas. Tables/views/functions/procedures/sequences use \`ALL_TABLES\` / \`ALL_VIEWS\` / \`ALL_OBJECTS\` / \`ALL_SEQUENCES\`. Compatibility mode only adds to these views.
 - **Zero external dependencies**: the driver is a pure-Rust protocol implementation; no Dameng Instant Client or libdmdpi needed.
 
 ### Tips & Notes
