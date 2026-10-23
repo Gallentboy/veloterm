@@ -22,8 +22,9 @@
 //!
 //! Oracle 侧说明：oracle_async 是纯 Rust 原生异步驱动（TNS/TTC 线路协议），
 //! 零 C 依赖——无需 Oracle Instant Client / OCI / ODPI-C，各臂直接 await。
-//! 取消经 TNS Break Marker 真中断（tokio::select! 协作）；TLS/TCPS 尚未
-//! 实现（ssl_mode 非 disable 当前被忽略，按明文连接）。
+//! 取消经 TNS Break Marker 真中断（tokio::select! 协作）；TLS/TCPS 不实现
+//! （前端 Oracle 表单隐藏 SSL 选项，后端对非 disable 直接报错，不做静默
+//! 明文回退）。
 //!
 //! OceanBase 侧说明：Oracle 模式臂（libobclient）TLS P0 仅 disable（非
 //! disable 直接报错，不做静默明文回退）；MySQL 模式臂沿用 mysql_async 的
@@ -342,34 +343,25 @@ pub enum DbEngine {
 }
 
 impl DbEngine {
-    /// OB Oracle 的驱动选择：extra_options 的 `driver` 字段（"rust" 走纯 Rust
-    /// 分叉；缺省/其他值走 libobclient FFI 回退）。非法 JSON 同样回退 FFI
-    /// ——驱动选择不该因配置损坏而阻断连接。
-    fn ob_oracle_driver(extra: Option<&str>) -> String {
-        extra
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            .and_then(|v| v.get("driver").and_then(|d| d.as_str()).map(str::to_string))
-            .unwrap_or_else(|| "ffi".to_string())
-    }
-
     /// 建连并取服务端版本描述。OceanBase 按 mode 分双模式：MySQL 模式复用
-    /// mysql_async 臂（engine 变体仍是 MySql），Oracle 模式走 obclient 臂。
+    /// mysql_async 臂（engine 变体仍是 MySql），Oracle 模式固定走纯 Rust
+    /// 分叉驱动（`connect_ob_rust`）。
+    ///
+    /// libobclient FFI 路径（`connect_ob_oracle`）代码完整保留，但不再参与
+    /// 分派——OB Oracle 实际只用纯 Rust 连接。保留原因：一是历史记录
+    /// `extra_options.driver="ffi"` 不该因驱动下线而报错（现在统一按 Rust
+    /// 处理，用户无感）；二是 FFI 实现作为协议对照参考留在树内，真机排查
+    /// 线缆差异时可直接对照。
     pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), String> {
-        // OB Oracle 的驱动开关：extra_options 的 driver="rust" 走纯 Rust 分叉，
-        // 其余（含缺省/非法值）走 libobclient FFI 回退
-        if record.engine == "oceanbase"
-            && record.mode.as_deref() == Some("oracle")
-            && Self::ob_oracle_driver(record.extra_options.as_deref()) == "rust"
-        {
-            return Self::connect_ob_rust(record).await;
-        }
         match (record.engine.as_str(), record.mode.as_deref()) {
             ("mysql", _) => Self::connect_mysql(record).await,
             ("postgres", _) => Self::connect_postgres(record).await,
             ("oracle", _) => Self::connect_oracle(record).await,
             ("redis", _) => Self::connect_redis(record).await,
             ("oceanbase", Some("mysql")) => Self::connect_ob_mysql(record).await,
-            ("oceanbase", Some("oracle")) => Self::connect_ob_oracle(record).await,
+            // OB Oracle 固定纯 Rust（connect_ob_rust）；FFI 版 connect_ob_oracle
+            // 保留在树内但不再分派，见 connect 的文档说明
+            ("oceanbase", Some("oracle")) => Self::connect_ob_rust(record).await,
             ("oceanbase", _) => Err("OceanBase 需要选择租户模式（MySQL/Oracle）".to_string()),
             ("sqlite", _) => Self::connect_sqlite(record).await,
             ("dameng", _) => Self::connect_dameng(record).await,
@@ -516,6 +508,16 @@ impl DbEngine {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| "Oracle 需要填写密码".to_string())?;
         let host = record.host.trim().to_string();
+
+        // 纯 Rust 驱动未实现 TCPS：非 disable 直接报错，不做静默明文回退
+        // （同 OB Oracle 租户模式的 P0 约定）。前端 Oracle 表单已隐藏 SSL
+        // 选项，此处拦截的是历史记录里残留的旧档位。
+        if record.ssl_mode != "disable" {
+            return Err(
+                "Oracle 连接暂不支持 TLS/TCPS（纯 Rust 驱动未实现），请把 SSL 模式改为「不加密」"
+                    .to_string(),
+            );
+        }
 
         let opts = oracle_async::Opts::builder()
             .host(host)
@@ -995,10 +997,16 @@ impl DbEngine {
         ))
     }
 
-    /// OB Oracle 模式：spawn_blocking 里走 ObConn::connect（libobclient 阻塞
-    /// C API，同 connect_oracle 先例）。database 字段 = 初始 schema 语义
-    ///（非空则连接后 ALTER SESSION SET CURRENT_SCHEMA，在 ObConn::connect
-    /// 内完成）；TLS P0 仅 disable（非 disable 直接报错，不做静默明文回退）。
+    /// OB Oracle 模式（libobclient FFI）：spawn_blocking 里走 ObConn::connect
+    ///（libobclient 阻塞 C API，同 connect_oracle 先例）。database 字段 =
+    /// 初始 schema 语义（非空则连接后 ALTER SESSION SET CURRENT_SCHEMA，在
+    /// ObConn::connect 内完成）；TLS P0 仅 disable。
+    ///
+    /// **当前不在分派路径上**——OB Oracle 固定走纯 Rust 的 `connect_ob_rust`。
+    /// 此实现与 obclient 模块一并保留：既是历史记录的兼容参考，也是真机排查
+    /// ob20 线缆差异时的对照实现。重新启用只需把 `connect` 里
+    /// `("oceanbase", Some("oracle"))` 那一臂改回本函数。
+    #[allow(dead_code)]
     async fn connect_ob_oracle(record: &DbConnectionRecord) -> Result<(DbEngine, String), String> {
         if record.ssl_mode != "disable" {
             return Err(

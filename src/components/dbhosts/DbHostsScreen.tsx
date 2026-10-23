@@ -546,16 +546,6 @@ function DbConnectionFormDialog({
   const [redisMasterName, setRedisMasterName] = useState(redisExtraInitial.masterName ?? '');
   const [redisCertPath, setRedisCertPath] = useState(redisExtraInitial.clientCertPath ?? '');
   const [redisKeyPath, setRedisKeyPath] = useState(redisExtraInitial.clientKeyPath ?? '');
-  // OB Oracle：驱动选择（rust = 纯 Rust 分叉；ffi = libobclient，缺省）
-  const [obDriver, setObDriver] = useState<'ffi' | 'rust'>(() => {
-    if (node?.engine !== 'oceanbase' || !node.extraOptions) return 'ffi';
-    try {
-      const parsed = JSON.parse(node.extraOptions) as { driver?: string };
-      return parsed.driver === 'rust' ? 'rust' : 'ffi';
-    } catch {
-      return 'ffi';
-    }
-  });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -583,6 +573,10 @@ function DbConnectionFormDialog({
   const obOracleTlsLocked = engine === 'oceanbase' && mode === 'oracle';
 
   const isSqlite = engine === 'sqlite';
+  // 不支持 TLS 的引擎：SQLite 无网络链路、Oracle（含 OB Oracle 租户模式）
+  // 的纯 Rust 驱动未实现 TCPS、达梦驱动无 TLS 链路。SSL 选项整体隐藏，
+  // 保存时强制归一为 disable——不让用户选出一个后端会静默忽略的档位。
+  const tlsUnsupported = isSqlite || isOracleSemantics || engine === 'dameng';
   // Redis 拓扑扩展校验：集群/哨兵至少一个节点、哨兵必填 master 名、
   // mTLS 证书与私钥成对（两者只填其一直接拒保存）
   const redisNodeLines = redisNodes
@@ -640,7 +634,8 @@ function DbConnectionFormDialog({
     compatibleMode: engine === 'dameng' ? compatibleMode : null,
     // Redis：拓扑/节点/哨兵 master/mTLS 证书路径（JSON 文本）；证书路径
     // 仅 TLS 档位下携带（disable + 证书是配置矛盾，后端直接报错）。
-    // OB Oracle：driver 选择（rust = 纯 Rust 分叉驱动，ffi = libobclient）
+    // OB Oracle 不再写 driver 字段——后端固定走纯 Rust 驱动（libobclient
+    // 路径代码保留但不在分派路径上）
     extraOptions:
       engine === 'redis'
         ? JSON.stringify({
@@ -651,9 +646,7 @@ function DbConnectionFormDialog({
               ? { clientCertPath: redisCertPath.trim(), clientKeyPath: redisKeyPath.trim() }
               : {}),
           })
-        : engine === 'oceanbase' && mode === 'oracle'
-          ? JSON.stringify({ driver: obDriver })
-          : null,
+        : null,
     username: isSqlite ? null : username.trim() || null,
     // 留空 = 更新时保留旧值（后端语义）；新建时空值即无密码。
     // 例外：SQLite 从加密改回不加密时必须显式清空——否则库里残留的旧口令
@@ -666,8 +659,9 @@ function DbConnectionFormDialog({
         : password.length > 0 || node == null
           ? password || null
           : null,
-    // SQLite 无 TLS、OB Oracle 租户模式 P0 仅 disable、达梦驱动无 TLS——三者强制归一
-    sslMode: isSqlite || obOracleTlsLocked || engine === 'dameng' ? 'disable' : sslMode,
+    // SQLite 无 TLS、Oracle/OB Oracle 的纯 Rust 驱动未实现 TCPS、达梦驱动
+    // 无 TLS 链路——三者强制归一 disable
+    sslMode: tlsUnsupported ? 'disable' : sslMode,
     sshHostId: null,
     envLevel,
     readonly,
@@ -792,8 +786,9 @@ function DbConnectionFormDialog({
                   onClick={() => {
                     setEngine(kind);
                     setPort(String(ENGINE_DEFAULT_PORTS[kind]));
-                    // SQLite 无 TLS：切过去时把 SSL 归一为 disable，避免把 require 存进库
-                    if (kind === 'sqlite') setSslMode('disable');
+                    // SQLite 无 TLS、Oracle 纯 Rust 驱动未实现 TCPS：切过去时
+                    // 把 SSL 归一为 disable，避免把 require 存进库
+                    if (kind === 'sqlite' || kind === 'oracle') setSslMode('disable');
                     // 切到 oceanbase 时归一化租户模式（null → 'mysql'，已选则保留）；
                     // 切离时不清空——buildRecord 按 engine 门控，非 oceanbase 恒 null
                     if (kind === 'oceanbase') {
@@ -840,25 +835,6 @@ function DbConnectionFormDialog({
               ))}
             </div>
           </FormField>
-        ) : null}
-
-        {/* OB Oracle：驱动选择（rust = 纯 Rust 分叉驱动，含 OB20 协议层与 SM3
-            认证；ffi = libobclient）。仅 Oracle 租户模式下有意义——MySQL 租户
-            始终走标准 MySQL 协议 */}
-        {engine === 'oceanbase' && mode === 'oracle' ? (
-          <div className="flex flex-col gap-1.5">
-            <FormField label={t('dbHosts.obDriverLabel')} className="w-56">
-              <SelectMenu
-                value={obDriver}
-                onChange={(v) => setObDriver(v === 'rust' ? 'rust' : 'ffi')}
-                options={[
-                  { value: 'ffi', label: t('dbHosts.obDriverFfi') },
-                  { value: 'rust', label: t('dbHosts.obDriverRust') },
-                ]}
-              />
-            </FormField>
-            <p className="text-ui-xs text-foreground-subtlest">{t('dbHosts.obDriverHint')}</p>
-          </div>
         ) : null}
 
         {/* Redis：拓扑（单机/集群/哨兵）——地址存在 extra_options 的节点列表里，
@@ -1054,7 +1030,8 @@ function DbConnectionFormDialog({
           </>
         )}
 
-        {/* Oracle：服务名行（必填，连库必需；SSL 同行）；MySQL/PG/Redis 无此行 */}
+        {/* Oracle：服务名行（必填，连库必需）；MySQL/PG/Redis 无此行。
+            无 SSL 列——纯 Rust 驱动未实现 TCPS，选项整体隐藏（见 tlsUnsupported） */}
         {engine === 'oracle' ? (
           <div className="flex gap-3">
             <div className="min-w-0 flex-1">
@@ -1064,15 +1041,6 @@ function DbConnectionFormDialog({
                   onChange={(e) => setServiceName(e.target.value)}
                   placeholder="ORCLPDB1"
                   className="font-mono"
-                />
-              </FormField>
-            </div>
-            <div className="w-36 shrink-0">
-              <FormField label={t('dbHosts.sslLabel')}>
-                <SelectMenu
-                  value={sslMode}
-                  onChange={(v) => setSslMode(v as DbConnectionRecord['sslMode'])}
-                  options={SSL_MODES.map((m) => ({ value: m.value, label: t(m.labelKey) }))}
                 />
               </FormField>
             </div>
