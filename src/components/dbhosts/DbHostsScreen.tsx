@@ -48,12 +48,15 @@ const ENGINE_DEFAULT_PORTS: Record<DbEngineKind, number> = {
   mysql: 3306,
   postgres: 5432,
   oracle: 1521,
+  dameng: 5236,
 };
 
+// 引擎名均为产品名（英文界面也保留原厂名），不走 i18n；达梦沿用其中文产品名
 const ENGINE_LABELS: Record<DbEngineKind, string> = {
   mysql: 'MySQL',
   postgres: 'PostgreSQL',
   oracle: 'Oracle',
+  dameng: '达梦 DM8',
 };
 
 const SSL_MODES: Array<{ value: DbConnectionRecord['sslMode']; labelKey: string }> = [
@@ -134,6 +137,7 @@ export function DbHostsScreen({
     port: 3306,
     database: null,
     serviceName: null,
+    compatibleMode: null,
     username: null,
     password: null,
     sslMode: 'disable',
@@ -205,7 +209,9 @@ export function DbHostsScreen({
                     ? 'text-terminal-cyan'
                     : record.engine === 'postgres'
                       ? 'text-terminal-blue'
-                      : 'text-terminal-red',
+                      : record.engine === 'dameng'
+                        ? 'text-terminal-magenta'
+                        : 'text-terminal-red',
                 )}
               />
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -226,6 +232,14 @@ export function DbHostsScreen({
                   {record.readonly ? (
                     <span className="rounded bg-surface px-1 py-px font-mono text-[9px] text-foreground-subtle uppercase">
                       {t('dbHosts.readonlyBadge')}
+                    </span>
+                  ) : null}
+                  {/* 达梦的兼容模式决定客户端 SQL 方言，列表里值得一眼可见 */}
+                  {record.engine === 'dameng' ? (
+                    <span className="rounded bg-surface px-1 py-px font-mono text-[9px] text-foreground-subtle uppercase">
+                      {record.compatibleMode === 'mysql'
+                        ? t('dbHosts.compatBadgeMysql')
+                        : t('dbHosts.compatBadgeOracle')}
                     </span>
                   ) : null}
                 </span>
@@ -508,6 +522,10 @@ function DbConnectionFormDialog({
   const [port, setPort] = useState(String(node?.port ?? 3306));
   const [database, setDatabase] = useState(node?.database ?? '');
   const [serviceName, setServiceName] = useState(node?.serviceName ?? '');
+  // 达梦兼容模式：空/未知一律回显 oracle（与后端 dameng_dialect 的默认一致）
+  const [compatibleMode, setCompatibleMode] = useState<'oracle' | 'mysql'>(
+    node?.compatibleMode === 'mysql' ? 'mysql' : 'oracle',
+  );
   const [username, setUsername] = useState(node?.username ?? '');
   // 回显已存密码（默认掩码，点眼睛可查看明文——PasswordInput 自带切换）；
   // 用户不动它保存即原值写回；主动清空保存则保留库中旧值（后端 None=保留语义）
@@ -526,7 +544,9 @@ function DbConnectionFormDialog({
       ? t('dbHosts.databaseLabelMysql')
       : engine === 'postgres'
         ? t('dbHosts.databaseLabelPg')
-        : t('dbHosts.databaseLabelOracle');
+        : engine === 'dameng'
+          ? t('dbHosts.databaseLabelDameng')
+          : t('dbHosts.databaseLabelOracle');
 
   // Oracle：服务名必填（连库必需）；database 降为可选的初始 schema
   const canSave =
@@ -543,10 +563,13 @@ function DbConnectionFormDialog({
     port: Number.parseInt(port, 10) || ENGINE_DEFAULT_PORTS[engine],
     database: database.trim() || null,
     serviceName: engine === 'oracle' ? serviceName.trim() || null : null,
+    // 仅达梦有意义；其余引擎写 null（后端忽略该列）
+    compatibleMode: engine === 'dameng' ? compatibleMode : null,
     username: username.trim() || null,
     // 留空 = 更新时保留旧值（后端语义）；新建时空值即无密码
     password: password.length > 0 || node == null ? password || null : null,
-    sslMode,
+    // 达梦驱动无 TLS：固定 disable，避免用户先选过 TLS 再切引擎时把旧模式存进去
+    sslMode: engine === 'dameng' ? 'disable' : sslMode,
     sshHostId: null,
     envLevel,
     readonly,
@@ -638,7 +661,7 @@ function DbConnectionFormDialog({
 
         <FormField label={t('dbHosts.engineLabel')}>
           <div className="flex gap-1.5">
-            {(['mysql', 'postgres', 'oracle'] as const).map((kind) => (
+            {(['mysql', 'postgres', 'oracle', 'dameng'] as const).map((kind) => (
               <button
                 key={kind}
                 type="button"
@@ -660,6 +683,25 @@ function DbConnectionFormDialog({
           </div>
         </FormField>
 
+        {/* 达梦：兼容模式只影响客户端 SQL 方言，与 dm.ini 的 COMPATIBLE_MODE 无关 */}
+        {engine === 'dameng' ? (
+          <div className="flex flex-col gap-1.5">
+            <FormField label={t('dbHosts.compatibleModeLabel')} className="w-36">
+              <SelectMenu
+                value={compatibleMode}
+                onChange={(v) => setCompatibleMode(v as 'oracle' | 'mysql')}
+                options={[
+                  { value: 'oracle', label: t('dbHosts.compatibleModeOracle') },
+                  { value: 'mysql', label: t('dbHosts.compatibleModeMysql') },
+                ]}
+              />
+            </FormField>
+            <p className="text-ui-xs text-foreground-subtlest">
+              {t('dbHosts.compatibleModeHint')}
+            </p>
+          </div>
+        ) : null}
+
         <div className="flex gap-3">
           <div className="min-w-0 flex-[2]">
             <FormField label={t('dbHosts.hostLabel')}>
@@ -676,7 +718,7 @@ function DbConnectionFormDialog({
               <TextInput
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
-                placeholder="3306"
+                placeholder={String(ENGINE_DEFAULT_PORTS[engine])}
                 className="font-mono"
               />
             </FormField>
@@ -724,23 +766,34 @@ function DbConnectionFormDialog({
                 placeholder={
                   engine === 'oracle'
                     ? t('dbHosts.schemaPlaceholder')
-                    : t('dbHosts.databasePlaceholder')
+                    : engine === 'dameng'
+                      ? 'SYSDBA'
+                      : t('dbHosts.databasePlaceholder')
                 }
                 pickLabel={
-                  engine === 'oracle' ? t('dbHosts.pickSchema') : t('dbHosts.pickDatabase')
+                  engine === 'oracle' || engine === 'dameng'
+                    ? t('dbHosts.pickSchema')
+                    : t('dbHosts.pickDatabase')
                 }
               />
             </FormField>
           </div>
           {engine !== 'oracle' ? (
             <div className="w-36 shrink-0">
+              {/* 达梦只有登录加密、没有 TLS 链路，下拉禁用并固定 disable */}
               <FormField label={t('dbHosts.sslLabel')}>
                 <SelectMenu
-                  value={sslMode}
+                  value={engine === 'dameng' ? 'disable' : sslMode}
                   onChange={(v) => setSslMode(v as DbConnectionRecord['sslMode'])}
                   options={SSL_MODES.map((m) => ({ value: m.value, label: t(m.labelKey) }))}
+                  disabled={engine === 'dameng'}
                 />
               </FormField>
+              {engine === 'dameng' ? (
+                <p className="mt-1 text-ui-xs text-foreground-subtlest">
+                  {t('dbHosts.sslUnsupportedDameng')}
+                </p>
+              ) : null}
             </div>
           ) : null}
         </div>

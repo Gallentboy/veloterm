@@ -47,6 +47,14 @@ pub struct DbSessionMeta {
     pub connection_id: usize,
     pub name: String,
     pub engine: String,
+    /// sqlsplit 用的方言标识：与 engine 同值，但达梦展开为 "dameng:oracle" /
+    /// "dameng:mysql"（兼容模式决定语句分割与只读判定的方言）。仅后端内部
+    /// 使用，不序列化给前端（避免前端类型多一个无意义字段）。
+    #[serde(skip)]
+    pub dialect: String,
+    /// 达梦的客户端侧兼容模式（'oracle' | 'mysql'）；其他引擎恒 null。
+    /// 前端据此选方言语法（ROWNUM vs LIMIT、FROM DUAL 等）。
+    pub compatible_mode: Option<String>,
     pub database: Option<String>,
     pub server_version: String,
     pub readonly: bool,
@@ -188,11 +196,20 @@ pub async fn db_connect(
     }
     let (engine, server_version) = DbEngine::connect(&record).await?;
     let session_id = state.alloc_session_id();
+    // 达梦按兼容模式展开方言（服务器行为由 dm.ini 决定，驱动不感知；这里只
+    // 决定客户端侧的语句分割与只读白名单走哪套 sqlparser 方言）。在结构体
+    // 构造前算好：name/env_level 等 move 字段后 record 不可再借用
+    let dameng_dialect = record.dameng_dialect();
     let meta = DbSessionMeta {
         session_id: session_id.clone(),
         connection_id: record.id,
         name: record.name,
         engine: record.engine.clone(),
+        dialect: match dameng_dialect {
+            Some(d) => format!("dameng:{d}"),
+            None => record.engine.clone(),
+        },
+        compatible_mode: dameng_dialect.map(str::to_string),
         database: record.database.clone(),
         server_version,
         readonly: record.readonly,
@@ -291,28 +308,24 @@ pub async fn db_query(
     on_event: Channel<QueryEvent>,
 ) -> Result<(), String> {
     let session = state.get(&session_id)?;
-    let statements = sqlsplit::split_statements(
-        &session
-            .meta
-            .read()
-            .map_err(|_| "DB 会话元信息锁中毒".to_string())?
-            .engine
-            .clone(),
-        &sql,
-    );
+    let dialect = session
+        .meta
+        .read()
+        .map_err(|_| "DB 会话元信息锁中毒".to_string())?
+        .dialect
+        .clone();
+    let statements = sqlsplit::split_statements(&dialect, &sql);
     if statements.is_empty() {
         return Err("SQL 语句为空".to_string());
     }
-    let (readonly, engine_kind) = {
-        let meta = session
-            .meta
-            .read()
-            .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
-        (meta.readonly, meta.engine.clone())
-    };
+    let readonly = session
+        .meta
+        .read()
+        .map_err(|_| "DB 会话元信息锁中毒".to_string())?
+        .readonly;
     if readonly {
         for stmt in &statements {
-            if !sqlsplit::statement_is_readonly(&engine_kind, stmt) {
+            if !sqlsplit::statement_is_readonly(&dialect, stmt) {
                 let head: String = stmt.sql.chars().take(60).collect();
                 return Err(format!(
                     "会话为只读模式，禁止执行非查询语句：{head}{}",
@@ -521,15 +534,12 @@ pub async fn db_use_database(
             let mut old = std::mem::replace(&mut *engine, new_engine);
             old.close().await;
         }
-        DbEngine::Oracle(_) => {
-            // Oracle 切换 = ALTER SESSION SET CURRENT_SCHEMA（只改名字解析，
-            // 不重连、不动连接记录的 service_name）；元信息仍展示服务名
+        DbEngine::Oracle(_) | DbEngine::Dameng(_) => {
+            // Oracle / 达梦切 schema = 会话级 SET SCHEMA（只改名字解析，不重连、
+            // 不动连接记录）；不走下方 meta 重写分支的 early-return，统一落到
+            // 尾部的 database 更新（原 Oracle 臂在此 early-return，导致切换后
+            // 元信息永远停在初始 schema——顺带修正）
             engine.select_database(&db_name).await?;
-            let meta = session
-                .meta
-                .read()
-                .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
-            return Ok(meta.clone());
         }
         DbEngine::Closed => return Err("连接已关闭".to_string()),
     }

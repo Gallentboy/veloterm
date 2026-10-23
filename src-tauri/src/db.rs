@@ -378,7 +378,10 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
       -- 数据库工作台连接库（侧栏「数据库主机」页）：一台引擎实例一条记录。
       -- password 明文存 SQLCipher 库（zk_credentials 同级安全水位）；
       -- ssh_host_id 指向 hosts 表（经该主机的跳板链+中继建隧道，空 = 直连）；
-      -- engine: 'mysql' | 'postgres' | 'oracle'（oracle 走 vendor oracle-rs 纯 Rust 驱动）。
+      -- engine: 'mysql' | 'postgres' | 'oracle' | 'dameng'；
+      -- compatible_mode 仅达梦有意义（'oracle' | 'mysql'），客户端侧方言选择用
+      -- （服务器行为由 dm.ini 的 COMPATIBLE_MODE 决定，驱动不感知）；
+      -- 其他引擎忽略此列。
       CREATE TABLE IF NOT EXISTS db_connections (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           name TEXT NOT NULL,
@@ -394,6 +397,7 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
           env_level TEXT NOT NULL DEFAULT 'dev',
           readonly INTEGER NOT NULL DEFAULT 1,
           color TEXT,
+          compatible_mode TEXT,
           created_at INTEGER NOT NULL,
           updated_at INTEGER NOT NULL
       );",
@@ -441,6 +445,17 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
         && !e.to_string().contains("duplicate column")
     {
         return Err(format!("failed to apply db_connections column migration: {e}"));
+    }
+
+    // compatible_mode：仅达梦有意义（'oracle' | 'mysql'），客户端侧方言选择用；
+    // 其他引擎忽略。空 = 未指定（按 oracle 处理，达梦默认部署多为 Oracle 兼容）。
+    if let Err(e) = conn.execute_batch(
+        "ALTER TABLE db_connections ADD COLUMN compatible_mode TEXT",
+    ) && !e.to_string().contains("duplicate column")
+    {
+        return Err(format!(
+            "failed to apply db_connections column migration `compatible_mode`: {e}"
+        ));
     }
 
     log::info!(
@@ -1010,6 +1025,11 @@ pub struct DbConnectionRecord {
     pub readonly: bool,
     #[serde(default)]
     pub color: Option<String>,
+    /// 仅达梦有意义：'oracle' | 'mysql'（客户端侧方言选择用；服务器行为由
+    /// dm.ini 的 COMPATIBLE_MODE 决定，驱动不感知）。空 = 未指定（按 oracle 处理）。
+    /// 其他引擎忽略此字段。
+    #[serde(default)]
+    pub compatible_mode: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -1027,9 +1047,22 @@ fn default_db_readonly() -> bool {
 }
 
 impl DbConnectionRecord {
-    /// engine 合法性（mysql / postgres / oracle 三引擎）
+    /// engine 合法性（mysql / postgres / oracle / dameng 四引擎）
     pub fn supported_engine(&self) -> bool {
-        matches!(self.engine.as_str(), "mysql" | "postgres" | "oracle")
+        matches!(self.engine.as_str(), "mysql" | "postgres" | "oracle" | "dameng")
+    }
+
+    /// 达梦的客户端侧方言（'oracle' | 'mysql'）；非达梦返回 None。
+    /// 空或未识别按 oracle 处理（达梦默认部署多为 Oracle 兼容）。
+    pub fn dameng_dialect(&self) -> Option<&'static str> {
+        if self.engine != "dameng" {
+            return None;
+        }
+        Some(if self.compatible_mode.as_deref() == Some("mysql") {
+            "mysql"
+        } else {
+            "oracle"
+        })
     }
 }
 
@@ -1053,7 +1086,8 @@ fn validate_db_connection(record: &DbConnectionRecord) -> Result<(), String> {
 }
 
 const DB_CONNECTION_COLUMNS: &str = "id, name, engine, host, port, database, username, password, \
-     ssl_mode, ssh_host_id, env_level, readonly, color, created_at, updated_at, service_name";
+     ssl_mode, ssh_host_id, env_level, readonly, color, created_at, updated_at, service_name, \
+     compatible_mode";
 
 fn row_to_db_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbConnectionRecord> {
     Ok(DbConnectionRecord {
@@ -1073,6 +1107,7 @@ fn row_to_db_connection(row: &rusqlite::Row<'_>) -> rusqlite::Result<DbConnectio
         created_at: row.get(13)?,
         updated_at: row.get(14)?,
         service_name: row.get(15)?,
+        compatible_mode: row.get(16)?,
     })
 }
 
@@ -1125,8 +1160,8 @@ pub fn save_db_connection(
         conn.execute(
             "INSERT INTO db_connections \
              (name, engine, host, port, database, username, password, ssl_mode, ssh_host_id, \
-              env_level, readonly, color, created_at, updated_at, service_name) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14)",
+              env_level, readonly, color, created_at, updated_at, service_name, compatible_mode) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13,?14,?15)",
             params![
                 record.name.trim(),
                 record.engine,
@@ -1142,6 +1177,7 @@ pub fn save_db_connection(
                 record.color,
                 now,
                 record.service_name,
+                record.compatible_mode,
             ],
         )
         .map_err(|e| format!("failed to insert db connection: {e}"))?;
@@ -1152,7 +1188,8 @@ pub fn save_db_connection(
             conn.execute(
                 "UPDATE db_connections SET name=?2, engine=?3, host=?4, port=?5, database=?6, \
                  username=?7, password=?8, ssl_mode=?9, ssh_host_id=?10, env_level=?11, \
-                 readonly=?12, color=?13, updated_at=?14, service_name=?15 WHERE id=?1",
+                 readonly=?12, color=?13, updated_at=?14, service_name=?15, compatible_mode=?16 \
+                 WHERE id=?1",
                 params![
                     record.id,
                     record.name.trim(),
@@ -1169,13 +1206,14 @@ pub fn save_db_connection(
                     record.color,
                     now,
                     record.service_name,
+                    record.compatible_mode,
                 ],
             )
         } else {
             conn.execute(
                 "UPDATE db_connections SET name=?2, engine=?3, host=?4, port=?5, database=?6, \
                  username=?7, ssl_mode=?8, ssh_host_id=?9, env_level=?10, readonly=?11, \
-                 color=?12, updated_at=?13, service_name=?14 WHERE id=?1",
+                 color=?12, updated_at=?13, service_name=?14, compatible_mode=?15 WHERE id=?1",
                 params![
                     record.id,
                     record.name.trim(),
@@ -1191,6 +1229,7 @@ pub fn save_db_connection(
                     record.color,
                     now,
                     record.service_name,
+                    record.compatible_mode,
                 ],
             )
         }
@@ -2598,6 +2637,7 @@ mod tests {
                 env_level: "prod".to_string(),
                 readonly: true,
                 color: None,
+                compatible_mode: None,
                 created_at: 0,
                 updated_at: 0,
             },
@@ -2628,6 +2668,7 @@ mod tests {
                 env_level: "dev".to_string(),
                 readonly: false,
                 color: Some("#ff0000".to_string()),
+                compatible_mode: None,
                 created_at: 0,
                 updated_at: 0,
             },
@@ -2667,6 +2708,7 @@ mod tests {
                 env_level: "dev".to_string(),
                 readonly: true,
                 color: None,
+                compatible_mode: None,
                 created_at: 0,
                 updated_at: 0,
             },

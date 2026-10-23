@@ -5,7 +5,7 @@
 
 import { Channel, invoke } from '@tauri-apps/api/core';
 
-export type DbEngineKind = 'mysql' | 'postgres' | 'oracle';
+export type DbEngineKind = 'mysql' | 'postgres' | 'oracle' | 'dameng';
 
 export interface DbConnectionRecord {
   id: number;
@@ -16,6 +16,9 @@ export interface DbConnectionRecord {
   database: string | null;
   /** Oracle 专有：服务名（连库必需）。database 在 Oracle 语义 = 初始 schema */
   serviceName: string | null;
+  /** 仅达梦有意义：客户端侧方言选择（服务器行为由 dm.ini 的 COMPATIBLE_MODE 决定）。
+   *  null/undefined = 按 oracle 处理。 */
+  compatibleMode: 'oracle' | 'mysql' | null;
   username: string | null;
   /** null = 更新时保留库中旧值（表单未改动不回传）；明文存 SQLCipher 库 */
   password: string | null;
@@ -61,6 +64,8 @@ export interface DbSessionMeta {
   connectionId: number;
   name: string;
   engine: DbEngineKind;
+  /** 达梦的客户端侧兼容模式；其他引擎为 null（前端据此选方言语法） */
+  compatibleMode: 'oracle' | 'mysql' | null;
   database: string | null;
   serverVersion: string;
   readonly: boolean;
