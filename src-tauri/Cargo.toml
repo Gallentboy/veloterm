@@ -40,6 +40,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2.7.2", features = [] }
+# build.rs 解析 assets/oracle-errors/zh-CN.json 生成嵌入表（与主依赖同一份
+# 版本，不引入新 crate）
+serde_json = "1.0"
 
 [dependencies]
 # 内置工具集的命令名清单（零依赖 crate）：启动时据此在 tools/ 下创建硬链接

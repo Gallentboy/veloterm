@@ -8,6 +8,8 @@ pub mod db_version;
 pub mod row_common;
 pub mod bind;
 pub mod nls;
+pub mod lob;
+pub mod udt;
 pub mod ping;
 pub mod exec;
 pub mod fetch;
