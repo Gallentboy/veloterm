@@ -218,7 +218,7 @@ export function DbSessionView({
     name: string;
     kind: 'table' | 'view';
     detail: TableDetail;
-    tab: 'ddl' | 'columns' | 'indexes';
+    tab: 'ddl' | 'columns' | 'indexes' | 'constraints';
   } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [ddlCopied, setDdlCopied] = useState(false);
@@ -1276,7 +1276,10 @@ export function DbSessionView({
                     {tableDetail.name}
                   </span>
                   <span className="flex items-center gap-0.5">
-                    {(['ddl', 'columns', 'indexes'] as const).map((tab) => (
+                    {(['ddl', 'columns', 'indexes', 'constraints'] as const)
+                      // 无约束数据（headers 空）不展示约束 Tab
+                      .filter((tab) => tab !== 'constraints' || tableDetail.detail.constraintHeaders.length > 0)
+                      .map((tab) => (
                       <button
                         key={tab}
                         type="button"
@@ -1338,12 +1341,19 @@ export function DbSessionView({
                     columns={tableDetail.detail.columnHeaders}
                     rows={tableDetail.detail.columns}
                   />
-                ) : (
+                ) : tableDetail.tab === 'indexes' ? (
                   <DataTable
                     className="flex-1"
                     columns={tableDetail.detail.indexHeaders}
                     rows={tableDetail.detail.indexes}
                     emptyLabel={t('db.noIndexes')}
+                  />
+                ) : (
+                  <DataTable
+                    className="flex-1"
+                    columns={tableDetail.detail.constraintHeaders}
+                    rows={tableDetail.detail.constraints}
+                    emptyLabel={t('db.noConstraints')}
                   />
                 )}
               </>

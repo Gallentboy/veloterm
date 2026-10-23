@@ -251,8 +251,8 @@ pub struct ObjectDefinition {
     pub arg_count: usize,
 }
 
-/// 表/视图详情：DDL + 列结构 + 索引清单（树右键「表详情」）。表头用英文通用词
-///（后端不做 i18n，前端 DataTable 直接展示）。
+/// 表/视图详情：DDL + 列结构 + 索引清单 + 约束清单（树右键「表详情」）。
+/// 表头用英文通用词（后端不做 i18n，前端 DataTable 直接展示）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TableDetail {
@@ -261,6 +261,12 @@ pub struct TableDetail {
     pub columns: Vec<Vec<String>>,
     pub index_headers: Vec<String>,
     pub indexes: Vec<Vec<String>>,
+    /// 约束（PK/UK/FK/CHECK）：name / type / columns / references。
+    /// type 用短码：PK / U / F / C；references 仅外键有值（"schema.table(col,...)"）
+    #[serde(default)]
+    pub constraint_headers: Vec<String>,
+    #[serde(default)]
+    pub constraints: Vec<Vec<String>>,
 }
 
 /// MySQL 列结构行：name / column_type / is_nullable / default / comment
@@ -1403,6 +1409,58 @@ impl DbEngine {
                     })
                     .collect();
 
+                // 约束（DBeaver MySQLCatalog 同源）：kcu 按约束名聚合列；
+                // REFERENTIAL_CONSTRAINTS 补外键引用目标。GROUP_CONCAT 聚列
+                // 行形态：constraint_name / type 短码 / 聚合列 / 引用表 / 引用列
+                type MySqlConstraintRow = (
+                    String,
+                    String,
+                    String,
+                    Option<String>,
+                    Option<String>,
+                );
+                let cons_rows: Vec<MySqlConstraintRow> =
+                    conn.exec(
+                        "SELECT kcu.CONSTRAINT_NAME, \
+                           CASE tc.CONSTRAINT_TYPE \
+                             WHEN 'PRIMARY KEY' THEN 'PK' \
+                             WHEN 'UNIQUE' THEN 'U' \
+                             WHEN 'FOREIGN KEY' THEN 'F' \
+                             WHEN 'CHECK' THEN 'C' END, \
+                           GROUP_CONCAT(kcu.COLUMN_NAME ORDER BY kcu.ORDINAL_POSITION), \
+                           rc.REFERENCED_TABLE_NAME, \
+                           (SELECT GROUP_CONCAT(kcu2.COLUMN_NAME ORDER BY kcu2.ORDINAL_POSITION) \
+                            FROM information_schema.KEY_COLUMN_USAGE kcu2 \
+                            WHERE kcu2.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA \
+                              AND kcu2.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME \
+                              AND kcu2.REFERENCED_COLUMN_NAME IS NOT NULL) \
+                         FROM information_schema.KEY_COLUMN_USAGE kcu \
+                         JOIN information_schema.TABLE_CONSTRAINTS tc \
+                           ON tc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA \
+                          AND tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME \
+                          AND tc.TABLE_NAME = kcu.TABLE_NAME \
+                         LEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS rc \
+                           ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA \
+                          AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME \
+                         WHERE kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ? \
+                           AND kcu.REFERENCED_TABLE_NAME IS NULL \
+                         GROUP BY kcu.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, \
+                           rc.REFERENCED_TABLE_NAME",
+                        (schema, table),
+                    )
+                    .await
+                    .map_err(|e| format!("MySQL 查询约束失败：{e}"))?;
+                let constraints: Vec<Vec<String>> = cons_rows
+                    .iter()
+                    .map(|(name, ctype, cols, ref_table, ref_cols)| {
+                        let references = match (ref_table.as_deref(), ref_cols.as_deref()) {
+                            (Some(t), Some(c)) if !t.is_empty() => format!("{t}({c})"),
+                            _ => String::new(),
+                        };
+                        vec![name.clone(), ctype.clone(), cols.clone(), references]
+                    })
+                    .collect();
+
                 Ok(TableDetail {
                     ddl,
                     column_headers: vec![
@@ -1415,6 +1473,13 @@ impl DbEngine {
                     columns,
                     index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
                     indexes,
+                    constraint_headers: vec![
+                        "Constraint".into(),
+                        "Type".into(),
+                        "Columns".into(),
+                        "References".into(),
+                    ],
+                    constraints,
                 })
             }
             DbEngine::Postgres(client) => {
@@ -1517,6 +1582,37 @@ impl DbEngine {
                     ddl
                 };
 
+                // 约束（DBeaver PostgreSchema.ConstraintCache 同源）：
+                // pg_get_constraintdef 直接给出 "PRIMARY KEY (a,b)" /
+                // "FOREIGN KEY (x) REFERENCES t(y)" 完整定义文本
+                let cons_rows = client
+                    .query(
+                        "SELECT conname, contype::char::text, pg_get_constraintdef(oid) \
+                         FROM pg_catalog.pg_constraint \
+                         WHERE conrelid = format('%I.%I', $1, $2)::regclass \
+                         ORDER BY conname",
+                        &[&schema, &table],
+                    )
+                    .await
+                    .map_err(|e| format!("PostgreSQL 查询约束失败：{e}"))?;
+                let constraints: Vec<Vec<String>> = cons_rows
+                    .iter()
+                    .filter_map(|row| {
+                        Some(vec![
+                            row.try_get::<_, String>(0).ok()?,
+                            // contype 单字符：p/u/f/c → PK/U/F/C
+                            match row.try_get::<_, String>(1).ok()?.as_str() {
+                                "p" => "PK".to_string(),
+                                "u" => "U".to_string(),
+                                "f" => "F".to_string(),
+                                _ => "C".to_string(),
+                            },
+                            row.try_get::<_, String>(2).ok()?,
+                            String::new(),
+                        ])
+                    })
+                    .collect();
+
                 Ok(TableDetail {
                     ddl,
                     column_headers: vec![
@@ -1528,6 +1624,13 @@ impl DbEngine {
                     columns,
                     index_headers: vec!["Index".into(), "Definition".into()],
                     indexes,
+                    constraint_headers: vec![
+                        "Constraint".into(),
+                        "Type".into(),
+                        "Definition".into(),
+                        "References".into(),
+                    ],
+                    constraints,
                 })
             }
             DbEngine::Oracle(conn) => {
@@ -1639,12 +1742,83 @@ impl DbEngine {
                     ddl
                 };
 
+                // 约束（DBeaver OracleSchema.ConstraintCache 同源）：
+                // all_constraints + all_cons_columns；外键经 r_constraint_name
+                // 反查目标表。CHHECK 条件截断到 120 字符防止超长
+                let cons_sql = format!(
+                    "SELECT c.CONSTRAINT_NAME, c.CONSTRAINT_TYPE, c.R_OWNER, c.R_CONSTRAINT_NAME, \
+                       (SELECT LISTAGG(cc.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY cc.POSITION) \
+                        FROM all_cons_columns cc \
+                        WHERE cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME) AS COLS \
+                     FROM all_constraints c \
+                     WHERE c.OWNER = {} AND c.TABLE_NAME = {} \
+                     ORDER BY c.CONSTRAINT_NAME",
+                    ob_quote_literal(schema),
+                    ob_quote_literal(table)
+                );
+                let mut cons_rs = conn
+                    .query(&cons_sql)
+                    .await
+                    .map_err(|e| format!("Oracle 查询约束失败：{}", oracle_err(e)))?;
+                let mut constraints: Vec<Vec<String>> = Vec::new();
+                let mut fk_refs: Vec<(String, String)> = Vec::new();
+                while let Some(row) = cons_rs
+                    .next_row()
+                    .await
+                    .map_err(|e| format!("Oracle 读取约束失败：{}", oracle_err(e)))?
+                {
+                    let name = oracle_row_string(&row, 0);
+                    let ctype_raw = oracle_row_string(&row, 1);
+                    let ctype = match ctype_raw.as_str() {
+                        "P" => "PK".to_string(),
+                        "U" => "U".to_string(),
+                        "R" => "F".to_string(),
+                        _ => "C".to_string(),
+                    };
+                    if ctype == "F" {
+                        fk_refs.push((
+                            name.clone(),
+                            format!("{}.{}", oracle_row_string(&row, 2), oracle_row_string(&row, 3)),
+                        ));
+                    }
+                    constraints.push(vec![name, ctype, oracle_row_string(&row, 4), String::new()]);
+                }
+                // 外键目标表名反查（r_constraint_name → 目标表的约束名）
+                for (fk_name, r_owner_name) in &fk_refs {
+                    let parts: Vec<&str> = r_owner_name.splitn(2, '.').collect();
+                    if parts.len() == 2 {
+                        let ref_sql = format!(
+                            "SELECT TABLE_NAME FROM all_constraints \
+                             WHERE OWNER = {} AND CONSTRAINT_NAME = {}",
+                            ob_quote_literal(parts[0]),
+                            ob_quote_literal(parts[1])
+                        );
+                        let mut ref_rs = conn
+                            .query(&ref_sql)
+                            .await
+                            .map_err(|e| format!("Oracle 查询外键目标失败：{}", oracle_err(e)))?;
+                        if let Some(row) = ref_rs
+                            .next_row()
+                            .await
+                            .map_err(|e| format!("Oracle 读取外键目标失败：{}", oracle_err(e)))?
+                            && let Some(cell) = constraints
+                                .iter_mut()
+                                .find(|c| c.first().map(String::as_str) == Some(fk_name.as_str()))
+                            && let Some(r) = cell.get_mut(3)
+                        {
+                            *r = oracle_row_string(&row, 0);
+                        }
+                    }
+                }
+
                 Ok(TableDetail {
                     ddl,
                     column_headers: vec!["Column".into(), "Type".into(), "Nullable".into()],
                     columns,
                     index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
                     indexes,
+                    constraint_headers: Vec::new(),
+                    constraints: Vec::new(),
                 })
             }
             DbEngine::Redis { conn, db, .. } => {
@@ -1672,6 +1846,8 @@ impl DbEngine {
                     // 无索引概念：空 headers + 空 rows，前端空表自然不渲染
                     index_headers: Vec::new(),
                     indexes: Vec::new(),
+                    constraint_headers: Vec::new(),
+                    constraints: Vec::new(),
                 })
             }
             DbEngine::Sqlite(_) => {
@@ -1834,6 +2010,10 @@ impl DbEngine {
                         columns,
                         index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
                         indexes,
+                        // SQLite 约束内嵌在建表 DDL 里（sqlite_master.sql 已含
+                        // PRIMARY KEY/UNIQUE/CHECK/REFERENCES 原文），不单独列
+                        constraint_headers: Vec::new(),
+                        constraints: Vec::new(),
                     })
                 })
                 .await
@@ -1999,6 +2179,53 @@ impl DbEngine {
                         ddl
                     };
 
+                    // 约束（DBeaver DamengMetaModel 同源简化）：达梦约束在
+                    // SYSCONS 基表，INDEXID 关联 SYSINDEXES 取列。TYPE$ 映射
+                    // P/U/F/C。外键目标经 SYSCONS.ID = 约束的 INDEXID 反查
+                    //（DBeaver 的五表 JOIN 简化为两段查询，行为一致）。
+                    let cons_rows = dm_query_rows(
+                        client,
+                        "SELECT CONS_OBJ.NAME, SYSCONS.TYPE$, \
+                           (SELECT LISTAGG(SC.NAME, ',') WITHIN GROUP (ORDER BY SC.ID) \
+                            FROM SYSCOLUMNS SC, SYSOBJECTS TAB2 \
+                            WHERE SC.ID = SYSCONS.TABLEID AND TAB2.ID = SC.ID \
+                              AND TAB2.NAME = ?2) AS COLS, \
+                           (SELECT REF_OBJ.NAME || '(' || \
+                              (SELECT LISTAGG(SC2.NAME, ',') WITHIN GROUP (ORDER BY SC2.ID) \
+                               FROM SYSCOLUMNS SC2, SYSOBJECTS REF_TAB \
+                               WHERE SC2.ID = SYSCONS.TABLEID AND REF_TAB.ID = SC2.ID \
+                                 AND REF_TAB.ID != TAB_OBJ.ID) || ')' \
+                            FROM DUAL WHERE SYSCONS.TYPE$ = 'F') AS REFS \
+                         FROM SYSCONS, SYSOBJECTS CONS_OBJ, SYSOBJECTS TAB_OBJ, SYSOBJECTS SCH_OBJ2 \
+                         WHERE CONS_OBJ.ID = SYSCONS.ID \
+                           AND CONS_OBJ.PID = TAB_OBJ.ID \
+                           AND TAB_OBJ.SCHID = SCH_OBJ2.ID \
+                           AND SCH_OBJ2.NAME = ?1 AND TAB_OBJ.NAME = ?2 \
+                         ORDER BY CONS_OBJ.NAME",
+                        &[
+                            dm_pure::Param::Str(schema_o.clone()),
+                            dm_pure::Param::Str(table_o.clone()),
+                        ],
+                    )
+                    .unwrap_or_default();
+                    let constraints: Vec<Vec<String>> = cons_rows
+                        .iter()
+                        .map(|row| {
+                            let ctype = match dm_row_string(row, 1).as_str() {
+                                "P" => "PK".to_string(),
+                                "U" => "U".to_string(),
+                                "F" => "F".to_string(),
+                                _ => "C".to_string(),
+                            };
+                            vec![
+                                dm_row_string(row, 0),
+                                ctype,
+                                dm_row_string(row, 2),
+                                dm_row_string(row, 3),
+                            ]
+                        })
+                        .collect();
+
                     Ok(TableDetail {
                         ddl,
                         column_headers: vec![
@@ -2010,6 +2237,13 @@ impl DbEngine {
                         columns,
                         index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
                         indexes,
+                        constraint_headers: vec![
+                            "Constraint".into(),
+                            "Type".into(),
+                            "Columns".into(),
+                            "References".into(),
+                        ],
+                        constraints,
                     })
                 })
                 .await

@@ -251,13 +251,16 @@ export function dbObjectDefinition(
   return invoke('db_object_definition', { sessionId, schema, name, kind });
 }
 
-/** 表/视图详情：DDL + 列结构 + 索引清单（树右键「表详情」）。 */
+/** 表/视图详情：DDL + 列结构 + 索引清单 + 约束清单（树右键「表详情」）。 */
 export interface TableDetail {
   ddl: string;
   columnHeaders: string[];
   columns: string[][];
   indexHeaders: string[];
   indexes: string[][];
+  /** 约束（PK/U/F/C）：name / type / columns | definition / references */
+  constraintHeaders: string[];
+  constraints: string[][];
 }
 
 export function dbTableDetail(
