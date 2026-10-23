@@ -227,7 +227,9 @@ export function DbScreen({ isVisible = true }: { isVisible?: boolean }) {
                                   )}`
                                 : ''
                             }`
-                          : conn.engine}
+                          : conn.engine === 'dameng'
+                            ? `dameng:${conn.compatibleMode === 'mysql' ? 'mysql' : 'oracle'}`
+                            : conn.engine}
                       </span>
                     </button>
                   ))

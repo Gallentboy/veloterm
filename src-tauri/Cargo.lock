@@ -39,6 +39,17 @@ dependencies = [
 
 [[package]]
 name = "aes"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
+dependencies = [
+ "cfg-if",
+ "cipher 0.4.4",
+ "cpufeatures 0.2.17",
+]
+
+[[package]]
+name = "aes"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35f0f96ce78e38c3dc6d8948aa8163d06385be74000f3c7a95bf1eef35d3ea32"
@@ -56,7 +67,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f2b8006a0c83f52b62ba44a97b58bf76fe2f70a329e588f67f89691d93d498f"
 dependencies = [
  "aead 0.6.1",
- "aes",
+ "aes 0.9.3",
  "cipher 0.5.2",
  "ctr",
  "ctutils",
@@ -284,6 +295,7 @@ dependencies = [
  "bytes",
  "calamine",
  "chrono",
+ "dm-pure",
  "fast-socks5",
  "flate2",
  "futures",
@@ -3095,6 +3107,15 @@ dependencies = [
 
 [[package]]
 name = "des"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
+dependencies = [
+ "cipher 0.4.4",
+]
+
+[[package]]
+name = "des"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "916a94e407b54f9034d71dd748234cd1e516ced6284009906ae246f177eafe5a"
@@ -3268,6 +3289,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "442039f5147480ba31067cb00ada1adae6892028e40e45fc5de7b7df6dcc1b5f"
 dependencies = [
  "const-random",
+]
+
+[[package]]
+name = "dm-pure"
+version = "1.2.4"
+dependencies = [
+ "aes 0.8.4",
+ "cipher 0.4.4",
+ "des 0.8.1",
+ "encoding_rs",
+ "md5 0.7.0",
+ "num-bigint 0.4.8",
+ "num-traits",
+ "rand 0.8.8",
 ]
 
 [[package]]
@@ -7713,6 +7748,12 @@ dependencies = [
 
 [[package]]
 name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
+
+[[package]]
+name = "md5"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
@@ -9427,7 +9468,7 @@ version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63d440a804ec8d6fafbb6b84471e013286658d373248927692ab3366686220ca"
 dependencies = [
- "aes",
+ "aes 0.9.3",
  "aes-gcm",
  "cbc",
  "der 0.8.2",
@@ -10774,7 +10815,7 @@ version = "0.63.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "036204edbd199552a5b3832f63c60dcdf395dc44c7f06b4af1c0e8139cc11bce"
 dependencies = [
- "aes",
+ "aes 0.9.3",
  "aws-lc-rs",
  "bitflags 2.13.2",
  "block-padding",
@@ -10788,7 +10829,7 @@ dependencies = [
  "data-encoding",
  "delegate",
  "der 0.8.2",
- "des",
+ "des 0.9.0",
  "digest 0.11.3",
  "ecdsa",
  "ed25519-dalek",
@@ -10803,7 +10844,7 @@ dependencies = [
  "inout 0.2.2",
  "keccak",
  "log",
- "md5",
+ "md5 0.8.1",
  "ml-kem",
  "module-lattice",
  "num-bigint 0.5.1",
@@ -12083,12 +12124,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d801accda99469cde6d73da741422610fdf6508a72d9a69d1b55cb241c720597"
 dependencies = [
  "aead 0.6.1",
- "aes",
+ "aes 0.9.3",
  "aes-gcm",
  "chacha20 0.10.2",
  "cipher 0.5.2",
  "ctutils",
- "des",
+ "des 0.9.0",
  "poly1305 0.9.1",
  "ssh-encoding",
  "zeroize",

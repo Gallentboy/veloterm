@@ -195,8 +195,9 @@ unsafe extern "C" fn sqlite_progress_trampoline(
 }
 
 /// 引擎实例：一会话一连接（单查询工作台模型，不做池）。Closed 为优雅关闭后的占位。
-/// Oracle / ObOracle / SQLite 均为同步驱动（rust-oracle / libobclient / rusqlite
-/// 无 async），持有连接分别经 with_oracle / with_obclient / with_sqlite 包裹调用。
+/// Oracle / ObOracle / SQLite / 达梦均为同步驱动（rust-oracle / libobclient /
+/// rusqlite / dm-pure 无 async），持有连接分别经 with_oracle / with_obclient /
+/// with_sqlite / with_dameng 包裹调用。
 pub enum DbEngine {
     MySql(mysql_async::Conn),
     Postgres(tokio_postgres::Client),
@@ -204,6 +205,7 @@ pub enum DbEngine {
     /// OB Oracle 模式（libobclient 阻塞 C API，obclient::ObConn 安全包装）
     ObOracle(obclient::ObConn),
     Sqlite(SqliteEngine),
+    Dameng(dm_pure::DmClient),
     Closed,
 }
 
@@ -219,6 +221,7 @@ impl DbEngine {
             ("oceanbase", Some("oracle")) => Self::connect_ob_oracle(record).await,
             ("oceanbase", _) => Err("OceanBase 需要选择租户模式（MySQL/Oracle）".to_string()),
             ("sqlite", _) => Self::connect_sqlite(record).await,
+            ("dameng", _) => Self::connect_dameng(record).await,
             (other, _) => Err(format!("不支持的数据库引擎：{other}")),
         }
     }
@@ -231,6 +234,9 @@ impl DbEngine {
             let _ = conn.disconnect().await;
         } else if let DbEngine::ObOracle(conn) = taken {
             conn.close();
+        } else if let DbEngine::Dameng(mut client) = taken {
+            // dm-pure 的 close 只是丢弃 socket（无网络往返），同步调用即可
+            client.close();
         }
         // SQLite：rusqlite::Connection 的 Drop 即 sqlite3_close（文件句柄与加密
         // codec 一并释放），无需显式动作
@@ -671,11 +677,113 @@ impl DbEngine {
             }
             Err(e) => {
                 // JoinError（panic/取消）：连接已无法取回，置 Closed 由会话层
-                //重建（阻塞任务收尾时 Drop 兑底 mysql_close）
+                //重建（阻塞任务收尾时 Drop 兜底 mysql_close）
                 *self = DbEngine::Closed;
                 Err(e)
             }
         }
+    }
+
+    /// 同步达梦连接的阻塞包裹（with_oracle 同型）：连接取出 → spawn_blocking
+    /// 内执行闭包 → 连接归还（错误/取消也归还，避免连接丢失）。dm-pure 是
+    /// 纯同步驱动（std::net），闭包内可直接调用其 API。
+    async fn with_dameng<T, F>(&mut self, f: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut dm_pure::DmClient) -> Result<T, String> + Send + 'static,
+    {
+        let taken = std::mem::replace(self, DbEngine::Closed);
+        let DbEngine::Dameng(mut client) = taken else {
+            *self = taken;
+            return Err("连接已关闭".to_string());
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            let r = f(&mut client);
+            (r, client)
+        })
+        .await
+        .map_err(|e| format!("达梦任务失败：{e}"));
+        match result {
+            Ok((r, client)) => {
+                *self = DbEngine::Dameng(client);
+                r
+            }
+            Err(e) => {
+                // JoinError（panic/取消）：连接已无法取回，置 Closed 由会话层重建
+                *self = DbEngine::Closed;
+                Err(e)
+            }
+        }
+    }
+
+    async fn connect_dameng(record: &DbConnectionRecord) -> Result<(DbEngine, String), String> {
+        // 达梦沿用 Oracle 的双字段语义：database = 初始 schema（可选）
+        if record.ssl_mode != "disable" {
+            return Err(
+                "达梦引擎暂不支持 TLS（dm-pure 为明文 TCP），请将 SSL 模式设为 disable"
+                    .to_string(),
+            );
+        }
+        let host = record.host.trim().to_string();
+        let port = record.port;
+        let username = record
+            .username
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("SYSDBA")
+            .to_string();
+        // 密码允许为空（部分测试实例无密码），由服务器裁决
+        let password = record.password.clone().unwrap_or_default();
+        let initial_schema = record
+            .database
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        if let Some(schema) = initial_schema.as_deref()
+            && !dm_valid_identifier(schema)
+        {
+            return Err("达梦无效的 schema 名".to_string());
+        }
+        let (client, version) = tokio::task::spawn_blocking(move || {
+            let cfg = dm_pure::ClientConfig {
+                host,
+                port,
+                user: username,
+                password,
+                app_name: "VeloTerm".to_string(),
+                os_name: std::env::consts::OS.to_string(),
+                // 驱动的 timeout 是 socket 读写「空闲」超时（不是语句总时长）：
+                // 取 60s 对齐工作台默认语句预算，长查询只要服务端持续有帧
+                // 往来就不会被提前掐断
+                timeout: Duration::from_secs(60),
+                // 静默重连会新建会话、丢掉 SET SCHEMA 的会话状态，后续查询
+                // 悄悄落到默认 schema——工作台宁可报错让用户显式重连
+                auto_reconnect: false,
+                ..Default::default()
+            };
+            let mut client = dm_pure::DmClient::with_config(cfg);
+            client
+                .connect()
+                .map_err(|e| format!("达梦连接失败：{e}"))?;
+            // 先设 schema 再查版本：版本查询是「能拿就拿、拿不到回 DM8」的
+            // 尽力而为查询，放在最后，它的失败不影响会话初始化
+            if let Some(schema) = initial_schema {
+                // SET SCHEMA 只改名字解析（同 Oracle 的 CURRENT_SCHEMA）。
+                // 不加双引号：未加引号的标识符在达梦 Oracle 兼容模式下折叠成
+                // 大写（与 Oracle 一致），用户手输小写也能命中；加了引号则
+                // 大小写敏感（Oracle 臂同此取舍）
+                let sql = format!("SET SCHEMA {schema}");
+                client
+                    .execute(&sql, &[])
+                    .map_err(|e| format!("达梦设置初始 schema 失败：{e}"))?;
+            }
+            let version = dm_server_version(&mut client);
+            Ok::<_, String>((client, version))
+        })
+        .await
+        .map_err(|e| format!("达梦连接任务失败：{e}"))??;
+        Ok((DbEngine::Dameng(client), version))
     }
 
     /// 可切换的数据库清单（MySQL=全部 schema；PG=服务器上可连的 database，
@@ -724,6 +832,13 @@ impl DbEngine {
                 // 切换走 select_database 的 CURRENT_SCHEMA
                 self.with_obclient(ob_oracle_usernames).await
             }
+            DbEngine::Dameng(_) => {
+                // 达梦的「库」层即 schema（Oracle 风格字典），切换走 SET SCHEMA；
+                // 不滤系统账号——达梦的实例级账号清单远比 Oracle 短，且工作台
+                // 需要能看到 SYS/SYSDBA 等库供排查
+                self.with_dameng(|client| dm_query_strings(client, DM_ALL_USERS_SQL, &[]))
+                    .await
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -770,6 +885,22 @@ impl DbEngine {
                 // SQLite 无连接级切库（对象树顶层已是 database_list 的附加库），
                 // 会话层只更新元信息；不报错以保持命令语义一致
                 Ok(())
+            }
+            DbEngine::Dameng(_) => {
+                // 同 Oracle：标识符字符集校验后拼进 SET SCHEMA（达梦普通标识符
+                // 同为 [A-Za-z0-9_$#]）。不加双引号——未引号标识符折叠成大写，
+                // 与 Oracle 臂的宽容度一致
+                if !dm_valid_identifier(database) {
+                    return Err("达梦无效的 schema 名".to_string());
+                }
+                let sql = format!("SET SCHEMA {database}");
+                self.with_dameng(move |client| {
+                    client
+                        .execute(&sql, &[])
+                        .map_err(|e| format!("达梦切换 schema 失败：{e}"))?;
+                    Ok(())
+                })
+                .await
             }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
@@ -1258,6 +1389,178 @@ impl DbEngine {
                 // P0 不实现（DDL 拉取/索引聚合的目录 SQL 后续版本接入）
                 Err("OceanBase Oracle 模式的对象详情将在后续版本支持".to_string())
             }
+            DbEngine::Dameng(_) => {
+                // 与 Oracle 同型：DBMS_METADATA.GET_DDL 首选（返回 CLOB，驱动可能
+                // 给 Str 或 Bytes），失败降级：视图读 ALL_VIEWS.TEXT、表拼列元数据。
+                // 达梦的 ALL_IND_COLUMNS 可用，但 LISTAGG 兼容性不稳，索引列在
+                // Rust 侧聚合（ALL_INDEXES × ALL_IND_COLUMNS 按 INDEX_NAME 分组）
+                let schema_o = schema.to_string();
+                let table_o = table.to_string();
+                let kind_o = kind.to_string();
+                self.with_dameng(move |client| {
+                    let object_type = if kind_o == "view" { "VIEW" } else { "TABLE" };
+                    let ddl = dm_query_first_string(
+                        client,
+                        "SELECT DBMS_METADATA.GET_DDL(?, ?, ?) FROM DUAL",
+                        &[
+                            dm_pure::Param::Str(object_type.to_string()),
+                            dm_pure::Param::Str(table_o.clone()),
+                            dm_pure::Param::Str(schema_o.clone()),
+                        ],
+                    )
+                    .unwrap_or_default();
+
+                    // 列结构：DATA_DEFAULT 在 Oracle 系字典里是 LONG，部分驱动/版本
+                    // 读不了——首查失败就退到不带 Default 的三列（宁可少一列，
+                    // 不能让整张表的列结构都拉不出来）
+                    let col_rows = match dm_query_rows(
+                        client,
+                        "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT \
+                         FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? \
+                         ORDER BY COLUMN_ID",
+                        &[
+                            dm_pure::Param::Str(schema_o.clone()),
+                            dm_pure::Param::Str(table_o.clone()),
+                        ],
+                    ) {
+                        Ok(rows) => rows,
+                        Err(_) => dm_query_rows(
+                            client,
+                            "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE \
+                             FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? \
+                             ORDER BY COLUMN_ID",
+                            &[
+                                dm_pure::Param::Str(schema_o.clone()),
+                                dm_pure::Param::Str(table_o.clone()),
+                            ],
+                        )
+                        .map_err(|e| format!("达梦查询列结构失败：{e}"))?,
+                    };
+                    let columns: Vec<Vec<String>> = col_rows
+                        .iter()
+                        .map(|row| {
+                            vec![
+                                dm_row_string(row, 0),
+                                dm_row_string(row, 1),
+                                // 字典的 Y/N 统一为另两引擎的 YES/NO 展示
+                                match dm_row_string(row, 2).as_str() {
+                                    "Y" => "YES".to_string(),
+                                    "N" => "NO".to_string(),
+                                    other => other.to_string(),
+                                },
+                                // 降级路没有第四列：越界由 dm_row_string 回 NULL
+                                dm_row_string(row, 3),
+                            ]
+                        })
+                        .collect();
+
+                    // 索引：每行一个（索引名, 唯一性, 列名），按 INDEX_NAME 聚合成
+                    // 「一索引一行」（与 MySQL/Oracle 臂的展示口径一致）
+                    let idx_rows = dm_query_rows(
+                        client,
+                        "SELECT i.INDEX_NAME, i.UNIQUENESS, c.COLUMN_NAME \
+                         FROM ALL_INDEXES i \
+                         JOIN ALL_IND_COLUMNS c \
+                           ON i.OWNER = c.INDEX_OWNER AND i.INDEX_NAME = c.INDEX_NAME \
+                         WHERE i.TABLE_OWNER = ? AND i.TABLE_NAME = ? \
+                         ORDER BY i.INDEX_NAME, c.COLUMN_POSITION",
+                        &[
+                            dm_pure::Param::Str(schema_o.clone()),
+                            dm_pure::Param::Str(table_o.clone()),
+                        ],
+                    )
+                    .unwrap_or_default();
+                    let mut indexes: Vec<Vec<String>> = Vec::new();
+                    // 行已按 INDEX_NAME 排序：与上一个索引同名则追加列，否则开新行。
+                    // 用 last_name 记账而非 match indexes.last_mut()——避免在
+                    // 新增分支里同时持有集合的可变借用
+                    let mut last_name: Option<String> = None;
+                    for row in &idx_rows {
+                        let name = dm_row_string(row, 0);
+                        let unique = if dm_row_string(row, 1).eq_ignore_ascii_case("UNIQUE") {
+                            "UNIQUE".to_string()
+                        } else {
+                            String::new()
+                        };
+                        let col = dm_row_string(row, 2);
+                        if last_name.as_deref() == Some(name.as_str()) {
+                            if let Some(cells) = indexes.last_mut().and_then(|last| last.get_mut(2))
+                            {
+                                if !cells.is_empty() {
+                                    cells.push_str(", ");
+                                }
+                                cells.push_str(&col);
+                            }
+                        } else {
+                            indexes.push(vec![name.clone(), unique, col]);
+                            last_name = Some(name);
+                        }
+                    }
+
+                    let ddl = if ddl.trim().is_empty() {
+                        if kind_o == "view" {
+                            // 视图降级：ALL_VIEWS.TEXT 即查询体
+                            let text = dm_query_first_string(
+                                client,
+                                "SELECT TEXT FROM ALL_VIEWS WHERE OWNER = ? AND VIEW_NAME = ?",
+                                &[
+                                    dm_pure::Param::Str(schema_o.clone()),
+                                    dm_pure::Param::Str(table_o.clone()),
+                                ],
+                            )
+                            .unwrap_or_default();
+                            if text.trim().is_empty() {
+                                "-- 无法获取 DDL（DBMS_METADATA 与 ALL_VIEWS 均无结果）".to_string()
+                            } else {
+                                text
+                            }
+                        } else {
+                            // 表降级：列元数据拼装（含 NOT NULL，与 Oracle 臂同型）
+                            let q = |v: &str| format!("\"{}\"", v.replace('"', "\"\""));
+                            let lines: Vec<String> = columns
+                                .iter()
+                                .map(|c| {
+                                    let mut line = format!(
+                                        "  {} {}",
+                                        q(c.first().map(String::as_str).unwrap_or("")),
+                                        c.get(1).cloned().unwrap_or_default()
+                                    );
+                                    if c.get(2).map(|v| v == "NO").unwrap_or(false) {
+                                        line.push_str(" NOT NULL");
+                                    }
+                                    line
+                                })
+                                .collect();
+                            if lines.is_empty() {
+                                "-- 无法获取 DDL".to_string()
+                            } else {
+                                format!(
+                                    "CREATE TABLE {}.{} (\n{}\n);",
+                                    q(&schema_o),
+                                    q(&table_o),
+                                    lines.join(",\n")
+                                )
+                            }
+                        }
+                    } else {
+                        ddl
+                    };
+
+                    Ok(TableDetail {
+                        ddl,
+                        column_headers: vec![
+                            "Column".into(),
+                            "Type".into(),
+                            "Nullable".into(),
+                            "Default".into(),
+                        ],
+                        columns,
+                        index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
+                        indexes,
+                    })
+                })
+                .await
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -1448,6 +1751,81 @@ impl DbEngine {
                 // 后续版本接入）
                 Err("OceanBase Oracle 模式的对象详情将在后续版本支持".to_string())
             }
+            DbEngine::Dameng(_) => {
+                // 达梦数据字典同 Oracle 风格：ALL_SOURCE 按行存源码（每行自带换行），
+                // ALL_ARGUMENTS 的 ARGUMENT_NAME 为 NULL 者是函数返回值，需排除
+                let schema_o = schema.to_string();
+                let name_o = name.to_string();
+                let kind_o = kind.to_string();
+                self.with_dameng(move |client| {
+                    if kind_o == "sequence" {
+                        let ddl = dm_query_first_string(
+                            client,
+                            "SELECT DBMS_METADATA.GET_DDL('SEQUENCE', ?, ?) FROM DUAL",
+                            &[
+                                dm_pure::Param::Str(name_o.clone()),
+                                dm_pure::Param::Str(schema_o.clone()),
+                            ],
+                        )
+                        .unwrap_or_default();
+                        if ddl.trim().is_empty() {
+                            return Err("未找到该序列（可能已被删除）".to_string());
+                        }
+                        return Ok(ObjectDefinition {
+                            definition: ddl,
+                            // 达梦序列取下一个值同样需 FROM DUAL
+                            call_template: format!(
+                                "SELECT \"{schema_o}\".\"{name_o}\".NEXTVAL FROM DUAL;"
+                            ),
+                            arg_count: 0,
+                        });
+                    }
+                    let obj_type = if kind_o == "function" { "FUNCTION" } else { "PROCEDURE" };
+                    let rows = dm_query_rows(
+                        client,
+                        "SELECT TEXT FROM ALL_SOURCE WHERE OWNER = ? AND NAME = ? AND TYPE = ? \
+                         ORDER BY LINE",
+                        &[
+                            dm_pure::Param::Str(schema_o.clone()),
+                            dm_pure::Param::Str(name_o.clone()),
+                            dm_pure::Param::Str(obj_type.to_string()),
+                        ],
+                    )
+                    .map_err(|e| format!("达梦拉取定义失败：{e}"))?;
+                    let definition = rows
+                        .iter()
+                        .map(|row| dm_text_at(row, 0))
+                        .collect::<Vec<_>>()
+                        .join("");
+                    if definition.trim().is_empty() {
+                        return Err("未找到该函数/过程（可能已被删除）".to_string());
+                    }
+                    let arg_count = dm_query_rows(
+                        client,
+                        "SELECT COUNT(*) FROM ALL_ARGUMENTS WHERE OWNER = ? AND OBJECT_NAME = ? \
+                         AND ARGUMENT_NAME IS NOT NULL AND DATA_LEVEL = 0",
+                        &[
+                            dm_pure::Param::Str(schema_o.clone()),
+                            dm_pure::Param::Str(name_o.clone()),
+                        ],
+                    )
+                    .ok()
+                    .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                    .unwrap_or(0);
+                    let call_template = if kind_o == "function" {
+                        // 达梦 Oracle 兼容模式下函数调用需要 FROM DUAL
+                        format!("SELECT \"{schema_o}\".\"{name_o}\"() FROM DUAL")
+                    } else {
+                        format!("CALL \"{schema_o}\".\"{name_o}\"()")
+                    };
+                    Ok(ObjectDefinition {
+                        definition,
+                        call_template,
+                        arg_count: arg_count.max(0) as usize,
+                    })
+                })
+                .await
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -1543,6 +1921,21 @@ impl DbEngine {
                 //（ob_oracle_usernames，清单与 oracle 臂同源）
                 self.with_obclient(|conn| {
                     Ok(ob_oracle_usernames(conn)?
+                        .into_iter()
+                        .map(|name| CatalogNode {
+                            key: name.clone(),
+                            name,
+                            kind: "schema".to_string(),
+                            detail: None,
+                        })
+                        .collect())
+                })
+                .await
+            }
+            DbEngine::Dameng(_) => {
+                // 达梦「库」层即 schema（Oracle 风格），kind 与 Oracle 臂一致
+                self.with_dameng(|client| {
+                    Ok(dm_query_strings(client, DM_ALL_USERS_SQL, &[])?
                         .into_iter()
                         .map(|name| CatalogNode {
                             key: name.clone(),
@@ -1797,6 +2190,65 @@ impl DbEngine {
                 })
                 .await
             }
+            DbEngine::Dameng(_) => {
+                // 分类计数（照 Oracle 臂范式）：表/视图/序列各自字典表，函数与
+                // 过程同属 ALL_OBJECTS 按 OBJECT_TYPE 分组。任一查询失败不阻断
+                // 其余分组（计 0 即不展示该组）——对象树不该因单个字典表权限
+                // 不足而整层空掉
+                let schema_o = schema.to_string();
+                self.with_dameng(move |client| {
+                    let bind = [dm_pure::Param::Str(schema_o.clone())];
+                    let tables = dm_query_rows(
+                        client,
+                        "SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = ?",
+                        &bind,
+                    )
+                    .ok()
+                    .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                    .unwrap_or(0);
+                    let views = dm_query_rows(
+                        client,
+                        "SELECT COUNT(*) FROM ALL_VIEWS WHERE OWNER = ?",
+                        &bind,
+                    )
+                    .ok()
+                    .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                    .unwrap_or(0);
+                    let sequences = dm_query_rows(
+                        client,
+                        "SELECT COUNT(*) FROM ALL_SEQUENCES WHERE SEQUENCE_OWNER = ?",
+                        &bind,
+                    )
+                    .ok()
+                    .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                    .unwrap_or(0);
+                    let routine_rows = dm_query_rows(
+                        client,
+                        "SELECT OBJECT_TYPE, COUNT(*) FROM ALL_OBJECTS WHERE OWNER = ? \
+                         AND OBJECT_TYPE IN ('FUNCTION','PROCEDURE') GROUP BY OBJECT_TYPE",
+                        &bind,
+                    )
+                    .unwrap_or_default();
+                    let count_of = |kind: &str| {
+                        routine_rows
+                            .iter()
+                            .find(|row| {
+                                dm_row_string(row.as_slice(), 0).eq_ignore_ascii_case(kind)
+                            })
+                            .map(|row| dm_row_i64(row.as_slice(), 1))
+                            .unwrap_or(0)
+                    };
+                    Ok(group_nodes(
+                        &schema_o,
+                        tables,
+                        views,
+                        count_of("FUNCTION"),
+                        count_of("PROCEDURE"),
+                        sequences,
+                    ))
+                })
+                .await
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -1997,6 +2449,50 @@ impl DbEngine {
                 })
                 .await
             }
+            DbEngine::Dameng(_) => {
+                // 各分组对应各自的达梦字典表（序列的 owner 列叫 SEQUENCE_OWNER）；
+                // 表/视图不用 ALL_OBJECTS 而是专用字典，避开回收站对象与同名的
+                // 分区子表（ALL_OBJECTS 里会出现）
+                let sql = match group {
+                    ObjectGroup::Table => {
+                        "SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = ? ORDER BY TABLE_NAME"
+                    }
+                    ObjectGroup::View => {
+                        "SELECT VIEW_NAME FROM ALL_VIEWS WHERE OWNER = ? ORDER BY VIEW_NAME"
+                    }
+                    ObjectGroup::Function => {
+                        "SELECT OBJECT_NAME FROM ALL_OBJECTS WHERE OWNER = ? \
+                         AND OBJECT_TYPE = 'FUNCTION' ORDER BY OBJECT_NAME"
+                    }
+                    ObjectGroup::Procedure => {
+                        "SELECT OBJECT_NAME FROM ALL_OBJECTS WHERE OWNER = ? \
+                         AND OBJECT_TYPE = 'PROCEDURE' ORDER BY OBJECT_NAME"
+                    }
+                    ObjectGroup::Sequence => {
+                        "SELECT SEQUENCE_NAME FROM ALL_SEQUENCES WHERE SEQUENCE_OWNER = ? \
+                         ORDER BY SEQUENCE_NAME"
+                    }
+                };
+                let schema_o = schema.to_string();
+                let kind_o = kind.clone();
+                self.with_dameng(move |client| {
+                    let names = dm_query_strings(
+                        client,
+                        sql,
+                        &[dm_pure::Param::Str(schema_o.clone())],
+                    )?;
+                    Ok(names
+                        .into_iter()
+                        .map(|name| CatalogNode {
+                            key: format!("{schema_o}.{name}"),
+                            name,
+                            kind: kind_o.clone(),
+                            detail: None,
+                        })
+                        .collect())
+                })
+                .await
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -2151,6 +2647,36 @@ impl DbEngine {
                                 kind: "column".to_string(),
                                 detail: Some(data_type),
                             })
+                        })
+                        .collect())
+                })
+                .await
+            }
+            DbEngine::Dameng(_) => {
+                // ALL_TAB_COLUMNS 覆盖表与视图（同 Oracle 臂口径）
+                let schema_o = schema.to_string();
+                let table_o = table.to_string();
+                self.with_dameng(move |client| {
+                    let rows = dm_query_rows(
+                        client,
+                        "SELECT COLUMN_NAME, DATA_TYPE FROM ALL_TAB_COLUMNS \
+                         WHERE OWNER = ? AND TABLE_NAME = ? ORDER BY COLUMN_ID",
+                        &[
+                            dm_pure::Param::Str(schema_o.clone()),
+                            dm_pure::Param::Str(table_o.clone()),
+                        ],
+                    )
+                    .map_err(|e| format!("达梦查询列清单失败：{e}"))?;
+                    Ok(rows
+                        .iter()
+                        .map(|row| {
+                            let name = dm_row_string(row, 0);
+                            CatalogNode {
+                                key: format!("{schema_o}.{table_o}.{name}"),
+                                name,
+                                kind: "column".to_string(),
+                                detail: Some(dm_row_string(row, 1)),
+                            }
                         })
                         .collect())
                 })
@@ -2529,6 +3055,73 @@ impl DbEngine {
                     })
                     .await;
                 // 取消信号在语句间由会话层判定（同 Oracle 臂）
+                let _ = cancel_notify;
+                result
+            }
+
+            DbEngine::Dameng(_) => {
+                // 同步引擎（同 Oracle 臂）：execute 一次性取全量结果，再在阻塞线程
+                // 内按批回调（Channel 发送是 Send 安全的）。取消粒度 = 语句间
+                //（会话层 AtomicBool）：dm-pure 阻塞在 socket 读上无协作取消点，
+                // 行流中不可中断；max_rows 截断在拿到结果后客户端侧成立
+                //（驱动已把整结果集解在内存，大表需用户自加 WHERE/LIMIT）
+                let sql_o = sql.to_string();
+                let result = self
+                    .with_dameng(move |client| {
+                        let result = client
+                            .execute(&sql_o, &[])
+                            .map_err(|e| format!("达梦：{e}"))?;
+                        let mut summary = ExecSummary::default();
+                        match result {
+                            dm_pure::ExecuteResult::Query { columns, rows } => {
+                                let names: Vec<String> =
+                                    columns.iter().map(|c| c.name.clone()).collect();
+                                if names.is_empty() {
+                                    // 防御：无列的结果集按 DML 处理（与 Oracle 臂同口径）
+                                    return Ok(summary);
+                                }
+                                on_columns(&names);
+                                summary.columns = names;
+                                // 全量已在内存，用总行数精确判定截断（不靠多探一行）
+                                let total = rows.len();
+                                let keep = total.min(max_rows);
+                                summary.truncated = total > keep;
+                                let mut batch: Vec<Vec<String>> =
+                                    Vec::with_capacity(ROWS_PER_BATCH);
+                                for row in rows.into_iter().take(keep) {
+                                    batch.push(
+                                        row.iter().map(dm_value_to_string).collect::<Vec<_>>(),
+                                    );
+                                    summary.rows_read += 1;
+                                    if batch.len() >= ROWS_PER_BATCH {
+                                        on_rows(std::mem::take(&mut batch));
+                                    }
+                                }
+                                if !batch.is_empty() {
+                                    on_rows(batch);
+                                }
+                            }
+                            dm_pure::ExecuteResult::Affected(n) => {
+                                summary.affected = Some(n);
+                            }
+                            dm_pure::ExecuteResult::Call { affected, out } => {
+                                // 工作台是单结果集模型：OUT 参数不单列展示，
+                                // 仅当存在输出值时作为一行返回（否则只看 affected）
+                                summary.affected = Some(affected);
+                                if !out.is_empty() && max_rows > 0 {
+                                    let out_header = vec!["OUT".to_string()];
+                                    on_columns(&out_header);
+                                    summary.columns = out_header;
+                                    let cells: Vec<String> =
+                                        out.iter().map(dm_value_to_string).collect();
+                                    summary.rows_read = 1;
+                                    on_rows(vec![cells]);
+                                }
+                            }
+                        }
+                        Ok(summary)
+                    })
+                    .await;
                 let _ = cancel_notify;
                 result
             }
@@ -2930,6 +3523,155 @@ fn emit_oracle_rows<F1, F2>(
     }
 }
 
+// ── 达梦（dm-pure）辅助：同步驱动 + Oracle 风格数据字典 ──────────────────
+
+/// 达梦 schema（用户）清单：Oracle 兼容与 MySQL 兼容模式下都存在该字典视图
+///（达梦两者共用一套数据字典，只差语法层兼容）。
+const DM_ALL_USERS_SQL: &str = "SELECT USERNAME FROM ALL_USERS ORDER BY USERNAME";
+
+/// 达梦标识符校验（拼进 SET SCHEMA 前）：同 Oracle 的普通标识符字符集
+/// [A-Za-z0-9_$#]，非空。防止拼接注入。
+fn dm_valid_identifier(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '#'))
+}
+
+/// 服务端版本描述。dm-pure 没有 server_version API（只有 server_encoding_name），
+/// 故读 V$INSTANCE.BUILD_VERSION；部分部署该视图不可见时降级 V$VERSION
+///（多行 banner），都拿不到就回 "DM8"（版本号只是展示，不影响功能）。
+fn dm_server_version(client: &mut dm_pure::DmClient) -> String {
+    if let Some(v) = dm_query_first_string(client, "SELECT BUILD_VERSION FROM V$INSTANCE", &[])
+        .filter(|s| !s.trim().is_empty())
+    {
+        return v.trim().to_string();
+    }
+    if let Ok(rows) = dm_query_rows(client, "SELECT * FROM V$VERSION", &[]) {
+        // V$VERSION 是「BANNER」单列多行：取首行非空即达梦版本串
+        if let Some(line) = rows
+            .iter()
+            .map(|row| dm_row_string(row, 0))
+            .find(|s| !s.trim().is_empty())
+        {
+            return line.trim().to_string();
+        }
+    }
+    "DM8".to_string()
+}
+
+/// 达梦行类型：每单元格一个解码后的 Value。
+type DmRow = Vec<dm_pure::Value>;
+
+/// 执行查询并把所有行返回（非 Query 结果返回空）。dm-pure 的 execute 已把
+/// 整结果集解在内存，这里只是所有权转移。
+fn dm_query_rows(
+    client: &mut dm_pure::DmClient,
+    sql: &str,
+    params: &[dm_pure::Param],
+) -> Result<Vec<DmRow>, dm_pure::DmError> {
+    match client.execute(sql, params)? {
+        dm_pure::ExecuteResult::Query { rows, .. } => Ok(rows),
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// 单值查询的便捷形态：取首行首列并字符串化（无结果返回 None）。
+/// 元数据查询（版本、DDL）大多走这条路径。
+fn dm_query_first_string(
+    client: &mut dm_pure::DmClient,
+    sql: &str,
+    params: &[dm_pure::Param],
+) -> Option<String> {
+    let rows = dm_query_rows(client, sql, params).ok()?;
+    let first = rows.first()?;
+    Some(dm_text_at(first, 0))
+}
+
+/// 文本列的取值：CLOB 正常解成 Str，但 DBMS_METADATA 等系统函数在部分
+/// 服务端版本/路径上会以 BLOB 字节返回——此时按 UTF-8 容错解码（不能走
+/// dm_value_to_string 的 `<BLOB N bytes>` 占位，否则 DDL 面板只剩占位符）。
+/// NULL 返回空串（调用方按「无内容」处理：DDL 降级、版本回退）。
+fn dm_text_at(row: &[dm_pure::Value], i: usize) -> String {
+    match row.get(i) {
+        Some(dm_pure::Value::Bytes(b)) | Some(dm_pure::Value::Raw(b)) => {
+            String::from_utf8_lossy(b).into_owned()
+        }
+        Some(dm_pure::Value::Null) | None => String::new(),
+        Some(other) => dm_value_to_string(other),
+    }
+}
+
+/// 取首列字符串清单（schema/对象名列表查询用）。
+fn dm_query_strings(
+    client: &mut dm_pure::DmClient,
+    sql: &str,
+    params: &[dm_pure::Param],
+) -> Result<Vec<String>, String> {
+    let rows = dm_query_rows(client, sql, params).map_err(|e| format!("达梦查询失败：{e}"))?;
+    Ok(rows.iter().map(|row| dm_row_string(row, 0)).collect())
+}
+
+/// 行按列取字符串（越界列回 NULL，与 oracle_row_string 同语义）。
+fn dm_row_string(row: &[dm_pure::Value], i: usize) -> String {
+    row.get(i)
+        .map(dm_value_to_string)
+        .unwrap_or_else(|| "NULL".to_string())
+}
+
+/// 行按列取 i64（计数/元数据数值列；取不到回 0）。
+fn dm_row_i64(row: &[dm_pure::Value], i: usize) -> i64 {
+    row.get(i).map(dm_value_to_i64).unwrap_or(0)
+}
+
+/// 数值变体统一取 i64：COUNT(*) 的返回类型随服务器/驱动路径漂移
+///（BigInt / Int / Decimal 字符串均见过），统一归一。非数值回 0。
+fn dm_value_to_i64(value: &dm_pure::Value) -> i64 {
+    use dm_pure::Value as V;
+    match value {
+        V::TinyInt(v) => *v as i64,
+        V::SmallInt(v) => *v as i64,
+        V::Int(v) => *v as i64,
+        V::BigInt(v) => *v,
+        V::Bool(v) => *v as i64,
+        // Decimal 保持字符串（精度）——计数场景 parse 即可：整数形态直取，
+        // 带小数点的（如 "7.0"）走 f64 再截断，失败回 0
+        V::Decimal(s) => s
+            .trim()
+            .parse::<i64>()
+            .unwrap_or_else(|_| s.trim().parse::<f64>().map(|f| f as i64).unwrap_or(0)),
+        V::Real(v) => *v as i64,
+        V::Double(v) => *v as i64,
+        _ => 0,
+    }
+}
+
+/// 达梦单元格字符串化（与 sqlite_viewer / MySQL 臂展示语义对齐）：
+/// NULL 字面量、二进制给长度占位（不把 BLOB 原字节倒进表格）、整数去 .0。
+fn dm_value_to_string(value: &dm_pure::Value) -> String {
+    use dm_pure::Value as V;
+    match value {
+        V::Null => "NULL".to_string(),
+        V::Bool(b) => b.to_string(),
+        V::TinyInt(v) => v.to_string(),
+        V::SmallInt(v) => v.to_string(),
+        V::Int(v) => v.to_string(),
+        V::BigInt(v) => v.to_string(),
+        V::Real(v) => format_float(*v as f64),
+        V::Double(v) => format_float(*v),
+        // DECIMAL 原样输出（驱动已保证是精确的十进制字符串，不经 f64）
+        V::Decimal(s) => s.clone(),
+        V::Str(s) => s.clone(),
+        V::Bytes(b) | V::Raw(b) => format!("<BLOB {} bytes>", b.len()),
+        // 日期时间三型都实现了 Display（yyyy-mm-dd / hh:mm:ss.ffffff 形态）；
+        // Interval 是驱动已格式化好的字符串
+        V::Date(v) => v.to_string(),
+        V::Time(v) => v.to_string(),
+        V::DateTime(v) => v.to_string(),
+        V::Interval(s) => s.clone(),
+    }
+}
+
 fn format_float(v: f64) -> String {
     if v.fract() == 0.0 && v.is_finite() && v.abs() < 1e15 {
         // 整数值去掉 .0（与 sqlite_viewer 一致）
@@ -3103,5 +3845,38 @@ mod tests {
         assert_eq!(oracle_ora_hint(28000), Some("账户已被锁定"));
         assert_eq!(oracle_ora_hint(99999), None);
         assert_eq!(oracle_ora_hint(0), None);
+    }
+
+    /// 达梦值字符串化/数值归一/标识符校验的纯函数边界（连库行为无法在无
+    /// 服务端环境测试，这里只锁展示与防注入逻辑）
+    #[test]
+    fn dameng_value_helpers() {
+        use dm_pure::Value as V;
+        assert_eq!(dm_value_to_string(&V::Null), "NULL");
+        assert_eq!(dm_value_to_string(&V::BigInt(42)), "42");
+        assert_eq!(
+            dm_value_to_string(&V::Decimal("123.4500".into())),
+            "123.4500"
+        );
+        assert_eq!(
+            dm_value_to_string(&V::Bytes(vec![1, 2, 3])),
+            "<BLOB 3 bytes>"
+        );
+        assert_eq!(dm_value_to_string(&V::Double(2.0)), "2");
+        assert_eq!(dm_value_to_i64(&V::Decimal("7".into())), 7);
+        assert_eq!(dm_value_to_i64(&V::Decimal("7.0".into())), 7);
+        assert_eq!(dm_value_to_i64(&V::Int(5)), 5);
+        assert_eq!(dm_value_to_i64(&V::Str("x".into())), 0);
+        assert_eq!(dm_value_to_i64(&V::Null), 0);
+        // 文本列：CLOB 走 Str，BLOB 形态按 UTF-8 容错解码，NULL 归空串
+        let text_row = vec![V::Bytes("CREATE TABLE t".as_bytes().to_vec())];
+        assert_eq!(dm_text_at(&text_row, 0), "CREATE TABLE t");
+        assert_eq!(dm_text_at(&[V::Null], 0), "");
+        assert_eq!(dm_text_at(&[], 0), "");
+        assert!(dm_valid_identifier("SYSDBA"));
+        assert!(dm_valid_identifier("A_1$#"));
+        assert!(!dm_valid_identifier(""));
+        assert!(!dm_valid_identifier("a b"));
+        assert!(!dm_valid_identifier("a;b"));
     }
 }

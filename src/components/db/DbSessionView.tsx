@@ -87,8 +87,18 @@ const EXPANDABLE_KINDS = new Set(['database', 'schema', 'group', 'table', 'view'
 
 /** OB 的 Oracle 租户模式与 Oracle 同方言：SELECT 需 FROM DUAL、无 LIMIT
  * （用 ROWNUM）、标识符不用反引号；OB MySQL 租户模式则完全走 MySQL 方言。 */
-function isOracleDialect(engine: DbSessionMeta['engine'], mode: string | null): boolean {
-  return engine === 'oracle' || (engine === 'oceanbase' && mode === 'oracle');
+function isOracleDialect(
+  engine: DbSessionMeta['engine'],
+  mode: string | null,
+  compatibleMode: string | null = null,
+): boolean {
+  // 达梦的兼容模式在服务器侧由 dm.ini 决定、客户端不感知，这里按表单选择的
+  // compatibleMode 判定（null/非 mysql 均归 oracle——达梦默认部署多为 Oracle 兼容）
+  return (
+    engine === 'oracle' ||
+    (engine === 'oceanbase' && mode === 'oracle') ||
+    (engine === 'dameng' && compatibleMode !== 'mysql')
+  );
 }
 
 function nodeIcon(kind: CatalogNode['kind'], className?: string) {
@@ -207,9 +217,16 @@ export function DbSessionView({
         sessionIdRef.current = sessionMeta.sessionId;
         setMeta(sessionMeta);
         // 引擎适配的欢迎语句：Oracle 方言无 FROM 不可查（SELECT 1 报 ORA-00923），
-        // 换 SELECT 1 FROM DUAL（含 OB Oracle 租户模式）。函数式 setSql 读最新值，
-        // 仅初始占位未动时替换。SQLite/MySQL/PG 的 SELECT 1 均合法，沿用默认占位
-        if (isOracleDialect(sessionMeta.engine, sessionMeta.mode)) {
+        // 换 SELECT 1 FROM DUAL（含 OB Oracle 租户模式与达梦 Oracle 兼容模式）。
+        // 函数式 setSql 读最新值，仅初始占位未动时替换。SQLite/MySQL/PG 的
+        // SELECT 1 均合法，沿用默认占位
+        if (
+          isOracleDialect(
+            sessionMeta.engine,
+            sessionMeta.mode,
+            sessionMeta.compatibleMode,
+          )
+        ) {
           setSql((prev) => (prev === 'SELECT 1;' ? 'SELECT 1 FROM DUAL;' : prev));
         }
         onBaseTitle(`${sessionMeta.name} · ${connection.host}`);
@@ -328,11 +345,13 @@ export function DbSessionView({
       if (node.kind === 'table' || node.kind === 'view') {
         const schema = node.key.split('.')[0] ?? '';
         const name = node.name;
-        // 标识符引用按方言：MySQL（含 OB MySQL 租户模式）反引号；SQLite 双引号
-        // （PG/Oracle 现有行为不加引号，保持原样不动，避免影响既有会话手感）
+        // 标识符引用按方言：MySQL（含 OB MySQL 租户模式与达梦 MySQL 兼容模式）
+        // 反引号；SQLite 双引号（PG/Oracle 现有行为不加引号，保持原样不动，
+        // 避免影响既有会话手感）
         const mysqlDialect =
           meta?.engine === 'mysql' ||
-          (meta?.engine === 'oceanbase' && meta?.mode !== 'oracle');
+          (meta?.engine === 'oceanbase' && meta?.mode !== 'oracle') ||
+          (meta?.engine === 'dameng' && meta?.compatibleMode === 'mysql');
         const quote = (ident: string) =>
           mysqlDialect
             ? `\`${ident.replace(/`/g, '``')}\``
@@ -340,10 +359,10 @@ export function DbSessionView({
               ? `"${ident.replace(/"/g, '""')}"`
               : ident;
         const target = schema ? `${quote(schema)}.${quote(name)}` : quote(name);
-        // 限行子句同样按方言：Oracle 方言（含 OB Oracle 租户模式）无 LIMIT 且
-        // 11.x 只认 ROWNUM（FETCH FIRST 需 12c+）
+        // 限行子句同样按方言：Oracle 方言（含 OB Oracle 租户模式与达梦 Oracle
+        // 兼容模式）无 LIMIT 且 11.x 只认 ROWNUM（FETCH FIRST 需 12c+）
         const limit =
-          meta && isOracleDialect(meta.engine, meta.mode)
+          meta && isOracleDialect(meta.engine, meta.mode, meta.compatibleMode)
             ? 'WHERE ROWNUM <= 200'
             : 'LIMIT 200';
         setSql(`SELECT * FROM ${target} ${limit};`);
