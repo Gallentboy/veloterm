@@ -127,6 +127,7 @@ export default {
     disconnect: 'Disconnect',
     refreshTree: 'Refresh catalog tree',
     treeHint: 'Double-click a table to draft a query',
+    searchObjects: 'Search objects in current database…',
     group_table: 'Tables',
     group_view: 'Views',
     group_function: 'Functions',
