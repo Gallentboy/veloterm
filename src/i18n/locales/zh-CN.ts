@@ -126,6 +126,7 @@ export default {
     disconnect: '断开会话',
     refreshTree: '刷新对象树',
     treeHint: '双击表名生成查询',
+    searchObjects: '搜索当前库对象…',
     group_table: '表',
     group_view: '视图',
     group_function: '函数',

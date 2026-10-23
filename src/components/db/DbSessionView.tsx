@@ -1,6 +1,7 @@
 /**
  * 单个数据库会话视图：连接工具栏 + 左侧对象树（三层懒加载：库/schema →
- * 表/视图 → 列）+ Monaco SQL 编辑器 + 流式结果面板（多结果集 Tab）。
+ * 表/视图 → 列；连接/切库后自动预载当前库的分组与对象层，树内搜索为纯内存过滤）+
+ * Monaco SQL 编辑器 + 流式结果面板（多结果集 Tab）。
  * 挂载时消费 pendingConnectionId 自动连接（仅一次，防 StrictMode 双建）；
  * 卸载即断开会话。全部会话状态内部留存（tab 常驻隐藏切换不丢）。
  */
@@ -21,10 +22,12 @@ import {
   Loader2,
   Play,
   RefreshCw,
+  Search,
   Sigma,
   Square,
   Table2,
   Unplug,
+  X,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -89,6 +92,9 @@ function redisQuote(value: string): string {
 
 /** 可展开子层的节点类型（分组/表/视图可展开；函数/过程/序列/列是叶子） */
 const EXPANDABLE_KINDS = new Set(['database', 'schema', 'group', 'table', 'view']);
+
+/** 搜索匹配的对象类节点（分组/库节点经由子树内命中间接显示） */
+const OBJECT_KINDS = new Set(['table', 'view', 'function', 'procedure', 'sequence']);
 
 /** OB 的 Oracle 租户模式与 Oracle 同方言：SELECT 需 FROM DUAL、无 LIMIT
  * （用 ROWNUM）、标识符不用反引号；OB MySQL 租户模式则完全走 MySQL 方言。 */
@@ -156,6 +162,11 @@ export function DbSessionView({
   const [databases, setDatabases] = useState<string[]>([]);
   const [switchingDb, setSwitchingDb] = useState(false);
 
+  // 对象树搜索词（纯内存过滤，仅作用于当前选中库的已加载对象）；
+  // searchCollapsed 记录搜索态下用户手动收起的分支（仅展示层，清空搜索即复位）
+  const [treeSearch, setTreeSearch] = useState('');
+  const [searchCollapsed, setSearchCollapsed] = useState<Set<string>>(new Set());
+
   // 函数/过程定义视图（对象树双击拉取；新查询执行时让位给结果面板）
   const [objectDef, setObjectDef] = useState<{
     name: string;
@@ -194,9 +205,10 @@ export function DbSessionView({
 
   const sessionIdRef = useRef<string | null>(null);
 
-  const catalogLoad = useCallback(async (sessionId: string) => {
+  const catalogLoad = useCallback(async (sessionId: string, currentDb?: string | null) => {
     setBranches(new Map());
     setRoots([]);
+    setTreeSearch('');
     try {
       const nodes = await dbCatalog(sessionId, null);
       const map = new Map<string, TreeBranch>();
@@ -207,6 +219,58 @@ export function DbSessionView({
       }
       setBranches(map);
       setRoots(keys);
+
+      // 预载当前库（连接 / 切库 / 刷新后）：库 → 分组 → 对象两层拉全进内存供搜索过滤，
+      // 分支保持折叠（展开态不变）；单组拉取失败降级为该组懒加载，整层失败静默
+      const dbNode =
+        currentDb &&
+        nodes.find(
+          (n) => (n.kind === 'database' || n.kind === 'schema') && n.name === currentDb,
+        );
+      if (dbNode) {
+        try {
+          const groups = await dbCatalog(sessionId, { kind: 'schema', schema: dbNode.name });
+          // group 取 key 的 `#` 后段（与手动展开同源）：SQL 引擎分组节点的 name 是大写
+          // TABLE 而 ObjectGroup::parse 只认小写，直接传 name 会整组拉空
+          const results = await Promise.all(
+            groups.map((g) => {
+              const group = g.key.split('#')[1] ?? g.name;
+              return dbCatalog(
+                sessionId,
+                { kind: 'group', schema: dbNode.name, group } as CatalogParentArg,
+              )
+                .then((children) => ({ g, children }))
+                .catch(() => null);
+            }),
+          );
+          setBranches((current) => {
+            // 树已被后续操作重建或用户已手动展开（切库/刷新竞态）则放弃合并
+            const dbBranch = current.get(dbNode.key);
+            if (!dbBranch || dbBranch.children != null) return current;
+            const next = new Map(current);
+            next.set(dbNode.key, { ...dbBranch, children: groups });
+            for (const r of results) {
+              // 单组预载失败：children 保持 null，展开时走懒加载兜底（不写入空数组短路）
+              if (!r) continue;
+              const { g, children } = r;
+              const existing = next.get(g.key);
+              if (existing) {
+                next.set(g.key, { ...existing, children });
+              } else {
+                next.set(g.key, { node: g, expanded: false, children, loading: false });
+              }
+              for (const obj of children) {
+                if (!next.has(obj.key)) {
+                  next.set(obj.key, { node: obj, expanded: false, children: null, loading: false });
+                }
+              }
+            }
+            return next;
+          });
+        } catch {
+          // 预载失败不阻塞：分支保持懒加载语义
+        }
+      }
     } catch (e) {
       setConnectError(String(e));
     }
@@ -244,7 +308,7 @@ export function DbSessionView({
             // 清单拉取失败不阻塞会话（下拉退化为仅当前库）
             setDatabases(sessionMeta.database ? [sessionMeta.database] : []);
           });
-        await catalogLoad(sessionMeta.sessionId);
+        await catalogLoad(sessionMeta.sessionId, sessionMeta.database);
       } catch (e) {
         setConnectError(String(e));
         onBaseTitle(connection.name);
@@ -575,7 +639,7 @@ export function DbSessionView({
         if (!databases.includes(database)) {
           setDatabases((current) => [...current, database].sort());
         }
-        await catalogLoad(sessionId);
+        await catalogLoad(sessionId, database);
       } catch (e) {
         setConnectError(String(e));
       } finally {
@@ -605,12 +669,36 @@ export function DbSessionView({
     };
   }, []);
 
+  const treeFilter = treeSearch.trim().toLowerCase();
+
+  // 清空搜索后复位手动收起集
+  useEffect(() => {
+    if (!treeSearch.trim()) setSearchCollapsed(new Set());
+  }, [treeSearch]);
+
+  /** 搜索匹配：对象类节点按名称命中；分组/库节点看其已加载子树内是否有命中（未加载子层不参与） */
+  const subtreeMatches = (branch: TreeBranch, q: string): boolean => {
+    if (OBJECT_KINDS.has(branch.node.kind) && branch.node.name.toLowerCase().includes(q)) {
+      return true;
+    }
+    return (branch.children ?? []).some((c) => {
+      const child = branches.get(c.key);
+      return child
+        ? subtreeMatches(child, q)
+        : OBJECT_KINDS.has(c.kind) && c.name.toLowerCase().includes(q);
+    });
+  };
+
   const renderTree = (keys: string[], depth: number) => {
     const out: React.ReactNode[] = [];
     for (const key of keys) {
       const branch = branches.get(key);
       if (!branch) continue;
+      // 搜索即剪枝：命中的对象及其祖先路径显示，其余整枝隐藏
+      if (treeFilter && !subtreeMatches(branch, treeFilter)) continue;
       const hasChildren = EXPANDABLE_KINDS.has(branch.node.kind);
+      // 搜索时命中路径默认展开、点击可收起（仅展示层，不改 expanded 状态，清空搜索即恢复原状）
+      const effectiveExpanded = treeFilter ? !searchCollapsed.has(key) : branch.expanded;
       // MySQL 树根层：当前会话选中的库节点高亮标识（PG 根层是 schema，
       // 当前库由树面板顶部徽标承载）
       const isCurrentDb =
@@ -626,7 +714,19 @@ export function DbSessionView({
         <button
           key={key}
           type="button"
-          onClick={() => void toggleBranch(key)}
+          onClick={() => {
+            if (treeFilter) {
+              // 搜索态：折叠/展开只作用于展示层，不动真实展开态（列层不参与匹配，无需懒加载）
+              setSearchCollapsed((cur) => {
+                const next = new Set(cur);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+              });
+            } else {
+              void toggleBranch(key);
+            }
+          }}
           onDoubleClick={() => handleNodeClick(branch.node)}
           onContextMenu={(e) => {
             // 表/视图/函数/过程提供右键菜单；其余节点用系统默认
@@ -650,7 +750,7 @@ export function DbSessionView({
             <ChevronRight
               className={cn(
                 'size-3 shrink-0 text-foreground-subtlest transition-transform duration-150',
-                branch.expanded && 'rotate-90',
+                effectiveExpanded && 'rotate-90',
               )}
             />
           ) : (
@@ -669,7 +769,7 @@ export function DbSessionView({
           ) : null}
         </button>,
       );
-      if (branch.expanded && branch.children) {
+      if (effectiveExpanded && branch.children) {
         out.push(
           renderTree(
             branch.children.map((c) => c.key),
@@ -766,7 +866,7 @@ export function DbSessionView({
             className="size-7 rounded-lg text-foreground-subtle hover:text-foreground"
             onClick={() => {
               const sid = sessionIdRef.current;
-              if (sid) void catalogLoad(sid);
+              if (sid) void catalogLoad(sid, meta.database);
             }}
           >
             <RefreshCw className="size-3.5" />
@@ -886,6 +986,29 @@ export function DbSessionView({
             <span className="min-w-0 flex-1 truncate text-right font-mono text-ui-xs font-semibold text-primary">
               {meta.database ?? '—'}
             </span>
+          </div>
+          {/* 对象树搜索：纯内存过滤，只作用于当前选中库的已加载对象（连接/切库后自动预载） */}
+          <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border/40 px-2">
+            <Search className="size-3 shrink-0 text-foreground-subtlest" />
+            <div className="relative min-w-0 flex-1">
+              <input
+                type="text"
+                value={treeSearch}
+                onChange={(e) => setTreeSearch(e.target.value)}
+                placeholder={t('db.searchObjects')}
+                className="h-6 w-full rounded-md border border-border/60 bg-background pr-5 pl-2 text-ui-xs text-foreground outline-none placeholder:text-foreground-subtlest focus:border-border"
+              />
+              {treeSearch ? (
+                <button
+                  type="button"
+                  onClick={() => setTreeSearch('')}
+                  className="absolute inset-y-0 right-1 flex w-4 items-center justify-center text-foreground-subtlest transition-colors hover:text-foreground"
+                  aria-label={t('common.clear', '清空')}
+                >
+                  <X className="size-3" />
+                </button>
+              ) : null}
+            </div>
           </div>
           <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto p-1.5 select-none">
             {renderTree(roots, 0)}
