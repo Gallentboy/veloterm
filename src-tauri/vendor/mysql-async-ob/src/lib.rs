@@ -452,6 +452,11 @@ mod opts;
 mod query;
 mod queryable;
 
+/// OceanBase 2.0 协议层（OB20 头/CRC/能力位/connect attrs）——veloterm 分叉
+/// 新增，wire 格式对照 vendor/obconnector-c 的 ob_protocol20.c / ma_net.c。
+/// io 层接入是后续阶段，模块当前独立可测。
+pub mod ob20;
+
 type BoxFuture<'a, T> = futures_core::future::BoxFuture<'a, Result<T>>;
 
 fn buffer_pool() -> &'static Arc<crate::buffer_pool::BufferPool> {
