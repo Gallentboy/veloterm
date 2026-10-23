@@ -174,7 +174,13 @@ agg = { path = "vendor/agg" }
 # （spawn_blocking）包裹。前一方案 stiang/oracle-rs（纯 Rust TNS）在 11.2
 # 实测不可用已移除。裁剪与说明见 vendor/rust-oracle/README-VELOTERM.md。
 oracle = { path = "vendor/rust-oracle", features = ["chrono"] }
-# ── 数据库工作台（MySQL / PostgreSQL / Oracle）──
+# OceanBase Oracle 模式引擎：libobclient（OceanBase Connector/C）的手写 FFI
+# sys crate，vendor 树 path 依赖（gif2mp4-sys 同先例——库本体由
+# vendor/obconnector-c 预编译、静态档案在 vendor/obclient-lib/，build.rs
+# 只做档案校验与链接旗标、不编译任何 C 代码）。安全包装（spawn_blocking
+# 适配、行流、错误转 String）在 src/db_browser/obclient.rs。
+obclnt-sys = { path = "vendor/obclnt-sys" }
+# ── 数据库工作台（MySQL / PostgreSQL / Oracle / OceanBase）──
 # mysql_async：纯 Rust 异步 MySQL 客户端。default-rustls = rustls + aws-lc-rs
 # provider（与 quinn/tonic/russh 同一份 aws-lc-sys，禁止 default 的 native-tls
 # ——rustls 双 provider 并存会运行期 panic，见上方 rustls 条目约束）。

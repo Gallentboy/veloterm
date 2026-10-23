@@ -306,6 +306,7 @@ const READONLY_PRAGMAS: &[&str] = &[
 /// - 加密族：只读会话里没有合法用途，且 `PRAGMA key` 的裸形态语义不明确
 /// - 维护动作族：即便无值也会落盘（`optimize` 写 sqlite_stat1、
 ///   `incremental_vacuum` 释放页、`wal_checkpoint` 回写 WAL）
+///
 /// 其余双态指令（`foreign_keys` / `journal_mode` / `synchronous` …）交给
 /// `value.is_none()` 判定：无值是查询、带值是写。
 const WRITE_PRAGMAS: &[&str] = &[
