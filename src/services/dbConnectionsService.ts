@@ -136,16 +136,32 @@ export interface CatalogNode {
   key: string;
   name: string;
   /** database（MySQL / Redis 顶层）| schema（PG 顶层）| group | table | view
-   *  | function | procedure | sequence | column；group 的 key 形如 `{schema}#{group}`；
-   *  Redis 的 table 节点 detail 承载值类型（string/hash/list/set/zset/stream） */
-  kind: 'database' | 'schema' | 'group' | 'table' | 'view' | 'function' | 'procedure' | 'sequence' | 'column';
+   *  | mview（物化视图）| function | procedure | sequence | trigger | column；
+   *  group 的 key 形如 `{schema}#{group}`；Redis 的 table 节点 detail 承载
+   *  值类型（string/hash/list/set/zset/stream） */
+  kind:
+    | 'database'
+    | 'schema'
+    | 'group'
+    | 'table'
+    | 'view'
+    | 'mview'
+    | 'function'
+    | 'procedure'
+    | 'sequence'
+    | 'trigger'
+    | 'column';
   detail: string | null;
 }
 
 /** 目录父层参数；null = 根层。 */
 export type CatalogParentArg =
   | { kind: 'schema'; schema: string }
-  | { kind: 'group'; schema: string; group: 'table' | 'view' | 'function' | 'procedure' | 'sequence' }
+  | {
+      kind: 'group';
+      schema: string;
+      group: 'table' | 'view' | 'mview' | 'function' | 'procedure' | 'sequence' | 'trigger';
+    }
   | { kind: 'table'; schema: string; table: string };
 
 export function dbCatalog(
@@ -225,12 +241,12 @@ export interface ObjectDefinition {
   argCount: number;
 }
 
-/** 拉取函数/过程/序列（kind: 'function' | 'procedure' | 'sequence'）的完整定义与调用骨架。 */
+/** 拉取函数/过程/序列/触发器的完整定义与调用骨架。 */
 export function dbObjectDefinition(
   sessionId: string,
   schema: string,
   name: string,
-  kind: 'function' | 'procedure' | 'sequence',
+  kind: 'function' | 'procedure' | 'sequence' | 'trigger',
 ): Promise<ObjectDefinition> {
   return invoke('db_object_definition', { sessionId, schema, name, kind });
 }
@@ -322,24 +338,6 @@ export function redisBigkeys(
   topN?: number,
 ): Promise<RedisBigkeysData> {
   return invoke('redis_bigkeys', { sessionId, sample, topN });
-}
-
-// ── Oracle 客户端库目录（运行期 dlopen 的动态绑定；进程级一次初始化）──
-
-/** 读 Oracle Instant Client 目录（null = 未设置，走系统搜索路径） */
-export function oracleClientDirGet(): Promise<string | null> {
-  return invoke('oracle_client_dir_get');
-}
-
-/** 写/清除目录（null = 清除）。注意：本进程已初始化过 Oracle 客户端时，
- * 新目录要重启应用才生效（rust-oracle 的 GLOBAL_CONTEXT 进程级一次语义） */
-export function oracleClientDirSet(dir: string | null): Promise<void> {
-  return invoke('oracle_client_dir_set', { dir });
-}
-
-/** 目录选择对话框（rfd）：取消返回 null */
-export function oracleClientDirPick(): Promise<string | null> {
-  return invoke('oracle_client_dir_pick');
 }
 
 // ── SQLite 数据库文件选择（rfd）──

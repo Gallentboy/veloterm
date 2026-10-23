@@ -167,13 +167,9 @@ jpegxl-sys = { path = "vendor/jpegxl-sys" }
 # 字体：树内自带 NotoEmoji/SymbolsNerdFont + fontdb 系统字体扫描，CJK 走
 # 配置传入的系统字体回退链（PingFang/微软雅黑等），无需打包 CJK 字体。
 agg = { path = "vendor/agg" }
-# Oracle 引擎：kubo/rust-oracle（oracle crate，官方 ODPI-C 绑定）vendor 树
-#（锁 tag v0.6.3），UPL-1.0/Apache-2.0 双许可。ODPI-C 经 crates.io 的
-# odpic-sys 在编译期 cc 静态编入（无需 Oracle SDK），运行期需 Instant
-# Client（11.2–23ai 全版本）。同步 API——engines.rs 经 with_oracle
-# （spawn_blocking）包裹。前一方案 stiang/oracle-rs（纯 Rust TNS）在 11.2
-# 实测不可用已移除。裁剪与说明见 vendor/rust-oracle/README-VELOTERM.md。
-oracle = { path = "vendor/rust-oracle", features = ["chrono"] }
+# Oracle 引擎：oracle_async（纯 Rust 原生异步驱动，TNS/TTC 线路协议）vendor 树，
+# 零 C 依赖（无需 Oracle Instant Client / OCI / ODPI-C），Tokio 异步全链路。
+oracle_async = { path = "vendor/oracle_async" }
 # OceanBase Oracle 模式引擎：libobclient（OceanBase Connector/C）的手写 FFI
 # sys crate，vendor 树 path 依赖（gif2mp4-sys 同先例——库本体由
 # vendor/obconnector-c 预编译、静态档案在 vendor/obclient-lib/，build.rs

@@ -1,5 +1,5 @@
 //! 引擎层：MySQL（mysql_async）/ PostgreSQL（tokio-postgres）/ Oracle
-//!（vendor rust-oracle，官方 ODPI-C 绑定、同步 API，经 with_oracle 包裹）/
+//!（vendor oracle_async，纯 Rust 原生异步驱动，TNS/TTC 线路协议）/
 //! Redis（redis-rs 多路复用异步连接）/
 //! OceanBase（双模式：MySQL 模式租户说标准 MySQL 线缆协议、复用
 //! mysql_async 臂仅微调；Oracle 模式租户走 vendor obclnt-sys 的 libobclient
@@ -20,11 +20,10 @@
 //! databases 推出（协议本身不提供枚举）。执行层是单行命令（sqlsplit 按行
 //! 分割），没有 DDL/DML 语义，也没有 affected-rows 概念。
 //!
-//! Oracle 侧说明：rust-oracle 同步无 async，with_oracle 以 spawn_blocking
-//! 包裹每次调用（连接取出/归还）；运行期需 Oracle Instant Client（11.2–
-//! 23ai 全版本支持，编译期仅 cc 编 dpi.c 无需 SDK）。TLS 走完整描述符的
-//! TCPS 协议（证书校验粒度由 Instant Client 侧配置决定，四档统一开启
-//! TCPS、不回退明文）。
+//! Oracle 侧说明：oracle_async 是纯 Rust 原生异步驱动（TNS/TTC 线路协议），
+//! 零 C 依赖——无需 Oracle Instant Client / OCI / ODPI-C，各臂直接 await。
+//! 取消经 TNS Break Marker 真中断（tokio::select! 协作）；TLS/TCPS 尚未
+//! 实现（ssl_mode 非 disable 当前被忽略，按明文连接）。
 //!
 //! OceanBase 侧说明：Oracle 模式臂（libobclient）TLS P0 仅 disable（非
 //! disable 直接报错，不做静默明文回退）；MySQL 模式臂沿用 mysql_async 的
@@ -37,7 +36,7 @@
 //! 要求 codec 已由 key 附加，反过来会被静默忽略；sqlcipher4 即默认档位，
 //! sqlcipher-raw 直接给 x'<64 位十六进制>' 原始密钥字面量）。rusqlite 的
 //! Connection 是 Send 非 Sync，所有阻塞调用经 with_sqlite 的 spawn_blocking
-//! 包裹（与 with_oracle 同型）；取消经 progress handler——每 1000 条 VDBE
+//! 包裹（与 with_obclient 同型）；取消经 progress handler——每 1000 条 VDBE
 //! 指令轮询会话标志，命中即 SQLITE_INTERRUPT（exec_streaming 映射为
 //! cancelled=true，不是错误）。
 //!
@@ -54,6 +53,7 @@ use serde::Serialize;
 
 use crate::db::DbConnectionRecord;
 use crate::db_browser::obclient;
+use oracle_async::Queryable as _;
 
 /// Redis 引擎专属实现（拓扑/命令/键检视/分词），从本文件拆出。
 ///
@@ -62,11 +62,14 @@ use crate::db_browser::obclient;
 pub mod redis_engine;
 /// Oracle 引擎专属辅助（含 OB Oracle 共用的 all_users 黑名单口径），从本文件拆出。
 pub mod oracle_engine;
+/// 真机回归（#[ignore]，读本机 veloterm.db 的 oracle 连接记录直连验证）
+#[cfg(test)]
+mod oracle_live_test;
 /// Oracle 辅助在 mod.rs 的 match 臂与 db_browser 命令层使用（`pub(crate)` 级，
 /// 不能再经 `pub use` 外露）
 pub(crate) use self::oracle_engine::{
-    emit_oracle_rows, ob_cell_string, ob_oracle_usernames, ob_quote_literal, oracle_client_dir,
-    oracle_err, oracle_row_string, oracle_usernames,
+    ob_cell_string, ob_oracle_usernames, ob_quote_literal, oracle_err, oracle_row_string,
+    oracle_usernames,
 };
 /// 仅测试模块使用（`use super::*` 引入）
 #[cfg(test)]
@@ -147,6 +150,10 @@ pub enum ObjectGroup {
     Function,
     Procedure,
     Sequence,
+    /// 触发器（MySQL/PG/Oracle/达梦均有；DBeaver 同名列对象类型）
+    Trigger,
+    /// 物化视图（PG 的 pg_class relkind='m'；MySQL/OB MySQL 模式无此类型）
+    MaterializedView,
     RedisString,
     RedisHash,
     RedisList,
@@ -163,6 +170,8 @@ impl ObjectGroup {
             ObjectGroup::Function => "function",
             ObjectGroup::Procedure => "procedure",
             ObjectGroup::Sequence => "sequence",
+            ObjectGroup::Trigger => "trigger",
+            ObjectGroup::MaterializedView => "mview",
             ObjectGroup::RedisString => "rstring",
             ObjectGroup::RedisHash => "rhash",
             ObjectGroup::RedisList => "rlist",
@@ -179,6 +188,8 @@ impl ObjectGroup {
             "function" => Some(ObjectGroup::Function),
             "procedure" => Some(ObjectGroup::Procedure),
             "sequence" => Some(ObjectGroup::Sequence),
+            "trigger" => Some(ObjectGroup::Trigger),
+            "mview" | "materialized view" => Some(ObjectGroup::MaterializedView),
             "rstring" | "string" => Some(ObjectGroup::RedisString),
             "rhash" | "hash" => Some(ObjectGroup::RedisHash),
             "rlist" | "list" => Some(ObjectGroup::RedisList),
@@ -255,7 +266,7 @@ pub struct TableDetail {
 type MySqlColumnRow = (String, String, String, Option<String>, Option<String>);
 
 /// SQLite 引擎（本地文件库）。rusqlite::Connection 是 Send 非 Sync，
-/// 所有阻塞调用经 spawn_blocking 包裹（与 Oracle 的 with_oracle 同型）。
+/// 所有阻塞调用经 spawn_blocking 包裹（与 with_obclient 同型）。
 pub struct SqliteEngine {
     conn: rusqlite::Connection,
     /// 会话取消标志：progress handler 每 1000 条 VDBE 指令轮询一次
@@ -306,15 +317,15 @@ unsafe extern "C" fn sqlite_progress_trampoline(
 }
 
 /// 引擎实例：一会话一连接（单查询工作台模型，不做池）。Closed 为优雅关闭后的占位。
-/// Oracle / ObOracle / SQLite / 达梦均为同步驱动（rust-oracle / libobclient /
-/// rusqlite / dm-pure 无 async），持有连接分别经 with_oracle / with_obclient /
-/// with_sqlite / with_dameng 包裹调用。Redis 用 RedisConn（单机
+/// Oracle 走 oracle_async（纯 Rust 异步，各臂直接 await）；ObOracle / SQLite /
+/// 达梦为同步驱动（libobclient / rusqlite / dm-pure 无 async），持有连接分别经
+/// with_obclient / with_sqlite / with_dameng 包裹调用。Redis 用 RedisConn（单机
 /// MultiplexedConnection / 集群 ClusterConnection，内部均单任务串行化请求/
 /// 响应，clone 廉价）——与「单连接工作台」模型天然契合，不需要额外池。
 pub enum DbEngine {
     MySql(mysql_async::Conn),
     Postgres(tokio_postgres::Client),
-    Oracle(oracle::Connection),
+    Oracle(oracle_async::Conn),
     Redis {
         conn: RedisConn,
         /// 当前逻辑库索引（SELECT n 的目标；元信息展示为 "db{n}"）
@@ -505,69 +516,51 @@ impl DbEngine {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| "Oracle 需要填写密码".to_string())?;
         let host = record.host.trim().to_string();
-        let conn_string = if record.ssl_mode == "disable" {
-            format!("{host}:{}/{}", record.port, service)
-        } else {
-            format!(
-                "((ADDRESS=(PROTOCOL=TCPS)(HOST={host})(PORT={port}))\
-                 (CONNECT_DATA=(SERVICE_NAME={service})))",
-                port = record.port,
-            )
-        };
-        let username = username.to_string();
-        let password = password.to_string();
-        let schema_o = initial_schema;
-        // Oracle 客户端库目录（用户可设，db_browser 的 oracle_client_dir_set）：
-        // ODPI-C 运行期 dlopen——进程级一次初始化，本进程此前已用别的参数
-        // 初始化过则本次参数被忽略（rust-oracle 的 GLOBAL_CONTEXT 语义）
-        let client_dir = oracle_client_dir().ok().flatten();
-        let (conn, version) = tokio::task::spawn_blocking(move || {
-            // NLS_LANG 补默认（未设时才补，尊重用户显式配置）：客户端字符集
-            // 定死 UTF-8——不设则随系统 locale 漂移，非 UTF-8 locale 下中文
-            // 数据乱码；语言 AMERICAN 与官方错误文档口径一致。ODPI-C 在 init
-            // 时读该变量，必须设在 init 之前；set_var 是进程级全局操作，
-            // edition 2024 要求 unsafe（首个 Oracle 初始化前设置一次，此后
-            // 本进程不再改环境变量）
-            if std::env::var_os("NLS_LANG").is_none() {
-                unsafe { std::env::set_var("NLS_LANG", "AMERICAN_AMERICA.AL32UTF8") };
-            }
-            let mut init = oracle::InitParams::new();
-            if let Some(dir) = client_dir.as_deref().filter(|d| !d.is_empty()) {
-                init.oracle_client_lib_dir(dir)
-                    .map_err(|e| format!("Oracle 客户端目录参数无效：{e}"))?;
-            }
-            init.init()
-                .map_err(|e| format!("Oracle 客户端初始化失败：{}", oracle_err(e)))?;
-            let conn = oracle::Connection::connect(&username, &password, &conn_string)
-                .map_err(|e| format!("Oracle 连接失败：{}", oracle_err(e)))?;
-            // server_version 返回 (Version, banner)：banner 即「Oracle Database
-            // 11g Enterprise Edition Release 11.2.0.4.0 - 64bit Production」形态
-            let version = conn
-                .server_version()
-                .map(|(_, banner)| banner)
-                .unwrap_or_default();
-            // 初始 schema（database 字段，可选）：CURRENT_SCHEMA 只改名字解析
-            // 不改权限；标识符字符集校验同 select_database（防注入）
-            if let Some(schema) = schema_o.as_deref().filter(|s| !s.trim().is_empty()) {
-                if !schema
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '#'))
-                {
-                    return Err("Oracle 无效的 schema 名".to_string());
+
+        let opts = oracle_async::Opts::builder()
+            .host(host)
+            .port(record.port)
+            .service_name(service)
+            .username(username)
+            .password(password)
+            .build();
+
+        let mut conn = oracle_async::Conn::connect(opts)
+            .await
+            .map_err(|e| format!("Oracle 连接失败：{}", oracle_err(e)))?;
+
+        // 版本展示与原生 OCI / go-ora 严格一致：用 0x3B 回包的完整 banner
+        // （如 "Oracle Database 11g Enterprise Edition Release …"），
+        // 兜底数字版本号；TTC 协商串只是平台尾巴不可用
+        let version = {
+            let banner = conn.db_version_banner().trim();
+            if !banner.is_empty() {
+                banner.to_string()
+            } else {
+                let text = conn.db_version().trim();
+                if text.is_empty() {
+                    "Oracle".to_string()
+                } else {
+                    text.to_string()
                 }
-                let sql = format!("ALTER SESSION SET CURRENT_SCHEMA = {schema}");
-                conn.execute(sql.as_str(), &[])
-                    .map_err(|e| format!("Oracle 设置初始 schema 失败：{}", oracle_err(e)))?;
             }
-            Ok::<_, String>((conn, version))
-        })
-        .await
-        .map_err(|e| format!("Oracle 连接任务失败：{e}"))??;
-        let version = if version.is_empty() {
-            "Oracle".to_string()
-        } else {
-            version
         };
+
+        // 初始 schema（database 字段，可选）：CURRENT_SCHEMA 只改名字解析
+        // 不改权限；标识符字符集校验同 select_database（防注入）
+        if let Some(schema) = initial_schema.as_deref().filter(|s| !s.trim().is_empty()) {
+            if !schema
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '#'))
+            {
+                return Err("Oracle 无效的 schema 名".to_string());
+            }
+            let sql = format!("ALTER SESSION SET CURRENT_SCHEMA = {schema}");
+            conn.exec(&sql)
+                .await
+                .map_err(|e| format!("Oracle 设置初始 schema 失败：{}", oracle_err(e)))?;
+        }
+
         Ok((DbEngine::Oracle(conn), version))
     }
 
@@ -911,7 +904,7 @@ impl DbEngine {
 
     /// 同步 SQLite 连接的阻塞包裹：连接取出 → spawn_blocking 内执行闭包 →
     /// 连接归还（错误也归还；panic/取消置 Closed 由会话层重建）。与
-    /// with_oracle 同型——rusqlite 的 Connection 是 Send 非 Sync，不能跨
+    /// with_obclient 同型——rusqlite 的 Connection 是 Send 非 Sync，不能跨
     /// await 直接持有。
     async fn with_sqlite<T, F>(&mut self, f: F) -> Result<T, String>
     where
@@ -1041,40 +1034,9 @@ impl DbEngine {
         Ok((DbEngine::ObOracle(conn), version))
     }
 
-    /// 同步 Oracle 连接的阻塞包裹：连接取出 → spawn_blocking 内执行闭包 →
-    /// 连接归还（错误/取消也归还，避免连接丢失）。闭包内可直接调用同步 API。
-    async fn with_oracle<T, F>(&mut self, f: F) -> Result<T, String>
-    where
-        T: Send + 'static,
-        F: FnOnce(&mut oracle::Connection) -> Result<T, String> + Send + 'static,
-    {
-        let taken = std::mem::replace(self, DbEngine::Closed);
-        let DbEngine::Oracle(mut conn) = taken else {
-            *self = taken;
-            return Err("连接已关闭".to_string());
-        };
-        let result = tokio::task::spawn_blocking(move || {
-            let r = f(&mut conn);
-            (r, conn)
-        })
-        .await
-        .map_err(|e| format!("Oracle 任务失败：{e}"));
-        match result {
-            Ok((r, conn)) => {
-                *self = DbEngine::Oracle(conn);
-                r
-            }
-            Err(e) => {
-                // JoinError（panic/取消）：连接已无法取回，置 Closed 由会话层重建
-                *self = DbEngine::Closed;
-                Err(e)
-            }
-        }
-    }
-
-    /// 同步 OB Oracle 连接（libobclient 阻塞 C API）的阻塞包裹：with_oracle
-    /// 同型——连接取出 → spawn_blocking 内执行闭包 → 连接归还（错误/取消也
-    /// 归还，避免连接丢失；Drop 兑底释放）。闭包内可直接调用同步 API。
+    /// 同步 OB Oracle 连接（libobclient 阻塞 C API）的阻塞包裹：连接取出 →
+    /// spawn_blocking 内执行闭包 → 连接归还（错误/取消也归还，避免连接丢失；
+    /// Drop 兜底释放）。闭包内可直接调用同步 API。
     async fn with_obclient<T, F>(&mut self, f: F) -> Result<T, String>
     where
         T: Send + 'static,
@@ -1105,7 +1067,7 @@ impl DbEngine {
         }
     }
 
-    /// 同步达梦连接的阻塞包裹（with_oracle 同型）：连接取出 → spawn_blocking
+    /// 同步达梦连接的阻塞包裹（with_obclient 同型）：连接取出 → spawn_blocking
     /// 内执行闭包 → 连接归还（错误/取消也归还，避免连接丢失）。dm-pure 是
     /// 纯同步驱动（std::net），闭包内可直接调用其 API。
     async fn with_dameng<T, F>(&mut self, f: F) -> Result<T, String>
@@ -1237,10 +1199,10 @@ impl DbEngine {
                     .filter_map(|row| row.try_get::<_, String>(0).ok())
                     .collect())
             }
-            DbEngine::Oracle(_) => {
+            DbEngine::Oracle(conn) => {
                 // Oracle 无连接级切库：清单 = 可见 schema（版本适配滤系统账号，
                 // 见 oracle_usernames），切换走 select_database 的 CURRENT_SCHEMA
-                self.with_oracle(|conn| oracle_usernames(conn)).await
+                oracle_usernames(conn).await
             }
             DbEngine::Redis { conn, cluster, .. } => {
                 // 集群只有 db0（SELECT 在集群协议下不可用），清单收窄避免误导。
@@ -1296,7 +1258,7 @@ impl DbEngine {
                 self.with_obclient(move |conn| conn.select_schema(&schema))
                     .await
             }
-            DbEngine::Oracle(_) => {
+            DbEngine::Oracle(conn) => {
                 // CURRENT_SCHEMA 只改名字解析不改权限；拼进 DDL 前必须校验
                 // 标识符字符集（Oracle 普通标识符 [A-Za-z0-9_$#]，不带引号）
                 let valid = !database.is_empty()
@@ -1307,12 +1269,10 @@ impl DbEngine {
                     return Err("Oracle 无效的 schema 名".to_string());
                 }
                 let sql = format!("ALTER SESSION SET CURRENT_SCHEMA = {database}");
-                self.with_oracle(move |conn| {
-                    conn.execute(&sql, &[])
-                        .map_err(|e| format!("Oracle 切换 schema 失败：{}", oracle_err(e)))?;
-                    Ok(())
-                })
-                .await
+                conn.exec(&sql)
+                    .await
+                    .map_err(|e| format!("Oracle 切换 schema 失败：{}", oracle_err(e)))?;
+                Ok(())
             }
             DbEngine::Redis { conn, db, cluster } => {
                 // SELECT 是连接级状态：multiplexed 连接上所有后续命令都落在这个
@@ -1562,115 +1522,122 @@ impl DbEngine {
                     indexes,
                 })
             }
-            DbEngine::Oracle(_) => {
+            DbEngine::Oracle(conn) => {
                 // DDL 首选 DBMS_METADATA.GET_DDL（需权限，失败降级为列元数据
                 // 拼装——PG 同型语义）；列结构 all_tab_columns（data_default 是
                 // LONG 类型、驱动不支持，故不带 Default 列）；索引
                 // all_indexes + all_ind_columns 经 LISTAGG 聚列。
-                // SQL 用真实多行字符串（Oracle 接受任意空白，无 \ 续行）
-                let schema_o = schema.to_string();
-                let table_o = table.to_string();
-                let kind_o = kind.to_string();
-                self.with_oracle(move |conn| {
-                    let object_type = if kind_o == "view" { "VIEW" } else { "TABLE" };
-                    let ddl = conn
-                        .query(
-                            "SELECT DBMS_METADATA.GET_DDL(:1, :2, :3) FROM dual",
-                            &[&object_type, &table_o, &schema_o],
-                        )
-                        .ok()
-                        .and_then(|mut rs| rs.next())
-                        .and_then(|r| r.ok())
-                        .map(|row| oracle_row_string(&row, 0))
-                        .unwrap_or_default();
+                let object_type = if kind == "view" { "VIEW" } else { "TABLE" };
+                let ddl_sql = format!(
+                    "SELECT DBMS_METADATA.GET_DDL({}, {}, {}) FROM dual",
+                    ob_quote_literal(object_type),
+                    ob_quote_literal(table),
+                    ob_quote_literal(schema)
+                );
+                let ddl = match conn.query(&ddl_sql).await {
+                    Ok(mut rs) => match rs.next_row().await {
+                        Ok(Some(row)) => oracle_row_string(&row, 0),
+                        _ => String::new(),
+                    },
+                    Err(_) => String::new(),
+                };
 
-                    let col_rs = conn
-                        .query(
-                            "SELECT column_name, data_type, nullable FROM all_tab_columns
-                             WHERE owner = :1 AND table_name = :2 ORDER BY column_id",
-                            &[&schema_o, &table_o],
-                        )
-                        .map_err(|e| format!("Oracle 查询列结构失败：{}", oracle_err(e)))?;
-                    let columns: Vec<Vec<String>> = col_rs
-                        .filter_map(|r| r.ok())
-                        .map(|row| {
-                            vec![
-                                oracle_row_string(&row, 0),
-                                oracle_row_string(&row, 1),
-                                // 字典的 Y/N 统一为另两引擎的 YES/NO 展示
-                                match row.sql_values().get(2).map(|v| v.to_string()) {
-                                    Some(s) if s == "Y" => "YES".to_string(),
-                                    Some(s) if s == "N" => "NO".to_string(),
-                                    _ => String::new(),
-                                },
-                            ]
-                        })
-                        .collect();
-
-                    let idx_rs = conn
-                        .query(
-                            "SELECT i.index_name, i.uniqueness,
-                                    LISTAGG(c.column_name, ', ') WITHIN GROUP
-                                      (ORDER BY c.column_position)
-                             FROM all_indexes i
-                             JOIN all_ind_columns c
-                               ON c.index_name = i.index_name AND c.index_owner = i.owner
-                             WHERE i.table_owner = :1 AND i.table_name = :2
-                             GROUP BY i.index_name, i.uniqueness ORDER BY i.index_name",
-                            &[&schema_o, &table_o],
-                        )
-                        .map_err(|e| format!("Oracle 查询索引失败：{}", oracle_err(e)))?;
-                    let indexes: Vec<Vec<String>> = idx_rs
-                        .filter_map(|r| r.ok())
-                        .map(|row| {
-                            vec![
-                                oracle_row_string(&row, 0),
-                                if oracle_row_string(&row, 1) == "UNIQUE" {
-                                    "UNIQUE".to_string()
-                                } else {
-                                    String::new()
-                                },
-                                oracle_row_string(&row, 2),
-                            ]
-                        })
-                        .collect();
-
-                    // DDL 降级：列元数据拼装（含 NOT NULL）
-                    let ddl = if ddl.is_empty() {
-                        let q = |v: &str| format!("\"{}\"", v.replace('"', "\"\""));
-                        let lines: Vec<String> = columns
-                            .iter()
-                            .map(|c| {
-                                let mut line = format!(
-                                    "  {} {}",
-                                    q(c.first().unwrap_or(&String::new())),
-                                    c.get(1).cloned().unwrap_or_default()
-                                );
-                                if c.get(2).map(|v| v == "NO").unwrap_or(false) {
-                                    line.push_str(" NOT NULL");
-                                }
-                                line
-                            })
-                            .collect();
-                        format!(
-                            "CREATE TABLE {}.{} (\n{}\n);",
-                            q(&schema_o),
-                            q(&table_o),
-                            lines.join(",\n")
-                        )
-                    } else {
-                        ddl
+                let col_sql = format!(
+                    "SELECT column_name, data_type, nullable FROM all_tab_columns \
+                     WHERE owner = {} AND table_name = {} ORDER BY column_id",
+                    ob_quote_literal(schema),
+                    ob_quote_literal(table)
+                );
+                let mut col_rs = conn
+                    .query(&col_sql)
+                    .await
+                    .map_err(|e| format!("Oracle 查询列结构失败：{}", oracle_err(e)))?;
+                let mut columns: Vec<Vec<String>> = Vec::new();
+                while let Some(row) = col_rs
+                    .next_row()
+                    .await
+                    .map_err(|e| format!("Oracle 读取列结构失败：{}", oracle_err(e)))?
+                {
+                    let nullable = match row.values().get(2).map(|v| v.to_string()) {
+                        Some(s) if s == "Y" => "YES".to_string(),
+                        Some(s) if s == "N" => "NO".to_string(),
+                        _ => String::new(),
                     };
+                    columns.push(vec![
+                        oracle_row_string(&row, 0),
+                        oracle_row_string(&row, 1),
+                        nullable,
+                    ]);
+                }
 
-                    Ok(TableDetail {
-                        ddl,
-                        column_headers: vec!["Column".into(), "Type".into(), "Nullable".into()],
-                        columns,
-                        index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
-                        indexes,
-                    })
+                let idx_sql = format!(
+                    "SELECT i.index_name, i.uniqueness, \
+                            LISTAGG(c.column_name, ', ') WITHIN GROUP \
+                              (ORDER BY c.column_position) \
+                     FROM all_indexes i \
+                     JOIN all_ind_columns c \
+                       ON c.index_name = i.index_name AND c.index_owner = i.owner \
+                     WHERE i.table_owner = {} AND i.table_name = {} \
+                     GROUP BY i.index_name, i.uniqueness ORDER BY i.index_name",
+                    ob_quote_literal(schema),
+                    ob_quote_literal(table)
+                );
+                let mut idx_rs = conn
+                    .query(&idx_sql)
+                    .await
+                    .map_err(|e| format!("Oracle 查询索引失败：{}", oracle_err(e)))?;
+                let mut indexes: Vec<Vec<String>> = Vec::new();
+                while let Some(row) = idx_rs
+                    .next_row()
+                    .await
+                    .map_err(|e| format!("Oracle 读取索引失败：{}", oracle_err(e)))?
+                {
+                    let is_unique = if oracle_row_string(&row, 1) == "UNIQUE" {
+                        "UNIQUE".to_string()
+                    } else {
+                        String::new()
+                    };
+                    indexes.push(vec![
+                        oracle_row_string(&row, 0),
+                        is_unique,
+                        oracle_row_string(&row, 2),
+                    ]);
+                }
+
+                // DDL 降级：列元数据拼装（含 NOT NULL）
+                let ddl = if ddl.is_empty() {
+                    let q = |v: &str| format!("\"{}\"", v.replace('"', "\"\""));
+                    let lines: Vec<String> = columns
+                        .iter()
+                        .map(|c| {
+                            let mut line = format!(
+                                "  {} {}",
+                                q(c.first().unwrap_or(&String::new())),
+                                c.get(1).cloned().unwrap_or_default()
+                            );
+                            if c.get(2).map(|v| v == "NO").unwrap_or(false) {
+                                line.push_str(" NOT NULL");
+                            }
+                            line
+                        })
+                        .collect();
+                    format!(
+                        "CREATE TABLE {}.{} (\n{}\n);",
+                        q(schema),
+                        q(table),
+                        lines.join(",\n")
+                    )
+                } else {
+                    ddl
+                };
+
+                Ok(TableDetail {
+                    ddl,
+                    column_headers: vec!["Column".into(), "Type".into(), "Nullable".into()],
+                    columns,
+                    index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
+                    indexes,
                 })
-                .await
             }
             DbEngine::Redis { conn, db, .. } => {
                 // Redis 没有 DDL：ddl 字段承载一段人类可读的键检视块（纯文本，
@@ -2059,6 +2026,37 @@ impl DbEngine {
                 if kind == "sequence" {
                     return Err("MySQL 没有序列对象".to_string());
                 }
+                // 触发器：DBeaver MySQLTrigger 同源——SHOW CREATE TRIGGER
+                //（列名含 "Create Trigger"；无调用骨架，返回空 template）
+                if kind == "trigger" {
+                    let s = schema.replace('`', "``");
+                    let n = name.replace('`', "``");
+                    let mut result = conn
+                        .query_iter(format!("SHOW CREATE TRIGGER `{s}`.`{n}`"))
+                        .await
+                        .map_err(|e| format!("MySQL 拉取触发器定义失败：{e}"))?;
+                    let create_idx = result
+                        .columns_ref()
+                        .iter()
+                        .position(|c| {
+                            c.name_str().to_lowercase().contains("create")
+                                && !c.name_str().to_lowercase().contains("sql_mode")
+                        })
+                        .ok_or_else(|| "SHOW CREATE TRIGGER 结果中未找到定义列".to_string())?;
+                    let rows: Vec<mysql_async::Row> = result
+                        .collect()
+                        .await
+                        .map_err(|e| format!("MySQL 读取触发器定义失败：{e}"))?;
+                    let row = rows
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| "SHOW CREATE TRIGGER 未返回定义".to_string())?;
+                    return Ok(ObjectDefinition {
+                        definition: row.get::<String, usize>(create_idx).unwrap_or_default(),
+                        call_template: String::new(),
+                        arg_count: 0,
+                    });
+                }
                 let verb = if kind == "function" { "FUNCTION" } else { "PROCEDURE" };
                 let s = schema.replace('`', "``");
                 let n = name.replace('`', "``");
@@ -2125,6 +2123,29 @@ impl DbEngine {
                         arg_count: 0,
                     });
                 }
+                // 触发器：pg_get_triggerdef（DBeaver PostgreTrigger 同源）
+                if kind == "trigger" {
+                    let row = client
+                        .query_opt(
+                            "SELECT pg_catalog.pg_get_triggerdef(t.oid) \
+                             FROM pg_catalog.pg_trigger t \
+                             JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
+                             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                             WHERE n.nspname = $1 AND t.tgname = $2 LIMIT 1",
+                            &[&schema, &name],
+                        )
+                        .await
+                        .map_err(|e| format!("PostgreSQL 拉取触发器定义失败：{e}"))?
+                        .ok_or_else(|| "未找到该触发器（可能已被删除）".to_string())?;
+                    let definition: String = row
+                        .try_get(0)
+                        .map_err(|e| format!("PostgreSQL 读取触发器定义失败：{e}"))?;
+                    return Ok(ObjectDefinition {
+                        definition,
+                        call_template: String::new(),
+                        arg_count: 0,
+                    });
+                }
                 let row = client
                     .query_opt(
                         "SELECT pg_get_functiondef(p.oid), p.pronargs \
@@ -2152,72 +2173,120 @@ impl DbEngine {
                     arg_count: arg_count.max(0) as usize,
                 })
             }
-            DbEngine::Oracle(_) => {
+            DbEngine::Oracle(conn) => {
                 // 定义：all_source 按行拼回（CREATE OR REPLACE 前缀在首行内）；
                 // 入参个数：all_arguments 的具名参数（argument_name 为 NULL 的
                 // 是函数返回值，排除）
-                let schema_o = schema.to_string();
-                let name_o = name.to_string();
-                let kind_o = kind.to_string();
-                self.with_oracle(move |conn| {
-                    // 序列：DBMS_METADATA 出 CREATE SEQUENCE DDL；模板取 NEXTVAL
-                    if kind_o == "sequence" {
-                        let ddl = conn
-                            .query(
-                                "SELECT DBMS_METADATA.GET_DDL('SEQUENCE', :1, :2) FROM dual",
-                                &[&name_o, &schema_o],
-                            )
-                            .map_err(|e| format!("Oracle 拉取序列定义失败：{}", oracle_err(e)))?
-                            .filter_map(|r| r.ok())
-                            .next()
-                            .map(|row| oracle_row_string(&row, 0))
-                            .unwrap_or_default();
-                        if ddl.trim().is_empty() {
-                            return Err("未找到该序列（可能已被删除）".to_string());
-                        }
-                        return Ok(ObjectDefinition {
-                            definition: ddl,
-                            call_template: format!("SELECT {schema_o}.{name_o}.NEXTVAL FROM dual;"),
-                            arg_count: 0,
-                        });
-                    }
-                    let obj_type = if kind_o == "function" { "FUNCTION" } else { "PROCEDURE" };
-                    let src = conn
-                        .query(
-                            "SELECT text FROM all_source
-                             WHERE owner = :1 AND name = :2 AND type = :3
-                             ORDER BY line",
-                            &[&schema_o, &name_o, &obj_type],
-                        )
-                        .map_err(|e| format!("Oracle 拉取定义失败：{}", oracle_err(e)))?;
-                    let definition = src
-                        .filter_map(|r| r.ok())
-                        .map(|row| oracle_row_string(&row, 0))
-                        .collect::<Vec<_>>()
-                        .join("");
-                    if definition.trim().is_empty() {
-                        return Err("未找到该函数/过程（可能已被删除）".to_string());
-                    }
-                    let arg_count = conn
-                        .query_row_as::<i64>(
-                            "SELECT COUNT(*) FROM all_arguments
-                             WHERE owner = :1 AND object_name = :2
-                               AND argument_name IS NOT NULL",
-                            &[&schema_o, &name_o],
-                        )
-                        .map_err(|e| format!("Oracle 查询参数个数失败：{}", oracle_err(e)))?;
-                    let call_template = if kind_o == "function" {
-                        format!("SELECT \"{schema_o}\".\"{name_o}\"() FROM dual")
-                    } else {
-                        format!("BEGIN \"{schema_o}\".\"{name_o}\"(); END;")
+                if kind == "sequence" {
+                    let ddl_sql = format!(
+                        "SELECT DBMS_METADATA.GET_DDL('SEQUENCE', {}, {}) FROM dual",
+                        ob_quote_literal(name),
+                        ob_quote_literal(schema)
+                    );
+                    let mut rs = conn
+                        .query(&ddl_sql)
+                        .await
+                        .map_err(|e| format!("Oracle 拉取序列定义失败：{}", oracle_err(e)))?;
+                    let ddl = match rs
+                        .next_row()
+                        .await
+                        .map_err(|e| format!("Oracle 读取序列定义失败：{}", oracle_err(e)))?
+                    {
+                        Some(row) => oracle_row_string(&row, 0),
+                        None => String::new(),
                     };
-                    Ok(ObjectDefinition {
+                    if ddl.trim().is_empty() {
+                        return Err("未找到该序列（可能已被删除）".to_string());
+                    }
+                    return Ok(ObjectDefinition {
+                        definition: ddl,
+                        call_template: format!("SELECT {schema}.{name}.NEXTVAL FROM dual;"),
+                        arg_count: 0,
+                    });
+                }
+                // 触发器：DBeaver OracleTrigger 同源——all_source TYPE='TRIGGER'
+                // 拼回完整触发器体（含 CREATE TRIGGER 头）
+                if kind == "trigger" {
+                    let sql = format!(
+                        "SELECT text FROM all_source WHERE owner = {} AND name = {} \
+                         AND type = 'TRIGGER' ORDER BY line",
+                        ob_quote_literal(schema),
+                        ob_quote_literal(name)
+                    );
+                    let mut rs = conn
+                        .query(&sql)
+                        .await
+                        .map_err(|e| format!("Oracle 拉取触发器定义失败：{}", oracle_err(e)))?;
+                    let mut lines = Vec::new();
+                    while let Some(row) = rs
+                        .next_row()
+                        .await
+                        .map_err(|e| format!("Oracle 读取触发器定义失败：{}", oracle_err(e)))?
+                    {
+                        lines.push(oracle_row_string(&row, 0));
+                    }
+                    let definition = lines.join("");
+                    if definition.trim().is_empty() {
+                        return Err("未找到该触发器（可能已被删除）".to_string());
+                    }
+                    return Ok(ObjectDefinition {
                         definition,
-                        call_template,
-                        arg_count: arg_count.max(0) as usize,
-                    })
+                        call_template: String::new(),
+                        arg_count: 0,
+                    });
+                }
+                let obj_type = if kind == "function" { "FUNCTION" } else { "PROCEDURE" };
+                let sql = format!(
+                    "SELECT text FROM all_source WHERE owner = {} AND name = {} AND type = {} ORDER BY line",
+                    ob_quote_literal(schema),
+                    ob_quote_literal(name),
+                    ob_quote_literal(obj_type)
+                );
+                let mut rs = conn
+                    .query(&sql)
+                    .await
+                    .map_err(|e| format!("Oracle 拉取定义失败：{}", oracle_err(e)))?;
+                let mut lines = Vec::new();
+                while let Some(row) = rs
+                    .next_row()
+                    .await
+                    .map_err(|e| format!("Oracle 读取定义失败：{}", oracle_err(e)))?
+                {
+                    lines.push(oracle_row_string(&row, 0));
+                }
+                let definition = lines.join("");
+                if definition.trim().is_empty() {
+                    return Err("未找到该函数/过程（可能已被删除）".to_string());
+                }
+
+                let cnt_sql = format!(
+                    "SELECT COUNT(*) FROM all_arguments WHERE owner = {} AND object_name = {} AND argument_name IS NOT NULL",
+                    ob_quote_literal(schema),
+                    ob_quote_literal(name)
+                );
+                let mut cnt_rs = conn
+                    .query(&cnt_sql)
+                    .await
+                    .map_err(|e| format!("Oracle 查询参数个数失败：{}", oracle_err(e)))?;
+                let arg_count: usize = match cnt_rs
+                    .next_row()
+                    .await
+                    .map_err(|e| format!("Oracle 读取参数个数失败：{}", oracle_err(e)))?
+                {
+                    Some(row) => row.get::<i64>(0).unwrap_or(0).max(0) as usize,
+                    None => 0,
+                };
+
+                let call_template = if kind == "function" {
+                    format!("SELECT \"{schema}\".\"{name}\"() FROM dual")
+                } else {
+                    format!("BEGIN \"{schema}\".\"{name}\"(); END;")
+                };
+                Ok(ObjectDefinition {
+                    definition,
+                    call_template,
+                    arg_count,
                 })
-                .await
             }
             DbEngine::Redis { conn, db, .. } => {
                 // Redis 树里没有函数/过程/序列（只有 key），本臂只服务「key
@@ -2276,6 +2345,27 @@ impl DbEngine {
                             call_template: format!(
                                 "SELECT \"{schema_o}\".\"{name_o}\".NEXTVAL FROM DUAL;"
                             ),
+                            arg_count: 0,
+                        });
+                    }
+                    // 触发器：DBeaver DamengMetaModel 同源——DBMS_METADATA.GET_DDL
+                    //（达梦触发器源码不在 ALL_SOURCE，走 GET_DDL 才能拿到完整定义）
+                    if kind_o == "trigger" {
+                        let ddl = dm_query_first_string(
+                            client,
+                            "SELECT DBMS_METADATA.GET_DDL('TRIGGER', ?, ?) FROM DUAL",
+                            &[
+                                dm_pure::Param::Str(name_o.clone()),
+                                dm_pure::Param::Str(schema_o.clone()),
+                            ],
+                        )
+                        .unwrap_or_default();
+                        if ddl.trim().is_empty() {
+                            return Err("未找到该触发器（可能已被删除）".to_string());
+                        }
+                        return Ok(ObjectDefinition {
+                            definition: ddl,
+                            call_template: String::new(),
                             arg_count: 0,
                         });
                     }
@@ -2385,20 +2475,18 @@ impl DbEngine {
                     })
                     .collect())
             }
-            DbEngine::Oracle(_) => {
+            DbEngine::Oracle(conn) => {
                 // 顶层 = schema（用户）：版本适配滤系统账号（oracle_usernames）
-                self.with_oracle(|conn| {
-                    Ok(oracle_usernames(conn)?
-                        .into_iter()
-                        .map(|name| CatalogNode {
-                            key: name.clone(),
-                            name,
-                            kind: "schema".to_string(),
-                            detail: None,
-                        })
-                        .collect())
-                })
-                .await
+                Ok(oracle_usernames(conn)
+                    .await?
+                    .into_iter()
+                    .map(|name| CatalogNode {
+                        key: name.clone(),
+                        name,
+                        kind: "schema".to_string(),
+                        detail: None,
+                    })
+                    .collect())
             }
             DbEngine::Redis { conn, .. } => {
                 // 顶层 = 逻辑库。keys 计数走 INFO keyspace 一次拿全（形如
@@ -2475,7 +2563,12 @@ impl DbEngine {
         }
     }
 
-    /// 库/schema 下固定分组（表/视图/函数/过程/序列），带对象计数，空组不返回。
+    /// 库/schema 下固定分组（表/视图/物化视图/函数/过程/触发器/序列），
+    /// 带对象计数，空组不返回。SQL 口径对齐 DBeaver 开源实现：
+    /// - MySQL：information_schema.TRIGGERS（DBeaver MySQLCatalog.TriggerCache 同源）
+    /// - PG：pg_class relkind='m' 物化视图 + pg_trigger（PostgreSchema 同源）
+    /// - Oracle：all_objects 加 TRIGGER/CLUSTER（OracleSchema 同源）
+    /// - 达梦：SYSOBJECTS 基表（DamengMetaModel 同源，原生口径而非 ALL_* 兼容层）
     async fn catalog_groups(&mut self, schema: &str) -> Result<Vec<CatalogNode>, String> {
         match self {
             DbEngine::MySql(conn) => {
@@ -2509,6 +2602,16 @@ impl DbEngine {
                     Ok(Some(n)) => n,
                     _ => 0,
                 };
+                // 触发器：DBeaver TriggerCache 同源（TRIGGER_SCHEMA 过滤）
+                let triggers: i64 = conn
+                    .exec_first::<i64, _, _>(
+                        "SELECT COUNT(*) FROM information_schema.triggers \
+                         WHERE trigger_schema = ?",
+                        (schema,),
+                    )
+                    .await
+                    .unwrap_or(Some(0))
+                    .unwrap_or(0);
                 let count_of = |kind: &str, rows: &[(String, i64)]| {
                     rows.iter()
                         .find(|(k, _)| k.eq_ignore_ascii_case(kind))
@@ -2517,22 +2620,34 @@ impl DbEngine {
                 };
                 Ok(group_nodes(
                     schema,
-                    count_of("BASE TABLE", &tables),
-                    count_of("VIEW", &tables),
-                    count_of("FUNCTION", &routines),
-                    count_of("PROCEDURE", &routines),
-                    sequences,
+                    GroupCounts {
+                        triggers: Some(triggers),
+                        ..GroupCounts::base(
+                            count_of("BASE TABLE", &tables),
+                            count_of("VIEW", &tables),
+                            count_of("FUNCTION", &routines),
+                            count_of("PROCEDURE", &routines),
+                            sequences,
+                        )
+                    },
                 ))
             }
             DbEngine::Postgres(client) => {
-                let tables: Vec<(String, i64)> = client
+                // DBeaver PostgreSchema 同源：pg_class 按 relkind 分组
+                // （r=表/v=视图/m=物化视图/S=序列/f=外部表），触发器走 pg_trigger
+                //（not tgisinternal 过滤自动创建的内部触发器）。不用
+                // information_schema——它看不到物化视图，且 DBeaver 也不用。
+                let relkind: Vec<(String, i64)> = client
                     .query(
-                        "SELECT table_type, COUNT(*) FROM information_schema.tables \
-                         WHERE table_schema = $1 GROUP BY table_type",
+                        "SELECT c.relkind::char::text, COUNT(*) \
+                         FROM pg_catalog.pg_class c \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                         WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','S') \
+                         GROUP BY c.relkind",
                         &[&schema],
                     )
                     .await
-                    .map_err(|e| format!("PostgreSQL 查询表清单失败：{e}"))?
+                    .map_err(|e| format!("PostgreSQL 查询关系清单失败：{e}"))?
                     .iter()
                     .filter_map(|row| {
                         Some((
@@ -2543,8 +2658,11 @@ impl DbEngine {
                     .collect();
                 let routines: Vec<(String, i64)> = client
                     .query(
-                        "SELECT routine_type, COUNT(*) FROM information_schema.routines \
-                         WHERE routine_schema = $1 GROUP BY routine_type",
+                        "SELECT p.prokind::char::text, COUNT(*) \
+                         FROM pg_catalog.pg_proc p \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
+                         WHERE n.nspname = $1 AND p.prokind IN ('f','p') \
+                         GROUP BY p.prokind",
                         &[&schema],
                     )
                     .await
@@ -2557,10 +2675,12 @@ impl DbEngine {
                         ))
                     })
                     .collect();
-                let sequences: i64 = client
+                let triggers: i64 = client
                     .query_opt(
-                        "SELECT COUNT(*) FROM information_schema.sequences \
-                         WHERE sequence_schema = $1",
+                        "SELECT COUNT(*) FROM pg_catalog.pg_trigger t \
+                         JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                         WHERE n.nspname = $1 AND NOT t.tgisinternal",
                         &[&schema],
                     )
                     .await
@@ -2570,63 +2690,70 @@ impl DbEngine {
                     .unwrap_or(0);
                 let count_of = |kind: &str, rows: &[(String, i64)]| {
                     rows.iter()
+                        .find(|(k, _)| *k == kind)
+                        .map(|(_, c)| *c)
+                        .unwrap_or(0)
+                };
+                Ok(group_nodes(
+                    schema,
+                    GroupCounts {
+                        triggers: Some(triggers),
+                        mviews: Some(count_of("m", &relkind)),
+                        ..GroupCounts::base(
+                            count_of("r", &relkind),
+                            count_of("v", &relkind),
+                            count_of("f", &routines),
+                            count_of("p", &routines),
+                            count_of("S", &relkind),
+                        )
+                    },
+                ))
+            }
+            DbEngine::Oracle(conn) => {
+                // 对象在 all_objects 一表内聚合（SEQUENCE/TRIGGER 也在；DBeaver
+                // OracleSchema 同源，加 TRIGGER 类型）；BIN$ 前缀 = 回收站不计数
+                let sql = format!(
+                    "SELECT object_type, COUNT(*) FROM all_objects \
+                     WHERE owner = {} AND object_name NOT LIKE 'BIN$%' \
+                       AND object_type IN \
+                         ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE','TRIGGER') \
+                     GROUP BY object_type",
+                    ob_quote_literal(schema)
+                );
+                let mut rs = conn
+                    .query(&sql)
+                    .await
+                    .map_err(|e| format!("Oracle 查询对象计数失败：{}", oracle_err(e)))?;
+                let mut counts: Vec<(String, i64)> = Vec::new();
+                while let Some(row) = rs
+                    .next_row()
+                    .await
+                    .map_err(|e| format!("Oracle 读取对象计数失败：{}", oracle_err(e)))?
+                {
+                    let k = oracle_row_string(&row, 0);
+                    let c = row.get::<i64>(1).unwrap_or(0);
+                    counts.push((k, c));
+                }
+                let count_of = |kind: &str| {
+                    counts
+                        .iter()
                         .find(|(k, _)| k.eq_ignore_ascii_case(kind))
                         .map(|(_, c)| *c)
                         .unwrap_or(0)
                 };
                 Ok(group_nodes(
                     schema,
-                    count_of("BASE TABLE", &tables),
-                    count_of("VIEW", &tables),
-                    count_of("FUNCTION", &routines),
-                    count_of("PROCEDURE", &routines),
-                    sequences,
-                ))
-            }
-            DbEngine::Oracle(_) => {
-                // 五类对象在 all_objects 一表内聚合（SEQUENCE 也在）；
-                // BIN$ 前缀 = 回收站对象不计数
-                let schema_o = schema.to_string();
-                self.with_oracle(move |conn| {
-                    let rs = conn
-                        .query(
-                            "SELECT object_type, COUNT(*) FROM all_objects
-                             WHERE owner = :1 AND object_name NOT LIKE 'BIN$%'
-                               AND object_type IN
-                                 ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE')
-                             GROUP BY object_type",
-                            &[&schema_o],
+                    GroupCounts {
+                        triggers: Some(count_of("TRIGGER")),
+                        ..GroupCounts::base(
+                            count_of("TABLE"),
+                            count_of("VIEW"),
+                            count_of("FUNCTION"),
+                            count_of("PROCEDURE"),
+                            count_of("SEQUENCE"),
                         )
-                        .map_err(|e| format!("Oracle 查询对象计数失败：{}", oracle_err(e)))?;
-                    let counts: Vec<(String, i64)> = rs
-                        .filter_map(|r| r.ok())
-                        .map(|row| {
-                            (
-                                oracle_row_string(&row, 0),
-                                row.sql_values()
-                                    .get(1)
-                                    .and_then(|v| v.to_string().parse::<i64>().ok())
-                                    .unwrap_or(0),
-                            )
-                        })
-                        .collect();
-                    let count_of = |kind: &str| {
-                        counts
-                            .iter()
-                            .find(|(k, _)| k.eq_ignore_ascii_case(kind))
-                            .map(|(_, c)| *c)
-                            .unwrap_or(0)
-                    };
-                    Ok(group_nodes(
-                        &schema_o,
-                        count_of("TABLE"),
-                        count_of("VIEW"),
-                        count_of("FUNCTION"),
-                        count_of("PROCEDURE"),
-                        count_of("SEQUENCE"),
-                    ))
-                })
-                .await
+                    },
+                ))
             }
             DbEngine::Sqlite(_) => {
                 // SQLite 只有表/视图两类（无函数/过程/序列）：计数取
@@ -2663,11 +2790,13 @@ impl DbEngine {
                     };
                     Ok(group_nodes(
                         &schema_o,
-                        count_of("table"),
-                        count_of("view"),
-                        0,
-                        0,
-                        0,
+                        GroupCounts::base(
+                            count_of("table"),
+                            count_of("view"),
+                            0,
+                            0,
+                            0,
+                        ),
                     ))
                 })
                 .await
@@ -2681,7 +2810,7 @@ impl DbEngine {
                         "SELECT object_type, COUNT(*) FROM all_objects \
                          WHERE owner = {} AND object_name NOT LIKE 'BIN$%' \
                            AND object_type IN \
-                             ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE') \
+                             ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE','TRIGGER') \
                          GROUP BY object_type",
                         ob_quote_literal(&schema_o)
                     );
@@ -2705,11 +2834,16 @@ impl DbEngine {
                     };
                     Ok(group_nodes(
                         &schema_o,
-                        count_of("TABLE"),
-                        count_of("VIEW"),
-                        count_of("FUNCTION"),
-                        count_of("PROCEDURE"),
-                        count_of("SEQUENCE"),
+                        GroupCounts {
+                            triggers: Some(count_of("TRIGGER")),
+                            ..GroupCounts::base(
+                                count_of("TABLE"),
+                                count_of("VIEW"),
+                                count_of("FUNCTION"),
+                                count_of("PROCEDURE"),
+                                count_of("SEQUENCE"),
+                            )
+                        },
                     ))
                 })
                 .await
@@ -2750,16 +2884,18 @@ impl DbEngine {
                     .collect())
             }
             DbEngine::Dameng(_) => {
-                // 分类计数（照 Oracle 臂范式）：表/视图/序列各自字典表，函数与
-                // 过程同属 ALL_OBJECTS 按 OBJECT_TYPE 分组。任一查询失败不阻断
-                // 其余分组（计 0 即不展示该组）——对象树不该因单个字典表权限
-                // 不足而整层空掉
+                // 分类计数：DBeaver DamengMetaModel 同源——直查 SYSOBJECTS 基表
+                //（TYPE$+SUBTYPE$ 分型），不用 ALL_* 兼容层。触发器 SUBTYPE$='TRIG'
+                //（DBeaver 的 TRIG 三表 JOIN 简化为单表 SCHID 过滤，PID 关联的
+                // 目标表信息在对象详情时才取）。任一查询失败不阻断其余分组。
                 let schema_o = schema.to_string();
                 self.with_dameng(move |client| {
                     let bind = [dm_pure::Param::Str(schema_o.clone())];
                     let tables = dm_query_rows(
                         client,
-                        "SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = ?",
+                        "SELECT COUNT(*) FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ IN ('UTAB','STAB','ITAB')",
                         &bind,
                     )
                     .ok()
@@ -2767,7 +2903,9 @@ impl DbEngine {
                     .unwrap_or(0);
                     let views = dm_query_rows(
                         client,
-                        "SELECT COUNT(*) FROM ALL_VIEWS WHERE OWNER = ?",
+                        "SELECT COUNT(*) FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'VIEW'",
                         &bind,
                     )
                     .ok()
@@ -2775,16 +2913,32 @@ impl DbEngine {
                     .unwrap_or(0);
                     let sequences = dm_query_rows(
                         client,
-                        "SELECT COUNT(*) FROM ALL_SEQUENCES WHERE SEQUENCE_OWNER = ?",
+                        "SELECT COUNT(*) FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'SEQ'",
                         &bind,
                     )
                     .ok()
                     .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
                     .unwrap_or(0);
+                    let triggers = dm_query_rows(
+                        client,
+                        "SELECT COUNT(*) FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'TRIG'",
+                        &bind,
+                    )
+                    .ok()
+                    .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                    .unwrap_or(0);
+                    // 函数/过程同属 PROC（DBeaver INFO1 区分：1=过程 0=函数）
                     let routine_rows = dm_query_rows(
                         client,
-                        "SELECT OBJECT_TYPE, COUNT(*) FROM ALL_OBJECTS WHERE OWNER = ? \
-                         AND OBJECT_TYPE IN ('FUNCTION','PROCEDURE') GROUP BY OBJECT_TYPE",
+                        "SELECT CASE WHEN t.INFO1 & 1 = 1 THEN 'PROCEDURE' ELSE 'FUNCTION' END, \
+                         COUNT(*) FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PROC' \
+                         GROUP BY CASE WHEN t.INFO1 & 1 = 1 THEN 'PROCEDURE' ELSE 'FUNCTION' END",
                         &bind,
                     )
                     .unwrap_or_default();
@@ -2799,11 +2953,16 @@ impl DbEngine {
                     };
                     Ok(group_nodes(
                         &schema_o,
-                        tables,
-                        views,
-                        count_of("FUNCTION"),
-                        count_of("PROCEDURE"),
-                        sequences,
+                        GroupCounts {
+                            triggers: Some(triggers),
+                            ..GroupCounts::base(
+                                tables,
+                                views,
+                                count_of("FUNCTION"),
+                                count_of("PROCEDURE"),
+                                sequences,
+                            )
+                        },
                     ))
                 })
                 .await
@@ -2880,6 +3039,26 @@ impl DbEngine {
                  WHERE sequence_schema = $1 ORDER BY sequence_name",
                 "sequence_name",
             ),
+            // 触发器：DBeaver MySQLCatalog.TriggerCache 同源
+            //（PG 侧不用通用模板，在 Postgres 臂单独拼 pg_trigger 查询）
+            ObjectGroup::Trigger => (
+                "SELECT trigger_name FROM information_schema.triggers \
+                 WHERE trigger_schema = ? GROUP BY trigger_name ORDER BY trigger_name",
+                // 占位：PG 走 pg_catalog，不会用这条（Postgres 臂对 Trigger/MView
+                // 分组单独拼 SQL 后再执行）
+                "SELECT trigger_name FROM information_schema.triggers \
+                 WHERE trigger_schema = $1 GROUP BY trigger_name ORDER BY trigger_name",
+                "trigger_name",
+            ),
+            ObjectGroup::MaterializedView => {
+                // MySQL/OB MySQL 模式无物化视图（分组树上也不会出现），
+                // 走到这里返回空集保持签名
+                (
+                    "SELECT NULL AS name FROM DUAL WHERE 1 = 0",
+                    "SELECT NULL AS name WHERE 1 = 0",
+                    "name",
+                )
+            }
             // Redis 六型在上面的 early return 里已消化；走到这里说明是
             // 非 Redis 引擎收到了 Redis 分组（前端/调用方拼错），直接拒绝
             // 而不是编造一条查不出东西的 SQL。
@@ -2911,8 +3090,28 @@ impl DbEngine {
                     .collect())
             }
             DbEngine::Postgres(client) => {
+                // 触发器与物化视图不走通用 information_schema 模板（前者在
+                // information_schema 无表、后者不在 tables 里）——DBeaver 同源
+                // 的 pg_catalog 查询在此单独拼装
+                let sql_pg_dyn = match group {
+                    ObjectGroup::Trigger => Some(
+                        "SELECT t.tgname FROM pg_catalog.pg_trigger t \
+                         JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                         WHERE n.nspname = $1 AND NOT t.tgisinternal \
+                         ORDER BY t.tgname",
+                    ),
+                    ObjectGroup::MaterializedView => Some(
+                        "SELECT c.relname FROM pg_catalog.pg_class c \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                         WHERE n.nspname = $1 AND c.relkind = 'm' \
+                         ORDER BY c.relname",
+                    ),
+                    _ => None,
+                };
+                let final_sql = sql_pg_dyn.unwrap_or(sql_pg);
                 let rows = client
-                    .query(sql_pg, &[&schema])
+                    .query(final_sql, &[&schema])
                     .await
                     .map_err(|e| format!("PostgreSQL 查询对象清单失败：{e}"))?;
                 Ok(rows
@@ -2926,44 +3125,47 @@ impl DbEngine {
                     })
                     .collect())
             }
-            DbEngine::Oracle(_) => {
+            DbEngine::Oracle(conn) => {
                 // all_objects 按对象类型列（Oracle 无 information_schema）；
                 // 对象类型大写、BIN$ 回收站滤除
-                let schema_o = schema.to_string();
                 let obj_type = match group {
                     ObjectGroup::Table => "TABLE",
                     ObjectGroup::View => "VIEW",
+                    ObjectGroup::MaterializedView => "MATERIALIZED VIEW",
                     ObjectGroup::Function => "FUNCTION",
                     ObjectGroup::Procedure => "PROCEDURE",
                     ObjectGroup::Sequence => "SEQUENCE",
+                    ObjectGroup::Trigger => "TRIGGER",
                     // Redis 分组已在函数入口的 early return 拦掉，Oracle
-                    // 永远收不到；给个不存在的类型名让服务端返回空集，
-                    // 保持本臂签名不变（不必为死路径引入 Result）
+                    // 永远收不到；给个不存在的类型名让服务端返回空集
                     _ => "VELOTERM_UNREACHABLE",
+                };
+                let sql = format!(
+                    "SELECT object_name FROM all_objects \
+                     WHERE owner = {} AND object_type = {} \
+                       AND object_name NOT LIKE 'BIN$%' ORDER BY object_name",
+                    ob_quote_literal(schema),
+                    ob_quote_literal(obj_type)
+                );
+                let mut rs = conn
+                    .query(&sql)
+                    .await
+                    .map_err(|e| format!("Oracle 查询对象清单失败：{}", oracle_err(e)))?;
+                let mut nodes = Vec::new();
+                while let Some(row) = rs
+                    .next_row()
+                    .await
+                    .map_err(|e| format!("Oracle 读取对象清单失败：{}", oracle_err(e)))?
+                {
+                    let name = oracle_row_string(&row, 0);
+                    nodes.push(CatalogNode {
+                        key: format!("{schema}.{name}"),
+                        name,
+                        kind: kind.clone(),
+                        detail: None,
+                    });
                 }
-                .to_string();
-                let kind_o = kind.clone();
-                self.with_oracle(move |conn| {
-                    let rs = conn
-                        .query(
-                            "SELECT object_name FROM all_objects
-                             WHERE owner = :1 AND object_type = :2
-                               AND object_name NOT LIKE 'BIN$%' ORDER BY object_name",
-                            &[&schema_o, &obj_type],
-                        )
-                        .map_err(|e| format!("Oracle 查询对象清单失败：{}", oracle_err(e)))?;
-                    Ok(rs
-                        .filter_map(|r| r.ok())
-                        .map(|row| oracle_row_string(&row, 0))
-                        .map(|name| CatalogNode {
-                            key: format!("{schema_o}.{name}"),
-                            name,
-                            kind: kind_o.clone(),
-                            detail: None,
-                        })
-                        .collect())
-                })
-                .await
+                Ok(nodes)
             }
             // 函数入口的 early return 已消费全部 Redis 分组；这里只是让
             // match 穷尽（借用检查器不会因 early return 收窄 self 类型）
@@ -2974,7 +3176,11 @@ impl DbEngine {
                 let obj_type = match group {
                     ObjectGroup::Table => "table",
                     ObjectGroup::View => "view",
-                    ObjectGroup::Function | ObjectGroup::Procedure | ObjectGroup::Sequence => {
+                    ObjectGroup::Trigger
+                    | ObjectGroup::MaterializedView
+                    | ObjectGroup::Function
+                    | ObjectGroup::Procedure
+                    | ObjectGroup::Sequence => {
                         return Ok(Vec::new());
                     }
                     // Redis 六型已在函数入口的 early return 拦掉，此处不可达
@@ -3028,9 +3234,11 @@ impl DbEngine {
                 let obj_type = match group {
                     ObjectGroup::Table => "TABLE",
                     ObjectGroup::View => "VIEW",
+                    ObjectGroup::MaterializedView => "MATERIALIZED VIEW",
                     ObjectGroup::Function => "FUNCTION",
                     ObjectGroup::Procedure => "PROCEDURE",
                     ObjectGroup::Sequence => "SEQUENCE",
+                    ObjectGroup::Trigger => "TRIGGER",
                     // Redis 六型已在函数入口的 early return 拦掉，不可达；
                     // 同 Oracle 臂给不存在的类型名让服务端返回空集
                     ObjectGroup::RedisString
@@ -3074,22 +3282,40 @@ impl DbEngine {
                 // 分区子表（ALL_OBJECTS 里会出现）
                 let sql = match group {
                     ObjectGroup::Table => {
-                        "SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = ? ORDER BY TABLE_NAME"
+                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ IN ('UTAB','STAB','ITAB') \
+                         ORDER BY NAME"
                     }
                     ObjectGroup::View => {
-                        "SELECT VIEW_NAME FROM ALL_VIEWS WHERE OWNER = ? ORDER BY VIEW_NAME"
+                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'VIEW' ORDER BY NAME"
                     }
                     ObjectGroup::Function => {
-                        "SELECT OBJECT_NAME FROM ALL_OBJECTS WHERE OWNER = ? \
-                         AND OBJECT_TYPE = 'FUNCTION' ORDER BY OBJECT_NAME"
+                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PROC' AND (t.INFO1 & 1) = 0 \
+                         ORDER BY NAME"
                     }
                     ObjectGroup::Procedure => {
-                        "SELECT OBJECT_NAME FROM ALL_OBJECTS WHERE OWNER = ? \
-                         AND OBJECT_TYPE = 'PROCEDURE' ORDER BY OBJECT_NAME"
+                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PROC' AND (t.INFO1 & 1) = 1 \
+                         ORDER BY NAME"
                     }
                     ObjectGroup::Sequence => {
-                        "SELECT SEQUENCE_NAME FROM ALL_SEQUENCES WHERE SEQUENCE_OWNER = ? \
-                         ORDER BY SEQUENCE_NAME"
+                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'SEQ' ORDER BY NAME"
+                    }
+                    ObjectGroup::Trigger => {
+                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'TRIG' ORDER BY NAME"
+                    }
+                    ObjectGroup::MaterializedView => {
+                        "SELECT NULL AS NAME FROM DUAL WHERE 1 = 0"
                     }
                     // Redis 六型已在函数入口的 early return 拦掉，不可达；
                     // 空查询保持签名（返回空集）
@@ -3177,36 +3403,35 @@ impl DbEngine {
                     })
                     .collect())
             }
-            DbEngine::Oracle(_) => {
+            DbEngine::Oracle(conn) => {
                 // all_tab_columns 覆盖表与视图；data_type 概括为裸类型名
                 //（与另两引擎的 information_schema 口径一致）
-                let schema_o = schema.to_string();
-                let table_o = table.to_string();
-                self.with_oracle(move |conn| {
-                    let rs = conn
-                        .query(
-                            "SELECT column_name, data_type FROM all_tab_columns
-                             WHERE owner = :1 AND table_name = :2 ORDER BY column_id",
-                            &[&schema_o, &table_o],
-                        )
-                        .map_err(|e| format!("Oracle 查询列清单失败：{}", oracle_err(e)))?;
-                    Ok(rs
-                        .filter_map(|r| r.ok())
-                        .map(|row| {
-                            (
-                                oracle_row_string(&row, 0),
-                                oracle_row_string(&row, 1),
-                            )
-                        })
-                        .map(|(name, data_type)| CatalogNode {
-                            key: format!("{schema_o}.{table_o}.{name}"),
-                            name,
-                            kind: "column".to_string(),
-                            detail: Some(data_type),
-                        })
-                        .collect())
-                })
-                .await
+                let sql = format!(
+                    "SELECT column_name, data_type FROM all_tab_columns \
+                     WHERE owner = {} AND table_name = {} ORDER BY column_id",
+                    ob_quote_literal(schema),
+                    ob_quote_literal(table)
+                );
+                let mut rs = conn
+                    .query(&sql)
+                    .await
+                    .map_err(|e| format!("Oracle 查询列清单失败：{}", oracle_err(e)))?;
+                let mut nodes = Vec::new();
+                while let Some(row) = rs
+                    .next_row()
+                    .await
+                    .map_err(|e| format!("Oracle 读取列清单失败：{}", oracle_err(e)))?
+                {
+                    let name = oracle_row_string(&row, 0);
+                    let data_type = oracle_row_string(&row, 1);
+                    nodes.push(CatalogNode {
+                        key: format!("{schema}.{table}.{name}"),
+                        name,
+                        kind: "column".to_string(),
+                        detail: Some(data_type),
+                    });
+                }
+                Ok(nodes)
             }
             DbEngine::Redis { conn, db, .. } => {
                 // Redis 的「列」= 该 key 内的字段/成员/元素（按值类型取前 200
@@ -3500,78 +3725,83 @@ impl DbEngine {
                 // PG extended protocol 拿不到 DML 的 affected rows（空列即视为已执行）
                 Ok(summary)
             }
-            DbEngine::Oracle(_) => {
-                // 同步引擎：整个执行（含行流迭代与回调发射）移入 spawn_blocking，
-                // 回调直接在阻塞线程内调用（Channel 发送是 Send 安全的）。
-                // 取消粒度 = 语句间（会话层 AtomicBool）；行流中不可中断——
-                // rust-oracle 的 fetch 阻塞在 OCI 上无协作取消点
-                let sql_o = sql.to_string();
-                let result = self
-                    .with_oracle(move |conn| {
-                        // PL/SQL 匿名块（BEGIN/DECLARE 起）：execute + 隐式结果集
-                        //（dbms_sql.return_result，客户端与服务器均 12.1+）。
-                        // 工作台是单结果集模型，多组隐式结果只输出第一组
-                        let trimmed = sql_o.trim_start();
-                        let upper_start = trimmed
-                            .get(..32)
-                            .map(|s| s.to_uppercase())
-                            .unwrap_or_default();
-                        if upper_start.starts_with("BEGIN")
-                            || upper_start.starts_with("DECLARE")
-                        {
-                            let mut stmt = conn
-                                .statement(&sql_o)
-                                .build()
-                                .map_err(|e| format!("Oracle：{}", oracle_err(e)))?;
-                            stmt.execute(&[])
-                                .map_err(|e| format!("Oracle：{}", oracle_err(e)))?;
-                            let affected = stmt
-                                .row_count()
-                                .map_err(|e| format!("Oracle：{}", oracle_err(e)))?;
-                            let mut summary = ExecSummary {
-                                affected: Some(affected),
-                                ..Default::default()
-                            };
-                            if let Ok(Some(mut cursor)) = stmt.implicit_result() {
-                                let mut rs = cursor
-                                    .query()
-                                    .map_err(|e| format!("Oracle：{}", oracle_err(e)))?;
-                                emit_oracle_rows(
-                                    &mut rs, max_rows, &mut on_columns, &mut on_rows,
-                                    &mut summary,
-                                );
-                            }
-                            return Ok(summary);
-                        }
-
-                        // 常规语句：query 逐行流式 fetch（OCI 每行一次，
-                        // max_rows 防护客户端侧成立，大表不整载）
-                        let mut rs = conn
-                            .query(&sql_o, &[])
-                            .map_err(|e| format!("Oracle：{}", oracle_err(e)))?;
-                        let columns: Vec<String> = rs
-                            .column_info()
-                            .iter()
-                            .map(|c| c.name().to_string())
-                            .collect();
-                        if columns.is_empty() {
-                            // DML / DDL：无结果集（affected 拿不到——PG 同型语义，
-                            // 空列即视为已执行）
-                            return Ok(ExecSummary::default());
-                        }
-                        on_columns(&columns);
-                        let mut summary = ExecSummary {
-                            columns,
+            DbEngine::Oracle(conn) => {
+                // 纯 Rust 异步驱动：query 流式取行，PL/SQL 匿名块的隐式结果集
+                // 由 QueryResult 自动接续（oracle_async 的 Msg 27 链）
+                let mut rs = tokio::select! {
+                    res = conn.query(sql) => res.map_err(|e| format!("Oracle：{}", oracle_err(e)))?,
+                    _ = cancel_notify.notified() => {
+                        let _ = conn.break_connection().await;
+                        return Ok(ExecSummary {
+                            cancelled: true,
                             ..Default::default()
-                        };
-                        emit_oracle_rows(&mut rs, max_rows, &mut on_columns, &mut on_rows, &mut summary);
-                        Ok(summary)
-                    })
-                    .await;
-                // 取消信号在语句间由会话层判定；本语句执行中收到通知时
-                // 无法中断阻塞线程，下一轮语句开始前生效
-                let _ = cancel_notify;
-                result
+                        });
+                    }
+                };
+
+                let columns: Vec<String> = rs
+                    .columns()
+                    .iter()
+                    .map(|c| c.name.clone())
+                    .collect();
+
+                if columns.is_empty() {
+                    // DML / DDL / PLSQL 无结果集：affected 走 rows_affected
+                    let affected = rs.rows_affected();
+                    return Ok(ExecSummary {
+                        affected: Some(affected),
+                        ..Default::default()
+                    });
+                }
+
+                on_columns(&columns);
+                let mut summary = ExecSummary {
+                    columns,
+                    ..Default::default()
+                };
+
+                let mut batch: Vec<Vec<String>> = Vec::with_capacity(ROWS_PER_BATCH);
+                let mut maybe_more = false;
+
+                loop {
+                    if summary.rows_read >= max_rows {
+                        maybe_more = true;
+                        break;
+                    }
+
+                    tokio::select! {
+                        _ = cancel_notify.notified() => {
+                            let _ = rs.break_connection().await;
+                            summary.cancelled = true;
+                            break;
+                        }
+                        row_res = rs.next_row() => {
+                            match row_res {
+                                Ok(Some(row)) => {
+                                    let cells: Vec<String> =
+                                        row.values().iter().map(|v| v.to_string()).collect();
+                                    batch.push(cells);
+                                    summary.rows_read += 1;
+                                    if batch.len() >= ROWS_PER_BATCH {
+                                        on_rows(std::mem::take(&mut batch));
+                                    }
+                                }
+                                Ok(None) => break,
+                                Err(e) => {
+                                    return Err(format!("Oracle 行读取错误：{}", oracle_err(e)));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !batch.is_empty() {
+                    on_rows(batch);
+                }
+                if maybe_more {
+                    summary.truncated = true;
+                }
+                Ok(summary)
             }
             DbEngine::Redis { conn, db, .. } => {
                 // 单行命令执行：tokenize → 一次往返 → 值转表 → 分批回调。
@@ -3899,30 +4129,72 @@ pub(crate) fn parse_redis_db(value: &str) -> Option<u32> {
 
 /// 按计数生成分组节点（计数为 0 的组不返回）；key 形如 `{schema}#{group}`，
 /// 前端展开时从 key 解析 schema 与分组类型。
-fn group_nodes(
-    schema: &str,
+/// 分组计数载体：多数引擎只有基础五组（触发器/物化视图为 None = 不展示该组），
+/// 支持 PG 的物化视图与四引擎的触发器时填 Some。
+struct GroupCounts {
     tables: i64,
     views: i64,
     functions: i64,
     procedures: i64,
     sequences: i64,
-) -> Vec<CatalogNode> {
-    [
-        (ObjectGroup::Table, "TABLE", tables),
-        (ObjectGroup::View, "VIEW", views),
-        (ObjectGroup::Function, "FUNCTION", functions),
-        (ObjectGroup::Procedure, "PROCEDURE", procedures),
-        (ObjectGroup::Sequence, "SEQUENCE", sequences),
-    ]
-    .iter()
-    .filter(|(_, _, count)| *count > 0)
-    .map(|(group, name, count)| CatalogNode {
-        key: format!("{schema}#{}", group.as_str()),
-        name: name.to_string(),
-        kind: "group".to_string(),
-        detail: Some(count.to_string()),
-    })
-    .collect()
+    /// None = 引擎不支持触发器（如 SQLite 常规认知下）/ 该组不展示
+    triggers: Option<i64>,
+    /// None = 引擎无物化视图（MySQL / Oracle 普通视图树之外另列）
+    mviews: Option<i64>,
+}
+
+impl GroupCounts {
+    /// 基础五组（触发器与物化视图不展示）——绝大多数引擎的起步形态
+    fn base(tables: i64, views: i64, functions: i64, procedures: i64, sequences: i64) -> Self {
+        Self { tables, views, functions, procedures, sequences, triggers: None, mviews: None }
+    }
+}
+
+fn group_nodes(schema: &str, counts: GroupCounts) -> Vec<CatalogNode> {
+    let groups: Vec<(ObjectGroup, &str, i64)> = match (counts.triggers, counts.mviews) {
+        (Some(t), Some(m)) => vec![
+            (ObjectGroup::Table, "TABLE", counts.tables),
+            (ObjectGroup::View, "VIEW", counts.views),
+            (ObjectGroup::MaterializedView, "MATERIALIZED VIEW", m),
+            (ObjectGroup::Function, "FUNCTION", counts.functions),
+            (ObjectGroup::Procedure, "PROCEDURE", counts.procedures),
+            (ObjectGroup::Trigger, "TRIGGER", t),
+            (ObjectGroup::Sequence, "SEQUENCE", counts.sequences),
+        ],
+        (Some(t), None) => vec![
+            (ObjectGroup::Table, "TABLE", counts.tables),
+            (ObjectGroup::View, "VIEW", counts.views),
+            (ObjectGroup::Function, "FUNCTION", counts.functions),
+            (ObjectGroup::Procedure, "PROCEDURE", counts.procedures),
+            (ObjectGroup::Trigger, "TRIGGER", t),
+            (ObjectGroup::Sequence, "SEQUENCE", counts.sequences),
+        ],
+        (None, Some(m)) => vec![
+            (ObjectGroup::Table, "TABLE", counts.tables),
+            (ObjectGroup::View, "VIEW", counts.views),
+            (ObjectGroup::MaterializedView, "MATERIALIZED VIEW", m),
+            (ObjectGroup::Function, "FUNCTION", counts.functions),
+            (ObjectGroup::Procedure, "PROCEDURE", counts.procedures),
+            (ObjectGroup::Sequence, "SEQUENCE", counts.sequences),
+        ],
+        (None, None) => vec![
+            (ObjectGroup::Table, "TABLE", counts.tables),
+            (ObjectGroup::View, "VIEW", counts.views),
+            (ObjectGroup::Function, "FUNCTION", counts.functions),
+            (ObjectGroup::Procedure, "PROCEDURE", counts.procedures),
+            (ObjectGroup::Sequence, "SEQUENCE", counts.sequences),
+        ],
+    };
+    groups
+        .into_iter()
+        .filter(|(_, _, count)| *count > 0)
+        .map(|(group, name, count)| CatalogNode {
+            key: format!("{schema}#{}", group.as_str()),
+            name: name.to_string(),
+            kind: "group".to_string(),
+            detail: Some(count.to_string()),
+        })
+        .collect()
 }
 
 /// 连接任务泛型 helper：不同 TLS 流类型（NoTlsStream / RustlsStream）经
@@ -4160,13 +4432,54 @@ mod tests {
     /// 无法在无客户端环境测试，这里只锁纯函数映射）
     #[test]
     fn oracle_ora_hint_known_and_unknown_codes() {
-        assert_eq!(oracle_ora_hint(904), Some("标识符无效"));
+        assert_eq!(oracle_ora_hint(904), Some("标识符无效（列名/别名拼写错误，或该列在当前版本不存在）"));
         assert_eq!(oracle_ora_hint(923), Some("未找到 FROM 关键字（常见：SELECT 列表缺逗号）"));
-        assert_eq!(oracle_ora_hint(942), Some("表或视图不存在"));
+        assert_eq!(oracle_ora_hint(942), Some("表或视图不存在（检查 schema 前缀与权限）"));
         assert_eq!(oracle_ora_hint(1017), Some("用户名或密码无效"));
         assert_eq!(oracle_ora_hint(28000), Some("账户已被锁定"));
+        // 新增覆盖：游标/PLSQL/通信
+        assert_eq!(oracle_ora_hint(1002), Some("取数越界（fetch out of sequence，游标状态已失效）"));
+        assert_eq!(oracle_ora_hint(6510), Some("PL/SQL 编译错误（检查过程和函数体）"));
+        assert_eq!(oracle_ora_hint(3135), Some("连接丢失（connection lost contact）"));
         assert_eq!(oracle_ora_hint(99999), None);
         assert_eq!(oracle_ora_hint(0), None);
+    }
+
+    /// OCI「缺消息文件」文案清理：go-ora 原样透传服务器文案（如
+    /// `ORA-00904: Message 904 not found; No message file for product=RDBMS,
+    /// facility=ORA`），本函数剥掉英文尾巴、换内置中文并保留 arguments 段
+    #[test]
+    fn oracle_err_strips_missing_message_file_noise() {
+        use oracle_async::OracleError;
+        // 缺消息文件形态（真机服务器返回的原文）
+        let e = oracle_async::Error::Server(OracleError {
+            code: 904,
+            message: "ORA-00904: Message 904 not found; No message file for product=RDBMS, \
+                      facility=ORA; arguments: [ORACLE_MAINTAINED]"
+                .into(),
+        });
+        let msg = oracle_err(e);
+        assert!(!msg.contains("No message file"), "应剥掉缺消息文件尾巴：{msg}");
+        assert!(msg.contains("标识符无效"), "应含内置中文：{msg}");
+        assert!(msg.contains("ORACLE_MAINTAINED"), "应保留 arguments 定位信息：{msg}");
+
+        // 正常文案形态：透传并追加提示
+        let e = oracle_async::Error::Server(OracleError {
+            code: 942,
+            message: "ORA-00942: table or view does not exist".into(),
+        });
+        let msg = oracle_err(e);
+        assert!(msg.contains("table or view does not exist"));
+        assert!(msg.contains("表或视图不存在"));
+
+        // 未收录码 + 缺消息文件：回落官方文档提示，不出现英文噪音
+        let e = oracle_async::Error::Server(OracleError {
+            code: 20001,
+            message: "ORA-20001: Message 20001 not found; No message file".into(),
+        });
+        let msg = oracle_err(e);
+        assert!(!msg.contains("No message file"), "{msg}");
+        assert!(msg.contains("ORA-20001"), "{msg}");
     }
 
     /// 达梦值字符串化/数值归一/标识符校验的纯函数边界（连库行为无法在无

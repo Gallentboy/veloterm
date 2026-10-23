@@ -1,10 +1,10 @@
 //! 数据库工作台（侧栏「数据库」菜单）：MySQL / PostgreSQL / Oracle /
 //! OceanBase / SQLite 连接管理、对象树浏览与流式 SQL 执行。会话模型与
 //! ZkState 同型（tauri manage 注入 State + 会话表 + 前端按 sessionId
-//! 交互）；引擎层见 engines.rs（Oracle 走 vendor rust-oracle——官方
-//! ODPI-C 绑定、同步 API 经 with_oracle 的 spawn_blocking 包裹，运行期
-//! 需 Oracle Instant Client，支持 11.2–23ai；PL/SQL 匿名块经 sqlsplit
-//! 整段化后 execute + implicit_result，database 字段在 Oracle 语义 =
+//! 交互）；引擎层见 engines.rs（Oracle 走 vendor oracle_async——纯 Rust
+//! 原生异步驱动，零 C 依赖无需 Oracle Instant Client，Tokio 全链路异步；
+//! PL/SQL 经 sqlsplit 整段化，隐式结果集（Msg 27）由 QueryResult 自动接续，
+//! database 字段在 Oracle 语义 =
 //! 服务名，「切库」= CURRENT_SCHEMA；OceanBase 双模式——MySQL 模式租户
 //! 复用 mysql_async 臂、Oracle 模式租户走 vendor obclnt-sys/libobclient
 //!（obclient.rs 安全包装 + with_obclient 阻塞包裹，database 字段同
@@ -699,43 +699,6 @@ pub async fn db_use_database(
         .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
     meta.database = Some(db_name);
     Ok(meta.clone())
-}
-
-// ── Oracle 客户端库目录（运行期 dlopen 的动态绑定形态）─────────────────────
-//
-// ODPI-C 经 dlopen/LoadLibrary 运行期加载 Oracle 客户端：进程启动零依赖、
-// 缺库只在连接时报错（DPI-1047），绝不拖死应用。用户可在数据库页设置
-// Instant Client 的目录（rust-oracle 的 InitParams::oracle_client_lib_dir，
-// 进程级一次初始化——已初始化后改目录需重启应用生效）。
-
-const ORACLE_CLIENT_DIR_KV: &str = "oracle_client_lib_dir";
-
-/// 读 Oracle 客户端库目录设置（None = 未设置，走系统搜索路径）
-#[tauri::command]
-pub fn oracle_client_dir_get() -> Result<Option<String>, String> {
-    db::get_kv(&pool()?, ORACLE_CLIENT_DIR_KV)
-        .map(|dir| dir.filter(|s| !s.is_empty()))
-}
-
-/// 写/清除 Oracle 客户端库目录（None = 清除，回到系统搜索路径）。
-/// 走 db::set_kv（app_kv.updated_at NOT NULL，裸 INSERT 漏该列会约束失败）
-#[tauri::command]
-pub fn oracle_client_dir_set(dir: Option<String>) -> Result<(), String> {
-    let pool = pool()?;
-    match dir.as_deref().filter(|s| !s.trim().is_empty()) {
-        Some(d) => db::set_kv(&pool, ORACLE_CLIENT_DIR_KV, d.trim()),
-        None => db::delete_kv(&pool, ORACLE_CLIENT_DIR_KV),
-    }
-}
-
-/// 目录选择对话框（rfd）：返回所选目录；取消返回 None
-#[tauri::command]
-pub async fn oracle_client_dir_pick() -> Result<Option<String>, String> {
-    let picked = rfd::AsyncFileDialog::new()
-        .set_title("选择 Oracle Instant Client 目录")
-        .pick_folder()
-        .await;
-    Ok(picked.map(|h| h.path().to_string_lossy().into_owned()))
 }
 
 // ── SQLite 数据库文件选择（rfd）───────────────────────────────────────────

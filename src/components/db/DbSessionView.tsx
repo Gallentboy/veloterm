@@ -18,6 +18,7 @@ import {
   Database,
   Eye,
   Folder,
+  Layers,
   ListOrdered,
   Loader2,
   Play,
@@ -28,6 +29,7 @@ import {
   Table2,
   Unplug,
   X,
+  Zap,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -113,10 +115,18 @@ function redisViewCommand(key: string, type: string): string {
 }
 
 /** 可展开子层的节点类型（分组/表/视图可展开；函数/过程/序列/列是叶子） */
-const EXPANDABLE_KINDS = new Set(['database', 'schema', 'group', 'table', 'view']);
+const EXPANDABLE_KINDS = new Set(['database', 'schema', 'group', 'table', 'view', 'mview']);
 
 /** 搜索匹配的对象类节点（分组/库节点经由子树内命中间接显示） */
-const OBJECT_KINDS = new Set(['table', 'view', 'function', 'procedure', 'sequence']);
+const OBJECT_KINDS = new Set([
+  'table',
+  'view',
+  'mview',
+  'function',
+  'procedure',
+  'sequence',
+  'trigger',
+]);
 
 /** OB 的 Oracle 租户模式与 Oracle 同方言：SELECT 需 FROM DUAL、无 LIMIT
  * （用 ROWNUM）、标识符不用反引号；OB MySQL 租户模式则完全走 MySQL 方言。 */
@@ -144,12 +154,16 @@ function nodeIcon(kind: CatalogNode['kind'], className?: string) {
       return <Folder className={cn('size-3.5 shrink-0 text-terminal-blue', className)} />;
     case 'view':
       return <Eye className={cn('size-3.5 shrink-0 text-terminal-blue', className)} />;
+    case 'mview':
+      return <Layers className={cn('size-3.5 shrink-0 text-terminal-blue', className)} />;
     case 'function':
       return <Sigma className={cn('size-3.5 shrink-0 text-terminal-magenta', className)} />;
     case 'procedure':
       return <Braces className={cn('size-3.5 shrink-0 text-terminal-magenta', className)} />;
     case 'sequence':
       return <ListOrdered className={cn('size-3.5 shrink-0 text-terminal-yellow', className)} />;
+    case 'trigger':
+      return <Zap className={cn('size-3.5 shrink-0 text-terminal-red', className)} />;
     case 'column':
       return <AlignLeft className={cn('size-3 shrink-0 text-foreground-subtlest', className)} />;
     default:
@@ -192,7 +206,7 @@ export function DbSessionView({
   // 函数/过程定义视图（对象树双击拉取；新查询执行时让位给结果面板）
   const [objectDef, setObjectDef] = useState<{
     name: string;
-    kind: 'function' | 'procedure' | 'sequence';
+    kind: 'function' | 'procedure' | 'sequence' | 'trigger';
     def: ObjectDefinition;
   } | null>(null);
   const [defLoading, setDefLoading] = useState(false);
@@ -475,7 +489,23 @@ export function DbSessionView({
         setSql(`SELECT * FROM ${target} ${limit};`);
         return;
       }
-      if (node.kind === 'function' || node.kind === 'procedure' || node.kind === 'sequence') {
+      // 物化视图：双击生成与普通视图同型的 SELECT
+      if (node.kind === 'mview') {
+        const schema = node.key.split('.')[0] ?? '';
+        const name = node.name;
+        const mysqlDialect = meta?.engine === 'dameng' && meta?.compatibleMode === 'mysql';
+        const quote = (ident: string) =>
+          mysqlDialect ? `\`${ident.replace(/`/g, '``')}\`` : ident;
+        const target = schema ? `${quote(schema)}.${quote(name)}` : quote(name);
+        setSql(`SELECT * FROM ${target} LIMIT 200;`);
+        return;
+      }
+      if (
+        node.kind === 'function' ||
+        node.kind === 'procedure' ||
+        node.kind === 'sequence' ||
+        node.kind === 'trigger'
+      ) {
         const sessionId = sessionIdRef.current;
         if (!sessionId || defLoading) return;
         const schema = node.key.split('.')[0] ?? '';
@@ -749,9 +779,17 @@ export function DbSessionView({
           }}
           onDoubleClick={() => handleNodeClick(branch.node)}
           onContextMenu={(e) => {
-            // 表/视图/函数/过程提供右键菜单；其余节点用系统默认
+            // 表/视图/物化视图/函数/过程/序列/触发器提供右键菜单；其余用系统默认
             if (
-              ['table', 'view', 'function', 'procedure'].includes(branch.node.kind)
+              [
+                'table',
+                'view',
+                'mview',
+                'function',
+                'procedure',
+                'sequence',
+                'trigger',
+              ].includes(branch.node.kind)
             ) {
               e.preventDefault();
               setContextMenu({ x: e.clientX, y: e.clientY, node: branch.node });
@@ -962,17 +1000,19 @@ export function DbSessionView({
                 const node = contextMenu.node;
                 const isRedisKey = meta.engine === 'redis' && node.kind === 'table';
                 const items: { key: string; label: string; action: () => void }[] = [];
-                if (node.kind === 'table' || node.kind === 'view') {
-                  items.push({
-                    key: 'viewData',
-                    label: t('db.viewData'),
-                    action: () => handleNodeClick(node),
-                  });
-                  items.push({
-                    key: 'detail',
-                    label: isRedisKey ? t('db.objectDefinition') : t('db.tableDetail'),
-                    action: () => openTableDetail(node),
-                  });
+                if (node.kind === 'table' || node.kind === 'view' || node.kind === 'mview') {
+                  items.push(
+                    {
+                      key: 'viewData',
+                      label: t('db.viewData'),
+                      action: () => handleNodeClick(node),
+                    },
+                    {
+                      key: 'detail',
+                      label: isRedisKey ? t('db.objectDefinition') : t('db.tableDetail'),
+                      action: () => openTableDetail(node),
+                    },
+                  );
                 } else {
                   items.push({
                     key: 'definition',
@@ -1311,6 +1351,8 @@ export function DbSessionView({
                 <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border/50 bg-surface/30 px-2 select-none">
                   {objectDef.kind === 'function' ? (
                     <Sigma className="size-3.5 shrink-0 text-terminal-magenta" />
+                  ) : objectDef.kind === 'trigger' ? (
+                    <Zap className="size-3.5 shrink-0 text-terminal-red" />
                   ) : (
                     <Braces className="size-3.5 shrink-0 text-terminal-magenta" />
                   )}
