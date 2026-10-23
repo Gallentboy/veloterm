@@ -54,6 +54,7 @@ import {
   type DbConnectionRecord,
   type DbConnectionTestResult,
   type DbEngineKind,
+  type RedisExtraOptions,
   type SqliteEncryptionMode,
 } from '@/services/dbConnectionsService';
 import { cn } from '@/lib/utils';
@@ -207,6 +208,7 @@ export function DbHostsScreen({
     database: null,
     serviceName: null,
     dbPath: null,
+    extraOptions: null,
     encryptionMode: 'none',
     compatibleMode: null,
     username: null,
@@ -575,6 +577,27 @@ function DatabasePickerField({
   );
 }
 
+/** 解析记录的 Redis extraOptions（engine 非 redis / JSON 非法 → 单机默认） */
+function parseRedisExtra(node: DbConnectionRecord | null): RedisExtraOptions {
+  if (node?.engine !== 'redis' || !node.extraOptions) return { topology: 'single' };
+  try {
+    const parsed = JSON.parse(node.extraOptions) as Partial<RedisExtraOptions>;
+    return {
+      topology:
+        parsed.topology === 'cluster' || parsed.topology === 'sentinel'
+          ? parsed.topology
+          : 'single',
+      nodes: Array.isArray(parsed.nodes) ? parsed.nodes : [],
+      masterName: typeof parsed.masterName === 'string' ? parsed.masterName : undefined,
+      clientCertPath:
+        typeof parsed.clientCertPath === 'string' ? parsed.clientCertPath : undefined,
+      clientKeyPath: typeof parsed.clientKeyPath === 'string' ? parsed.clientKeyPath : undefined,
+    };
+  } catch {
+    return { topology: 'single' };
+  }
+}
+
 function DbConnectionFormDialog({
   node,
   onSaved,
@@ -611,6 +634,14 @@ function DbConnectionFormDialog({
   const [sslMode, setSslMode] = useState<DbConnectionRecord['sslMode']>(node?.sslMode ?? 'disable');
   const [envLevel, setEnvLevel] = useState(node?.envLevel ?? 'dev');
   const [readonly, setReadonly] = useState(node?.readonly ?? true);
+  // Redis：拓扑与扩展配置（extra_options JSON 持久化；集群/哨兵节点、
+  // 哨兵 master 名、mTLS 证书路径）
+  const redisExtraInitial = parseRedisExtra(node);
+  const [redisTopology, setRedisTopology] = useState(redisExtraInitial.topology);
+  const [redisNodes, setRedisNodes] = useState((redisExtraInitial.nodes ?? []).join('\n'));
+  const [redisMasterName, setRedisMasterName] = useState(redisExtraInitial.masterName ?? '');
+  const [redisCertPath, setRedisCertPath] = useState(redisExtraInitial.clientCertPath ?? '');
+  const [redisKeyPath, setRedisKeyPath] = useState(redisExtraInitial.clientKeyPath ?? '');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -638,6 +669,17 @@ function DbConnectionFormDialog({
   const obOracleTlsLocked = engine === 'oceanbase' && mode === 'oracle';
 
   const isSqlite = engine === 'sqlite';
+  // Redis 拓扑扩展校验：集群/哨兵至少一个节点、哨兵必填 master 名、
+  // mTLS 证书与私钥成对（两者只填其一直接拒保存）
+  const redisNodeLines = redisNodes
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const redisExtraOk =
+    engine !== 'redis' ||
+    (redisTopology === 'single' || redisNodeLines.length > 0) &&
+      (redisTopology !== 'sentinel' || redisMasterName.trim().length > 0) &&
+      (redisCertPath.trim().length === 0) === (redisKeyPath.trim().length === 0);
 
   // SQLite 原始密钥必须 64 位十六进制（前端先挡一层，后端仍会校验）
   const rawKeyOk =
@@ -654,14 +696,20 @@ function DbConnectionFormDialog({
   const canSave =
     !saving &&
     name.trim().length > 0 &&
+    redisExtraOk &&
     (isSqlite
       ? rawKeyOk && sqlitePasswordOk
-      : host.trim().length > 0 && (engine !== 'oracle' || serviceName.trim().length > 0));
+      : // Redis 集群/哨兵拓扑的地址在节点列表里，host 可留空；单机仍需 host
+        (engine === 'redis' && redisTopology !== 'single'
+          ? redisNodeLines.length > 0
+          : host.trim().length > 0) && (engine !== 'oracle' || serviceName.trim().length > 0));
 
   // 测试连接：SQLite 允许内存库（不加密时 dbPath 可留空），其余引擎仍需主机
   const canTest = isSqlite
     ? dbPath.trim().length > 0 || encryptionMode === 'none'
-    : host.trim().length > 0;
+    : engine === 'redis' && redisTopology !== 'single'
+      ? redisNodeLines.length > 0
+      : host.trim().length > 0;
 
   const buildRecord = (): DbConnectionRecord => ({
     id: node?.id ?? 0,
@@ -676,6 +724,19 @@ function DbConnectionFormDialog({
     encryptionMode: isSqlite ? encryptionMode : 'none',
     // 仅达梦有意义；其余引擎写 null（后端忽略该列）
     compatibleMode: engine === 'dameng' ? compatibleMode : null,
+    // Redis：拓扑/节点/哨兵 master/mTLS 证书路径（JSON 文本）；证书路径
+    // 仅 TLS 档位下携带（disable + 证书是配置矛盾，后端直接报错）
+    extraOptions:
+      engine === 'redis'
+        ? JSON.stringify({
+            topology: redisTopology,
+            nodes: redisNodeLines,
+            ...(redisTopology === 'sentinel' ? { masterName: redisMasterName.trim() } : {}),
+            ...(sslMode !== 'disable' && redisCertPath.trim() && redisKeyPath.trim()
+              ? { clientCertPath: redisCertPath.trim(), clientKeyPath: redisKeyPath.trim() }
+              : {}),
+          })
+        : null,
     username: isSqlite ? null : username.trim() || null,
     // 留空 = 更新时保留旧值（后端语义）；新建时空值即无密码。
     // 例外：SQLite 从加密改回不加密时必须显式清空——否则库里残留的旧口令
@@ -862,6 +923,65 @@ function DbConnectionFormDialog({
               ))}
             </div>
           </FormField>
+        ) : null}
+
+        {/* Redis：拓扑（单机/集群/哨兵）——地址存在 extra_options 的节点列表里，
+            集群/哨兵下 host 可留空；集群仅 db0，哨兵连接时解析当前 master */}
+        {engine === 'redis' ? (
+          <div className="flex flex-col gap-1.5">
+            <FormField
+              label={t('dbHosts.redisTopologyLabel')}
+              hint={
+                redisTopology === 'cluster'
+                  ? t('dbHosts.redisClusterHint')
+                  : redisTopology === 'sentinel'
+                    ? t('dbHosts.redisSentinelHint')
+                    : undefined
+              }
+              className="w-36"
+            >
+              <SelectMenu
+                value={redisTopology}
+                onChange={(v) => setRedisTopology(v as 'single' | 'cluster' | 'sentinel')}
+                options={[
+                  { value: 'single', label: t('dbHosts.redisTopologySingle') },
+                  { value: 'cluster', label: t('dbHosts.redisTopologyCluster') },
+                  { value: 'sentinel', label: t('dbHosts.redisTopologySentinel') },
+                ]}
+              />
+            </FormField>
+            {redisTopology !== 'single' ? (
+              <FormField label={t('dbHosts.redisNodesLabel')} hint={t('dbHosts.redisNodesHint')}>
+                <textarea
+                  value={redisNodes}
+                  onChange={(e) => setRedisNodes(e.target.value)}
+                  placeholder={'10.0.0.1:6379\n10.0.0.2:6379'}
+                  rows={3}
+                  spellCheck={false}
+                  className="scrollbar-slim w-full resize-y rounded-md border border-border/60 bg-background px-2 py-1.5 font-mono text-ui-xs text-foreground outline-none placeholder:text-foreground-subtlest focus:border-border"
+                />
+              </FormField>
+            ) : null}
+            {redisTopology === 'sentinel' ? (
+              <FormField label={t('dbHosts.redisMasterLabel')}>
+                <TextInput
+                  value={redisMasterName}
+                  onChange={(e) => setRedisMasterName(e.target.value)}
+                  placeholder="mymaster"
+                  className="font-mono"
+                />
+              </FormField>
+            ) : null}
+            {!redisExtraOk ? (
+              <span className="text-ui-xs text-destructive">
+                {redisNodeLines.length === 0 && redisTopology !== 'single'
+                  ? t('dbHosts.redisNodesRequired')
+                  : redisTopology === 'sentinel' && redisMasterName.trim().length === 0
+                    ? t('dbHosts.redisMasterRequired')
+                    : t('dbHosts.redisCertsIncomplete')}
+              </span>
+            ) : null}
+          </div>
         ) : null}
 
         {/* 达梦：兼容模式只影响客户端 SQL 方言，与 dm.ini 的 COMPATIBLE_MODE 无关 */}
@@ -1081,6 +1201,33 @@ function DbConnectionFormDialog({
             ) : null}
           </div>
         )}
+
+        {/* Redis mTLS：客户端证书/私钥 PEM 路径（仅 TLS 档位下有意义；两路径
+            成对填写，留空不启用） */}
+        {engine === 'redis' && sslMode !== 'disable' ? (
+          <div className="flex gap-3">
+            <div className="min-w-0 flex-1">
+              <FormField label={t('dbHosts.redisCertLabel')} hint={t('dbHosts.redisCertHint')}>
+                <TextInput
+                  value={redisCertPath}
+                  onChange={(e) => setRedisCertPath(e.target.value)}
+                  placeholder="/path/to/client-cert.pem"
+                  className="font-mono"
+                />
+              </FormField>
+            </div>
+            <div className="min-w-0 flex-1">
+              <FormField label={t('dbHosts.redisKeyLabel')}>
+                <TextInput
+                  value={redisKeyPath}
+                  onChange={(e) => setRedisKeyPath(e.target.value)}
+                  placeholder="/path/to/client-key.pem"
+                  className="font-mono"
+                />
+              </FormField>
+            </div>
+          </div>
+        ) : null}
 
         {/* SQLite 无用户名/密码凭证：口令字段已在上面的加密区块接管 */}
         {isSqlite ? null : (
