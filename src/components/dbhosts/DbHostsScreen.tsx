@@ -14,15 +14,26 @@ import { useTranslation } from 'react-i18next';
 import {
   CircleCheck,
   CircleX,
+  Cylinder,
   Database,
   FolderOpen,
+  Landmark,
   Loader2,
   Pencil,
   Play,
   Plus,
   Trash2,
+  Waves,
   Zap,
 } from 'lucide-react';
+import type { ComponentType } from 'react';
+
+import {
+  MysqlBrandIcon,
+  PostgresqlBrandIcon,
+  RedisBrandIcon,
+  SqliteBrandIcon,
+} from '@/components/dbhosts/engineIcons';
 
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
@@ -66,6 +77,32 @@ const ENGINE_LABELS: Record<DbEngineKind, string> = {
   oceanbase: 'OceanBase',
   sqlite: 'SQLite',
   dameng: '达梦 DM8',
+};
+
+/** 各引擎的辨识图标：MySQL/PG/Redis/SQLite 用 simple-icons 的品牌官方
+ *  logo（CC0，见 engineIcons.tsx）；Oracle/OceanBase/达梦 simple-icons
+ *  未收录，取 lucide 意象代形（圆柱=Oracle 筒仓、海浪=OceanBase、
+ *  殿堂柱式=达梦）。选择器与列表行共用（组件签名与 lucide 同构，
+ *  只要求 className） */
+const ENGINE_ICONS: Record<DbEngineKind, ComponentType<{ className?: string }>> = {
+  mysql: MysqlBrandIcon,
+  postgres: PostgresqlBrandIcon,
+  oracle: Cylinder,
+  redis: RedisBrandIcon,
+  oceanbase: Waves,
+  sqlite: SqliteBrandIcon,
+  dameng: Landmark,
+};
+
+/** 各引擎的图标着色（终端色板，每引擎一色互不重复） */
+const ENGINE_COLORS: Record<DbEngineKind, string> = {
+  mysql: 'text-terminal-cyan',
+  postgres: 'text-terminal-blue',
+  oracle: 'text-terminal-red',
+  redis: 'text-terminal-green',
+  oceanbase: 'text-terminal-magenta',
+  sqlite: 'text-terminal-yellow',
+  dameng: 'text-terminal-white',
 };
 
 /** 连接条目的引擎显示名：OceanBase 附带租户模式后缀（如「OceanBase · Oracle 模式」） */
@@ -236,20 +273,14 @@ export function DbHostsScreen({
               key={record.id}
               className="group flex items-center gap-3 rounded-lg border border-border px-3 py-2 transition-colors hover:border-border-hover"
             >
-              <Database
-                className={cn(
-                  'size-4 shrink-0',
-                  record.engine === 'mysql'
-                    ? 'text-terminal-cyan'
-                    : record.engine === 'postgres'
-                      ? 'text-terminal-blue'
-                      : record.engine === 'redis'
-                        ? 'text-terminal-green'
-                        : record.engine === 'oracle'
-                          ? 'text-terminal-red'
-                          : 'text-terminal-magenta',
-                )}
-              />
+              {(() => {
+                const EngineIcon = ENGINE_ICONS[record.engine];
+                return (
+                  <EngineIcon
+                    className={cn('size-4 shrink-0', ENGINE_COLORS[record.engine])}
+                  />
+                );
+              })()}
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span className="flex items-center gap-1.5 truncate text-ui-sm font-medium text-foreground">
                   {record.name}
@@ -761,7 +792,9 @@ function DbConnectionFormDialog({
         </FormField>
 
         <FormField label={t('dbHosts.engineLabel')}>
-          <div className="flex gap-1.5">
+          {/* 七引擎按钮不再等宽挤压：改自然宽度 + 横向滚动（scrollbar-hair
+              3px 细条），窄窗下滑出选择，宽窗下天然铺开 */}
+          <div className="scrollbar-hair flex gap-1.5 overflow-x-auto pb-0.5">
             {(
               [
                 'mysql',
@@ -772,32 +805,38 @@ function DbConnectionFormDialog({
                 'sqlite',
                 'dameng',
               ] as const
-            ).map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                onClick={() => {
-                  setEngine(kind);
-                  setPort(String(ENGINE_DEFAULT_PORTS[kind]));
-                  // SQLite 无 TLS：切过去时把 SSL 归一为 disable，避免把 require 存进库
-                  if (kind === 'sqlite') setSslMode('disable');
-                  // 切到 oceanbase 时归一化租户模式（null → 'mysql'，已选则保留）；
-                  // 切离时不清空——buildRecord 按 engine 门控，非 oceanbase 恒 null
-                  if (kind === 'oceanbase') {
-                    setMode((cur) => (cur === 'oracle' ? 'oracle' : 'mysql'));
-                  }
-                }}
-                className={cn(
-                  'flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-ui-xs transition-colors',
-                  engine === kind
-                    ? 'border-primary/60 bg-primary/10 font-semibold text-foreground'
-                    : 'border-border/70 text-foreground-subtle hover:bg-hover hover:text-foreground',
-                )}
-                title={ENGINE_LABELS[kind]}
-              >
-                {ENGINE_LABELS[kind]}
-              </button>
-            ))}
+            ).map((kind) => {
+              const EngineIcon = ENGINE_ICONS[kind];
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  onClick={() => {
+                    setEngine(kind);
+                    setPort(String(ENGINE_DEFAULT_PORTS[kind]));
+                    // SQLite 无 TLS：切过去时把 SSL 归一为 disable，避免把 require 存进库
+                    if (kind === 'sqlite') setSslMode('disable');
+                    // 切到 oceanbase 时归一化租户模式（null → 'mysql'，已选则保留）；
+                    // 切离时不清空——buildRecord 按 engine 门控，非 oceanbase 恒 null
+                    if (kind === 'oceanbase') {
+                      setMode((cur) => (cur === 'oracle' ? 'oracle' : 'mysql'));
+                    }
+                  }}
+                  className={cn(
+                    'flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-ui-xs transition-colors',
+                    engine === kind
+                      ? 'border-primary/60 bg-primary/10 font-semibold text-foreground'
+                      : 'border-border/70 text-foreground-subtle hover:bg-hover hover:text-foreground',
+                  )}
+                  title={ENGINE_LABELS[kind]}
+                >
+                  <EngineIcon
+                    className={cn('size-3.5 shrink-0', ENGINE_COLORS[kind])}
+                  />
+                  {ENGINE_LABELS[kind]}
+                </button>
+              );
+            })}
           </div>
         </FormField>
 
