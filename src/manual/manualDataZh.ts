@@ -854,22 +854,29 @@ VeloTerm 原生集成系统级伪终端（PTY）。在 macOS / Linux 上直接�
       {
         id: 'db-connections',
         title: '数据库连接库与测试',
-        badge: 'MySQL/PG',
-        keywords: ['数据库', 'MySQL', 'PostgreSQL', 'Oracle', '连接', 'SSL', 'TLS', '只读'],
+        badge: 'MySQL/PG/DM',
+        keywords: ['数据库', 'MySQL', 'PostgreSQL', 'Oracle', '达梦', 'DM8', '兼容模式', '连接', 'SSL', 'TLS', '只读'],
         content: `### 功能概述
-内置 MySQL 与 PostgreSQL 原生连接库（纯 Rust 驱动，TLS 走 rustls；Oracle 为后续版本预留）。密码存 SQLCipher 加密库，支持环境级别标识与只读防护开关。
+内置 MySQL、PostgreSQL、Oracle 与达梦 DM8 四引擎连接库（MySQL/PG 走纯 Rust 异步驱动，Oracle 走 ODPI-C 运行期加载，达梦走树内 vendor 的纯 Rust DM8 协议驱动）。密码存 SQLCipher 加密库，支持环境级别标识与只读防护开关。
 
 ### 操作入口 / 快捷键
 - **入口**：侧边栏「数据库主机」页新建/编辑连接。
 
 ### 核心操作步骤
-1. 点击「新建连接」，选择引擎（MySQL / PostgreSQL，端口自动带出 3306 / 5432）。
+1. 点击「新建连接」，选择引擎（MySQL 3306 / PostgreSQL 5432 / Oracle 1521 / 达梦 5236，端口自动带出）。
 2. 填写地址、端口、库名、用户名与密码；按需选择 SSL 模式：
    - **不加密**：明文直连；
    - **优先 TLS / 强制 TLS**：TLS 加密且不校验证书（自签内网证书适用）；
    - **验证证书**：系统根证书链验证（云数据库适用）。
+   - **达梦不支持 TLS**（驱动仅做登录加密），该下拉对达梦置灰。
 3. 设置环境级别（dev/test/staging/prod）与「只读会话」开关（默认开：后端 AST 白名单拦截写语句）。
 4. 保存前可点「测试连接」：建连 → 取服务端版本 → 断开，返回耗时毫秒数。
+
+### 达梦 DM8 专项
+- **兼容模式**：达梦实例的 MySQL / Oracle 兼容由服务器侧 \`dm.ini\` 的 \`COMPATIBLE_MODE\` 决定，客户端无法切换。表单里的「兼容模式」选项**只影响客户端 SQL 方言**（语句分割、只读判定、取行语法 ROWNUM/LIMIT、欢迎语句 FROM DUAL），选错不影响连接，只影响部分语句写法。
+- **初始 Schema**：达梦的「库名」字段语义是登录后的默认 schema（对应 Oracle 的 CURRENT_SCHEMA），可留空。
+- **对象树**：无论哪种兼容模式，统一走达梦固有的 Oracle 风格数据字典（\`ALL_USERS\` / \`ALL_TABLES\` / \`ALL_VIEWS\` / \`ALL_OBJECTS\` / \`ALL_SEQUENCES\`）——兼容模式只增不删这些视图。
+- **零外部依赖**：驱动为纯 Rust 协议实现，无需安装达梦 Instant Client 或 libdmdpi，开箱即用。
 
 ### 实用技巧 / 注意事项
 - 编辑连接时密码留空 = 保留库中旧密码（表单不回显密码）。
