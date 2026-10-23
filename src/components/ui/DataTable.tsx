@@ -64,6 +64,8 @@ export const DataTable = memo(function DataTable({
   const [copied, setCopied] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // 鼠标悬停的数据单元格文本 span（Cmd/Ctrl+A 全选的作用目标），null = 不在单元格上
+  const hoveredCellRef = useRef<HTMLElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
 
@@ -115,6 +117,28 @@ export const DataTable = memo(function DataTable({
     },
     [handleContainerScroll],
   );
+
+  // Cmd/Ctrl+A 限定为「当前单元格内容全选」：鼠标悬停在任意数据单元格上即生效，拦截默认的
+  // 整页全选，改选该单元格 span 内容（DOM 顺序是先 enter 新格后 leave 旧格，leave 只在仍是
+  // 自己时才清空）。悬停空白/空单元格、工具栏输入框等其余场景走默认行为。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'KeyA' || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      const container = containerRef.current;
+      const span = hoveredCellRef.current;
+      if (!container || !span || !container.contains(span)) return;
+      if (!span.textContent) return;
+      e.preventDefault();
+      const sel = window.getSelection();
+      if (!sel) return;
+      const range = document.createRange();
+      range.selectNodeContents(span);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, []);
 
   const totalRows = processedRows.length;
   const totalHeight = totalRows * ROW_HEIGHT;
@@ -222,20 +246,35 @@ export const DataTable = memo(function DataTable({
             ) : null}
             {visibleRows.map((row, rIdx) => (
               <tr key={startIndex + rIdx} className="h-8 border-b border-border/30 hover:bg-hover/60">
-                <td className="border-r border-border/40 bg-surface/30 px-2 text-center text-foreground-subtlest select-none">
+                <td className="border-r border-border/40 bg-surface/30 px-2 text-center align-middle leading-none text-foreground-subtlest select-none">
                   {startIndex + rIdx + 1}
                 </td>
                 {row.map((cell, cIdx) => (
                   <td
                     key={cIdx}
-                    onMouseEnter={(e) => handleCellMouseEnter(e, cell)}
-                    onMouseLeave={handleCellMouseLeave}
-                    className={cn(
-                      'max-w-xs truncate border-r border-border/30 px-3 text-foreground last:border-r-0',
-                      cell === 'NULL' ? 'text-foreground-subtlest italic' : '',
-                    )}
+                    onMouseEnter={(e) => {
+                      handleCellMouseEnter(e, cell);
+                      hoveredCellRef.current =
+                        e.currentTarget.querySelector<HTMLElement>('[data-cell-text]');
+                    }}
+                    onMouseLeave={(e) => {
+                      handleCellMouseLeave();
+                      const span = e.currentTarget.querySelector<HTMLElement>('[data-cell-text]');
+                      if (hoveredCellRef.current === span) hoveredCellRef.current = null;
+                    }}
+                    className="border-r border-border/30 px-3 align-middle leading-none text-foreground select-none last:border-r-0"
                   >
-                    {cell}
+                    {/* 单元格空白区不可起选（td select-none），仅内容可选：inline-block 收缩到内容宽 +
+                        span select-text 重新开启选中，高亮只盖文本本身 */}
+                    <span
+                      data-cell-text
+                      className={cn(
+                        'inline-block max-w-xs truncate select-text',
+                        cell === 'NULL' ? 'text-foreground-subtlest italic' : '',
+                      )}
+                    >
+                      {cell}
+                    </span>
                   </td>
                 ))}
               </tr>
