@@ -222,12 +222,19 @@ pub async fn db_connect(
     // 达梦的兼容模式在结构体构造前算好（name/env_level 等 move 字段后
     // record 不可再借用）；db_query 的方言键映射消费它
     let dameng_dialect = record.dameng_dialect();
+    // Redis 拓扑复用 mode 字段携带（cluster/sentinel；单机 None）：前端据此
+    // 禁用集群的切库下拉；OB 的租户模式语义不受影响（engine 已区分两者）
+    let mode = if record.engine == "redis" {
+        engines::redis_topology_of(record.extra_options.as_deref()).map(str::to_string)
+    } else {
+        record.mode.clone()
+    };
     let meta = DbSessionMeta {
         session_id: session_id.clone(),
         connection_id: record.id,
         name: record.name,
         engine: record.engine.clone(),
-        mode: record.mode.clone(),
+        mode,
         compatible_mode: dameng_dialect.map(str::to_string),
         database,
         server_version,
@@ -503,6 +510,97 @@ pub async fn db_table_detail(
     let session = state.get(&session_id)?;
     let mut engine = session.engine.lock().await;
     engine.table_detail(&schema, &table, &kind).await
+}
+
+// ── Redis 键管理与诊断 ─────────────────────────────────────────────────
+
+/// Redis 键结构化读（键编辑对话框）：类型 + TTL + 成员明细；成员超上限置
+/// truncated（前端禁整体覆写防丢数据）。db 是键所属逻辑库（树节点携带的
+/// dbN），缺省用会话当前库。只读会话可用。
+#[tauri::command]
+pub async fn redis_read_key(
+    state: State<'_, DbState>,
+    session_id: String,
+    key: String,
+    db: Option<String>,
+) -> Result<engines::RedisKeyData, String> {
+    let session = state.get(&session_id)?;
+    let mut engine = session.engine.lock().await;
+    let DbEngine::Redis { conn, db: current, .. } = &mut *engine else {
+        return Err("该命令仅适用于 Redis 会话".to_string());
+    };
+    let target = db
+        .as_deref()
+        .and_then(engines::parse_redis_db)
+        .unwrap_or(*current);
+    engines::redis_read_key_full(conn, *current, target, &key).await
+}
+
+/// Redis 键整体覆写（键编辑对话框保存）：DEL + 按类型写入的 MULTI/EXEC
+/// 原子管道，keep_ttl 时恢复原 TTL；清空全部成员 = 删除该 key。
+/// 只读会话拒绝。
+#[tauri::command]
+pub async fn redis_write_key(
+    state: State<'_, DbState>,
+    session_id: String,
+    key: String,
+    payload: engines::RedisKeyWrite,
+    keep_ttl: bool,
+    db: Option<String>,
+) -> Result<i64, String> {
+    let session = state.get(&session_id)?;
+    if session
+        .meta
+        .read()
+        .map_err(|_| "DB 会话元信息锁中毒".to_string())?
+        .readonly
+    {
+        return Err("只读会话不允许写键（连接记录开启「只读」）".to_string());
+    }
+    let mut engine = session.engine.lock().await;
+    let DbEngine::Redis { conn, db: current, .. } = &mut *engine else {
+        return Err("该命令仅适用于 Redis 会话".to_string());
+    };
+    let target = db
+        .as_deref()
+        .and_then(engines::parse_redis_db)
+        .unwrap_or(*current);
+    engines::redis_write_key_full(conn, *current, target, &key, payload, keep_ttl).await
+}
+
+/// Redis 慢日志视图（SLOWLOG GET 的结构化解析）。只读会话可用。
+#[tauri::command]
+pub async fn redis_slowlog(
+    state: State<'_, DbState>,
+    session_id: String,
+    count: Option<i64>,
+) -> Result<engines::RedisTableData, String> {
+    let session = state.get(&session_id)?;
+    let count = count.unwrap_or(100).clamp(1, 1000) as usize;
+    let mut engine = session.engine.lock().await;
+    let DbEngine::Redis { conn, .. } = &mut *engine else {
+        return Err("该命令仅适用于 Redis 会话".to_string());
+    };
+    engines::redis_slowlog_rows(conn, count).await
+}
+
+/// Redis 大 key 分析（SCAN 采样 + 批量 MEMORY USAGE，按内存倒序取前 N）。
+/// 只读会话可用。
+#[tauri::command]
+pub async fn redis_bigkeys(
+    state: State<'_, DbState>,
+    session_id: String,
+    sample: Option<i64>,
+    top_n: Option<i64>,
+) -> Result<engines::RedisBigkeysData, String> {
+    let session = state.get(&session_id)?;
+    let sample = sample.unwrap_or(1000).clamp(100, 50_000) as usize;
+    let top_n = top_n.unwrap_or(50).clamp(10, 500) as usize;
+    let mut engine = session.engine.lock().await;
+    let DbEngine::Redis { conn, .. } = &mut *engine else {
+        return Err("该命令仅适用于 Redis 会话".to_string());
+    };
+    engines::redis_bigkeys_rows(conn, sample, top_n).await
 }
 
 // ── 当前数据库切换（工具栏下拉）────────────────────────────────────────
