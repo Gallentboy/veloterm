@@ -35,6 +35,14 @@ import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { DataTable } from '@/components/ui/DataTable';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { SqlEditor } from '@/components/db/SqlEditor';
+import {
+  RedisBigkeysModal,
+  RedisKeyDeleteModal,
+  RedisKeyEditorModal,
+  RedisSlowlogModal,
+  RedisTtlModal,
+  redisQuote,
+} from '@/components/db/RedisKeyDialogs';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { createPortal } from 'react-dom';
 import {
@@ -85,9 +93,23 @@ interface StatementResult {
 const ROW_CAP_OPTIONS = [1000, 5000, 20000, 50000];
 const DEFAULT_TIMEOUT_MS = 60_000;
 
-/** Redis 命令参数转义：含空白/引号/反斜杠时用双引号包裹并转义 */
-function redisQuote(value: string): string {
-  return /[\s"'\\]/.test(value) ? `"${value.replace(/(["\\])/g, '\\$1')}"` : value;
+/** Redis key → 最自然的查看命令（树双击、编辑保存后的回看共用） */
+function redisViewCommand(key: string, type: string): string {
+  const k = redisQuote(key);
+  switch (type) {
+    case 'hash':
+      return `HGETALL ${k}`;
+    case 'list':
+      return `LRANGE ${k} 0 -1`;
+    case 'set':
+      return `SMEMBERS ${k}`;
+    case 'zset':
+      return `ZRANGE ${k} 0 -1 WITHSCORES`;
+    case 'stream':
+      return `XRANGE ${k} - +`;
+    default:
+      return `GET ${k}`;
+  }
 }
 
 /** 可展开子层的节点类型（分组/表/视图可展开；函数/过程/序列/列是叶子） */
@@ -193,6 +215,14 @@ export function DbSessionView({
     y: number;
     node: CatalogNode;
   } | null>(null);
+
+  // Redis 键管理/诊断对话框（editor/ttl/delete 携带键作用域；node.key 的
+  // `.` 前段是逻辑库 dbN——key 本身可含点，但 schema 不含）
+  const [redisDialog, setRedisDialog] = useState<
+    | { kind: 'editor' | 'ttl' | 'delete'; keyName: string; keyDb: string; keyType: string }
+    | { kind: 'slowlog' | 'bigkeys' }
+    | null
+  >(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   useDismissOnOutsidePointer(
     contextMenu != null,
@@ -416,21 +446,7 @@ export function DbSessionView({
       // Redis：table 节点即 key，detail 携带值类型（string/hash/...），据此出命令。
       // node.name 是裸 key（node.key 形如 "db0.{key}"，不能按 . 切分）
       if (meta?.engine === 'redis' && node.kind === 'table') {
-        const type = node.detail ?? 'string';
-        const k = redisQuote(node.name);
-        const cmd =
-          type === 'hash'
-            ? `HGETALL ${k}`
-            : type === 'list'
-              ? `LRANGE ${k} 0 -1`
-              : type === 'set'
-                ? `SMEMBERS ${k}`
-                : type === 'zset'
-                  ? `ZRANGE ${k} 0 -1 WITHSCORES`
-                  : type === 'stream'
-                    ? `XRANGE ${k} - +`
-                    : `GET ${k}`;
-        setSql(cmd);
+        setSql(redisViewCommand(node.name, node.detail ?? 'string'));
         return;
       }
       if (node.kind === 'table' || node.kind === 'view') {
@@ -805,6 +821,21 @@ export function DbSessionView({
   }
 
   const currentResult = results[activeResult] ?? results[results.length - 1] ?? null;
+  // Redis Cluster：仅 db0，切库下拉禁用（SELECT 在集群协议下不可用）
+  const redisCluster = meta.engine === 'redis' && meta.mode === 'cluster';
+
+  // Redis SCAN 翻页：后端保证 SCAN 结果 headers 为 [cursor, key] 且游标只在
+  // 首行首列；'0' 表示迭代完毕。翻页沿用原命令的 COUNT（缺省 100）
+  const scanPaging = (() => {
+    if (meta.engine !== 'redis' || !currentResult) return null;
+    const text = currentResult.sql.trim();
+    if (!/^scan\b/i.test(text) || currentResult.columns[0] !== 'cursor') return null;
+    const cursor = currentResult.rows[0]?.[0] ?? '0';
+    if (!cursor || cursor === '0') return null;
+    const countMatch = text.match(/COUNT\s+(\d+)/i);
+    const count = countMatch ? Number(countMatch[1]) : 100;
+    return { cursor, command: `SCAN ${cursor} COUNT ${count}` };
+  })();
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -842,20 +873,29 @@ export function DbSessionView({
           {switchingDb ? (
             <Loader2 className="mx-1 size-3 animate-spin text-foreground-subtle" />
           ) : (
-            <SelectMenu
-              value={meta.database ?? ''}
-              options={(
-                meta.database && !databases.includes(meta.database)
-                  ? [meta.database, ...databases]
-                  : databases
-              ).map((db) => ({ value: db, label: db }))}
-              onChange={(db) => void handleUseDatabase(db)}
-              disabled={databases.length === 0 || meta.engine === 'sqlite'}
-              placeholder="—"
-              aria-label={t('db.currentDatabase')}
-              className="max-w-40"
-              triggerClassName="h-6 rounded border-border/60 bg-background px-1.5 font-mono text-ui-xs hover:border-border"
-            />
+            <span
+              title={redisCluster ? t('db.redisClusterDbLocked') : undefined}
+              className={redisCluster ? 'cursor-not-allowed opacity-60' : undefined}
+            >
+              <SelectMenu
+                value={meta.database ?? ''}
+                options={(
+                  meta.database && !databases.includes(meta.database)
+                    ? [meta.database, ...databases]
+                    : databases
+                ).map((db) => ({ value: db, label: db }))}
+                onChange={(db) => void handleUseDatabase(db)}
+                disabled={
+                  databases.length === 0 ||
+                  meta.engine === 'sqlite' ||
+                  (meta.engine === 'redis' && meta.mode === 'cluster')
+                }
+                placeholder="—"
+                aria-label={t('db.currentDatabase')}
+                className="max-w-40"
+                triggerClassName="h-6 rounded border-border/60 bg-background px-1.5 font-mono text-ui-xs hover:border-border"
+              />
+            </span>
           )}
         </div>
         <div className="flex-1" />
@@ -911,48 +951,70 @@ export function DbSessionView({
               style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
               className="z-[120] min-w-44 overflow-hidden rounded-lg border border-border bg-menu p-1 shadow-lg select-none"
             >
-              {(contextMenu.node.kind === 'table' || contextMenu.node.kind === 'view'
-                ? [
+              {(() => {
+                // Redis 键：table 节点即 key（detail=值类型）——「表详情」语义即
+                // 键详情，另附编辑/TTL/删除三个写入口（只读会话隐藏）；创建索引
+                // 对 Redis 无意义，只对 SQL 表保留
+                const node = contextMenu.node;
+                const isRedisKey = meta.engine === 'redis' && node.kind === 'table';
+                const items: { key: string; label: string; action: () => void }[] = [];
+                if (node.kind === 'table' || node.kind === 'view') {
+                  items.push({
+                    key: 'viewData',
+                    label: t('db.viewData'),
+                    action: () => handleNodeClick(node),
+                  });
+                  items.push({
+                    key: 'detail',
+                    label: isRedisKey ? t('db.objectDefinition') : t('db.tableDetail'),
+                    action: () => openTableDetail(node),
+                  });
+                } else {
+                  items.push({
+                    key: 'definition',
+                    label: t('db.objectDefinition'),
+                    action: () => handleNodeClick(node),
+                  });
+                }
+                if (isRedisKey && !meta.readonly) {
+                  const keyDb = node.key.split('.')[0] ?? '';
+                  const keyType = node.detail ?? 'string';
+                  items.push(
                     {
-                      key: 'viewData',
-                      label: t('db.viewData'),
-                      action: () => handleNodeClick(contextMenu.node),
+                      key: 'editKey',
+                      label: t('db.redisEditKey'),
+                      action: () =>
+                        setRedisDialog({ kind: 'editor', keyName: node.name, keyDb, keyType }),
                     },
                     {
-                      key: 'detail',
-                      label: t('db.tableDetail'),
-                      action: () => openTableDetail(contextMenu.node),
+                      key: 'ttl',
+                      label: t('db.redisTtlTitle'),
+                      action: () =>
+                        setRedisDialog({ kind: 'ttl', keyName: node.name, keyDb, keyType }),
                     },
-                  ]
-                : [
                     {
-                      key: 'definition',
-                      label: t('db.objectDefinition'),
-                      action: () => handleNodeClick(contextMenu.node),
+                      key: 'deleteKey',
+                      label: t('db.redisDeleteKeyTitle'),
+                      action: () =>
+                        setRedisDialog({ kind: 'delete', keyName: node.name, keyDb, keyType }),
                     },
-                  ]
-              )
-                .concat(
-                  contextMenu.node.kind === 'table'
-                    ? [
-                        {
-                          key: 'createIndex',
-                          label: t('db.createIndex'),
-                          action: () => insertCreateIndexTemplate(contextMenu.node),
-                        },
-                      ]
-                    : [],
-                )
-                .concat([
-                  {
-                    key: 'copyName',
-                    label: t('db.copyQualifiedName'),
-                    action: () => {
-                      void navigator.clipboard.writeText(contextMenu.node.name).catch(() => undefined);
-                    },
+                  );
+                }
+                if (node.kind === 'table' && meta.engine !== 'redis') {
+                  items.push({
+                    key: 'createIndex',
+                    label: t('db.createIndex'),
+                    action: () => insertCreateIndexTemplate(node),
+                  });
+                }
+                items.push({
+                  key: 'copyName',
+                  label: t('db.copyQualifiedName'),
+                  action: () => {
+                    void navigator.clipboard.writeText(node.name).catch(() => undefined);
                   },
-                ])
-                .map((item) => (
+                });
+                return items.map((item) => (
                   <button
                     key={item.key}
                     type="button"
@@ -965,11 +1027,54 @@ export function DbSessionView({
                   >
                     {item.label}
                   </button>
-                ))}
+                ));
+              })()}
             </div>,
             document.body,
           )
         : null}
+
+      {/* Redis 键管理/诊断对话框（键操作完成即刷新对象树；保存后自动回看该键） */}
+      {meta && redisDialog?.kind === 'editor' ? (
+        <RedisKeyEditorModal
+          sessionId={meta.sessionId}
+          keyName={redisDialog.keyName}
+          keyDb={redisDialog.keyDb || undefined}
+          onClose={() => setRedisDialog(null)}
+          onSaved={() => {
+            void catalogLoad(meta.sessionId, meta.database);
+            const cmd = redisViewCommand(redisDialog.keyName, redisDialog.keyType);
+            setSql(cmd);
+            void runQuery(cmd);
+          }}
+        />
+      ) : null}
+      {meta && redisDialog?.kind === 'ttl' ? (
+        <RedisTtlModal
+          sessionId={meta.sessionId}
+          keyName={redisDialog.keyName}
+          keyDb={redisDialog.keyDb || undefined}
+          currentDb={meta.database}
+          onClose={() => setRedisDialog(null)}
+          onChanged={() => void catalogLoad(meta.sessionId, meta.database)}
+        />
+      ) : null}
+      {meta && redisDialog?.kind === 'delete' ? (
+        <RedisKeyDeleteModal
+          sessionId={meta.sessionId}
+          keyName={redisDialog.keyName}
+          keyDb={redisDialog.keyDb || undefined}
+          currentDb={meta.database}
+          onClose={() => setRedisDialog(null)}
+          onDeleted={() => void catalogLoad(meta.sessionId, meta.database)}
+        />
+      ) : null}
+      {meta && redisDialog?.kind === 'slowlog' ? (
+        <RedisSlowlogModal sessionId={meta.sessionId} onClose={() => setRedisDialog(null)} />
+      ) : null}
+      {meta && redisDialog?.kind === 'bigkeys' ? (
+        <RedisBigkeysModal sessionId={meta.sessionId} onClose={() => setRedisDialog(null)} />
+      ) : null}
 
       <div className="flex min-h-0 flex-1">
         {/* 对象树 */}
@@ -1036,7 +1141,12 @@ export function DbSessionView({
         <div className="flex min-w-0 flex-1 flex-col">
           {/* SQL 编辑器区 */}
           <div className="h-44 shrink-0 border-b border-border/50">
-            <SqlEditor value={sql} onChange={setSql} onRun={() => void runQuery()} />
+            <SqlEditor
+              value={sql}
+              onChange={setSql}
+              onRun={() => void runQuery()}
+              redisMode={meta.engine === 'redis'}
+            />
           </div>
 
           {/* 执行工具栏 */}
@@ -1073,6 +1183,26 @@ export function DbSessionView({
               className="w-[4.5rem]"
               triggerClassName="h-6 rounded border-border/60 bg-background px-1.5 text-ui-xs hover:border-border"
             />
+            {/* Redis 专属：慢日志 / 大 key 分析（只读会话也可用，纯读操作） */}
+            {meta.engine === 'redis' ? (
+              <>
+                <span className="mx-1 h-4 w-px bg-border/60" />
+                <button
+                  type="button"
+                  onClick={() => setRedisDialog({ kind: 'slowlog' })}
+                  className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground hover:bg-hover"
+                >
+                  {t('db.redisSlowlogTitle')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRedisDialog({ kind: 'bigkeys' })}
+                  className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground hover:bg-hover"
+                >
+                  {t('db.redisBigkeysTitle')}
+                </button>
+              </>
+            ) : null}
             {running ? (
               <span className="ml-auto flex items-center gap-1 text-ui-xs text-foreground-subtle">
                 <Loader2 className="size-3 animate-spin" />
@@ -1317,10 +1447,25 @@ export function DbSessionView({
                       columns={currentResult.columns}
                       rows={currentResult.rows}
                       statusFooter={
-                        <span>
-                          {currentResult.rows.length} 行 · {currentResult.columns.length} 列 ·{' '}
-                          {currentResult.elapsedMs} ms
-                          {currentResult.truncated ? ` · ${t('db.truncated')}` : ''}
+                        <span className="flex items-center gap-2">
+                          <span>
+                            {currentResult.rows.length} 行 · {currentResult.columns.length} 列 ·{' '}
+                            {currentResult.elapsedMs} ms
+                            {currentResult.truncated ? ` · ${t('db.truncated')}` : ''}
+                          </span>
+                          {scanPaging ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSql(scanPaging.command);
+                                void runQuery(scanPaging.command);
+                              }}
+                              className="rounded border border-border/60 px-1.5 py-px font-mono text-ui-xs text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground"
+                              title={t('db.redisScanNextHint')}
+                            >
+                              {t('db.redisScanNext')} ▸
+                            </button>
+                          ) : null}
                         </span>
                       }
                     />
