@@ -1500,9 +1500,12 @@ impl DbEngine {
             }
             DbEngine::Postgres(client) => {
                 let q = |v: &str| format!("\"{}\"", v.replace('"', "\"\""));
+                // 列结构 + 注释（DBeaver PostgreSchema 同源：col_description
+                // 取列级注释）
                 let col_rows = client
                     .query(
-                        "SELECT column_name, data_type, is_nullable, column_default \
+                        "SELECT column_name, data_type, is_nullable, column_default, \
+                                col_description(format('%I.%I', table_schema, table_name)::regclass::oid, ordinal_position) \
                          FROM information_schema.columns \
                          WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position",
                         &[&schema, &table],
@@ -1520,6 +1523,10 @@ impl DbEngine {
                                 .ok()
                                 .flatten()
                                 .unwrap_or_else(|| "NULL".into()),
+                            row.try_get::<_, Option<String>>(4)
+                                .ok()
+                                .flatten()
+                                .unwrap_or_default(),
                         ])
                     })
                     .collect();
@@ -1636,6 +1643,7 @@ impl DbEngine {
                         "Type".into(),
                         "Nullable".into(),
                         "Default".into(),
+                        "Comment".into(),
                     ],
                     columns,
                     index_headers: vec!["Index".into(), "Definition".into()],
@@ -1670,8 +1678,12 @@ impl DbEngine {
                 };
 
                 let col_sql = format!(
-                    "SELECT column_name, data_type, nullable FROM all_tab_columns \
-                     WHERE owner = {} AND table_name = {} ORDER BY column_id",
+                    "SELECT c.column_name, c.data_type, c.nullable, cc.COMMENTS \
+                     FROM all_tab_columns c \
+                     LEFT JOIN all_col_comments cc \
+                       ON cc.owner = c.owner AND cc.table_name = c.table_name \
+                      AND cc.column_name = c.column_name \
+                     WHERE c.owner = {} AND c.table_name = {} ORDER BY c.column_id",
                     ob_quote_literal(schema),
                     ob_quote_literal(table)
                 );
@@ -1694,6 +1706,8 @@ impl DbEngine {
                         oracle_row_string(&row, 0),
                         oracle_row_string(&row, 1),
                         nullable,
+                        // 列注释（all_col_comments 无行为 NULL）
+                        oracle_row_string(&row, 3),
                     ]);
                 }
 
@@ -1829,7 +1843,12 @@ impl DbEngine {
 
                 Ok(TableDetail {
                     ddl,
-                    column_headers: vec!["Column".into(), "Type".into(), "Nullable".into()],
+                    column_headers: vec![
+                        "Column".into(),
+                        "Type".into(),
+                        "Nullable".into(),
+                        "Comment".into(),
+                    ],
                     columns,
                     index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
                     indexes,
@@ -2061,12 +2080,17 @@ impl DbEngine {
 
                     // 列结构：DATA_DEFAULT 在 Oracle 系字典里是 LONG，部分驱动/版本
                     // 读不了——首查失败就退到不带 Default 的三列（宁可少一列，
-                    // 不能让整张表的列结构都拉不出来）
+                    // 不能让整张表的列结构都拉不出来）；左联 ALL_COL_COMMENTS
+                    // 取列注释（注释列失败退化为空，不影响主列结构）
                     let col_rows = match dm_query_rows(
                         client,
-                        "SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT \
-                         FROM ALL_TAB_COLUMNS WHERE OWNER = ? AND TABLE_NAME = ? \
-                         ORDER BY COLUMN_ID",
+                        "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE, c.DATA_DEFAULT, cc.COMMENTS \
+                         FROM ALL_TAB_COLUMNS c \
+                         LEFT JOIN ALL_COL_COMMENTS cc \
+                           ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME \
+                          AND cc.COLUMN_NAME = c.COLUMN_NAME \
+                         WHERE c.OWNER = ? AND c.TABLE_NAME = ? \
+                         ORDER BY c.COLUMN_ID",
                         &[
                             dm_pure::Param::Str(schema_o.clone()),
                             dm_pure::Param::Str(table_o.clone()),
@@ -2099,6 +2123,8 @@ impl DbEngine {
                                 },
                                 // 降级路没有第四列：越界由 dm_row_string 回 NULL
                                 dm_row_string(row, 3),
+                                // 列注释（降级路越界同样回空）
+                                dm_row_string(row, 4),
                             ]
                         })
                         .collect();
@@ -2249,6 +2275,7 @@ impl DbEngine {
                             "Type".into(),
                             "Nullable".into(),
                             "Default".into(),
+                            "Comment".into(),
                         ],
                         columns,
                         index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
