@@ -1027,9 +1027,14 @@ fn default_db_readonly() -> bool {
 }
 
 impl DbConnectionRecord {
-    /// engine 合法性（mysql / postgres / oracle 三引擎）
+    /// engine 合法性（mysql / postgres / oracle / redis 四引擎）。
+    /// redis 的 database 字段存逻辑库编号（"3" 或 "db3" 两种写法都接受），
+    /// 空值按 db0 处理——语义与另三引擎的「库名」不同，见 engines.rs。
     pub fn supported_engine(&self) -> bool {
-        matches!(self.engine.as_str(), "mysql" | "postgres" | "oracle")
+        matches!(
+            self.engine.as_str(),
+            "mysql" | "postgres" | "oracle" | "redis"
+        )
     }
 }
 

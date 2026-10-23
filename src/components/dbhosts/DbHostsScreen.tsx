@@ -48,12 +48,14 @@ const ENGINE_DEFAULT_PORTS: Record<DbEngineKind, number> = {
   mysql: 3306,
   postgres: 5432,
   oracle: 1521,
+  redis: 6379,
 };
 
 const ENGINE_LABELS: Record<DbEngineKind, string> = {
   mysql: 'MySQL',
   postgres: 'PostgreSQL',
   oracle: 'Oracle',
+  redis: 'Redis',
 };
 
 const SSL_MODES: Array<{ value: DbConnectionRecord['sslMode']; labelKey: string }> = [
@@ -205,7 +207,9 @@ export function DbHostsScreen({
                     ? 'text-terminal-cyan'
                     : record.engine === 'postgres'
                       ? 'text-terminal-blue'
-                      : 'text-terminal-red',
+                      : record.engine === 'redis'
+                        ? 'text-terminal-green'
+                        : 'text-terminal-red',
                 )}
               />
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -526,7 +530,9 @@ function DbConnectionFormDialog({
       ? t('dbHosts.databaseLabelMysql')
       : engine === 'postgres'
         ? t('dbHosts.databaseLabelPg')
-        : t('dbHosts.databaseLabelOracle');
+        : engine === 'redis'
+          ? t('dbHosts.databaseLabelRedis')
+          : t('dbHosts.databaseLabelOracle');
 
   // Oracle：服务名必填（连库必需）；database 降为可选的初始 schema
   const canSave =
@@ -638,7 +644,7 @@ function DbConnectionFormDialog({
 
         <FormField label={t('dbHosts.engineLabel')}>
           <div className="flex gap-1.5">
-            {(['mysql', 'postgres', 'oracle'] as const).map((kind) => (
+            {(['mysql', 'postgres', 'oracle', 'redis'] as const).map((kind) => (
               <button
                 key={kind}
                 type="button"
@@ -683,7 +689,7 @@ function DbConnectionFormDialog({
           </div>
         </div>
 
-        {/* Oracle：服务名行（必填，连库必需；SSL 同行）；MySQL/PG 无此行 */}
+        {/* Oracle：服务名行（必填，连库必需；SSL 同行）；MySQL/PG/Redis 无此行 */}
         {engine === 'oracle' ? (
           <div className="flex gap-3">
             <div className="min-w-0 flex-1">
@@ -724,10 +730,16 @@ function DbConnectionFormDialog({
                 placeholder={
                   engine === 'oracle'
                     ? t('dbHosts.schemaPlaceholder')
-                    : t('dbHosts.databasePlaceholder')
+                    : engine === 'redis'
+                      ? t('dbHosts.redisDbPlaceholder')
+                      : t('dbHosts.databasePlaceholder')
                 }
                 pickLabel={
-                  engine === 'oracle' ? t('dbHosts.pickSchema') : t('dbHosts.pickDatabase')
+                  engine === 'oracle'
+                    ? t('dbHosts.pickSchema')
+                    : engine === 'redis'
+                      ? t('dbHosts.pickRedisDb')
+                      : t('dbHosts.pickDatabase')
                 }
               />
             </FormField>

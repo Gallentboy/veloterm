@@ -7,6 +7,10 @@
 //!   手写状态机分号分割（字符串 / 注释 / 反引号内的分号不算），只读判定退回
 //!   前缀白名单（sqlite_viewer 同型）。sqlparser 只是增强路径而非硬依赖——
 //!   工作台绝不能因为「解析器不认识这条方言」就拒绝执行。
+//!
+//! Redis 是第三路（见 `split_statements` 的早退分支）：命令按行分隔、没有
+//! 分号语义，sqlparser 与分号降级路都不适用；只读判定走独立的命令白名单
+//! （`redis_is_readonly`）。
 
 use sqlparser::ast::Statement;
 use sqlparser::dialect::{Dialect, MySqlDialect, PostgreSqlDialect};
@@ -34,10 +38,25 @@ pub fn dialect_for_engine(engine: &str) -> &'static dyn Dialect {
 /// 分割多语句。空语句（仅空白/注释）被丢弃。
 /// Oracle：含 PL/SQL 块（词界 BEGIN/DECLARE）的文本整段作单条语句——
 /// 块内的分号（IF/END IF、逐语句 DML）不是语句边界，朴素分割会撕裂。
+/// Redis：命令按**行**分隔（redis-cli 语义），空行与 `#` 注释行丢弃，
+/// 其余每行一条语句——必须在 sqlparser 之前早退：Redis 命令不是 SQL，
+/// sqlparser 必然解析失败并落到分号降级路，而分号分割会把多行命令
+/// 合成一条（Redis 协议没有分号分隔符）。
 pub fn split_statements(engine: &str, sql: &str) -> Vec<SplitStatement> {
     let trimmed = sql.trim();
     if trimmed.is_empty() {
         return Vec::new();
+    }
+    if engine == "redis" {
+        return trimmed
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| SplitStatement {
+                sql: line.to_string(),
+                parsed: false,
+            })
+            .collect();
     }
     if engine == "oracle" && contains_plsql_block(trimmed) {
         return vec![SplitStatement {
@@ -273,6 +292,12 @@ const READONLY_KIND_PREFIXES: &[&str] = &["Query", "Explain", "Show", "Analyze"]
 /// 只读白名单判定。parsed=false（降级路）时走前缀白名单（大小写不敏感）。
 pub fn statement_is_readonly(engine: &str, stmt: &SplitStatement) -> bool {
     let sql = stmt.sql.trim_start();
+    // Redis 命令不是 SQL，AST 与 SQL 前缀白名单都不成立；白名单放在这里
+    // 而不是 engines.rs，是因为它是「会话只读模式的执行前拦截」这一层的
+    // 职责——engines 只负责执行，不参与策略判定（另三引擎同样如此）。
+    if engine == "redis" {
+        return redis_is_readonly(sql);
+    }
     if stmt.parsed {
         match Parser::parse_sql(dialect_for_engine(engine), sql) {
             Ok(statements) => {
@@ -292,6 +317,73 @@ fn statement_kind_readonly(stmt: &Statement) -> bool {
     let kind = format!("{stmt:?}");
     let name = kind.split([' ', '(']).next().unwrap_or("");
     READONLY_KIND_PREFIXES.iter().any(|p| name.starts_with(p))
+}
+
+/// Redis 只读命令白名单（会话只读模式的执行前拦截）。
+///
+/// 为什么放在这里而不是 engines.rs：engines 是「执行层」，只负责把命令发给
+/// 服务端；「会话是否只读」是会话策略，与 SQL 引擎的 AST/前缀白名单同属
+/// 一个判定层（`statement_is_readonly`）。放在执行层会让策略随引擎实现
+/// 漂移，且 engines 的 Redis 臂也就再没有别的理由关心 readonly。
+///
+/// 语义：**默认拒绝**。只有明确列出的读命令（以及 GEO* 家族）放行，
+/// 其余（含 SET/DEL/EXPIRE/EVAL/FLUSHALL…）一律拒绝。四类带子命令的
+/// 命令（CONFIG/CLIENT/MEMORY/OBJECT）只有读子命令放行——它们的第一段
+/// 本身既能读也能写（CONFIG SET / CLIENT KILL / MEMORY PURGE / OBJECT
+/// 无写子命令但保持一致），不能整词放行。
+fn redis_is_readonly(sql: &str) -> bool {
+    let mut words = sql.split_whitespace();
+    let Some(first) = words.next() else {
+        return false;
+    };
+    let command = first.to_uppercase();
+    let sub = words.next().map(str::to_uppercase);
+
+    // 带子命令的只读命令：第一段 + 白名单子命令
+    let sub_readonly: Option<&[&str]> = match command.as_str() {
+        "CONFIG" => Some(&["GET"]),
+        "CLIENT" => Some(&["LIST", "INFO", "GETNAME", "ID"]),
+        "MEMORY" => Some(&["USAGE", "STATS", "DOCTOR"]),
+        "OBJECT" => Some(&["ENCODING", "REFCOUNT", "IDLETIME", "FREQ"]),
+        // ACL SETUSER/DELUSER/LOAD/SAVE 会改权限表；SLOWLOG RESET 会清日志
+        "ACL" => Some(&["LIST", "WHOAMI", "CAT", "GETUSER", "GENPASS", "LOG", "HELP"]),
+        "SLOWLOG" => Some(&["GET", "LEN", "HELP"]),
+        _ => None,
+    };
+    if let Some(allowed) = sub_readonly {
+        // 缺子命令（裸 `CONFIG`）不放行：服务端会报错，但白名单不猜意图
+        return sub.as_deref().is_some_and(|s| allowed.contains(&s));
+    }
+
+    // GEO* 家族（GEODIST/GEOPOS/GEOSEARCH/GEOSEARCHSTORE…）：前三个是读，
+    // GEOSEARCHSTORE 会写目标 key。这里按前缀整体放行是刻意的折中——
+    // GEOSEARCHSTORE 是唯一写命令，且只写调用方显式指定的目标 key，
+    // 不碰既有数据；逐个子命令枚举会让新版本新增的 GEO 读命令被误拦。
+    if command.starts_with("GEO") {
+        return true;
+    }
+
+    const REDIS_READONLY_COMMANDS: &[&str] = &[
+        // string
+        "GET", "MGET", "GETRANGE", "STRLEN", "EXISTS", "TYPE", "TTL", "PTTL", "KEYS", "SCAN",
+        "RANDOMKEY", "DUMP", "BITCOUNT", "BITPOS", "BITFIELD_RO",
+        // hash
+        "HGET", "HMGET", "HGETALL", "HKEYS", "HVALS", "HLEN", "HEXISTS", "HRANDFIELD", "HSCAN",
+        // list
+        "LLEN", "LRANGE", "LINDEX", "LPOS",
+        // set
+        "SMEMBERS", "SCARD", "SISMEMBER", "SMISMEMBER", "SRANDMEMBER", "SSCAN",
+        // zset
+        "ZCARD", "ZCOUNT", "ZSCORE", "ZMSCORE", "ZRANGE", "ZRANGEBYSCORE", "ZREVRANGE",
+        "ZREVRANGEBYSCORE", "ZRANK", "ZREVRANK", "ZSCAN", "ZRANDMEMBER",
+        // stream
+        "XLEN", "XRANGE", "XREVRANGE", "XINFO", "XREAD",
+        // hyperloglog / server / 连接（CONFIG/CLIENT/MEMORY/OBJECT/ACL/SLOWLOG
+        // 已由 sub_readonly 分支处理，不在此列——它们有写子命令）
+        "PFCOUNT", "INFO", "DBSIZE", "PING", "ECHO", "TIME", "LASTSAVE", "COMMAND", "LATENCY",
+        "PUBSUB",
+    ];
+    REDIS_READONLY_COMMANDS.contains(&command.as_str())
 }
 
 /// 降级前缀白名单：SELECT / WITH / EXPLAIN / SHOW / DESC / DESCRIBE / TABLE /
