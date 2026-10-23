@@ -147,7 +147,7 @@ export const CellTooltipPortal = memo(function CellTooltipPortal({
           )}
         </button>
       </div>
-      <div className="overflow-y-auto max-h-40 break-all whitespace-pre-wrap leading-relaxed text-foreground select-text pr-1">
+      <div className="scrollbar-slim overflow-y-auto max-h-40 break-all whitespace-pre-wrap leading-relaxed text-foreground select-text pr-1">
         {anchor.text}
       </div>
     </div>,
