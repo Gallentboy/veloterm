@@ -715,12 +715,16 @@ export function DbSessionView({
       const hasChildren = EXPANDABLE_KINDS.has(branch.node.kind);
       // 搜索时命中路径默认展开、点击可收起（仅展示层，不改 expanded 状态，清空搜索即恢复原状）
       const effectiveExpanded = treeFilter ? !searchCollapsed.has(key) : branch.expanded;
-      // MySQL 树根层：当前会话选中的库节点高亮标识（PG 根层是 schema，
-      // 当前库由树面板顶部徽标承载）
+      // 树根层的「当前库」高亮：各引擎根层形态不同——MySQL（含 OB MySQL 模式）
+      // 根层是 database 节点，PG / Oracle（含 OB Oracle 模式）/ 达梦 / SQLite
+      // 根层是 schema 节点，所以按名字匹配而非限定 kind。大小写不敏感：达梦
+      // Oracle 兼容模式与 Oracle 的标识符默认折叠大写，而连接记录里用户可能
+      // 填小写。
+      const currentDbName = meta?.database ?? '';
       const isCurrentDb =
         depth === 0 &&
-        branch.node.kind === 'database' &&
-        branch.node.name === (meta?.database ?? '');
+        currentDbName.length > 0 &&
+        branch.node.name.toLowerCase() === currentDbName.toLowerCase();
       // 分组名后端给标准英文大写（TABLE/VIEW/...），前端 i18n 映射显示
       const displayLabel =
         branch.node.kind === 'group'
