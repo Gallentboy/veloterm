@@ -379,7 +379,7 @@ pub fn init_db_at_path(db_path: &Path, master_key: &str) -> Result<DbPool, Strin
       -- password 明文存 SQLCipher 库（zk_credentials 同级安全水位）；
       -- ssh_host_id 指向 hosts 表（经该主机的跳板链+中继建隧道，空 = 直连）；
       -- engine: 'mysql' | 'postgres' | 'oracle' | 'oceanbase' | 'sqlite'（oracle 走 vendor
-      -- rust-oracle；oceanbase 按 mode 列分双模式：'mysql' 复用 mysql_async 臂，
+      -- oracle_async 纯 Rust 驱动；oceanbase 按 mode 列分双模式：'mysql' 复用 mysql_async 臂，
       -- 'oracle' 走 vendor obclnt-sys/libobclient；sqlite 为本地文件库：
       -- db_path = 数据库文件路径（空 = 内存库 :memory:），password = 加密口令
       -- （sqlcipher-raw 模式填 64 位十六进制原始密钥），encryption_mode = 加密方式

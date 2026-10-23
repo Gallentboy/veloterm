@@ -1,12 +1,13 @@
 //! OceanBase Oracle 模式租户的连接安全包装：libobclient（OceanBase
 //! Connector/C）阻塞 C API 的 Rust 侧薄封装，sys 层见 vendor/obclnt-sys。
 //!
-//! 定位与先例：与 engines.rs 的 with_oracle（vendor rust-oracle 同步 API）
+//! 定位与先例：与 engines.rs 的 with_sqlite / with_dameng（同步 API）
 //! 同型——C 调用全部阻塞，engines 层经 with_obclient 把每次操作移入
 //! spawn_blocking（连接取出/归还，会话层 tokio::Mutex 串行独占）。
 //!
-//! 取消语义边界：取消粒度 = 语句间（会话层 AtomicBool 在语句边界生效，
-//! 与 Oracle 同步臂一致——exec_streaming 只拿到 Notify、无法在阻塞线程内
+//! 取消语义边界：取消粒度 = 语句间（会话层 AtomicBool 在语句边界生效；
+//! 与 Oracle 臂不同——后者走 oracle_async 的 TNS Break Marker 可真中断；
+//! exec_streaming 只拿到 Notify、无法在阻塞线程内
 //! 轮询同步标志）；行流与 C 调用中不可打断（fetch 阻塞在线缆读上无协作
 //! 取消点）。语句卡服务端长执行时会话层超时置废连接：引擎置 Closed，
 //! 后台阻塞任务收尾时 Drop 兜底 mysql_close（连接不泄漏）。

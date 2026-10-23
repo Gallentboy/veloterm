@@ -47,9 +47,6 @@ import {
   dbConnectionSave,
   dbConnectionTest,
   dbListDatabasesForRecord,
-  oracleClientDirGet,
-  oracleClientDirPick,
-  oracleClientDirSet,
   sqliteFilePick,
   type DbConnectionRecord,
   type DbConnectionTestResult,
@@ -148,10 +145,6 @@ export function DbHostsScreen({
   const [deleting, setDeleting] = useState<DbConnectionRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  // Oracle 客户端库目录设置弹层（进程级一次初始化，改目录需重启生效）
-  const [clientDirOpen, setClientDirOpen] = useState(false);
-  const [clientDir, setClientDir] = useState('');
-  const [clientDirSaved, setClientDirSaved] = useState<string | null>(null);
 
   const refresh = async () => {
     try {
@@ -167,25 +160,6 @@ export function DbHostsScreen({
   useEffect(() => {
     void refresh();
   }, []);
-
-  const openClientDir = async () => {
-    setClientDirOpen(true);
-    setClientDirSaved(null);
-    try {
-      setClientDir((await oracleClientDirGet()) ?? '');
-    } catch {
-      setClientDir('');
-    }
-  };
-
-  const saveClientDir = async (dir: string | null) => {
-    try {
-      await oracleClientDirSet(dir && dir.trim() ? dir.trim() : null);
-      setClientDirSaved(dir && dir.trim() ? dir.trim() : '');
-    } catch (e) {
-      setError(String(e));
-    }
-  };
 
   const handleDelete = async () => {
     if (!deleting) return;
@@ -229,16 +203,6 @@ export function DbHostsScreen({
           {t('dbHosts.summary', { total: records.length })}
         </span>
         <div className="flex items-center gap-1.5">
-          {/* Oracle 客户端库目录（运行期 dlopen；缺库只报错不崩进程） */}
-          <Button
-            variant="ghost"
-            size="lg"
-            className="h-7 px-3 text-ui-xs"
-            onClick={() => void openClientDir()}
-          >
-            <FolderOpen className="size-3.5" />
-            {t('dbHosts.oracleClientDir')}
-          </Button>
           <Button size="lg" className="h-7 px-3 text-ui-xs" onClick={() => setEditing(newRecord())}>
             <Plus className="size-3.5" />
             {t('dbHosts.newConnection')}
@@ -397,66 +361,6 @@ export function DbHostsScreen({
           <p className="text-ui-sm text-foreground">
             {t('dbHosts.deleteConfirm', { name: deleting.name })}
           </p>
-        </Modal>
-      ) : null}
-
-      {/* Oracle 客户端库目录设置：ODPI-C 运行期 dlopen，指定 Instant Client
-          目录（留空走系统搜索路径）；进程级一次初始化——已连接过 Oracle 后
-          改目录需重启应用生效 */}
-      {clientDirOpen ? (
-        <Modal
-          onClose={() => setClientDirOpen(false)}
-          title={t('dbHosts.oracleClientDir')}
-          className="w-[520px]"
-          footer={
-            <>
-              <Button variant="outline" className="h-8 px-3 text-ui-base" onClick={() => void saveClientDir(null)}>
-                {t('dbHosts.oracleClientDirClear')}
-              </Button>
-              <Button
-                className="h-8 px-3 text-ui-base"
-                onClick={async () => {
-                  await saveClientDir(clientDir);
-                }}
-              >
-                {t('common.save')}
-              </Button>
-            </>
-          }
-        >
-          <div className="flex flex-col gap-3">
-            <FormField label={t('dbHosts.oracleClientDirLabel')}>
-              <div className="flex gap-2">
-                <TextInput
-                  value={clientDir}
-                  onChange={(e) => setClientDir(e.target.value)}
-                  placeholder={t('dbHosts.oracleClientDirPlaceholder')}
-                  className="min-w-0 flex-1"
-                />
-                <Button
-                  variant="outline"
-                  className="h-8 shrink-0 px-3 text-ui-base"
-                  onClick={async () => {
-                    const picked = await oracleClientDirPick().catch(() => null);
-                    if (picked) setClientDir(picked);
-                  }}
-                >
-                  <FolderOpen className="size-3.5" />
-                  {t('dbHosts.oracleClientDirBrowse')}
-                </Button>
-              </div>
-            </FormField>
-            <p className="text-ui-xs text-foreground-subtle">
-              {t('dbHosts.oracleClientDirHint')}
-            </p>
-            {clientDirSaved != null ? (
-              <p className="text-ui-xs text-terminal-green">
-                {clientDirSaved
-                  ? t('dbHosts.oracleClientDirSaved', { dir: clientDirSaved })
-                  : t('dbHosts.oracleClientDirCleared')}
-              </p>
-            ) : null}
-          </div>
         </Modal>
       ) : null}
     </div>
