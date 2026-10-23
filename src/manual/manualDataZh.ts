@@ -888,7 +888,7 @@ VeloTerm 原生集成系统级伪终端（PTY）。在 macOS / Linux 上直接�
         badge: 'SQL',
         keywords: ['SQL 工作台', '查询', '对象树', '表结构', '取消', '多结果集'],
         content: `### 功能概述
-多会话 Tab 工作台：左侧库/schema → 对象分组（表 / 视图 / 物化视图 / 函数 / 过程 / 触发器 / 序列，带数量、空组不出现）→ 表/视图列的懒加载对象树（宽度可拖），右侧 Monaco SQL 编辑器（静态补全）与流式结果表格（多结果集 Tab、排序、过滤、TSV 复制）。
+多会话 Tab 工作台：左侧库/schema → 对象分组（表 / 视图 / 物化视图 / 函数 / 过程 / 触发器 / 序列 / 同义词 / 包 / 事件 / 规则，带数量、空组不出现）→ 表/视图列的懒加载对象树（宽度可拖），右侧 Monaco SQL 编辑器（静态补全）与流式结果表格（多结果集 Tab、排序、过滤、TSV 复制）。
 
 分组按引擎能力呈现（口径对齐 DBeaver 开源实现）：MySQL 取 \`information_schema\` 的 TABLES / ROUTINES / TRIGGERS；PostgreSQL 走 \`pg_catalog\`（pg_class 按 relkind 分表/视图/物化视图/序列，pg_proc 按 prokind 分函数/过程，pg_trigger 过滤内部触发器）；Oracle 与达梦走 \`all_objects\` / \`SYSOBJECTS\` 基表。双击函数/过程/序列/触发器拉取完整定义（触发器定义分别来自 \`SHOW CREATE TRIGGER\`、\`pg_get_triggerdef\`、\`all_source\`、\`DBMS_METADATA.GET_DDL\`）。
 

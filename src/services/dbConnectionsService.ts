@@ -150,6 +150,10 @@ export interface CatalogNode {
     | 'procedure'
     | 'sequence'
     | 'trigger'
+    | 'synonym'
+    | 'package'
+    | 'event'
+    | 'rule'
     | 'column';
   detail: string | null;
 }
@@ -160,7 +164,18 @@ export type CatalogParentArg =
   | {
       kind: 'group';
       schema: string;
-      group: 'table' | 'view' | 'mview' | 'function' | 'procedure' | 'sequence' | 'trigger';
+      group:
+        | 'table'
+        | 'view'
+        | 'mview'
+        | 'function'
+        | 'procedure'
+        | 'sequence'
+        | 'trigger'
+        | 'synonym'
+        | 'package'
+        | 'event'
+        | 'rule';
     }
   | { kind: 'table'; schema: string; table: string };
 
@@ -246,7 +261,7 @@ export function dbObjectDefinition(
   sessionId: string,
   schema: string,
   name: string,
-  kind: 'function' | 'procedure' | 'sequence' | 'trigger',
+  kind: 'function' | 'procedure' | 'sequence' | 'trigger' | 'synonym' | 'package' | 'event' | 'rule',
 ): Promise<ObjectDefinition> {
   return invoke('db_object_definition', { sessionId, schema, name, kind });
 }

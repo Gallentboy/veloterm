@@ -155,6 +155,14 @@ pub enum ObjectGroup {
     Trigger,
     /// 物化视图（PG 的 pg_class relkind='m'；MySQL/OB MySQL 模式无此类型）
     MaterializedView,
+    /// 同义词（Oracle 系特有：Oracle ALL_SYNONYMS / 达梦 SYSOBJECTS）
+    Synonym,
+    /// 包（Oracle 系特有：PACKAGE / PACKAGE BODY）
+    Package,
+    /// 事件（MySQL Event Scheduler）
+    Event,
+    /// 规则（PG pg_rewrite）
+    Rule,
     RedisString,
     RedisHash,
     RedisList,
@@ -173,6 +181,10 @@ impl ObjectGroup {
             ObjectGroup::Sequence => "sequence",
             ObjectGroup::Trigger => "trigger",
             ObjectGroup::MaterializedView => "mview",
+            ObjectGroup::Synonym => "synonym",
+            ObjectGroup::Package => "package",
+            ObjectGroup::Event => "event",
+            ObjectGroup::Rule => "rule",
             ObjectGroup::RedisString => "rstring",
             ObjectGroup::RedisHash => "rhash",
             ObjectGroup::RedisList => "rlist",
@@ -191,6 +203,10 @@ impl ObjectGroup {
             "sequence" => Some(ObjectGroup::Sequence),
             "trigger" => Some(ObjectGroup::Trigger),
             "mview" | "materialized view" => Some(ObjectGroup::MaterializedView),
+            "synonym" => Some(ObjectGroup::Synonym),
+            "package" => Some(ObjectGroup::Package),
+            "event" => Some(ObjectGroup::Event),
+            "rule" => Some(ObjectGroup::Rule),
             "rstring" | "string" => Some(ObjectGroup::RedisString),
             "rhash" | "hash" => Some(ObjectGroup::RedisHash),
             "rlist" | "list" => Some(ObjectGroup::RedisList),
@@ -2299,6 +2315,34 @@ impl DbEngine {
                         arg_count: 0,
                     });
                 }
+                // 事件：SHOW CREATE EVENT（DBeaver MySQLEvent 的 EVENT_DEFINITION
+                // 列拼 DDL 同型，直接取原句更保真）
+                if kind == "event" {
+                    let s = schema.replace('`', "``");
+                    let n = name.replace('`', "``");
+                    let mut result = conn
+                        .query_iter(format!("SHOW CREATE EVENT `{s}`.`{n}`"))
+                        .await
+                        .map_err(|e| format!("MySQL 拉取事件定义失败：{e}"))?;
+                    let create_idx = result
+                        .columns_ref()
+                        .iter()
+                        .position(|c| c.name_str().to_lowercase().starts_with("create"))
+                        .ok_or_else(|| "SHOW CREATE EVENT 结果中未找到定义列".to_string())?;
+                    let rows: Vec<mysql_async::Row> = result
+                        .collect()
+                        .await
+                        .map_err(|e| format!("MySQL 读取事件定义失败：{e}"))?;
+                    let row = rows
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| "SHOW CREATE EVENT 未返回定义".to_string())?;
+                    return Ok(ObjectDefinition {
+                        definition: row.get::<String, usize>(create_idx).unwrap_or_default(),
+                        call_template: String::new(),
+                        arg_count: 0,
+                    });
+                }
                 let verb = if kind == "function" { "FUNCTION" } else { "PROCEDURE" };
                 let s = schema.replace('`', "``");
                 let n = name.replace('`', "``");
@@ -2382,6 +2426,29 @@ impl DbEngine {
                     let definition: String = row
                         .try_get(0)
                         .map_err(|e| format!("PostgreSQL 读取触发器定义失败：{e}"))?;
+                    return Ok(ObjectDefinition {
+                        definition,
+                        call_template: String::new(),
+                        arg_count: 0,
+                    });
+                }
+                // 规则：pg_get_ruledef（DBeaver PostgreTableReal.RuleCache 同源）
+                if kind == "rule" {
+                    let row = client
+                        .query_opt(
+                            "SELECT pg_catalog.pg_get_ruledef(r.oid) \
+                             FROM pg_catalog.pg_rewrite r \
+                             JOIN pg_catalog.pg_class c ON c.oid = r.ev_class \
+                             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                             WHERE n.nspname = $1 AND r.rulename = $2 LIMIT 1",
+                            &[&schema, &name],
+                        )
+                        .await
+                        .map_err(|e| format!("PostgreSQL 拉取规则定义失败：{e}"))?
+                        .ok_or_else(|| "未找到该规则（可能已被删除）".to_string())?;
+                    let definition: String = row
+                        .try_get(0)
+                        .map_err(|e| format!("PostgreSQL 读取规则定义失败：{e}"))?;
                     return Ok(ObjectDefinition {
                         definition,
                         call_template: String::new(),
@@ -2473,6 +2540,56 @@ impl DbEngine {
                     }
                     return Ok(ObjectDefinition {
                         definition,
+                        call_template: String::new(),
+                        arg_count: 0,
+                    });
+                }
+                // 同义词 / 包：all_source 存源码（PACKAGE / PACKAGE BODY 都在），
+                // 同义词无源码走 DBMS_METADATA.GET_DDL（DBeaver 同型）
+                if kind == "synonym" || kind == "package" {
+                    let ddl_sql = format!(
+                        "SELECT DBMS_METADATA.GET_DDL('{}', {}, {}) FROM dual",
+                        if kind == "synonym" { "SYNONYM" } else { "PACKAGE" },
+                        ob_quote_literal(name),
+                        ob_quote_literal(schema)
+                    );
+                    let mut rs = conn
+                        .query(&ddl_sql)
+                        .await
+                        .map_err(|e| format!("Oracle 拉取定义失败：{}", oracle_err(e)))?;
+                    let mut ddl = String::new();
+                    if let Some(row) = rs
+                        .next_row()
+                        .await
+                        .map_err(|e| format!("Oracle 读取定义失败：{}", oracle_err(e)))?
+                    {
+                        ddl = oracle_row_string(&row, 0);
+                    }
+                    // 包有源码时优先 all_source（GET_DDL 对包可能不含包体）
+                    if kind == "package" && ddl.trim().is_empty() {
+                        let src_sql = format!(
+                            "SELECT text FROM all_source WHERE owner = {} AND name = {} \
+                             AND type = 'PACKAGE' ORDER BY line",
+                            ob_quote_literal(schema),
+                            ob_quote_literal(name)
+                        );
+                        let mut src_rs = conn
+                            .query(&src_sql)
+                            .await
+                            .map_err(|e| format!("Oracle 拉取包源码失败：{}", oracle_err(e)))?;
+                        while let Some(row) = src_rs
+                            .next_row()
+                            .await
+                            .map_err(|e| format!("Oracle 读取包源码失败：{}", oracle_err(e)))?
+                        {
+                            ddl.push_str(&oracle_row_string(&row, 0));
+                        }
+                    }
+                    if ddl.trim().is_empty() {
+                        return Err("未找到该对象（可能已被删除）".to_string());
+                    }
+                    return Ok(ObjectDefinition {
+                        definition: ddl,
                         call_template: String::new(),
                         arg_count: 0,
                     });
@@ -2604,6 +2721,28 @@ impl DbEngine {
                         .unwrap_or_default();
                         if ddl.trim().is_empty() {
                             return Err("未找到该触发器（可能已被删除）".to_string());
+                        }
+                        return Ok(ObjectDefinition {
+                            definition: ddl,
+                            call_template: String::new(),
+                            arg_count: 0,
+                        });
+                    }
+                    // 同义词 / 包：达梦 DBMS_METADATA.GET_DDL（ObjectType 枚举名
+                    // 'SYNONYM'/'PACKAGE'，DBeaver DamengConstants 同源）
+                    if kind_o == "synonym" || kind_o == "package" {
+                        let obj_enum = if kind_o == "synonym" { "SYNONYM" } else { "PACKAGE" };
+                        let ddl = dm_query_first_string(
+                            client,
+                            &format!("SELECT DBMS_METADATA.GET_DDL('{obj_enum}', ?, ?) FROM DUAL"),
+                            &[
+                                dm_pure::Param::Str(name_o.clone()),
+                                dm_pure::Param::Str(schema_o.clone()),
+                            ],
+                        )
+                        .unwrap_or_default();
+                        if ddl.trim().is_empty() {
+                            return Err("未找到该对象（可能已被删除）".to_string());
                         }
                         return Ok(ObjectDefinition {
                             definition: ddl,
@@ -2854,6 +2993,17 @@ impl DbEngine {
                     .await
                     .unwrap_or(Some(0))
                     .unwrap_or(0);
+                // 事件（MySQL Event Scheduler；DBeaver EventCache 同源）。
+                // 老版本 MySQL 无 events 表 → 静默 0
+                let events: i64 = conn
+                    .exec_first::<i64, _, _>(
+                        "SELECT COUNT(*) FROM information_schema.events \
+                         WHERE event_schema = ?",
+                        (schema,),
+                    )
+                    .await
+                    .unwrap_or(Some(0))
+                    .unwrap_or(0);
                 let count_of = |kind: &str, rows: &[(String, i64)]| {
                     rows.iter()
                         .find(|(k, _)| k.eq_ignore_ascii_case(kind))
@@ -2864,6 +3014,7 @@ impl DbEngine {
                     schema,
                     GroupCounts {
                         triggers: Some(triggers),
+                        events: Some(events),
                         ..GroupCounts::base(
                             count_of("BASE TABLE", &tables),
                             count_of("VIEW", &tables),
@@ -2930,6 +3081,21 @@ impl DbEngine {
                     .flatten()
                     .and_then(|row| row.try_get::<_, i64>(0).ok())
                     .unwrap_or(0);
+                // 规则（DBeaver PostgreTableReal.RuleCache 同源）：
+                // pg_rewrite 排除视图内部规则 _RETURN
+                let rules: i64 = client
+                    .query_opt(
+                        "SELECT COUNT(*) FROM pg_catalog.pg_rewrite r \
+                         JOIN pg_catalog.pg_class c ON c.oid = r.ev_class \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                         WHERE n.nspname = $1 AND r.rulename <> '_RETURN'",
+                        &[&schema],
+                    )
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|row| row.try_get::<_, i64>(0).ok())
+                    .unwrap_or(0);
                 let count_of = |kind: &str, rows: &[(String, i64)]| {
                     rows.iter()
                         .find(|(k, _)| *k == kind)
@@ -2941,6 +3107,7 @@ impl DbEngine {
                     GroupCounts {
                         triggers: Some(triggers),
                         mviews: Some(count_of("m", &relkind)),
+                        rules: Some(rules),
                         ..GroupCounts::base(
                             count_of("r", &relkind),
                             count_of("v", &relkind),
@@ -2958,7 +3125,7 @@ impl DbEngine {
                     "SELECT object_type, COUNT(*) FROM all_objects \
                      WHERE owner = {} AND object_name NOT LIKE 'BIN$%' \
                        AND object_type IN \
-                         ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE','TRIGGER') \
+                         ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE','TRIGGER','SYNONYM','PACKAGE') \
                      GROUP BY object_type",
                     ob_quote_literal(schema)
                 );
@@ -2987,6 +3154,8 @@ impl DbEngine {
                     schema,
                     GroupCounts {
                         triggers: Some(count_of("TRIGGER")),
+                        synonyms: Some(count_of("SYNONYM")),
+                        packages: Some(count_of("PACKAGE")),
                         ..GroupCounts::base(
                             count_of("TABLE"),
                             count_of("VIEW"),
@@ -3052,7 +3221,7 @@ impl DbEngine {
                         "SELECT object_type, COUNT(*) FROM all_objects \
                          WHERE owner = {} AND object_name NOT LIKE 'BIN$%' \
                            AND object_type IN \
-                             ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE','TRIGGER') \
+                             ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE','TRIGGER','SYNONYM','PACKAGE') \
                          GROUP BY object_type",
                         ob_quote_literal(&schema_o)
                     );
@@ -3078,6 +3247,8 @@ impl DbEngine {
                         &schema_o,
                         GroupCounts {
                             triggers: Some(count_of("TRIGGER")),
+                        synonyms: Some(count_of("SYNONYM")),
+                        packages: Some(count_of("PACKAGE")),
                             ..GroupCounts::base(
                                 count_of("TABLE"),
                                 count_of("VIEW"),
@@ -3197,6 +3368,31 @@ impl DbEngine {
                         &schema_o,
                         GroupCounts {
                             triggers: Some(triggers),
+                            // 同义词（SUBTYPE$='SYN'）与包（SUBTYPE$='PKGS'）
+                            synonyms: Some(
+                                dm_query_rows(
+                                    client,
+                                    "SELECT COUNT(*) FROM SYSOBJECTS t, SYSOBJECTS s \
+                                     WHERE t.SCHID = s.ID AND s.NAME = ? \
+                                       AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'SYN'",
+                                    &bind,
+                                )
+                                .ok()
+                                .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                                .unwrap_or(0),
+                            ),
+                            packages: Some(
+                                dm_query_rows(
+                                    client,
+                                    "SELECT COUNT(*) FROM SYSOBJECTS t, SYSOBJECTS s \
+                                     WHERE t.SCHID = s.ID AND s.NAME = ? \
+                                       AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PKGS'",
+                                    &bind,
+                                )
+                                .ok()
+                                .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                                .unwrap_or(0),
+                            ),
                             ..GroupCounts::base(
                                 tables,
                                 views,
@@ -3301,6 +3497,22 @@ impl DbEngine {
                     "name",
                 )
             }
+            // 事件（MySQL Event Scheduler；DBeaver MySQLCatalog.EventCache 同源）
+            ObjectGroup::Event => (
+                "SELECT event_name FROM information_schema.events \
+                 WHERE event_schema = ? ORDER BY event_name",
+                "SELECT NULL AS name WHERE 1 = 0",
+                "event_name",
+            ),
+            // 同义词 / 包 / 规则：不适用 MySQL/PG 通用模板（Oracle 系/PG 专属），
+            // 各引擎臂单独处理；这里给空集占位
+            ObjectGroup::Synonym | ObjectGroup::Package | ObjectGroup::Rule => {
+                (
+                    "SELECT NULL AS name FROM DUAL WHERE 1 = 0",
+                    "SELECT NULL AS name WHERE 1 = 0",
+                    "name",
+                )
+            }
             // Redis 六型在上面的 early return 里已消化；走到这里说明是
             // 非 Redis 引擎收到了 Redis 分组（前端/调用方拼错），直接拒绝
             // 而不是编造一条查不出东西的 SQL。
@@ -3349,6 +3561,13 @@ impl DbEngine {
                          WHERE n.nspname = $1 AND c.relkind = 'm' \
                          ORDER BY c.relname",
                     ),
+                    ObjectGroup::Rule => Some(
+                        "SELECT r.rulename FROM pg_catalog.pg_rewrite r \
+                         JOIN pg_catalog.pg_class c ON c.oid = r.ev_class \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                         WHERE n.nspname = $1 AND r.rulename <> '_RETURN' \
+                         ORDER BY r.rulename",
+                    ),
                     _ => None,
                 };
                 let final_sql = sql_pg_dyn.unwrap_or(sql_pg);
@@ -3378,8 +3597,10 @@ impl DbEngine {
                     ObjectGroup::Procedure => "PROCEDURE",
                     ObjectGroup::Sequence => "SEQUENCE",
                     ObjectGroup::Trigger => "TRIGGER",
-                    // Redis 分组已在函数入口的 early return 拦掉，Oracle
-                    // 永远收不到；给个不存在的类型名让服务端返回空集
+                    ObjectGroup::Synonym => "SYNONYM",
+                    ObjectGroup::Package => "PACKAGE",
+                    // Redis/事件/规则分组不适用 Oracle（树上不会出现）；
+                    // 给个不存在的类型名让服务端返回空集
                     _ => "VELOTERM_UNREACHABLE",
                 };
                 let sql = format!(
@@ -3420,6 +3641,10 @@ impl DbEngine {
                     ObjectGroup::View => "view",
                     ObjectGroup::Trigger
                     | ObjectGroup::MaterializedView
+                    | ObjectGroup::Synonym
+                    | ObjectGroup::Package
+                    | ObjectGroup::Event
+                    | ObjectGroup::Rule
                     | ObjectGroup::Function
                     | ObjectGroup::Procedure
                     | ObjectGroup::Sequence => {
@@ -3481,14 +3706,10 @@ impl DbEngine {
                     ObjectGroup::Procedure => "PROCEDURE",
                     ObjectGroup::Sequence => "SEQUENCE",
                     ObjectGroup::Trigger => "TRIGGER",
-                    // Redis 六型已在函数入口的 early return 拦掉，不可达；
-                    // 同 Oracle 臂给不存在的类型名让服务端返回空集
-                    ObjectGroup::RedisString
-                    | ObjectGroup::RedisHash
-                    | ObjectGroup::RedisList
-                    | ObjectGroup::RedisSet
-                    | ObjectGroup::RedisZset
-                    | ObjectGroup::RedisStream => "VELOTERM_UNREACHABLE",
+                    ObjectGroup::Synonym => "SYNONYM",
+                    ObjectGroup::Package => "PACKAGE",
+                    // Redis/事件/规则不适用 OB（树上不会出现）
+                    _ => "VELOTERM_UNREACHABLE",
                 }
                 .to_string();
                 let kind_o = kind.clone();
@@ -3556,12 +3777,24 @@ impl DbEngine {
                          WHERE t.SCHID = s.ID AND s.NAME = ? \
                            AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'TRIG' ORDER BY NAME"
                     }
-                    ObjectGroup::MaterializedView => {
-                        "SELECT NULL AS NAME FROM DUAL WHERE 1 = 0"
+                    // 同义词：达梦 SYSOBJECTS 的 SUBTYPE$='SYNONYM'
+                    ObjectGroup::Synonym => {
+                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'SYN' ORDER BY NAME"
                     }
+                    // 包：达梦 SYSOBJECTS 的 SUBTYPE$='PKGS'（包规范）
+                    ObjectGroup::Package => {
+                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                         WHERE t.SCHID = s.ID AND s.NAME = ? \
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PKGS' ORDER BY NAME"
+                    }
+                    ObjectGroup::MaterializedView
+                    | ObjectGroup::Event
+                    | ObjectGroup::Rule
                     // Redis 六型已在函数入口的 early return 拦掉，不可达；
                     // 空查询保持签名（返回空集）
-                    ObjectGroup::RedisString
+                    | ObjectGroup::RedisString
                     | ObjectGroup::RedisHash
                     | ObjectGroup::RedisList
                     | ObjectGroup::RedisSet
@@ -4383,50 +4616,63 @@ struct GroupCounts {
     triggers: Option<i64>,
     /// None = 引擎无物化视图（MySQL / Oracle 普通视图树之外另列）
     mviews: Option<i64>,
+    /// None = 引擎无同义词（Oracle 系特有）
+    synonyms: Option<i64>,
+    /// None = 引擎无包（Oracle 系特有）
+    packages: Option<i64>,
+    /// None = 引擎无事件（MySQL Event Scheduler）
+    events: Option<i64>,
+    /// None = 引擎无规则（PG pg_rewrite）
+    rules: Option<i64>,
 }
 
 impl GroupCounts {
     /// 基础五组（触发器与物化视图不展示）——绝大多数引擎的起步形态
     fn base(tables: i64, views: i64, functions: i64, procedures: i64, sequences: i64) -> Self {
-        Self { tables, views, functions, procedures, sequences, triggers: None, mviews: None }
+        Self {
+            tables,
+            views,
+            functions,
+            procedures,
+            sequences,
+            triggers: None,
+            mviews: None,
+            synonyms: None,
+            packages: None,
+            events: None,
+            rules: None,
+        }
     }
 }
 
 fn group_nodes(schema: &str, counts: GroupCounts) -> Vec<CatalogNode> {
-    let groups: Vec<(ObjectGroup, &str, i64)> = match (counts.triggers, counts.mviews) {
-        (Some(t), Some(m)) => vec![
-            (ObjectGroup::Table, "TABLE", counts.tables),
-            (ObjectGroup::View, "VIEW", counts.views),
-            (ObjectGroup::MaterializedView, "MATERIALIZED VIEW", m),
-            (ObjectGroup::Function, "FUNCTION", counts.functions),
-            (ObjectGroup::Procedure, "PROCEDURE", counts.procedures),
-            (ObjectGroup::Trigger, "TRIGGER", t),
-            (ObjectGroup::Sequence, "SEQUENCE", counts.sequences),
-        ],
-        (Some(t), None) => vec![
-            (ObjectGroup::Table, "TABLE", counts.tables),
-            (ObjectGroup::View, "VIEW", counts.views),
-            (ObjectGroup::Function, "FUNCTION", counts.functions),
-            (ObjectGroup::Procedure, "PROCEDURE", counts.procedures),
-            (ObjectGroup::Trigger, "TRIGGER", t),
-            (ObjectGroup::Sequence, "SEQUENCE", counts.sequences),
-        ],
-        (None, Some(m)) => vec![
-            (ObjectGroup::Table, "TABLE", counts.tables),
-            (ObjectGroup::View, "VIEW", counts.views),
-            (ObjectGroup::MaterializedView, "MATERIALIZED VIEW", m),
-            (ObjectGroup::Function, "FUNCTION", counts.functions),
-            (ObjectGroup::Procedure, "PROCEDURE", counts.procedures),
-            (ObjectGroup::Sequence, "SEQUENCE", counts.sequences),
-        ],
-        (None, None) => vec![
-            (ObjectGroup::Table, "TABLE", counts.tables),
-            (ObjectGroup::View, "VIEW", counts.views),
-            (ObjectGroup::Function, "FUNCTION", counts.functions),
-            (ObjectGroup::Procedure, "PROCEDURE", counts.procedures),
-            (ObjectGroup::Sequence, "SEQUENCE", counts.sequences),
-        ],
-    };
+    // 基础五组按各引擎恒有；可选组（触发器/物化视图/同义词/包/事件/规则）
+    // 逐个 Some 即拼入——组合爆炸不再用 match 四臂展开，改为动态拼装
+    let mut groups: Vec<(ObjectGroup, &str, i64)> = vec![
+        (ObjectGroup::Table, "TABLE", counts.tables),
+        (ObjectGroup::View, "VIEW", counts.views),
+    ];
+    if let Some(m) = counts.mviews {
+        groups.push((ObjectGroup::MaterializedView, "MATERIALIZED VIEW", m));
+    }
+    groups.push((ObjectGroup::Function, "FUNCTION", counts.functions));
+    groups.push((ObjectGroup::Procedure, "PROCEDURE", counts.procedures));
+    if let Some(t) = counts.triggers {
+        groups.push((ObjectGroup::Trigger, "TRIGGER", t));
+    }
+    groups.push((ObjectGroup::Sequence, "SEQUENCE", counts.sequences));
+    if let Some(s) = counts.synonyms {
+        groups.push((ObjectGroup::Synonym, "SYNONYM", s));
+    }
+    if let Some(p) = counts.packages {
+        groups.push((ObjectGroup::Package, "PACKAGE", p));
+    }
+    if let Some(e) = counts.events {
+        groups.push((ObjectGroup::Event, "EVENT", e));
+    }
+    if let Some(r) = counts.rules {
+        groups.push((ObjectGroup::Rule, "RULE", r));
+    }
     groups
         .into_iter()
         .filter(|(_, _, count)| *count > 0)
