@@ -331,9 +331,27 @@ pub enum DbEngine {
 }
 
 impl DbEngine {
+    /// OB Oracle 的驱动选择：extra_options 的 `driver` 字段（"rust" 走纯 Rust
+    /// 分叉；缺省/其他值走 libobclient FFI 回退）。非法 JSON 同样回退 FFI
+    /// ——驱动选择不该因配置损坏而阻断连接。
+    fn ob_oracle_driver(extra: Option<&str>) -> String {
+        extra
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+            .and_then(|v| v.get("driver").and_then(|d| d.as_str()).map(str::to_string))
+            .unwrap_or_else(|| "ffi".to_string())
+    }
+
     /// 建连并取服务端版本描述。OceanBase 按 mode 分双模式：MySQL 模式复用
     /// mysql_async 臂（engine 变体仍是 MySql），Oracle 模式走 obclient 臂。
     pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), String> {
+        // OB Oracle 的驱动开关：extra_options 的 driver="rust" 走纯 Rust 分叉，
+        // 其余（含缺省/非法值）走 libobclient FFI 回退
+        if record.engine == "oceanbase"
+            && record.mode.as_deref() == Some("oracle")
+            && Self::ob_oracle_driver(record.extra_options.as_deref()) == "rust"
+        {
+            return Self::connect_ob_rust(record).await;
+        }
         match (record.engine.as_str(), record.mode.as_deref()) {
             ("mysql", _) => Self::connect_mysql(record).await,
             ("postgres", _) => Self::connect_postgres(record).await,
@@ -922,6 +940,66 @@ impl DbEngine {
                 Err(e)
             }
         }
+    }
+
+    /// OB Oracle 纯 Rust 臂：mysql_async 分叉（vendor/mysql-async-ob）+ ob20。
+    /// 与 connect_mysql 同构（标准 MySQL 握手/认证），额外打开 ob_protocol20
+    /// 并支持 TLS 四档。结果引擎是 MySql 变体——同一个 crate 同时充当两角色
+    /// （分叉即上游完整副本，ob_protocol20 只是握手选项），查询/目录/切库
+    /// 全部复用 MySql 臂。database 为初始 schema（OB Oracle 语义下经
+    /// db_name 下发，服务端按租户默认 schema 解析）。
+    async fn connect_ob_rust(
+        record: &DbConnectionRecord,
+    ) -> Result<(DbEngine, String), String> {
+        let username = record
+            .username
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "OceanBase 需要填写用户名".to_string())?;
+        let mut builder = mysql_async::OptsBuilder::default()
+            .ip_or_hostname(record.host.trim())
+            .tcp_port(record.port)
+            .user(Some(username))
+            .ob_protocol20(true);
+        if let Some(pass) = record.password.as_deref().filter(|s| !s.is_empty()) {
+            builder = builder.pass(Some(pass));
+        }
+        if let Some(db) = record.database.as_deref().filter(|s| !s.trim().is_empty()) {
+            builder = builder.db_name(Some(db.trim()));
+        }
+        if record.ssl_mode != "disable" {
+            let mut ssl = mysql_async::SslOpts::default();
+            if record.ssl_mode == "verify-full" {
+                ssl = ssl
+                    .with_danger_accept_invalid_certs(false)
+                    .with_danger_skip_domain_validation(false);
+            } else {
+                ssl = ssl
+                    .with_danger_accept_invalid_certs(true)
+                    .with_danger_skip_domain_validation(true);
+            }
+            builder = builder.ssl_opts(ssl);
+        }
+        let opts = mysql_async::Opts::from(builder);
+        let mut conn = tokio::time::timeout(
+            Duration::from_secs(12),
+            mysql_async::Conn::new(opts),
+        )
+        .await
+        .map_err(|_| "OceanBase 连接超时（12s）".to_string())?
+        .map_err(|e| format!("OceanBase（Rust 驱动）连接失败：{e}"))?;
+        // 版本串：VERSION() 在 OB Oracle 租户下返回 Oracle 兼容版本
+        let version: Option<String> = {
+            use mysql_async::prelude::Queryable as _;
+            conn.query_first::<String, _>("SELECT VERSION() FROM DUAL")
+                .await
+                .ok()
+                .flatten()
+        };
+        Ok((
+            DbEngine::MySql(conn),
+            version.unwrap_or_else(|| "OceanBase".to_string()),
+        ))
     }
 
     /// OB Oracle 模式：spawn_blocking 里走 ObConn::connect（libobclient 阻塞

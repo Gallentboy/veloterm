@@ -191,7 +191,14 @@ dm-pure = { path = "vendor/dm-pure" }
 # mysql_async：纯 Rust 异步 MySQL 客户端。default-rustls = rustls + aws-lc-rs
 # provider（与 quinn/tonic/russh 同一份 aws-lc-sys，禁止 default 的 native-tls
 # ——rustls 双 provider 并存会运行期 panic，见上方 rustls 条目约束）。
-mysql_async = { version = "0.35", default-features = false, features = [
+#
+# veloterm 分叉：依赖重命名指向 vendor/mysql-async-ob（crate 名 oceanbase_async，
+# 源码即 mysql_async 0.35.1 的完整副本 + OB20 协议层 + ob_sm3_password 认证）。
+# 同一个 crate 同时充当 MySQL 驱动（ob_protocol20 默认关，行为与上游一致）与
+# OceanBase Oracle 租户的纯 Rust 驱动（连接记录 extra_options.driver="rust" 时
+# 打开 ob20），避免两套类型各自维护 9 处 match 臂。升级上游＝换 vendor 树并重放
+# 分叉补丁（清单见 vendor/mysql-async-ob/README-VELOTERM.md）。
+mysql_async = { path = "vendor/mysql-async-ob", package = "oceanbase_async", default-features = false, features = [
   "default-rustls",
 ] }
 # tokio-postgres：纯 Rust 异步 PostgreSQL 客户端（extended protocol，query_raw
