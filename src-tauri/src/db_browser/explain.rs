@@ -13,6 +13,7 @@
 //! 容忍千分位逗号。
 
 use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 
 /// 计划树节点。id 全局唯一（多数引擎直接用行号或 PLAN_TABLE.ID），
 /// parent_id = None 即根；节点对即边表。
@@ -108,15 +109,21 @@ fn parse_id_parent(columns: &[String], rows: &[Vec<String>]) -> Vec<PlanNode> {
     let cost = col_of(columns, "COST");
     let card = col_of(columns, "CARDINALITY");
     let bytes = col_of(columns, "BYTES");
-    rows.iter()
+    let mut nodes: Vec<PlanNode> = rows
+        .iter()
         .enumerate()
         .map(|(i, r)| {
-            // 少数计划行 OPERATION 为空（如 UNION 分支的伪父行）：OPTIONS
-            // 顶上当标题；空值渲染（NULL/空）一律不进标题与详情
+            // OPERATION 为空时 OPTIONS 顶当标题；两者均空（Oracle 11g+
+            // NESTED LOOPS 批读伪步骤，DBMS_XPLAN.DISPLAY 同样滤除）先空置，
+            // 后续 splice 剔除
             let op = cell(r, op);
             let opt = cell(r, options);
             let title = if nz(op) {
-                opt.to_string()
+                if nz(opt) {
+                    String::new()
+                } else {
+                    opt.to_string()
+                }
             } else if nz(opt) {
                 op.to_string()
             } else {
@@ -134,7 +141,48 @@ fn parse_id_parent(columns: &[String], rows: &[Vec<String>]) -> Vec<PlanNode> {
                 bytes: num_cell(r, bytes),
             }
         })
-        .collect()
+        .collect();
+    splice_empty_steps(&mut nodes);
+    nodes
+}
+
+/// 剔除空标题伪步骤（Oracle 11g+ NESTED LOOPS 批读的两行形态：第二行
+/// OPERATION/OPTIONS 均空；DBMS_XPLAN.DISPLAY 渲染时同样滤除）并把其
+/// 子节点上挂到被删节点的父，保持树连通；伪步骤的父也可能仍是伪步骤，
+/// 逐层上探（步数上限防环）
+fn splice_empty_steps(nodes: &mut Vec<PlanNode>) {
+    let empty_ids: HashSet<i64> = nodes
+        .iter()
+        .filter(|n| n.title.is_empty())
+        .map(|n| n.id)
+        .collect();
+    if empty_ids.is_empty() {
+        return;
+    }
+    let parent_of: HashMap<i64, Option<i64>> =
+        nodes.iter().map(|n| (n.id, n.parent_id)).collect();
+    let len = nodes.len();
+    nodes.retain(|n| !empty_ids.contains(&n.id));
+    for n in nodes.iter_mut() {
+        if !n.parent_id.is_some_and(|p| empty_ids.contains(&p)) {
+            continue;
+        }
+        let mut parent = n.parent_id;
+        let mut steps = 0;
+        while let Some(p) = parent {
+            if empty_ids.contains(&p) {
+                parent = parent_of.get(&p).copied().flatten();
+                steps += 1;
+                if steps > len {
+                    parent = None;
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        n.parent_id = parent;
+    }
 }
 
 /// SQLite EXPLAIN QUERY PLAN：结构走 id/parent 列，标题取 detail 文本
@@ -334,14 +382,18 @@ mod tests {
             vec!["1", "0", "SORT", "ORDER BY", "", "12", "10", "200"],
             vec!["2", "1", "TABLE ACCESS", "FULL", "T1", "10", "100", "1200"],
             vec!["3", "2", "NULL", "FULL", "T2", "9", "40", "1600"],
+            // 11g+ NESTED LOOPS 批读伪步骤（OPERATION/OPTIONS 均空）+ 挂其下的真步骤
+            vec!["4", "2", "NULL", "NULL", "", "1", "1", "10"],
+            vec!["5", "4", "INDEX", "UNIQUE SCAN", "PK_X", "0", "1", ""],
         ];
         let rows: Vec<Vec<String>> = rows
             .into_iter()
             .map(|r| r.into_iter().map(String::from).collect())
             .collect();
         let plan = parse_plan(&cols, &rows, "SELECT 1");
-        assert_eq!(plan.nodes.len(), 4);
-        let [n0, n1, n2, n3] = plan.nodes.as_slice() else {
+        // 伪步骤（id=4）被剔除：6 行 → 5 节点
+        assert_eq!(plan.nodes.len(), 5);
+        let [n0, n1, n2, n3, n5] = plan.nodes.as_slice() else {
             unreachable!()
         };
         assert_eq!(n0.parent_id, None);
@@ -356,6 +408,10 @@ mod tests {
         assert_eq!(n0.detail, "");
         assert_eq!(n3.title, "FULL");
         assert_eq!(n3.detail, "T2");
+        // 伪步骤剔除后子节点上挂到其父（5 的父从 4 改挂 2）
+        assert_eq!(n5.id, 5);
+        assert_eq!(n5.parent_id, Some(2));
+        assert_eq!(n5.title, "INDEX UNIQUE SCAN");
     }
 
     /// SQLite EXPLAIN QUERY PLAN：id/parent 结构 + detail 标题
