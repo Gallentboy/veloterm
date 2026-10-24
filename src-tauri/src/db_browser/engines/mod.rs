@@ -4915,49 +4915,49 @@ impl DbEngine {
                 }
                 let sql = match group {
                     ObjectGroup::Table => {
-                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                        "SELECT t.NAME FROM SYSOBJECTS t, SYSOBJECTS s \
                          WHERE t.SCHID = s.ID AND s.NAME = ? \
                            AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ IN ('UTAB','STAB','ITAB') \
-                         ORDER BY NAME"
+                         ORDER BY t.NAME"
                     }
                     ObjectGroup::View => {
-                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                        "SELECT t.NAME FROM SYSOBJECTS t, SYSOBJECTS s \
                          WHERE t.SCHID = s.ID AND s.NAME = ? \
-                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'VIEW' ORDER BY NAME"
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'VIEW' ORDER BY t.NAME"
                     }
                     ObjectGroup::Function => {
-                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                        "SELECT t.NAME FROM SYSOBJECTS t, SYSOBJECTS s \
                          WHERE t.SCHID = s.ID AND s.NAME = ? \
                            AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PROC' AND (t.INFO1 & 1) = 0 \
-                         ORDER BY NAME"
+                         ORDER BY t.NAME"
                     }
                     ObjectGroup::Procedure => {
-                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                        "SELECT t.NAME FROM SYSOBJECTS t, SYSOBJECTS s \
                          WHERE t.SCHID = s.ID AND s.NAME = ? \
                            AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PROC' AND (t.INFO1 & 1) = 1 \
-                         ORDER BY NAME"
+                         ORDER BY t.NAME"
                     }
                     ObjectGroup::Sequence => {
-                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                        "SELECT t.NAME FROM SYSOBJECTS t, SYSOBJECTS s \
                          WHERE t.SCHID = s.ID AND s.NAME = ? \
-                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'SEQ' ORDER BY NAME"
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'SEQ' ORDER BY t.NAME"
                     }
                     ObjectGroup::Trigger => {
-                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                        "SELECT t.NAME FROM SYSOBJECTS t, SYSOBJECTS s \
                          WHERE t.SCHID = s.ID AND s.NAME = ? \
-                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'TRIG' ORDER BY NAME"
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'TRIG' ORDER BY t.NAME"
                     }
                     // 同义词：达梦 SYSOBJECTS 的 SUBTYPE$='SYNONYM'
                     ObjectGroup::Synonym => {
-                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                        "SELECT t.NAME FROM SYSOBJECTS t, SYSOBJECTS s \
                          WHERE t.SCHID = s.ID AND s.NAME = ? \
-                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'SYN' ORDER BY NAME"
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'SYN' ORDER BY t.NAME"
                     }
                     // 包：达梦 SYSOBJECTS 的 SUBTYPE$='PKGS'（包规范）
                     ObjectGroup::Package => {
-                        "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
+                        "SELECT t.NAME FROM SYSOBJECTS t, SYSOBJECTS s \
                          WHERE t.SCHID = s.ID AND s.NAME = ? \
-                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PKGS' ORDER BY NAME"
+                           AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PKGS' ORDER BY t.NAME"
                     }
                     // 表空间/用户/角色（实例级，DBeaver DamengDataSource 三缓存
                     // 同源实证 SQL；不按 schema 过滤，无绑定参数）
