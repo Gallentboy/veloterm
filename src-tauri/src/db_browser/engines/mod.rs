@@ -1175,6 +1175,11 @@ impl DbEngine {
     pub async fn list_databases(&mut self) -> Result<Vec<String>, String> {
         match self {
             DbEngine::MySql(conn) => {
+                // OB Oracle：清单 = 可见 schema（ALL_USERS），切换走
+                // CURRENT_SCHEMA（与原生 Oracle 臂同源语义）
+                if conn.ob_is_oracle_mode() {
+                    return ob_oracle_usernames(conn).await;
+                }
                 use mysql_async::prelude::Queryable as _;
                 let names: Vec<String> = conn
                     .exec(
@@ -1236,6 +1241,22 @@ impl DbEngine {
     pub async fn select_database(&mut self, database: &str) -> Result<(), String> {
         match self {
             DbEngine::MySql(conn) => {
+                // OB Oracle：切库 = ALTER SESSION SET CURRENT_SCHEMA（Oracle
+                // 语义，只改名字解析不改权限）；标识符校验同原生 Oracle 臂
+                if conn.ob_is_oracle_mode() {
+                    use mysql_async::prelude::Queryable as _;
+                    let valid = !database.is_empty()
+                        && database
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '#'));
+                    if !valid {
+                        return Err("OceanBase Oracle 无效的 schema 名".to_string());
+                    }
+                    return conn
+                        .query_drop(format!("ALTER SESSION SET CURRENT_SCHEMA = {database}"))
+                        .await
+                        .map_err(|e| format!("OceanBase 切换 schema 失败：{e}"));
+                }
                 use mysql_async::prelude::Queryable as _;
                 let escaped = database.replace('`', "``");
                 conn.query_drop(format!("USE `{escaped}`"))
@@ -3908,6 +3929,20 @@ impl DbEngine {
     async fn catalog_root(&mut self) -> Result<Vec<CatalogNode>, String> {
         match self {
             DbEngine::MySql(conn) => {
+                // OB Oracle 租户无 information_schema：顶层 = schema（用户），
+                // 走 ALL_USERS（与原生 Oracle 臂同源口径）
+                if conn.ob_is_oracle_mode() {
+                    return Ok(ob_oracle_usernames(conn)
+                        .await?
+                        .into_iter()
+                        .map(|name| CatalogNode {
+                            key: name.clone(),
+                            name,
+                            kind: "schema".to_string(),
+                            detail: None,
+                        })
+                        .collect());
+                }
                 use mysql_async::prelude::Queryable as _;
                 let names: Vec<String> = conn
                     .exec(
@@ -4030,6 +4065,46 @@ impl DbEngine {
     pub async fn catalog_groups(&mut self, schema: &str) -> Result<Vec<CatalogNode>, String> {
         match self {
             DbEngine::MySql(conn) => {
+                // OB Oracle：all_objects 一表聚合（与原生 Oracle 臂同源；BIN$
+                // 回收站对象不计数）。OB 无 DBA_ 体系故恒 all_*
+                if conn.ob_is_oracle_mode() {
+                    use mysql_async::prelude::Queryable as _;
+                    let sql = format!(
+                        "SELECT object_type, COUNT(*) FROM {OB_DICT_PREFIX}_objects \
+                         WHERE owner = {} AND object_name NOT LIKE 'BIN$%' \
+                           AND object_type IN ('TABLE','VIEW','FUNCTION','PROCEDURE',\
+                             'SEQUENCE','TRIGGER','SYNONYM','PACKAGE','TYPE') \
+                         GROUP BY object_type",
+                        ob_quote_literal(schema)
+                    );
+                    let counts: Vec<(String, i64)> = conn
+                        .exec(sql, ())
+                        .await
+                        .map_err(|e| format!("OceanBase 查询对象计数失败：{e}"))?;
+                    let count_of = |kind: &str| {
+                        counts
+                            .iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case(kind))
+                            .map(|(_, c)| *c)
+                            .unwrap_or(0)
+                    };
+                    return Ok(group_nodes(
+                        schema,
+                        GroupCounts {
+                            triggers: Some(count_of("TRIGGER")),
+                            synonyms: Some(count_of("SYNONYM")),
+                            packages: Some(count_of("PACKAGE")),
+                            datatypes: Some(count_of("TYPE")),
+                            ..GroupCounts::base(
+                                count_of("TABLE"),
+                                count_of("VIEW"),
+                                count_of("FUNCTION"),
+                                count_of("PROCEDURE"),
+                                count_of("SEQUENCE"),
+                            )
+                        },
+                    ));
+                }
                 use mysql_async::prelude::Queryable as _;
                 let tables: Vec<(String, i64)> = conn
                     .exec(
@@ -4663,6 +4738,47 @@ impl DbEngine {
         let _ = name_col;
         match self {
             DbEngine::MySql(conn) => {
+                // OB Oracle：all_objects 按类型列（与原生 Oracle 臂同源；BIN$
+                // 回收站滤除）。OB 无物化视图/事件/外部表等 MySQL 专有分组，
+                // 这些分组树上不出现，走到这里返回空集
+                if conn.ob_is_oracle_mode() {
+                    use mysql_async::prelude::Queryable as _;
+                    let obj_type = match group {
+                        ObjectGroup::Table => Some("TABLE"),
+                        ObjectGroup::View => Some("VIEW"),
+                        ObjectGroup::Function => Some("FUNCTION"),
+                        ObjectGroup::Procedure => Some("PROCEDURE"),
+                        ObjectGroup::Sequence => Some("SEQUENCE"),
+                        ObjectGroup::Trigger => Some("TRIGGER"),
+                        ObjectGroup::Synonym => Some("SYNONYM"),
+                        ObjectGroup::Package => Some("PACKAGE"),
+                        ObjectGroup::DataType => Some("TYPE"),
+                        _ => None,
+                    };
+                    let Some(obj_type) = obj_type else {
+                        return Ok(Vec::new());
+                    };
+                    let sql = format!(
+                        "SELECT object_name FROM {OB_DICT_PREFIX}_objects \
+                         WHERE owner = {} AND object_type = {} \
+                           AND object_name NOT LIKE 'BIN$%' ORDER BY object_name",
+                        ob_quote_literal(schema),
+                        ob_quote_literal(obj_type)
+                    );
+                    let names: Vec<String> = conn
+                        .exec(sql, ())
+                        .await
+                        .map_err(|e| format!("OceanBase 查询对象清单失败：{e}"))?;
+                    return Ok(names
+                        .into_iter()
+                        .map(|name| CatalogNode {
+                            key: format!("{schema}.{name}"),
+                            name,
+                            kind: kind.clone(),
+                            detail: None,
+                        })
+                        .collect());
+                }
                 use mysql_async::prelude::Queryable as _;
                 let names: Vec<String> = conn
                     .exec(sql_mysql, (schema,))
@@ -5102,6 +5218,30 @@ impl DbEngine {
     ) -> Result<Vec<CatalogNode>, String> {
         match self {
             DbEngine::MySql(conn) => {
+                // OB Oracle：all_tab_columns（表与视图同表，与原生 Oracle 臂
+                // 同源口径）；列类型取 data_type 裸名
+                if conn.ob_is_oracle_mode() {
+                    use mysql_async::prelude::Queryable as _;
+                    let sql = format!(
+                        "SELECT column_name, data_type FROM {OB_DICT_PREFIX}_tab_columns \
+                         WHERE owner = {} AND table_name = {} ORDER BY column_id",
+                        ob_quote_literal(schema),
+                        ob_quote_literal(table)
+                    );
+                    let rows: Vec<(String, String)> = conn
+                        .exec(sql, ())
+                        .await
+                        .map_err(|e| format!("OceanBase 查询列清单失败：{e}"))?;
+                    return Ok(rows
+                        .into_iter()
+                        .map(|(name, data_type)| CatalogNode {
+                            key: format!("{schema}.{table}.{name}"),
+                            name,
+                            kind: "column".to_string(),
+                            detail: Some(data_type),
+                        })
+                        .collect());
+                }
                 use mysql_async::prelude::Queryable as _;
                 let rows: Vec<(String, String)> = conn
                     .exec(
@@ -6030,6 +6170,41 @@ fn format_float(v: f64) -> String {
     } else {
         format!("{v}")
     }
+}
+
+/// OB Oracle 字典前缀：恒 ALL_*（OB 无 DBA_ 视图的独立权限体系，Oracle 的
+/// oracle_dict_prefix 探测式不适用）
+const OB_DICT_PREFIX: &str = "all";
+
+/// OB Oracle 系统账号黑名单（与 oracle_usernames 的 <12 分支同源；OB 的
+/// all_users 无 12c 的 oracle_maintained 列，统一走黑名单）
+const OB_SYS_USERS: &str = "'SYS','SYSTEM','OUTLN','DIP','ORACLE_OCM','DBSNMP',\
+     'APPQOSSYS','WMSYS','EXFSYS','CTXSYS','XDB','ANONYMOUS','XS$NULL','MDDATA',\
+     'MDSYS','OLAPSYS','ORDDATA','ORDPLUGINS','ORDSYS','SI_INFORMTN_SCHEMA',\
+     'LBACSYS','OWBSYS','OWBSYS_AUDIT','SPATIAL_CSW_ADMIN','SPATIAL_WFS_ADMIN',\
+     'SYSMAN','MGMT_VIEW','FLOWS_FILES'";
+
+/// OB Oracle 可见 schema 清单（all_users + 系统账号黑名单；连接为 mysql_async
+/// 的文本协议，列值按 UTF-8 lossy 转串）
+async fn ob_oracle_usernames(conn: &mut mysql_async::Conn) -> Result<Vec<String>, String> {
+    use mysql_async::prelude::Queryable as _;
+    let sql = format!(
+        "SELECT username FROM all_users WHERE username NOT IN ({OB_SYS_USERS}) \
+         AND username NOT LIKE 'APEX\\_%' ESCAPE '\\' \
+         AND username NOT LIKE 'FLOWS\\_%' ESCAPE '\\' \
+         ORDER BY username"
+    );
+    let names: Vec<String> = conn
+        .exec(sql, ())
+        .await
+        .map_err(|e| format!("OceanBase 查询用户清单失败：{e}"))?;
+    Ok(names)
+}
+
+/// OB Oracle 容错计数（失败返回 None；列值走文本协议按 i64 解析）
+async fn ob_oracle_count_opt(conn: &mut mysql_async::Conn, sql: &str) -> Option<i64> {
+    use mysql_async::prelude::Queryable as _;
+    conn.query_first::<i64, _>(sql).await.ok().flatten()
 }
 
 /// DBA 字典视图自适应（DBeaver OracleUtils.getAdminAllViewPrefix 同义的
