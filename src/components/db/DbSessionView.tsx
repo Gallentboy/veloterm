@@ -1072,8 +1072,16 @@ export function DbSessionView({
             )
           : branch.node.name;
       out.push(
-        <button
+        <ControlHintTooltip
           key={key}
+          block
+          delayMs={400}
+          side="bottom"
+          title={
+            branch.node.detail ? `${displayLabel} · ${branch.node.detail}` : displayLabel
+          }
+        >
+        <button
           type="button"
           onClick={() => {
             if (treeFilter) {
@@ -1102,9 +1110,6 @@ export function DbSessionView({
             'flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left text-ui-xs text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground',
             isCurrentDb && 'bg-selected/70 font-semibold text-foreground',
           )}
-          title={
-            branch.node.detail ? `${displayLabel} · ${branch.node.detail}` : displayLabel
-          }
         >
           {hasChildren ? (
             <ChevronRight
@@ -1127,7 +1132,8 @@ export function DbSessionView({
               {branch.node.detail}
             </span>
           ) : null}
-        </button>,
+        </button>
+        </ControlHintTooltip>,
       );
       if (effectiveExpanded && branch.children) {
         out.push(
