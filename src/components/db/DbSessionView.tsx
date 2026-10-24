@@ -183,44 +183,10 @@ function redisViewCommand(key: string, type: string): string {
   }
 }
 
-/**
- * Redis 成员节点（key 展开后的最后一级）→ 精确取值命令。
- *
- * 节点 key 编码为 `{schema}.{key}#{field}`（后端约定，`#` 分隔成员名——
- * key 名本身可能含 `.`，点分无法可靠还原父 key）。各类型的取值命令按
- * 成员语义分派：hash 用 HGET、list 用 LINDEX（下标）、set 成员本身即值
- * （SISMEMBER 判存在）、zset 用 ZSCORE、stream 用 XRANGE 单条 id。
- * 拿不到父 key/成员时返回 null（调用方跳过）。
- */
-function redisMemberCommand(nodeKey: string, name: string, detail: string | null): string | null {
-  const hashAt = nodeKey.indexOf('#');
-  if (hashAt < 0) return null;
-  const parentPath = nodeKey.slice(0, hashAt); // "{schema}.{key}"
-  const dotAt = parentPath.indexOf('.');
-  if (dotAt < 0) return null;
-  const key = parentPath.slice(dotAt + 1);
-  if (!key) return null;
-  const k = redisQuote(key);
-  const member = redisQuote(name);
-  // detail 形如 "field · value" / "index · value" / "member · score" /
-  // "id · field=value..."，role 是首个分隔符前的标签
-  const role = (detail ?? '').split(' · ')[0];
-  switch (role) {
-    case 'field':
-      return `HGET ${k} ${member}`;
-    case 'index':
-      return `LINDEX ${k} ${name}`;
-    case 'member':
-      // set 的成员本身就是值；zset 的 member 配 score
-      return detail?.includes(' · ') ? `ZSCORE ${k} ${member}` : `SISMEMBER ${k} ${member}`;
-    case 'id':
-      return `XRANGE ${k} ${member} ${member}`;
-    default:
-      return null;
-  }
-}
-
-/** 可展开子层的节点类型（分组/表/视图可展开；函数/过程/序列/列是叶子） */
+/** 可展开子层的节点类型（分组/表/视图可展开；函数/过程/序列/列是叶子）。
+ * Redis 的 key（后端给 kind='table'）例外——见 renderTree 的 hasChildren：
+ * key 没有「列」概念，展开出来的 field/member 只是值本身，树到 key 为止，
+ * 点击 key 直接在右侧结果面板出内容。 */
 const EXPANDABLE_KINDS = new Set(['database', 'schema', 'group', 'table', 'view', 'mview']);
 
 /** 搜索匹配的对象类节点（分组/库节点经由子树内命中间接显示） */
@@ -1093,7 +1059,10 @@ export function DbSessionView({
       if (!branch) continue;
       // 搜索即剪枝：命中的对象及其祖先路径显示，其余整枝隐藏
       if (treeFilter && !subtreeMatches(branch, treeFilter)) continue;
-      const hasChildren = EXPANDABLE_KINDS.has(branch.node.kind);
+      // Redis 的 key 节点不展开：key 没有「列」概念，展开出来的 field/member
+      // 只是值本身，树到 key 为止；点击 key 直接在右侧结果面板出内容
+      const isRedisKeyNode = meta?.engine === 'redis' && branch.node.kind === 'table';
+      const hasChildren = !isRedisKeyNode && EXPANDABLE_KINDS.has(branch.node.kind);
       // 搜索时命中路径默认展开、点击可收起（仅展示层，不改 expanded 状态，清空搜索即恢复原状）
       const effectiveExpanded = treeFilter ? !searchCollapsed.has(key) : branch.expanded;
       // 树根层的「当前库」高亮：各引擎根层形态不同——MySQL（含 OB MySQL 模式）
@@ -1129,21 +1098,16 @@ export function DbSessionView({
         <button
           type="button"
           onClick={() => {
-            // Redis 成员节点（key 展开后的最后一级）：单击即取该成员的值——
-            // 生成精确命令（HGET/LINDEX/ZSCORE/...）填进编辑器并直接执行，
-            // 结果面板出值。叶子节点本就没有展开语义，单击在这里是空的，
-            // 拿它承载「看值」正合适
-            if (meta?.engine === 'redis' && branch.node.kind === 'column') {
-              const cmd = redisMemberCommand(
-                branch.node.key,
+            // Redis key 节点：单击直接出内容（命令填编辑器 + 立即执行，
+            // 结果面板即值）。树不再展开 key，所以单击就是唯一的查看入口
+            if (meta?.engine === 'redis' && branch.node.kind === 'table') {
+              const cmd = redisViewCommand(
                 branch.node.name,
-                branch.node.detail,
+                branch.node.detail ?? 'string',
               );
-              if (cmd) {
-                setSql(cmd);
-                void runQuery(cmd);
-                return;
-              }
+              setSql(cmd);
+              void runQuery(cmd);
+              return;
             }
             if (treeFilter) {
               // 搜索态：折叠/展开只作用于展示层，不动真实展开态（列层不参与匹配，无需懒加载）
