@@ -1,5 +1,6 @@
 import { X } from 'lucide-react';
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 
 interface ModalProps {
@@ -8,10 +9,21 @@ interface ModalProps {
   footer?: ReactNode;
   onClose: () => void;
   className?: string;
+  /** Portal 目标容器选择器（如 'main'）：遮罩 absolute 覆盖该容器，
+   * 居中与百分比宽度都相对它而非视口（容器需 relative 定位）；
+   * 不传 = 挂 body、fixed inset-0 全屏遮罩（原行为，其他消费方零影响） */
+  containerSelector?: string;
 }
 
 /** 通用模态框：遮罩 + 面板卡片，Escape/关闭按钮关闭。 */
-export function Modal({ title, children, footer, onClose, className }: ModalProps) {
+export function Modal({
+  title,
+  children,
+  footer,
+  onClose,
+  className,
+  containerSelector,
+}: ModalProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   // 最新回调存 ref：两个 effect 都只在挂载时跑，重渲染不重跑
   const onCloseRef = useRef(onClose);
@@ -34,10 +46,21 @@ export function Modal({ title, children, footer, onClose, className }: ModalProp
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  return (
+  // 挂载时惰性解析一次（Modal 都是条件渲染，挂载时页面 DOM 树已就绪；
+  // 不用 effect 是避免「先全屏渲染一帧再 portal」的闪烁）
+  const [container] = useState(() =>
+    containerSelector ? document.querySelector<HTMLElement>(containerSelector) : null,
+  );
+
+  const dialog = (
     <div
       ref={rootRef}
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/25 p-6"
+      className={cn(
+        'z-[70] flex items-center justify-center bg-black/25 p-6',
+        // 容器模式：遮罩只盖该容器（容器需 relative，AppShell 的 main 已挂）；
+        // 全屏模式：维持原行为
+        container ? 'absolute inset-0' : 'fixed inset-0',
+      )}
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -68,4 +91,6 @@ export function Modal({ title, children, footer, onClose, className }: ModalProp
       </div>
     </div>
   );
+
+  return container ? createPortal(dialog, container) : dialog;
 }

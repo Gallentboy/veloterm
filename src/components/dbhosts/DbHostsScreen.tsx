@@ -66,7 +66,7 @@ const ENGINE_DEFAULT_PORTS: Record<DbEngineKind, number> = {
   dameng: 5236,
 };
 
-// 引擎名均为产品名（英文界面也保留原厂名），不走 i18n；达梦沿用其中文产品名
+// 引擎名均为产品名（英文界面也保留原厂名），不走 i18n；达梦按产品代号显示 DM8
 const ENGINE_LABELS: Record<DbEngineKind, string> = {
   mysql: 'MySQL',
   postgres: 'PostgreSQL',
@@ -74,7 +74,7 @@ const ENGINE_LABELS: Record<DbEngineKind, string> = {
   redis: 'Redis',
   oceanbase: 'OceanBase',
   sqlite: 'SQLite',
-  dameng: '达梦 DM8',
+  dameng: 'DM8',
 };
 
 /** 各引擎的辨识图标：MySQL/PG/Redis/SQLite 用 simple-icons 的品牌官方
@@ -721,7 +721,11 @@ function DbConnectionFormDialog({
     <Modal
       title={node ? t('dbHosts.editTitle', { name: node.name }) : t('dbHosts.newTitle')}
       onClose={onClose}
-      className="w-[480px]"
+      // 遮罩与居中都相对右侧主内容区（AppShell 的 <main>，已挂 relative）而非
+      // 视口——左侧栏展开/折叠不影响弹框位置；窄窗下限 520px 保证表单不挤爆，
+      // 超宽屏上限 1080px 避免表单行被拉得过长；Modal 基座 max-w-full 兜底
+      containerSelector="main"
+      className="w-2/3 min-w-[520px] max-w-[1080px]"
       footer={
         <>
           <Button
