@@ -1880,6 +1880,8 @@ impl DbEngine {
                 // 拼装——PG 同型语义）；列结构 all_tab_columns（data_default 是
                 // LONG 类型、驱动不支持，故不带 Default 列）；索引
                 // all_indexes + all_ind_columns 经 LISTAGG 聚列。
+                // 字典视图前缀自适应（DBA 权限 → dba_*）
+                let dict_p = oracle_dict_prefix(conn).await;
                 let object_type = if kind == "view" { "VIEW" } else { "TABLE" };
                 let ddl_sql = format!(
                     "SELECT DBMS_METADATA.GET_DDL({}, {}, {}) FROM dual",
@@ -1897,8 +1899,8 @@ impl DbEngine {
 
                 let col_sql = format!(
                     "SELECT c.column_name, c.data_type, c.nullable, cc.COMMENTS \
-                     FROM all_tab_columns c \
-                     LEFT JOIN all_col_comments cc \
+                     FROM {dict_p}_tab_columns c \
+                     LEFT JOIN {dict_p}_col_comments cc \
                        ON cc.owner = c.owner AND cc.table_name = c.table_name \
                       AND cc.column_name = c.column_name \
                      WHERE c.owner = {} AND c.table_name = {} ORDER BY c.column_id",
@@ -1936,7 +1938,7 @@ impl DbEngine {
                 // LONG 边界）按无表达式处理，聚列退回占位名
                 let expr_sql = format!(
                     "SELECT INDEX_NAME, COLUMN_POSITION, COLUMN_EXPRESSION \
-                     FROM all_ind_expressions \
+                      FROM {dict_p}_ind_expressions \
                      WHERE INDEX_OWNER = {} AND TABLE_NAME = {} \
                      ORDER BY INDEX_NAME, COLUMN_POSITION",
                     ob_quote_literal(schema),
@@ -1957,8 +1959,8 @@ impl DbEngine {
                     "SELECT i.index_name, i.uniqueness, \
                             LISTAGG(c.column_name, ', ') WITHIN GROUP \
                               (ORDER BY c.column_position) \
-                     FROM all_indexes i \
-                     JOIN all_ind_columns c \
+                     FROM {dict_p}_indexes i \
+                     JOIN {dict_p}_ind_columns c \
                        ON c.index_name = i.index_name AND c.index_owner = i.owner \
                      WHERE i.table_owner = {} AND i.table_name = {} \
                      GROUP BY i.index_name, i.uniqueness ORDER BY i.index_name",
@@ -2028,7 +2030,7 @@ impl DbEngine {
                 let agg_11g = |owner: &str, cons: &str| {
                     format!(
                         "(SELECT LISTAGG(cc.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY cc.POSITION) \
-                          FROM all_cons_columns cc \
+                          FROM {dict_p}_cons_columns cc \
                           WHERE cc.OWNER = {owner} AND cc.CONSTRAINT_NAME = {cons})"
                     )
                 };
@@ -2037,7 +2039,7 @@ impl DbEngine {
                         "(SELECT MAX(SUBSTR(SYS_CONNECT_BY_PATH(cc.COLUMN_NAME, ','), 2)) \
                           FROM (SELECT cc.COLUMN_NAME, cc.POSITION, \
                                        ROW_NUMBER() OVER (ORDER BY cc.POSITION) AS RN \
-                                FROM all_cons_columns cc \
+                                FROM {dict_p}_cons_columns cc \
                                 WHERE cc.OWNER = {owner} AND cc.CONSTRAINT_NAME = {cons}) cc \
                           START WITH cc.RN = 1 \
                           CONNECT BY PRIOR cc.RN = cc.RN - 1)"
@@ -2052,7 +2054,7 @@ impl DbEngine {
                 let cons_sql = format!(
                     "SELECT c.CONSTRAINT_NAME, c.CONSTRAINT_TYPE, c.R_OWNER, c.R_CONSTRAINT_NAME, \
                        c.DELETE_RULE, {cols_agg} AS COLS \
-                     FROM all_constraints c \
+                     FROM {dict_p}_constraints c \
                      WHERE c.OWNER = {} AND c.TABLE_NAME = {} \
                      ORDER BY c.CONSTRAINT_NAME",
                     ob_quote_literal(schema),
@@ -2107,7 +2109,7 @@ impl DbEngine {
                     };
                     let ref_sql = format!(
                         "SELECT NVL(TABLE_NAME || '(' || {ref_agg} || ')', TABLE_NAME) \
-                         FROM all_constraints \
+                         FROM {dict_p}_constraints \
                          WHERE OWNER = {owner_lit} AND CONSTRAINT_NAME = {cons_lit}"
                     );
                     let mut ref_rs = conn
@@ -2142,9 +2144,9 @@ impl DbEngine {
                 let inc_sql = format!(
                     "SELECT c.CONSTRAINT_NAME, c.OWNER || '.' || c.TABLE_NAME, \
                        {cols_agg}, {ref_cols_agg} \
-                     FROM all_constraints c \
+                     FROM {dict_p}_constraints c \
                      WHERE c.CONSTRAINT_TYPE = 'R' AND c.R_OWNER = {} \
-                       AND c.R_CONSTRAINT_NAME IN (SELECT rc.CONSTRAINT_NAME FROM all_constraints rc \
+                           AND c.R_CONSTRAINT_NAME IN (SELECT rc.CONSTRAINT_NAME FROM {dict_p}_constraints rc \
                          WHERE rc.OWNER = {} AND rc.TABLE_NAME = {} \
                            AND rc.CONSTRAINT_TYPE IN ('P','U')) \
                      ORDER BY c.OWNER, c.TABLE_NAME, c.CONSTRAINT_NAME",
@@ -2175,9 +2177,9 @@ impl DbEngine {
                 // （ANALYZE 后更新）。Oracle 表大小走 dba_segments 但需要权限，
                 // 取 all_tables.BLOCKS * 块大小(8KB) 近似——不做，取 NUM_ROWS 即可
                 let stat_sql = format!(
-                    "SELECT (SELECT COMMENTS FROM all_tab_comments \
+                     "SELECT (SELECT COMMENTS FROM {dict_p}_tab_comments \
                        WHERE owner = {} AND table_name = {} AND table_type = 'TABLE'), \
-                       (SELECT NUM_ROWS FROM all_tables \
+                       (SELECT NUM_ROWS FROM {dict_p}_tables \
                        WHERE owner = {} AND table_name = {}) \
                      FROM dual",
                     ob_quote_literal(schema),
@@ -3294,6 +3296,8 @@ impl DbEngine {
                 // 定义：all_source 按行拼回（CREATE OR REPLACE 前缀在首行内）；
                 // 入参个数：all_arguments 的具名参数（argument_name 为 NULL 的
                 // 是函数返回值，排除）
+                // 字典视图前缀自适应（DBA 权限 → dba_*）
+                let dict_p = oracle_dict_prefix(conn).await;
                 // DB Link：all_db_links 无源码，重建 CREATE DATABASE LINK 语句
                 //（字典里本就无口令列，不回显）
                 // 用户自定义类型：GET_DDL 出完整 CREATE OR REPLACE TYPE 语句
@@ -3318,7 +3322,7 @@ impl DbEngine {
                         });
                     }
                     let attr_sql = format!(
-                        "SELECT ATTR_NAME, ATTR_TYPE_NAME FROM all_type_attrs \
+                        "SELECT ATTR_NAME, ATTR_TYPE_NAME FROM {dict_p}_type_attrs \
                          WHERE OWNER = {} AND TYPE_NAME = {} ORDER BY ATTR_NO",
                         ob_quote_literal(schema),
                         ob_quote_literal(name)
@@ -3352,7 +3356,7 @@ impl DbEngine {
                 if kind == "dblink" {
                     let sql = format!(
                         "SELECT username, host, DECODE(owner, 'PUBLIC', 'PUBLIC', 'USER') \
-                         FROM all_db_links \
+                         FROM {dict_p}_db_links \
                          WHERE owner = {} AND db_link = {}",
                         ob_quote_literal(schema),
                         ob_quote_literal(name)
@@ -3493,7 +3497,7 @@ impl DbEngine {
                 // 拼回完整触发器体（含 CREATE TRIGGER 头）
                 if kind == "trigger" {
                     let sql = format!(
-                        "SELECT text FROM all_source WHERE owner = {} AND name = {} \
+                        "SELECT text FROM {dict_p}_source WHERE owner = {} AND name = {} \
                          AND type = 'TRIGGER' ORDER BY line",
                         ob_quote_literal(schema),
                         ob_quote_literal(name)
@@ -3544,7 +3548,7 @@ impl DbEngine {
                     // 包有源码时优先 all_source（GET_DDL 对包可能不含包体）
                     if kind == "package" && ddl.trim().is_empty() {
                         let src_sql = format!(
-                            "SELECT text FROM all_source WHERE owner = {} AND name = {} \
+                            "SELECT text FROM {dict_p}_source WHERE owner = {} AND name = {} \
                              AND type = 'PACKAGE' ORDER BY line",
                             ob_quote_literal(schema),
                             ob_quote_literal(name)
@@ -3572,7 +3576,7 @@ impl DbEngine {
                 }
                 let obj_type = if kind == "function" { "FUNCTION" } else { "PROCEDURE" };
                 let sql = format!(
-                    "SELECT text FROM all_source WHERE owner = {} AND name = {} AND type = {} ORDER BY line",
+                    "SELECT text FROM {dict_p}_source WHERE owner = {} AND name = {} AND type = {} ORDER BY line",
                     ob_quote_literal(schema),
                     ob_quote_literal(name),
                     ob_quote_literal(obj_type)
@@ -3595,7 +3599,7 @@ impl DbEngine {
                 }
 
                 let cnt_sql = format!(
-                    "SELECT COUNT(*) FROM all_arguments WHERE owner = {} AND object_name = {} AND argument_name IS NOT NULL",
+                    "SELECT COUNT(*) FROM {dict_p}_arguments WHERE owner = {} AND object_name = {} AND argument_name IS NOT NULL",
                     ob_quote_literal(schema),
                     ob_quote_literal(name)
                 );
@@ -4272,9 +4276,11 @@ impl DbEngine {
             }
             DbEngine::Oracle(conn) => {
                 // 对象在 all_objects 一表内聚合（SEQUENCE/TRIGGER 也在；DBeaver
-                // OracleSchema 同源，加 TRIGGER 类型）；BIN$ 前缀 = 回收站不计数
+                // OracleSchema 同源，加 TRIGGER 类型）；BIN$ 前缀 = 回收站不计数。
+                // 字典视图前缀自适应（DBA 权限 → dba_*）
+                let dict_p = oracle_dict_prefix(conn).await;
                 let sql = format!(
-                    "SELECT object_type, COUNT(*) FROM all_objects \
+                    "SELECT object_type, COUNT(*) FROM {dict_p}_objects \
                      WHERE owner = {} AND object_name NOT LIKE 'BIN$%' \
                        AND object_type IN \
                          ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE','TRIGGER','SYNONYM','PACKAGE','TYPE') \
@@ -4304,7 +4310,7 @@ impl DbEngine {
                 };
                 // DB Link（all_db_links 按 owner；PUBLIC 链接不归入单 schema）
                 let db_link_sql = format!(
-                    "SELECT COUNT(*) FROM all_db_links WHERE owner = {}",
+                    "SELECT COUNT(*) FROM {dict_p}_db_links WHERE owner = {}",
                     ob_quote_literal(schema)
                 );
                 let db_links = oracle_count_opt(conn, &db_link_sql).await.unwrap_or(0);
@@ -4841,11 +4847,13 @@ impl DbEngine {
                 // all_objects 按对象类型列（Oracle 无 information_schema）；
                 // 对象类型大写、BIN$ 回收站滤除；INVALID 对象以徽标 detail 标出
                 //（DBeaver 对失效对象标红同义，VALID 不标降噪）。
+                // 字典视图前缀自适应（DBA 权限 → dba_*）
+                let dict_p = oracle_dict_prefix(conn).await;
                 // DB Link / 回收站不在 all_objects，单独走 all_db_links /
                 // dba_recyclebin（dba 视图无权限时降级 user_recyclebin）
                 if group == ObjectGroup::DbLink {
                     let sql = format!(
-                        "SELECT db_link, username, host FROM all_db_links \
+                        "SELECT db_link, username, host FROM {dict_p}_db_links \
                          WHERE owner = {} ORDER BY db_link",
                         ob_quote_literal(schema)
                     );
@@ -4932,7 +4940,7 @@ impl DbEngine {
                     _ => "VELOTERM_UNREACHABLE",
                 };
                 let sql = format!(
-                    "SELECT object_name, status FROM all_objects \
+                    "SELECT object_name, status FROM {dict_p}_objects \
                      WHERE owner = {} AND object_type = {} \
                        AND object_name NOT LIKE 'BIN$%' ORDER BY object_name",
                     ob_quote_literal(schema),
@@ -5294,9 +5302,11 @@ impl DbEngine {
             }
             DbEngine::Oracle(conn) => {
                 // all_tab_columns 覆盖表与视图；data_type 概括为裸类型名
-                //（与另两引擎的 information_schema 口径一致）
+                //（与另两引擎的 information_schema 口径一致）。
+                // 字典视图前缀自适应（DBA 权限 → dba_*）
+                let dict_p = oracle_dict_prefix(conn).await;
                 let sql = format!(
-                    "SELECT column_name, data_type FROM all_tab_columns \
+                    "SELECT column_name, data_type FROM {dict_p}_tab_columns \
                      WHERE owner = {} AND table_name = {} ORDER BY column_id",
                     ob_quote_literal(schema),
                     ob_quote_literal(table)
@@ -6286,6 +6296,24 @@ fn format_float(v: f64) -> String {
         format!("{}", v as i64)
     } else {
         format!("{v}")
+    }
+}
+
+/// DBA 字典视图自适应（DBeaver OracleUtils.getAdminAllViewPrefix 同义的
+/// 自动探测形态）：探测 dba_objects 可读（SELECT ANY DICTIONARY /
+/// SELECT_CATALOG_ROLE）即切 DBA_*（实例全量可见），否则 ALL_*（仅当前
+/// 用户可访问对象）。每次目录操作探测一回（一条 ROWNUM=1 的轻量探测）；
+/// 失败按无权限回 ALL_*（普通用户查 dba_objects 直接 ORA-00942）
+async fn oracle_dict_prefix(conn: &mut oracle_async::Conn) -> &'static str {
+    match conn
+        .query("SELECT 1 FROM dba_objects WHERE ROWNUM = 1")
+        .await
+    {
+        Ok(mut rs) => match rs.next_row().await {
+            Ok(Some(_)) => "dba",
+            _ => "all",
+        },
+        Err(_) => "all",
     }
 }
 
