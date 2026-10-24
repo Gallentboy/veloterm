@@ -693,16 +693,30 @@ impl DmClient {
             }
             // 帧转储进错误信息：EXPLAIN 等特殊语句的回包帧形态（cmd/len/ret）
             // 无 JDBC 侧先例可对照（驱动 jar 全树无 EXPLAIN 特判，服务端处理），
-            // 真机转储一次即可定位该按哪种帧解析
-            None => Err(DmError::protocol(format!(
-                "执行未产生有效结果帧（{} 帧：{}）",
-                frames.len(),
-                frames
-                    .iter()
-                    .map(|f| format!("cmd={} len={} ret={}", f.cmd, f.length, f.retcode))
-                    .collect::<Vec<_>>()
-                    .join("，")
-            ))),
+            // 真机转储一次即可定位该按哪种帧解析。帧体带 hex + 文本预览
+            //（计划帧是文本可直接肉眼定布局）
+            None => {
+                let mut dump = format!(
+                    "执行未产生有效结果帧（{} 帧：{}）",
+                    frames.len(),
+                    frames
+                        .iter()
+                        .map(|f| format!("cmd={} len={} ret={}", f.cmd, f.length, f.retcode))
+                        .collect::<Vec<_>>()
+                        .join("，")
+                );
+                if let Some(f) = frames.first() {
+                    let take = f.body.len().min(256);
+                    let hex: Vec<String> =
+                        f.body[..take].iter().map(|b| format!("{b:02X}")).collect();
+                    dump.push_str(&format!(
+                        "\n首帧体前 {take} 字节 hex：{}\n文本预览：{}",
+                        hex.join(" "),
+                        String::from_utf8_lossy(&f.body[..take])
+                    ));
+                }
+                Err(DmError::protocol(dump))
+            }
         }
     }
 
