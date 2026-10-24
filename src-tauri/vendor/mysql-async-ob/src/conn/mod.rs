@@ -303,6 +303,27 @@ impl Conn {
         }
     }
 
+    /// 宽容捕获 auth OK 的 status（严格解析失败时的兑底路径）：真机实测
+    /// 本 obproxy 的 auth OK 是裸 7 字节（raw=00 00 00 24 00 00 00），
+    /// 而协商了 CLIENT_SESSION_TRACK 后 OkPacketDeserializer 要求尾部存在
+    /// info/session 段字节——读空即报错，oracle 位（status bit 2，实测
+    /// 0x24 明明置位）随解析失败丢失。此路径手工跳过 header + 两个 lenenc
+    /// 后取 status；session-track 段不存在，能力回显扫描自然跳过
+    ///（该 obproxy 所有 OK 均无 session-track，ob20 保持 plain 协议，
+    /// 真机验证 plain 下全部功能正常）。
+    fn capture_auth_ok_state(&mut self, packet: &[u8]) {
+        if let Some(status) = bare_ok_status(packet) {
+            self.inner.status = StatusFlags::from_bits_retain(status);
+            self.inner.ob_is_oracle_mode = status & 4 != 0;
+            crate::obdbg!(
+                "capture_auth_ok_state: 宽容解析 status={status:#06x} bit2(oracle)={}",
+                self.inner.ob_is_oracle_mode
+            );
+        } else {
+            crate::obdbg!("capture_auth_ok_state: 裸 OK 提取失败（包形态异常）");
+        }
+    }
+
     /// Handles OK packet.
     pub(crate) fn handle_ok(&mut self, ok_packet: OkPacket<'static>) {
         crate::obdbg!(
@@ -871,7 +892,10 @@ impl Conn {
                         );
                         self.handle_ok(ok.into_owned());
                     }
-                    Err(_) => crate::obdbg!("caching_sha2: OK 解析失败——检测信息丢失"),
+                    Err(_) => {
+                        self.capture_auth_ok_state(&packet);
+                        crate::obdbg!("caching_sha2: 严格解析失败，已走宽容提取 oracle={}", self.inner.ob_is_oracle_mode);
+                    }
                 }
                 Ok(())
             }
@@ -956,7 +980,11 @@ impl Conn {
                             self.inner.ob_capability
                         );
                     }
-                    Err(_) => crate::obdbg!("native_auth: OK 解析失败——检测信息丢失（本轮根因候选）"),
+                    Err(_) => {
+                        // 裸 OK（协商 SESSION_TRACK 后严格解析要求尾段存在）——宽容提取 status
+                        self.capture_auth_ok_state(&packet);
+                        crate::obdbg!("native_auth: 严格解析失败，已走宽容提取 oracle={}", self.inner.ob_is_oracle_mode);
+                    }
                 }
                 Ok(())
             }
@@ -1135,7 +1163,10 @@ impl Conn {
                     );
                     self.handle_ok(ok.into_owned());
                 }
-                Err(_) => crate::obdbg!("drop_packet_capture_ok: OK 解析失败"),
+                Err(_) => {
+                    self.capture_auth_ok_state(&packet);
+                    crate::obdbg!("drop_packet_capture_ok: 严格解析失败，已走宽容提取 oracle={}", self.inner.ob_is_oracle_mode);
+                }
             }
         }
         Ok(())
@@ -1582,6 +1613,27 @@ impl Conn {
     }
 }
 
+/// 裸 OK 包的 status 提取（纯函数）：跳过 header(0x00) + affected_rows/
+/// insert_id 两个 lenenc 后取小端 u16。真机 fixture 单测锁定。
+fn bare_ok_status(packet: &[u8]) -> Option<u16> {
+    if packet.first() != Some(&0x00) {
+        return None;
+    }
+    let mut i = 1usize;
+    for _ in 0..2 {
+        match packet.get(i).copied() {
+            Some(0xFC) => i += 3,
+            Some(0xFD) => i += 4,
+            Some(0xFE) => i += 9,
+            Some(_) => i += 1,
+            None => return None,
+        }
+    }
+    let lo = *packet.get(i)?;
+    let hi = *packet.get(i + 1)?;
+    Some(u16::from_le_bytes([lo, hi]))
+}
+
 #[cfg(test)]
 mod test {
     use bytes::Bytes;
@@ -1589,6 +1641,25 @@ mod test {
     use mysql_common::constants::MAX_PAYLOAD_LEN;
     use rand::Fill;
     use tokio::{io::AsyncWriteExt, net::TcpListener};
+
+    /// 真机 fixture：本 obproxy 的 auth OK 是裸 7 字节（无 info/session 段），
+    /// 协商 CLIENT_SESSION_TRACK 后严格解析读空报错——宽容提取路径的锁定测试
+    #[test]
+    fn bare_ok_status_real_machine_fixture() {
+        // 真机实抓（10.4.128.23:3883）：status=0x0024，bit2 = oracle 模式位
+        let raw = [0x00, 0x00, 0x00, 0x24, 0x00, 0x00, 0x00];
+        assert_eq!(super::bare_ok_status(&raw), Some(0x0024));
+        // 内联 lenenc 正常跳过：affected=2、insert=0、status=0x0002
+        assert_eq!(super::bare_ok_status(&[0x00, 0x02, 0x00, 0x02, 0x00, 0x00, 0x00]), Some(0x0002));
+        // 0xFE 前缀 8 字节 lenenc 跳过
+        assert_eq!(
+            super::bare_ok_status(&[0x00, 0xFE, 1, 2, 3, 4, 5, 6, 7, 8, 0x00, 0x24, 0x00]),
+            Some(0x0024)
+        );
+        // 非 OK 包拒绝 / 截断包安全
+        assert_eq!(super::bare_ok_status(&[0xff, 0x00]), None);
+        assert_eq!(super::bare_ok_status(&[0x00, 0x00, 0x00]), None);
+    }
 
     use crate::{
         from_row, params, prelude::*, test_misc::get_opts, ChangeUserOpts, Conn, Error,
