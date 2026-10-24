@@ -16,17 +16,21 @@ export function SettingsPageTitle({ children }: { children: ReactNode }) {
   );
 }
 
-/** 设置分组卡片 */
+/** 设置分组卡片。自身即容器（container-type: inline-size）：内部的行布局/
+ *  宫格列数按**列宽**而非窗口宽度响应——双列布局下每列只有 ~380px，若按
+ *  媒体查询（窗口宽）判定会让行被误摊成左右两栏而挤压（设置页主内容区
+ *  宽度受左侧栏折叠/拖宽影响，媒体查询感知不到真实可用宽度）。 */
 export function SettingsSection({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <section className={cn('overflow-hidden rounded-lg border border-border', className)}>
+    <section className={cn('@container overflow-hidden rounded-lg border border-border', className)}>
       {children}
     </section>
   );
 }
 
-/** 设置行：左侧标题 + 描述（可选），右侧控件槽；窄窗口自动上下堆叠（响应式内置）；
- *  行间不加分隔线（内容区无分割线，仅 header 到内容有）。 */
+/** 设置行：左侧标题 + 描述（可选），右侧控件槽；窄列自动上下堆叠（按所在
+ *  分组卡片的列宽响应，见 SettingsSection 的容器查询说明）；行间不加分隔线
+ *  （内容区无分割线，仅 header 到内容有）。 */
 export function SettingRow({
   title,
   desc,
@@ -37,7 +41,7 @@ export function SettingRow({
   children?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-start gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+    <div className="flex flex-col items-start gap-3 px-4 py-3 @[480px]:flex-row @[480px]:items-center @[480px]:justify-between @[480px]:gap-6">
       <div className="flex min-w-0 flex-col gap-1">
         <span className="text-ui-base text-foreground select-none">{title}</span>
         {desc ? <span className="text-ui-sm text-foreground-subtle">{desc}</span> : null}
