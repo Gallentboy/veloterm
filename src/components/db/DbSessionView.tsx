@@ -2046,13 +2046,19 @@ export function DbSessionView({
                     </div>
                   ))}
                   </div>
-                  {/* 工具栏外置宿主：钉在 tab 行最右侧，不随 tab 滚动；
-                      当前结果无表格（错误/DML 摘要/对象页激活）时 portal 清空收起 */}
-                  <span
-                    ref={setResultToolbarHost}
-                    className="flex shrink-0 items-center gap-2 pl-1 pr-2"
-                    aria-hidden={resultToolbarHost == null}
-                  />
+                  {/* 工具栏外置宿主：钉在 tab 行最右侧，不随 tab 滚动。仅在
+                      结果集视图可见时渲染——对象页激活时结果集是 keep-alive
+                      隐藏（DataTable 仍挂载、portal 不会自己消失），宿主跟着
+                      卸载才能把控件从 tab 行收走（React 回调 ref(null)，表格
+                      退回内联工具栏于隐藏容器内）；当前结果无表格（错误/DML
+                      摘要）时 portal 清空、宿主收起 */}
+                  {activeObjectKey === null ? (
+                    <span
+                      ref={setResultToolbarHost}
+                      className="flex shrink-0 items-center gap-2 pl-1 pr-2"
+                      aria-hidden={resultToolbarHost == null}
+                    />
+                  ) : null}
                 </div>
                 {/* 结果集视图：对象页激活时隐藏（keep-alive，不卸载） */}
                 <div
