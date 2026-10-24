@@ -149,8 +149,13 @@ async fn main() {
 
     let mut rep = Reporter::new();
     println!(
-        "═══ OB Oracle 纯 Rust 驱动测试 ═══\n目标: {}:{}  用户: {}  OB20: {}\n",
-        args.host, args.port, args.user, args.ob20
+        "═══ OB Oracle 纯 Rust 驱动测试 ═══\n编译时间: {}（epoch {}，核对手里的 exe 是哪次构建）\n目标: {}:{}  用户: {}  OB20: {}\n",
+        option_env!("OB_FORK_BUILD_UTC").unwrap_or("unknown"),
+        option_env!("OB_FORK_BUILD_EPOCH").unwrap_or("?"),
+        args.host,
+        args.port,
+        args.user,
+        args.ob20
     );
 
     // ── 01 连接（握手 + 认证 + OB20 + Oracle 模式 + NLS 全在这一步）──
@@ -188,17 +193,19 @@ async fn main() {
         t.elapsed().as_millis(),
     );
 
-    // ── 02 OB20 协议状态 ──
+    // ── 02 OB20 协议状态（实测：管道是否真切换 + 能力回显原值）──
     let t = Instant::now();
-    // OB20 是否激活看 connect attrs 回显；我们无法直接查内部状态，但可以查
-    // 会话变量确认 Oracle 模式（OB20 的激活依赖能力回显，间接验证）
+    let echo = conn.ob_capability_echo();
     rep.report(
         2,
         "OB20 协议状态",
-        Outcome::Pass(format!(
-            "ob20={}（--no-ob20 可对照）",
-            if args.ob20 { "开" } else { "关" }
-        )),
+        if conn.ob20_active() {
+            Outcome::Pass(format!("已激活（echo={echo:#x}）"))
+        } else {
+            Outcome::Warn(format!(
+                "未激活（echo={echo:#x}）——回显未含 OB_PROTOCOL_V2 或 --no-ob20 对照组"
+            ))
+        },
         t.elapsed().as_millis(),
     );
 
@@ -209,10 +216,11 @@ async fn main() {
         3,
         "Oracle 模式检测",
         if is_oracle {
-            Outcome::Pass("服务端确认 Oracle 租户".to_string())
+            Outcome::Pass("服务端确认 Oracle 租户（status bit 2）".to_string())
         } else {
             Outcome::Warn(
-                "服务端 status flag 无 Oracle 位（可能是 MySQL 租户或直连 observer）".to_string(),
+                "服务端 status flag 无 Oracle 位——检测未生效，read_settings 会照发 MySQL 探测"
+                    .to_string(),
             )
         },
         t.elapsed().as_millis(),
