@@ -250,8 +250,9 @@ function MatrixRain() {
     return () => cancelAnimationFrame(raf);
   }, []);
   return (
-    // 黑底小屏幕面板：经典代码雨的舞台就是纯黑，透明底上做不出覆盖衰减
-    <div className="overflow-hidden rounded-lg border border-border">
+    // 黑底小屏幕：无边框（border 太显性、暴露容器存在），仅圆角柔化四角；
+    // 黑色画布本身就是内容
+    <div className="overflow-hidden rounded-lg">
       <canvas ref={ref} className="block max-w-full" aria-hidden="true" />
     </div>
   );
