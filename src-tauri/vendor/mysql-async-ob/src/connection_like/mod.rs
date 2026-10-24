@@ -44,7 +44,7 @@ impl std::ops::Deref for Connection<'_, '_> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Connection::Conn(ref conn) => conn,
+            Connection::Conn(conn) => conn,
             Connection::ConnMut(conn) => conn,
             Connection::Tx(tx) => tx.0.deref(),
         }

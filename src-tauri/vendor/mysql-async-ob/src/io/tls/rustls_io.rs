@@ -78,7 +78,7 @@ impl Endpoint {
         dangerous.set_certificate_verifier(Arc::new(dangerous_verifier));
 
         *self = match self {
-            Endpoint::Plain(ref mut stream) => {
+            Endpoint::Plain(stream) => {
                 let stream = stream.take().unwrap();
 
                 let client_config = Arc::new(config);

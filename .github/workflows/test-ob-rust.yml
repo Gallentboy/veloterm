@@ -1,0 +1,75 @@
+# 目标（单一）：OB Oracle 纯 Rust 驱动测试工具（ob_oracle_test.exe）的
+# Windows x64 构建车道。产出独立 exe，用户在 Windows 真机上输入 OceanBase
+# Oracle 租户的连接参数即可全链路测试（26 项：OB20 协议/Oracle 模式检测/
+# 目录查询/表详情/数据读写/事务/错误处理），验证纯 Rust 分叉驱动的真机行为。
+#
+# 与其他车道的关键差异：**零外部依赖安装**——mysql-async-ob 分叉不依赖
+# vcpkg/OpenSSL/MSYS2（纯 Rust + rustls），只需 Rust 工具链即可编译。
+#
+# 触发：推 tag（验证完删除）——
+#   git tag test_ob_rust && git push origin test_ob_rust
+#   git push origin :refs/tags/test_ob_rust   # 验证完删 tag
+# 也支持 workflow_dispatch 手动触发。
+name: 'test-ob-rust'
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'test_ob_rust*'
+
+jobs:
+  build-ob-rust-test:
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri/vendor/mysql-async-ob -> target'
+
+      # 零依赖构建：不装 vcpkg/OpenSSL——mysql-async-ob 是纯 Rust 分叉
+      #（rustls + flate2 rust_backend + crc32fast），无 C 依赖
+      - name: Build ob_oracle_test.exe (release)
+        working-directory: src-tauri/vendor/mysql-async-ob
+        run: cargo build --release --example ob_oracle_test
+
+      # 冒烟：无参数运行应输出用法并退出码 1
+      - name: Smoke test (usage output)
+        working-directory: src-tauri/vendor/mysql-async-ob
+        shell: pwsh
+        run: |
+          $exe = "target\release\examples\ob_oracle_test.exe"
+          if (-Not (Test-Path $exe)) { throw "exe not found: $exe" }
+          $output = & $exe 2>&1 | Out-String
+          Write-Host $output
+          if ($output -notmatch "参数错误") { throw "冒烟失败：未显示用法" }
+          Write-Host "✅ exe 正常，输出用法说明"
+
+      # PE 架构断言（0x8664 = x64）
+      - name: Verify PE architecture (x64)
+        working-directory: src-tauri/vendor/mysql-async-ob
+        shell: pwsh
+        run: |
+          $exe = "target\release\examples\ob_oracle_test.exe"
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          Write-Host "PE Machine = 0x$($machine.ToString('X4'))"
+          if ($machine -ne 0x8664) { throw "PE 架构不是 x64（0x8664），实际 0x$($machine.ToString('X4'))" }
+          Write-Host "✅ PE 架构 = x64"
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: ob_oracle_test-win-x64
+          path: src-tauri/vendor/mysql-async-ob/target/release/examples/ob_oracle_test.exe
+          retention-days: 7

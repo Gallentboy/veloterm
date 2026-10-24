@@ -306,7 +306,21 @@ impl crate::Conn {
         let packets = self.read_packets(num).await?;
         let defs = packets
             .into_iter()
-            .map(|x| ParseBuf(&x).parse(()))
+            .map(|mut x| match ParseBuf(&x).parse(()) {
+                Ok(col) => Ok(col),
+                Err(_) => {
+                    // OB Oracle 扩展列类型码降级：mysql_common 的 ColumnType
+                    // 不认识 OB 扩展码（160-163/200-211，Java ColumnType.java
+                    // 的 typeOracleMap），解析失败时把类型码字节替换为
+                    // VAR_STRING(253) 重试——文本协议下这些类型都以字符串
+                    // 返回，降级安全。PooledBuf 不可变，复制到栈缓冲再改。
+                    let mut buf = x.as_ref().to_vec();
+                    remap_ob_column_type(&mut buf);
+                    ParseBuf(&buf)
+                        .parse::<Column>(())
+                        .map_err(Error::from)
+                }
+            })
             .collect::<std::result::Result<Vec<Column>, _>>()
             .map_err(Error::from)?;
 
@@ -362,5 +376,54 @@ impl crate::Conn {
     pub(crate) async fn close_statement(&mut self, id: u32) -> Result<()> {
         self.stmt_cache_mut().remove(id);
         self.write_command(&ComStmtClose::new(id)).await
+    }
+}
+
+/// 把列定义包里的 OB Oracle 扩展列类型码替换为 VAR_STRING(253)。
+///
+/// 列定义包结构：6 个 lenenc 字符串（catalog/schema/table/org_table/name/
+/// org_name）后跟 13 字节固定段（2B filler_len + 2B charset + 4B col_len +
+/// **1B column_type** + 2B flags + 1B decimals + 2B filler）。本函数走完
+/// lenenc 字符串后定位 column_type 字节，若值在 OB_ORACLE_EXT_TYPES 里则
+/// 替换。非 OB 场景下该字节不会命中扩展码，无副作用。
+fn remap_ob_column_type(packet: &mut [u8]) {
+    let mut pos = 0usize;
+    for _ in 0..6 {
+        let len = match packet.get(pos) {
+            Some(&l) if l < 0xFB => {
+                pos += 1;
+                l as usize
+            }
+            Some(0xFC) => match (packet.get(pos + 1), packet.get(pos + 2)) {
+                (Some(&a), Some(&b)) => {
+                    pos += 3;
+                    (u16::from(a) | (u16::from(b) << 8)) as usize
+                }
+                _ => return,
+            },
+            Some(0xFD) => match (
+                packet.get(pos + 1),
+                packet.get(pos + 2),
+                packet.get(pos + 3),
+            ) {
+                (Some(&a), Some(&b), Some(&c)) => {
+                    pos += 4;
+                    (u32::from(a) | (u32::from(b) << 8) | (u32::from(c) << 16)) as usize
+                }
+                _ => return,
+            },
+            _ => return,
+        };
+        pos += len;
+        if pos >= packet.len() {
+            return;
+        }
+    }
+    // 固定段内偏移：filler_len(2) + charset(2) + column_length(4) = 8
+    let type_off = pos + 8;
+    if let Some(&t) = packet.get(type_off) {
+        if crate::ob20::OB_ORACLE_EXT_TYPES.contains(&t) {
+            packet[type_off] = 253; // VAR_STRING
+        }
     }
 }
