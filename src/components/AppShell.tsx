@@ -557,6 +557,9 @@ export function AppShell() {
                   <WelcomeScreen
                     onNewTerminal={handleOpenNewTerminal}
                     onOpenSettings={() => setPage('settings')}
+                    onNavigateHosts={() => setPage('hosts')}
+                    onOpenCommandPalette={() => setPaletteOpen(true)}
+                    onOpenManual={() => setIsManualOpen(true)}
                   />
                 ) : page === 'terminal' ? (
                   <TerminalScreen
