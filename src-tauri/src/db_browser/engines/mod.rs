@@ -1072,6 +1072,9 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 .await;
                 redis_select(conn, *db).await.ok();
                 let (role, rows) = entries?;
+                // 成员节点 key 用 `{schema}.{table}#{field}` 编码：`#` 分隔成员名，
+                // 前端据此能反推出父 key（key 名本身可能含 `.`，用点分无法可靠
+                // 还原）——单击成员节点时据此生成精确取值命令（HGET/LINDEX/...）
                 Ok(rows
                     .into_iter()
                     .map(|row| {
@@ -1086,7 +1089,7 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                             format!("{role} · {value}")
                         };
                         CatalogNode {
-                            key: format!("{schema}.{table}.{field}"),
+                            key: format!("{schema}.{table}#{field}"),
                             name: field,
                             kind: "column".to_string(),
                             detail: Some(detail),
