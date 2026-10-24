@@ -153,6 +153,14 @@ interface StatementResult {
  * 满员后再打开新对象，最左（最旧）一页被自动挤掉，依次滚动 */
 const OBJECT_PAGE_LIMIT = 10;
 
+/** SQL 编辑器高度（可拖拽分割条调整，语义同 ZK 树栏宽度）：px 值持久化
+ * localStorage，拖动期间只改内存态，pointerup 才落盘（避免每帧写 storage）。
+ * 176 = 原 h-44 固定高度，作为默认值 */
+const SQL_EDITOR_MIN_HEIGHT = 80;
+const SQL_EDITOR_MAX_HEIGHT = 640;
+const SQL_EDITOR_DEFAULT_HEIGHT = 176;
+const SQL_EDITOR_HEIGHT_STORAGE_KEY = 'veloterm.db.sqlEditorHeight';
+
 /** 结果面板里的对象页（查看定义 / 表详情），与多结果集 tab 同排 */
 interface ObjectPage {
   /** 面板内唯一 key（关闭/激活用） */
@@ -327,6 +335,49 @@ export function DbSessionView({
     affectedRows: 0,
   });
   const autoCommit = txStatus.autoCommit;
+
+  // SQL 编辑器高度（编辑框与结果面板之间的分割条上下拖拽）
+  const [editorHeight, setEditorHeight] = useState<number>(() => {
+    const saved = Number(window.localStorage.getItem(SQL_EDITOR_HEIGHT_STORAGE_KEY));
+    return Number.isFinite(saved) && saved >= SQL_EDITOR_MIN_HEIGHT
+      ? saved
+      : SQL_EDITOR_DEFAULT_HEIGHT;
+  });
+  const [isEditorResizing, setIsEditorResizing] = useState(false);
+  const editorResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
+
+  // 分割条拖动（pointer 事件 + 指针捕获，同 ZK 树栏拖拽条模式）：
+  // 上限动态夹取窗口高度——矮窗口下不许编辑器把结果面板挤没了
+  const handleEditorResizePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    editorResizeRef.current = { startY: event.clientY, startHeight: editorHeight };
+    setIsEditorResizing(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const handleEditorResizePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const origin = editorResizeRef.current;
+    if (!origin) return;
+    const maxByViewport = Math.max(
+      SQL_EDITOR_MIN_HEIGHT,
+      window.innerHeight - 260,
+    );
+    const next = Math.min(
+      Math.min(SQL_EDITOR_MAX_HEIGHT, maxByViewport),
+      Math.max(SQL_EDITOR_MIN_HEIGHT, origin.startHeight + (event.clientY - origin.startY)),
+    );
+    setEditorHeight(next);
+  };
+  const finishEditorResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!editorResizeRef.current) return;
+    editorResizeRef.current = null;
+    setIsEditorResizing(false);
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // 指针已释放（pointercancel 等）：忽略
+    }
+    window.localStorage.setItem(SQL_EDITOR_HEIGHT_STORAGE_KEY, String(editorHeight));
+  };
 
   // 当前数据库下拉（可切换的库清单 + 切换中状态）
   const [databases, setDatabases] = useState<string[]>([]);
@@ -1772,8 +1823,11 @@ export function DbSessionView({
 
         {/* 编辑器 + 结果 */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* SQL 编辑器区 */}
-          <div className="h-44 shrink-0 border-b border-border/50">
+          {/* SQL 编辑器区（高度可拖拽，见下方分割条） */}
+          <div
+            className="shrink-0 border-b border-border/50"
+            style={{ height: editorHeight }}
+          >
             <SqlEditor
               value={sql}
               onChange={setSql}
@@ -1784,6 +1838,27 @@ export function DbSessionView({
               redisMode={meta.engine === 'redis'}
             />
           </div>
+
+          {/* 编辑器/结果 分割条：与 ZK 树栏拖拽条同款——4px 热区 + hover 显示细胶囊 */}
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label={t('db.sqlEditorResize')}
+            aria-valuemin={SQL_EDITOR_MIN_HEIGHT}
+            aria-valuemax={SQL_EDITOR_MAX_HEIGHT}
+            aria-valuenow={editorHeight}
+            tabIndex={0}
+            onPointerDown={handleEditorResizePointerDown}
+            onPointerMove={handleEditorResizePointerMove}
+            onPointerUp={finishEditorResize}
+            onPointerCancel={finishEditorResize}
+            className={cn(
+              'group/db-handle relative z-10 flex h-1 w-full shrink-0 cursor-ns-resize touch-none items-center justify-center bg-transparent outline-none focus:outline-none focus-visible:ring-0',
+              "after:pointer-events-none after:absolute after:inset-x-0 after:h-0.5 after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-['']",
+              'hover:after:opacity-100 focus-visible:after:opacity-100',
+              isEditorResizing && 'after:opacity-100',
+            )}
+          />
 
           {/* 执行工具栏 */}
           <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border/50 bg-surface/40 px-2 select-none">
