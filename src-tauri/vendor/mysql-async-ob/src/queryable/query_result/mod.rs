@@ -141,7 +141,22 @@ where
                 self.conn.set_pending_result(None)?;
             } else {
                 // `packet` is a result set row.
-                row = Some(P::read_result_set_row(&packet, columns)?);
+                let mut parsed = P::read_result_set_row(&packet, columns.clone())?;
+                // OB Oracle N 列（NVARCHAR2/NCHAR）内联解码：真机实测 OB
+                // 把 N 列字符集编号虚报为 utf8mb4（cs=46、与 VARCHAR2 同号）
+                // 但字节是大端 UTF-16，字符集编号不可依据——JDBC 按
+                // typeOracleMap 的类型码 207/208 分派 nCharacterEncoding=
+                // UTF-16BE 解码；本标记由 read_column_defs 从原始类型码记录。
+                // MySQL 连接（oracle 位 false）零开销直通。
+                if self.conn.ob_is_oracle_mode() {
+                    let flags = self.conn.ob_nchar_column_flags();
+                    if flags.len() == columns.len() && flags.iter().any(|f| *f) {
+                        let mut vals = parsed.unwrap();
+                        crate::ob_types::decode_row_by_flags(flags, &mut vals);
+                        parsed = mysql_common::row::new_row(vals, columns.clone());
+                    }
+                }
+                row = Some(parsed);
             }
         }
 

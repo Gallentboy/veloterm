@@ -304,25 +304,38 @@ impl crate::Conn {
         let num = num.into();
         debug_assert!(num > 0);
         let packets = self.read_packets(num).await?;
+        // N 列标记：重映射时从原始类型码 207/208 记录（真机实测 OB 把
+        // N 列字符集编号虚报为 utf8mb4、与 VARCHAR2 同号，字符集不可依据；
+        // JDBC 按 typeOracleMap 的类型码分派 nCharacterEncoding=UTF-16BE
+        // 解码，本标记同语义，next_row 消费）
+        let mut nchar_flags = Vec::with_capacity(num);
         let defs = packets
             .into_iter()
-            .map(|mut x| match ParseBuf(&x).parse(()) {
-                Ok(col) => Ok(col),
-                Err(_) => {
-                    // OB Oracle 扩展列类型码降级：mysql_common 的 ColumnType
-                    // 不认识 OB 扩展码（160-163/200-211，Java ColumnType.java
-                    // 的 typeOracleMap），解析失败时把类型码字节替换为
-                    // VAR_STRING(253) 重试——文本协议下这些类型都以字符串
-                    // 返回，降级安全。PooledBuf 不可变，复制到栈缓冲再改。
-                    let mut buf = x.as_ref().to_vec();
-                    remap_ob_column_type(&mut buf);
-                    ParseBuf(&buf)
-                        .parse::<Column>(())
-                        .map_err(Error::from)
+            .map(|mut x| {
+                let parsed = ParseBuf(&x).parse::<Column>(());
+                match parsed {
+                    Ok(col) => {
+                        nchar_flags.push(false);
+                        Ok(col)
+                    }
+                    Err(_) => {
+                        // OB Oracle 扩展列类型码降级：mysql_common 的 ColumnType
+                        // 不认识 OB 扩展码（160-163/200-211，Java ColumnType.java
+                        // 的 typeOracleMap），解析失败时把类型码字节替换为
+                        // VAR_STRING(253) 重试——文本协议下这些类型都以字符串
+                        // 返回，降级安全；N 类型（207/208）同时记标记供
+                        // next_row 做 UTF-16BE 解码。PooledBuf 不可变，
+                        // 复制到栈缓冲再改。
+                        let mut buf = x.as_ref().to_vec();
+                        let is_nchar = remap_ob_column_type(&mut buf);
+                        nchar_flags.push(is_nchar);
+                        ParseBuf(&buf).parse::<Column>(()).map_err(Error::from)
+                    }
                 }
             })
             .collect::<std::result::Result<Vec<Column>, _>>()
             .map_err(Error::from)?;
+        self.set_ob_nchar_column_flags(nchar_flags);
 
         if !self
             .capabilities()
@@ -385,8 +398,10 @@ impl crate::Conn {
 /// org_name）后跟 13 字节固定段（2B filler_len + 2B charset + 4B col_len +
 /// **1B column_type** + 2B flags + 1B decimals + 2B filler）。本函数走完
 /// lenenc 字符串后定位 column_type 字节，若值在 OB_ORACLE_EXT_TYPES 里则
-/// 替换。非 OB 场景下该字节不会命中扩展码，无副作用。
-fn remap_ob_column_type(packet: &mut [u8]) {
+/// 替换为 VAR_STRING(253)；返回是否为 N 类型（207/208，调用方据此记
+/// UTF-16BE 解码标记）。非 OB 场景下该字节不会命中扩展码，无副作用。
+#[inline]
+fn remap_ob_column_type(packet: &mut [u8]) -> bool {
     let mut pos = 0usize;
     for _ in 0..6 {
         let len = match packet.get(pos) {
@@ -399,7 +414,7 @@ fn remap_ob_column_type(packet: &mut [u8]) {
                     pos += 3;
                     (u16::from(a) | (u16::from(b) << 8)) as usize
                 }
-                _ => return,
+                _ => return false,
             },
             Some(0xFD) => match (
                 packet.get(pos + 1),
@@ -410,13 +425,13 @@ fn remap_ob_column_type(packet: &mut [u8]) {
                     pos += 4;
                     (u32::from(a) | (u32::from(b) << 8) | (u32::from(c) << 16)) as usize
                 }
-                _ => return,
+                _ => return false,
             },
-            _ => return,
+            _ => return false,
         };
         pos += len;
         if pos >= packet.len() {
-            return;
+            return false;
         }
     }
     // 固定段 13 字节（mysql_common Column::deserialize 的 parse(13) 同口径）：
@@ -428,8 +443,10 @@ fn remap_ob_column_type(packet: &mut [u8]) {
     if let Some(&t) = packet.get(type_off) {
         if crate::ob20::OB_ORACLE_EXT_TYPES.contains(&t) {
             packet[type_off] = 253; // VAR_STRING
+            return matches!(t, 207 | 208); // NVARCHAR2 / NCHAR
         }
     }
+    false
 }
 
 #[cfg(test)]
@@ -457,22 +474,27 @@ mod tests {
 
     /// 真机实锤的失败形态：TIMESTAMP 列的类型码 202（OB_TIMESTAMP_NANO）。
     /// 此前偏移算错（fixed_len 误当 2 字节），替换打到 flags 高位、类型码
-    /// 原封不动——修复后必须命中类型字节
+    /// 原封不动——修复后必须命中类型字节；N 类型（207/208）额外返回 true
     #[test]
     fn remap_hits_type_byte_for_ob_ext_types() {
         for code in crate::ob20::OB_ORACLE_EXT_TYPES {
             let mut p = column_def(*code);
-            remap_ob_column_type(&mut p);
+            let is_nchar = remap_ob_column_type(&mut p);
             assert_eq!(p[14 + 7], 253, "类型码 {code} 应被降级为 VAR_STRING");
+            assert_eq!(
+                is_nchar,
+                matches!(code, 207 | 208),
+                "类型码 {code} 的 N 标记不符"
+            );
         }
     }
 
-    /// 标准类型码不受影响（非 OB 扩展码不改写）
+    /// 标准类型码不受影响（非 OB 扩展码不改写、返回 false）
     #[test]
     fn remap_leaves_standard_types_alone() {
         for code in [0u8, 3, 7, 10, 246, 253, 254] {
             let mut p = column_def(code);
-            remap_ob_column_type(&mut p);
+            assert!(!remap_ob_column_type(&mut p), "标准类型码 {code} 不应标记 N");
             assert_eq!(p[14 + 7], code, "标准类型码 {code} 不应被改写");
         }
     }

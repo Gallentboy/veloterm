@@ -133,6 +133,11 @@ struct ConnInner {
     /// 读写管道已实际切换为 ob20 编解码（switch_to_ob20 置位；诊断用，
     /// 区分「客户端 opts 开了」与「服务端回显确认后真切了」）
     ob20_active: bool,
+    /// 当前结果集的 N 列（NVARCHAR2/NCHAR）标记，按列序与列定义对应
+    ///（read_column_defs 重映射时从原始类型码 207/208 记录；next_row
+    /// 据此做大端 UTF-16 解码——真机实测 OB 虚报字符集编号为 utf8mb4，
+    /// 字符集不可依据，JDBC 同按类型码分派）
+    ob_nchar_columns: Vec<bool>,
 }
 
 impl fmt::Debug for ConnInner {
@@ -185,6 +190,7 @@ impl ConnInner {
             ob_capability: 0,
             ob_is_oracle_mode: false,
             ob20_active: false,
+            ob_nchar_columns: Vec::new(),
         }
     }
 
@@ -267,6 +273,15 @@ impl Conn {
     /// 读写管道是否已实际切换为 ob20 编解码（诊断用）
     pub fn ob20_active(&self) -> bool {
         self.inner.ob20_active
+    }
+
+    /// 当前结果集的 N 列标记（read_column_defs 记录，next_row 消费）
+    pub(crate) fn ob_nchar_column_flags(&self) -> &[bool] {
+        &self.inner.ob_nchar_columns
+    }
+
+    pub(crate) fn set_ob_nchar_column_flags(&mut self, flags: Vec<bool>) {
+        self.inner.ob_nchar_columns = flags;
     }
 
     /// Turns on/off automatic connection reset (see [`crate::PoolOpts::with_reset_connection`]).
