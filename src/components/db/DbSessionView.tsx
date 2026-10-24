@@ -327,6 +327,9 @@ export function DbSessionView({
   }, []);
   const [results, setResults] = useState<StatementResult[]>([]);
   const [activeResult, setActiveResult] = useState(0);
+  // 结果集表格工具栏的外置宿主（结果面板多 tab 行右侧，钉右不随 tab 滚动）：
+  // DataTable 的过滤框/复制按钮 portal 到这里，表格自身不再占一行
+  const [resultToolbarHost, setResultToolbarHost] = useState<HTMLSpanElement | null>(null);
   const [rowCap, setRowCap] = useState(5000);
   // 事务状态（自动提交开关、未提交修改数、累计影响行数）。
   // 连接建立时从后端读初始值（后端默认 true）
@@ -1974,7 +1977,8 @@ export function DbSessionView({
               </div>
             ) : (
               <>
-                <div className="scrollbar-hair flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b border-border/50 bg-surface/30 px-2 select-none">
+                <div className="flex h-8 shrink-0 items-stretch border-b border-border/50 bg-surface/30 select-none">
+                  <div className="scrollbar-hair flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2">
                   {results.map((result, i) => (
                     <button
                       key={result.index}
@@ -2041,6 +2045,14 @@ export function DbSessionView({
                       </button>
                     </div>
                   ))}
+                  </div>
+                  {/* 工具栏外置宿主：钉在 tab 行最右侧，不随 tab 滚动；
+                      当前结果无表格（错误/DML 摘要/对象页激活）时 portal 清空收起 */}
+                  <span
+                    ref={setResultToolbarHost}
+                    className="flex shrink-0 items-center gap-2 pl-1 pr-2"
+                    aria-hidden={resultToolbarHost == null}
+                  />
                 </div>
                 {/* 结果集视图：对象页激活时隐藏（keep-alive，不卸载） */}
                 <div
@@ -2070,6 +2082,7 @@ export function DbSessionView({
                       className="flex-1"
                       columns={currentResult.columns}
                       rows={currentResult.rows}
+                      toolbarTarget={resultToolbarHost}
                       statusFooter={
                         <span className="flex items-center gap-2">
                           <span>
