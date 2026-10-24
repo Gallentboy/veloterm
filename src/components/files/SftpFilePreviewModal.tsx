@@ -1,8 +1,9 @@
-import { AlertCircle, Binary, BookOpen, Code2, Eye, FileJson, Loader2, Pencil, PencilOff, Save, ScrollText, ShieldCheck, Table, X } from 'lucide-react';
+import { AlertCircle, Binary, BookOpen, Code2, Eye, FileJson, Pencil, PencilOff, Save, ScrollText, ShieldCheck, Table, X } from 'lucide-react';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as monaco from 'monaco-editor';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { PdfRemotePreview } from '@/components/files/PdfRemotePreview';
 import { ImageRemotePreview } from '@/components/files/ImageRemotePreview';
 import { MarkdownPreview } from '@/components/files/MarkdownPreview';
@@ -557,7 +558,7 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
                   onClick={() => void save()}
                 >
                   {saving ? (
-                    <Loader2 className="size-3 animate-spin" />
+                    <Spinner className="size-3" />
                   ) : (
                     <Save className="size-3" />
                   )}
@@ -640,7 +641,7 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
               />
               {baseline === null && !loadError && !isBinaryFile && !isLog ? (
                 <div className="absolute inset-0 flex items-center justify-center bg-popover">
-                  <Loader2 className="size-5 animate-spin text-foreground-subtle" />
+                  <Spinner className="size-5 text-foreground-subtle" />
                 </div>
               ) : null}
             </>
@@ -652,7 +653,7 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
               {/* 权限拒绝 → sudo 提权读取入口：NOPASSWD/缓存/主机凭证先行，需要密码时内联输入 */}
               {isPermissionDenied(loadError) ? (
                 sudoBusy ? (
-                  <Loader2 className="size-5 animate-spin text-foreground-subtle" />
+                  <Spinner className="size-5 text-foreground-subtle" />
                 ) : showSudoPrompt ? (
                   renderSudoPrompt(() => {
                     const pw = sudoInput.trim() || null;

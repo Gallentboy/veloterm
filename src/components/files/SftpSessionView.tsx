@@ -10,7 +10,6 @@ import {
   FolderOpen,
   HardDrive,
   Info,
-  Loader2,
   Pencil,
   RefreshCw,
   RotateCw,
@@ -24,6 +23,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { MarqueeText } from '@/components/ui/MarqueeText';
+import { Spinner } from '@/components/ui/spinner';
 import { Tooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
@@ -263,7 +263,7 @@ const SftpFileRow = memo(function SftpFileRow({
         {item.is_dir
           ? dirSizeLoading
             ? (
-                <Loader2 className="inline size-3.5 animate-spin text-foreground-subtlest" />
+                <Spinner className="inline size-3.5 text-foreground-subtlest" />
               )
             : dirSize != null
               ? formatBytes(dirSize)
@@ -1363,7 +1363,7 @@ export function SftpSessionView({
       >
         {isLoading && items.length === 0 ? (
           <div className="flex h-48 items-center justify-center text-foreground-subtle text-xs gap-2">
-            <Loader2 className="size-4 animate-spin text-primary" />
+            <Spinner className="size-4 text-primary" />
             <span>{t('files.connecting')}</span>
           </div>
         ) : items.length === 0 ? (
@@ -1527,7 +1527,7 @@ export function SftpSessionView({
                 className="h-8 gap-1.5 px-3 text-ui-base"
               >
                 {isDeleting ? (
-                  <Loader2 className="size-4 animate-spin" />
+                  <Spinner className="size-4" />
                 ) : (
                   <Trash2 className="size-4" />
                 )}
@@ -1550,7 +1550,7 @@ export function SftpSessionView({
             {deleteFlow.phase === 'counting' && (
               <>
                 <h4 className="flex items-center gap-2 text-ui-base font-semibold text-foreground select-none">
-                  <Loader2 className="size-4 animate-spin" />
+                  <Spinner className="size-4" />
                   {t('files.deleteCounting', { defaultValue: '统计文件数…' })}
                 </h4>
                 <p className="mt-2 font-mono text-ui-xs text-foreground-subtle bg-surface/60 px-2.5 py-1.5 rounded-md border border-border/60 break-all">
@@ -1636,7 +1636,7 @@ export function SftpSessionView({
             {deleteFlow.phase === 'fast' && (
               <>
                 <h4 className="flex items-center gap-2 text-ui-base font-semibold text-foreground select-none">
-                  <Loader2 className="size-4 animate-spin" />
+                  <Spinner className="size-4" />
                   {t('files.fastDeleteRunning', { defaultValue: '服务器 Shell 删除中…' })}
                 </h4>
                 <p className="mt-2 font-mono text-ui-xs text-destructive bg-surface/60 px-2.5 py-1.5 rounded-md border border-border/60 break-all">
@@ -1649,7 +1649,7 @@ export function SftpSessionView({
             {deleteFlow.phase === 'deleting' && (
               <>
                 <h4 className="flex items-center gap-2 text-ui-base font-semibold text-foreground select-none">
-                  <Loader2 className="size-4 animate-spin" />
+                  <Spinner className="size-4" />
                   {t('files.deleteProgressTitle', { defaultValue: '正在删除…' })}
                 </h4>
                 {deleteFlow.fallbackNote && (
@@ -1885,7 +1885,7 @@ export function SftpSessionView({
                 )}
               >
                 {isTryingEdit ? (
-                  <Loader2 className="size-3.5 animate-spin text-foreground-subtle" />
+                  <Spinner className="size-3.5 text-foreground-subtle" />
                 ) : (
                   <Pencil className="size-3.5 text-foreground-subtle" />
                 )}

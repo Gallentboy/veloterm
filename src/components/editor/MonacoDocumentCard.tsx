@@ -1,4 +1,3 @@
-import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useRef } from 'react';
 import * as monaco from 'monaco-editor';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
@@ -7,6 +6,7 @@ import { ensureExtendedLanguages } from '@/editor/languages';
 import { ensureBashCompletion, registerBashHostModel } from '@/editor/bashLanguage';
 import { attachHtmlAutoInsert } from '@/editor/htmlAutoInsert';
 import type { EditorFileDescriptor, MonacoDocumentCardProps } from '@/editor/types';
+import { Spinner } from '@/components/ui/spinner';
 
 /**
  * Monaco 文档卡片（ZCode 文档范式：外层 bg-background p-2，内层 rounded-xl 边框卡片，编辑器融入卡片）。
@@ -258,7 +258,7 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
         <div ref={containerRef} className="h-full w-full" />
         {content === null && (
           <div className="absolute inset-0 flex items-center justify-center bg-background">
-            <Loader2 className="animate-spin text-foreground-subtlest" size={20} />
+            <Spinner className="size-5 text-foreground-subtlest" />
           </div>
         )}
       </div>

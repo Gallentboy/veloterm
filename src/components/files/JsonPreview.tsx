@@ -5,7 +5,6 @@ import {
   ChevronRight,
   Copy,
   Filter,
-  Loader2,
   Minimize2,
   Maximize2,
   RotateCcw,
@@ -14,6 +13,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { cn } from '@/lib/utils';
+import { Spinner } from '@/components/ui/spinner';
 
 export interface JsonPreviewProps {
   content: string;
@@ -414,7 +414,7 @@ export const JsonPreview = memo(function JsonPreview({
                 className="flex items-center gap-1 rounded bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground transition-colors hover:bg-hover disabled:opacity-40"
               >
                 {jqLoading ? (
-                  <Loader2 className="size-3 animate-spin text-foreground-subtle" />
+                  <Spinner className="size-3 text-foreground-subtle" />
                 ) : (
                   <span>{t('files.runJq')}</span>
                 )}

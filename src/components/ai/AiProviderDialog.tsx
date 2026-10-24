@@ -1,4 +1,4 @@
-import { KeyRound, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { KeyRound, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
@@ -11,6 +11,7 @@ import {
   type AiProvider,
 } from '@/services/aiService';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { Modal } from '@/components/ui/modal';
 
@@ -141,7 +142,7 @@ export function AiProviderDialog({ node, onSave, onClose }: AiProviderDialogProp
         <>
           <Button variant="outline" onClick={() => void handleTest()} disabled={testState === 'testing'}>
             {testState === 'testing' ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <Spinner className="size-3.5" />
             ) : null}
             {t('ai.provider.test')}
           </Button>

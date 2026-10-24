@@ -18,7 +18,6 @@ import {
   Database,
   FolderOpen,
   Landmark,
-  Loader2,
   Pencil,
   Play,
   Plus,
@@ -38,6 +37,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
+import { Spinner } from '@/components/ui/spinner';
 import { FormField, PasswordInput, TextInput } from '@/components/hosts/formFields';import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { useAnchoredPanel } from '@/hooks/useAnchoredPanel';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
@@ -435,7 +435,7 @@ function DatabasePickerField({
           title={pickLabel ?? t('dbHosts.pickDatabase')}
         >
           {loading ? (
-            <Loader2 className="size-3.5 animate-spin" />
+            <Spinner className="size-3.5" />
           ) : (
             <Database className="size-3.5" />
           )}
@@ -736,7 +736,7 @@ function DbConnectionFormDialog({
             onClick={() => void handleTest()}
           >
             {testing ? (
-              <Loader2 className="size-3.5 animate-spin" />
+              <Spinner className="size-3.5" />
             ) : (
               <Zap className="size-3.5" />
             )}

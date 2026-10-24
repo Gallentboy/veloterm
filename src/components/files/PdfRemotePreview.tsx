@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { PdfPreview } from '@/components/files/PdfPreview';
 import { downloadRemoteFile, type TransferProgress } from '@/services/sftpService';
+import { Spinner } from '@/components/ui/spinner';
 
 export interface PdfRemotePreviewProps {
   /** SFTP 会话 id（下载远端文件用） */
@@ -99,7 +99,7 @@ export function PdfRemotePreview({ sessionId, remotePath }: PdfRemotePreviewProp
     const percent = progress?.percent ?? 0;
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3">
-        <Loader2 className="size-5 animate-spin text-foreground-subtle" />
+        <Spinner className="size-5 text-foreground-subtle" />
         <span className="text-ui-sm text-foreground-subtle">
           {t('pdf.downloading', {
             percent: percent.toFixed(0),

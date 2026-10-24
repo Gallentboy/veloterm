@@ -1,8 +1,9 @@
-import { AlertCircle, DownloadCloud, Loader2, RefreshCw } from 'lucide-react';
+import { AlertCircle, DownloadCloud, RefreshCw } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { downloadRemoteFile, type TransferHandle, type TransferProgress } from '@/services/sftpService';
 import { SqlitePreview } from '@/components/files/SqlitePreview';
 import { cn } from '@/lib/utils';
@@ -116,7 +117,7 @@ export const SqliteRemotePreview = memo(function SqliteRemotePreview({
             />
           </div>
         ) : (
-          <Loader2 className="size-4 animate-spin text-foreground-subtle" />
+          <Spinner className="size-4 text-foreground-subtle" />
         )}
       </div>
     );

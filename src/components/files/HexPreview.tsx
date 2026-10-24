@@ -1,8 +1,9 @@
-import { Check, Copy, DownloadCloud, Loader2 } from 'lucide-react';
+import { Check, Copy, DownloadCloud } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { cn } from '@/lib/utils';
+import { Spinner } from '@/components/ui/spinner';
 
 export interface HexPreviewProps {
   /** 如果已经有现成内容（例如从文本预览切到 Hex），直接转字节 */
@@ -204,7 +205,7 @@ export const HexPreview = memo(function HexPreview({
               className="flex items-center gap-1 rounded bg-surface px-2 py-0.5 text-foreground hover:bg-hover disabled:opacity-40"
             >
               {loading ? (
-                <Loader2 className="size-3 animate-spin text-foreground-subtle" />
+                <Spinner className="size-3 text-foreground-subtle" />
               ) : (
                 <DownloadCloud className="size-3" />
               )}

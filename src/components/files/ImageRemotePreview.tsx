@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ImagePreview } from '@/components/files/ImagePreview';
 import { downloadRemoteFile, type TransferProgress } from '@/services/sftpService';
+import { Spinner } from '@/components/ui/spinner';
 
 export interface ImageRemotePreviewProps {
   /** SFTP 会话 id（下载远端文件用） */
@@ -87,7 +87,7 @@ export function ImageRemotePreview({ sessionId, remotePath }: ImageRemotePreview
     const percent = progress?.percent ?? 0;
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3">
-        <Loader2 className="size-5 animate-spin text-foreground-subtle" />
+        <Spinner className="size-5 text-foreground-subtle" />
         <span className="text-ui-sm text-foreground-subtle">
           {t('image.downloading', {
             percent: percent.toFixed(0),

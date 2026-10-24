@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Copy, Eye, EyeOff, History, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, Copy, Eye, EyeOff, History, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -6,6 +6,7 @@ import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
+import { Spinner } from '@/components/ui/spinner';
 import { FormField, PasswordInput, TextArea, TextInput } from '@/components/hosts/formFields';
 import { groupPathOptions, jumpHostOptions } from '@/hosts/storage';
 import { writeClipboardText } from '@/lib/clipboard';
@@ -234,7 +235,7 @@ function PasswordHistoryDialog({ hostId, onClose }: PasswordHistoryDialogProps) 
               disabled={clearing}
             >
               {clearing ? (
-                <Loader2 className="size-4 animate-spin" />
+                <Spinner className="size-4" />
               ) : (
                 <Trash2 className="size-4" />
               )}
@@ -259,7 +260,7 @@ function PasswordHistoryDialog({ hostId, onClose }: PasswordHistoryDialogProps) 
         </div>
       ) : entries == null ? (
         <div className="flex items-center justify-center gap-2 py-10 text-ui-sm text-foreground-subtle select-none">
-          <Loader2 className="size-4 animate-spin" />
+          <Spinner className="size-4" />
           <span>{t('hostPasswordHistory.loading')}</span>
         </div>
       ) : entries.length === 0 ? (

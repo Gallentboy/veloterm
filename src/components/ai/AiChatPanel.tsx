@@ -1,4 +1,4 @@
-import { Loader2, Play, Send, Settings, Sparkles, SquareTerminal, TriangleAlert, X } from 'lucide-react';
+import { Play, Send, Settings, Sparkles, SquareTerminal, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
@@ -11,6 +11,7 @@ import {
 } from '@/services/aiService';
 import { Button } from '@/components/ui/button';
 import { SelectMenu } from '@/components/ui/SelectMenu';
+import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { ToolCallCard } from '@/components/ai/ToolCallCard';
 import { MarkdownContent } from '@/components/ai/MarkdownContent';
@@ -397,7 +398,7 @@ ${output}`);
               ) : (
                 item.content ||
                 (item.streaming ? (
-                  <Loader2 className="size-4 animate-spin text-foreground-subtlest" />
+                  <Spinner className="size-4 text-foreground-subtlest" />
                 ) : null)
               )}
               {item.error && (
@@ -460,7 +461,7 @@ ${output}`);
           className="shrink-0"
         >
           {isStreaming ? (
-            <Loader2 className="size-4 animate-spin" />
+            <Spinner className="size-4" />
           ) : (
             <Send className="size-4" />
           )}

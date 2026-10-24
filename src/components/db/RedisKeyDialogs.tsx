@@ -10,11 +10,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowDown, ArrowUp, Loader2, Plus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { DataTable } from '@/components/ui/DataTable';
+import { Spinner } from '@/components/ui/spinner';
 import { FormField, TextInput } from '@/components/hosts/formFields';
 import {
   dbQuery,
@@ -183,7 +184,7 @@ export function RedisKeyEditorModal({
               disabled={!editable || saving}
               onClick={() => void handleSave()}
             >
-              {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {saving ? <Spinner className="size-3.5" /> : null}
               {t('common.save')}
             </Button>
           ) : null}
@@ -196,7 +197,7 @@ export function RedisKeyEditorModal({
         ) : null}
         {data == null ? (
           <div className="flex h-24 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
-            {!error ? <Loader2 className="size-4 animate-spin" /> : null}
+            {!error ? <Spinner className="size-4" /> : null}
             {t('db.loadingDefinition')}
           </div>
         ) : data.truncated ? (
@@ -497,7 +498,7 @@ export function RedisTtlModal({
         <div className="flex items-center gap-2 text-ui-xs text-foreground-subtle select-none">
           {t('db.redisCurrentTtl')}：
           {busy ? (
-            <Loader2 className="size-3 animate-spin" />
+            <Spinner className="size-3" />
           ) : ttl === -1 ? (
             <span className="font-mono text-foreground">{t('db.redisTtlForever')}</span>
           ) : (
@@ -571,7 +572,7 @@ export function RedisKeyDeleteModal({
             disabled={busy}
             onClick={() => void handleDelete()}
           >
-            {busy ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            {busy ? <Spinner className="size-3.5" /> : null}
             {t('db.redisDeleteKey')}
           </Button>
         </>
@@ -648,7 +649,7 @@ export function RedisSlowlogModal({
           )
         ) : (
           <div className="flex flex-1 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
-            {!error ? <Loader2 className="size-4 animate-spin" /> : null}
+            {!error ? <Spinner className="size-4" /> : null}
             {t('db.loadingDefinition')}
           </div>
         )}
@@ -717,7 +718,7 @@ export function RedisBigkeysModal({
           />
         ) : (
           <div className="flex flex-1 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
-            {!error ? <Loader2 className="size-4 animate-spin" /> : null}
+            {!error ? <Spinner className="size-4" /> : null}
             {t('db.loadingDefinition')}
           </div>
         )}

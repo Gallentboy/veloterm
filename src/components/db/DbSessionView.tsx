@@ -24,7 +24,6 @@ import {
   Layers,
   Link,
   ListOrdered,
-  Loader2,
   Package,
   Play,
   Puzzle,
@@ -47,6 +46,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { DataTable } from '@/components/ui/DataTable';
+import { Spinner } from '@/components/ui/spinner';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { SqlEditor } from '@/components/db/SqlEditor';
 import { ExplainPlanGraph } from '@/components/db/ExplainPlanGraph';
@@ -1167,8 +1167,9 @@ export function DbSessionView({
             style={{ width: 'clamp(56px, 14vmin, 112px)', height: 'clamp(56px, 14vmin, 112px)' }}
             strokeWidth={1}
           />
-          <Loader2
-            className="absolute animate-spin text-primary/70"
+          <Spinner
+            aria-label={t('db.connecting')}
+            className="absolute text-primary/70"
             style={{ width: 'clamp(28px, 7vmin, 56px)', height: 'clamp(28px, 7vmin, 56px)' }}
             strokeWidth={2}
           />
@@ -1248,7 +1249,7 @@ export function DbSessionView({
             {t('db.currentDatabase')}
           </span>
           {switchingDb ? (
-            <Loader2 className="mx-1 size-3 animate-spin text-foreground-subtle" />
+            <Spinner className="mx-1 size-3 text-foreground-subtle" />
           ) : (
             <span
               title={redisCluster ? t('db.redisClusterDbLocked') : undefined}
@@ -1616,7 +1617,7 @@ export function DbSessionView({
             ) : null}
             {running ? (
               <span className="ml-auto flex items-center gap-1 text-ui-xs text-foreground-subtle">
-                <Loader2 className="size-3 animate-spin" />
+                <Spinner className="size-3" />
                 {t('db.executing')}
               </span>
             ) : null}
@@ -1626,7 +1627,7 @@ export function DbSessionView({
           <div className="flex min-h-0 flex-1 flex-col">
             {explainLoading ? (
               <div className="flex flex-1 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
-                <Loader2 className="size-4 animate-spin" />
+                <Spinner className="size-4" />
                 {t('db.explainLoading')}
               </div>
             ) : explainPlans ? (

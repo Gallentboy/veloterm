@@ -6,13 +6,13 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
-  Loader2,
   RefreshCw,
   Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { SelectMenu } from '@/components/ui/SelectMenu';
+import { Spinner } from '@/components/ui/spinner';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { useHostsStore } from '@/hosts/HostsProvider';
 import { writeClipboardText } from '@/lib/clipboard';
@@ -464,7 +464,7 @@ export function CommandHistoryScreen() {
             disabled={exhausted || loadingMore}
             onClick={() => void loadPage(nextOffset, 'append')}
           >
-            {loadingMore ? <Loader2 className="size-3.5 animate-spin" /> : null}
+            {loadingMore ? <Spinner className="size-3.5" /> : null}
             {exhausted ? t('commandHistory.noMore') : t('commandHistory.loadMore')}
           </Button>
         ) : null}

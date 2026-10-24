@@ -8,7 +8,6 @@ import {
   ClipboardPaste,
   Copy,
   Eraser,
-  Loader2,
   MonitorPlay,
   Type,
 } from 'lucide-react';
@@ -67,6 +66,7 @@ import {
 } from '@/terminal/castRecorder';
 import { exportCastFile, exportGifFile, exportLogFile, exportMp4File } from '@/terminal/castExport';
 import type { ITerminalTransport, TerminalSize } from '@/terminal/types';
+import { Spinner } from '@/components/ui/spinner';
 
 const DEFAULT_TERMINAL_FONT_FAMILY =
   'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace';
@@ -1878,7 +1878,7 @@ export function TerminalSession({
       {gifExport.busy ? (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
           <div className="flex flex-col items-center gap-3">
-            <Loader2 className="size-8 animate-spin text-primary" strokeWidth={2} />
+            <Spinner className="size-8 text-primary" strokeWidth={2} />
             <span className="font-mono text-ui-sm text-foreground select-none">
               {gifExport.kind === 'mp4'
                 ? gifExport.phase === 'mp4'
