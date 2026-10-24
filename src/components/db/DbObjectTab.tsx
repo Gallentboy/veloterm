@@ -7,7 +7,7 @@
  * 编辑器（组件内嵌在会话结果面板，无需跳转）。
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertCircle,
@@ -28,12 +28,13 @@ import {
   Trash2,
   Type,
   User,
+  WandSparkles,
   Zap,
 } from 'lucide-react';
 
 import { DataTable } from '@/components/ui/DataTable';
 import { Spinner } from '@/components/ui/spinner';
-import { ReadOnlySqlView } from '@/components/db/ReadOnlySqlView';
+import { ReadOnlySqlView, type ReadOnlySqlViewHandle } from '@/components/db/ReadOnlySqlView';
 import { nodeIcon } from '@/components/db/DbSessionView';
 import {
   dbObjectDefinition,
@@ -129,6 +130,11 @@ export function DbObjectTab({
   const [subTab, setSubTab] = useState<'ddl' | 'columns' | 'indexes' | 'constraints' | 'references'>('ddl');
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // 只读 SQL 视图的命令句柄（格式化按钮调 format()；定义视图与表 DDL
+  // 两个形态各自只挂一个实例，共用一个 ref）
+  const sqlViewRef = useRef<ReadOnlySqlViewHandle | null>(null);
+  const formatView = () =>
+    void sqlViewRef.current?.format().catch((e: unknown) => setNotice(String(e)));
   // 本地刷新计数（头部刷新按钮）：与外部 refreshToken（重复打开）叠加触发重取
   const [localRefresh, setLocalRefresh] = useState(0);
 
@@ -281,6 +287,17 @@ export function DbObjectTab({
               )}
             </button>
           ) : null}
+          {subTab === 'ddl' ? (
+            <button
+              type="button"
+              onClick={formatView}
+              title={t('db.formatSqlHint')}
+              className="flex items-center gap-1 rounded-md px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-hover hover:text-foreground"
+            >
+              <WandSparkles className="size-3" />
+              <span>{t('db.formatSql')}</span>
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={onClose}
@@ -294,6 +311,7 @@ export function DbObjectTab({
           // DDL 用 Monaco 只读渲染（SQL 高亮 + 折行）；独立实例，
           // 刷新走 setValue 不重建
           <ReadOnlySqlView
+            ref={sqlViewRef}
             content={detail.ddl}
             className="scrollbar-slim min-h-0 flex-1"
           />
@@ -399,6 +417,15 @@ export function DbObjectTab({
         </button>
         <button
           type="button"
+          onClick={formatView}
+          title={t('db.formatSqlHint')}
+          className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground hover:bg-hover"
+        >
+          <WandSparkles className="size-3 text-terminal-green" />
+          {t('db.formatSql')}
+        </button>
+        <button
+          type="button"
           onClick={onClose}
           className="rounded p-1 text-foreground-subtlest hover:text-foreground"
           aria-label={t('common.close', '关闭')}
@@ -412,6 +439,7 @@ export function DbObjectTab({
         </div>
       ) : null}
       <ReadOnlySqlView
+        ref={sqlViewRef}
         content={definition.definition}
         className="min-h-0 flex-1"
       />
