@@ -45,6 +45,11 @@ fn cell(row: &[String], col: Option<usize>) -> &str {
         .unwrap_or("")
 }
 
+/// 引擎空值渲染（"NULL"/"(null)"/空串）归一为 false——标题与详情拼接时跳过
+fn nz(s: &str) -> bool {
+    s.is_empty() || s == "NULL" || s == "(null)"
+}
+
 /// 数值列解析：NULL/空/非数返回 None，容忍千分位逗号
 fn num(s: &str) -> Option<f64> {
     let t = s.trim().replace(',', "");
@@ -106,18 +111,24 @@ fn parse_id_parent(columns: &[String], rows: &[Vec<String>]) -> Vec<PlanNode> {
     rows.iter()
         .enumerate()
         .map(|(i, r)| {
-            let mut title = cell(r, op).to_string();
+            // 少数计划行 OPERATION 为空（如 UNION 分支的伪父行）：OPTIONS
+            // 顶上当标题；空值渲染（NULL/空）一律不进标题与详情
+            let op = cell(r, op);
             let opt = cell(r, options);
-            if !opt.is_empty() && opt != "NULL" {
-                title.push(' ');
-                title.push_str(opt);
-            }
+            let title = if nz(op) {
+                opt.to_string()
+            } else if nz(opt) {
+                op.to_string()
+            } else {
+                format!("{op} {opt}")
+            };
+            let obj = cell(r, object);
             PlanNode {
                 // PLAN_TABLE.ID 唯一；缺列时退化为行号
                 id: int_cell(r, id).unwrap_or(i as i64),
                 parent_id: int_cell(r, parent),
                 title,
-                detail: cell(r, object).to_string(),
+                detail: if nz(obj) { String::new() } else { obj.to_string() },
                 cost: num_cell(r, cost),
                 rows: num_cell(r, card),
                 bytes: num_cell(r, bytes),
@@ -319,17 +330,18 @@ mod tests {
             "COST", "CARDINALITY", "BYTES"]
             .iter().map(|s| s.to_string()).collect();
         let rows = vec![
-            vec!["0", "NULL", "SELECT STATEMENT", "", "", "12", "10", "200"],
+            vec!["0", "NULL", "SELECT STATEMENT", "", "NULL", "12", "10", "200"],
             vec!["1", "0", "SORT", "ORDER BY", "", "12", "10", "200"],
             vec!["2", "1", "TABLE ACCESS", "FULL", "T1", "10", "100", "1200"],
+            vec!["3", "2", "NULL", "FULL", "T2", "9", "40", "1600"],
         ];
         let rows: Vec<Vec<String>> = rows
             .into_iter()
             .map(|r| r.into_iter().map(String::from).collect())
             .collect();
         let plan = parse_plan(&cols, &rows, "SELECT 1");
-        assert_eq!(plan.nodes.len(), 3);
-        let [n0, n1, n2] = plan.nodes.as_slice() else {
+        assert_eq!(plan.nodes.len(), 4);
+        let [n0, n1, n2, n3] = plan.nodes.as_slice() else {
             unreachable!()
         };
         assert_eq!(n0.parent_id, None);
@@ -339,6 +351,11 @@ mod tests {
         assert_eq!(n2.detail, "T1");
         assert_eq!(n2.cost, Some(10.0));
         assert_eq!(n2.rows, Some(100.0));
+        // 空值渲染不进标题与详情：OBJECT_NAME=NULL → detail 空；
+        // OPERATION=NULL 时 OPTIONS 顶当标题
+        assert_eq!(n0.detail, "");
+        assert_eq!(n3.title, "FULL");
+        assert_eq!(n3.detail, "T2");
     }
 
     /// SQLite EXPLAIN QUERY PLAN：id/parent 结构 + detail 标题

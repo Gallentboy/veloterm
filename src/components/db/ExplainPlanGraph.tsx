@@ -115,6 +115,8 @@ function TreeLine({
   const level = tree.levels.get(node.id) ?? 'normal';
   const kids = tree.children.get(node.id) ?? [];
   const connector = prefix === '' ? '' : isLast ? '└─ ' : '├─ ';
+  // 子层前缀：本层是末位用空格续、否则竖线续（根的子层从此非空）
+  const childPrefix = prefix + (isLast ? '   ' : '│  ');
   return (
     <div className="whitespace-pre">
       <span className="text-foreground-subtlest select-none">{prefix + connector}</span>
@@ -142,7 +144,7 @@ function TreeLine({
         <TreeLine
           key={k.id}
           node={k}
-          prefix={prefix + (prefix === '' ? '' : isLast ? '   ' : '│  ')}
+          prefix={childPrefix}
           isLast={i === kids.length - 1}
           tree={tree}
         />
