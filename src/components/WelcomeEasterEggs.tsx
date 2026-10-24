@@ -194,8 +194,8 @@ function MatrixRain() {
     const canvas = ref.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
-    const W = (canvas.width = 520);
-    const H = (canvas.height = 190);
+    const W = (canvas.width = 640);
+    const H = (canvas.height = 230);
     const fontSize = 13;
     const cols = Math.floor(W / fontSize);
     const rows = Math.floor(H / fontSize);
