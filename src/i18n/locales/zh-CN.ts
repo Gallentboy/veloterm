@@ -1185,6 +1185,7 @@ export default {
       '在我电脑上是好的\n这个需求做不了\n马上就好（还没开始）\n不是 bug，是特性\n昨天还能跑\n别问，问就是在重构\n先上线再说\n我一会儿就提交（并没有）\n没有注释，怕你不懂\n又是周五部署的一天',
     trainCaption: 'sl 小火车 · 别把 ls 敲错了',
     matrixCaption: '欢迎来到矩阵',
+    bannerCaption: 'VeloTerm · 正在启动',
     eggSwitch: '换一个彩蛋',
   },
   settings: {

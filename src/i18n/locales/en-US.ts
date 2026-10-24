@@ -1185,6 +1185,7 @@ export default {
       'Works on my machine\nIt is not a bug, it is a feature\nIt worked yesterday\nJust one more fix\nRefactoring. Again.\nShip it on Friday\nI will commit it soon (no)\nComments? Never heard of it\nThe bug is in the compiler\nNull pointer? Impossible',
     trainCaption: 'The sl train — you mistyped ls again',
     matrixCaption: 'Welcome to the Matrix',
+    bannerCaption: 'VeloTerm · booting',
     eggSwitch: 'Next easter egg',
   },
   settings: {
