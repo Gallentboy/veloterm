@@ -1,8 +1,8 @@
 //! Redis 的「表详情」：键的检视块（无 DDL/索引/约束概念）。
 
 use super::super::{
-    parse_redis_db, redis_inspect_block, redis_key_entries, redis_key_type, redis_select,
-    RedisConn, TableDetail,
+    redis_db_of, redis_inspect_block, redis_key_entries, redis_key_miss_hint, redis_key_type,
+    redis_select, RedisConn, TableDetail,
 };
 
 pub(crate) async fn detail(
@@ -17,10 +17,14 @@ pub(crate) async fn detail(
     // 与会话当前库可能不同，故临时切过去再切回。
     // 前置一次 TYPE：不存在的 key 直接报错，避免返回一份全是
     // 占位值的「详情」误导用户（key 过期/被删是常态）。
-    let target = parse_redis_db(schema).unwrap_or(current_db);
+    // schema 解析失败时回退当前库（前端对老调用方传裸 key 的兼容），
+    // 但错误信息里带上「在哪个库找的」，否则跨库场景会被误报成 key 过期
+    let target = redis_db_of(schema, current_db)?;
     redis_select(conn, target).await?;
     let inspected = async {
-        let kind = redis_key_type(conn, table).await?;
+        let kind = redis_key_type(conn, table)
+            .await
+            .map_err(|e| redis_key_miss_hint(e, target, schema))?;
         let ddl = redis_inspect_block(conn, table, &kind).await;
         let (_, rows) = redis_key_entries(conn, table, &kind).await;
         Ok::<_, String>((ddl, rows))
