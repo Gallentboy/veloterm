@@ -55,7 +55,7 @@ impl Error {
 pub enum IoError {
     #[error("Input/output error: {}", _0)]
     Io(#[source] io::Error),
-    #[cfg(any(feature = "native-tls-tls", feature = "rustls-tls"))]
+    #[cfg(feature = "rustls-tls")]
     #[error("TLS error: `{}'", _0)]
     Tls(#[source] tls::TlsError),
 }
@@ -228,13 +228,6 @@ impl From<ServerError> for Error {
 impl From<UrlError> for Error {
     fn from(err: UrlError) -> Self {
         Error::Url(err)
-    }
-}
-
-#[cfg(feature = "native-tls-tls")]
-impl From<native_tls::Error> for IoError {
-    fn from(err: native_tls::Error) -> Self {
-        IoError::Tls(tls::TlsError::TlsError(err))
     }
 }
 

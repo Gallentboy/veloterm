@@ -543,7 +543,7 @@ impl Conn {
 
     /// Returns true if io stream is encrypted.
     fn is_secure(&self) -> bool {
-        #[cfg(any(feature = "native-tls-tls", feature = "rustls-tls"))]
+        #[cfg(feature = "rustls-tls")]
         {
             self.inner
                 .stream
@@ -552,7 +552,7 @@ impl Conn {
                 .unwrap_or_default()
         }
 
-        #[cfg(not(any(feature = "native-tls-tls", feature = "rustls-tls")))]
+        #[cfg(not(feature = "rustls-tls"))]
         false
     }
 
@@ -1162,11 +1162,6 @@ impl Conn {
         body.push(cmd as u8);
         body.extend_from_slice(cmd_data);
         self.write_command_raw(buf).await
-    }
-
-    async fn drop_packet(&mut self) -> Result<()> {
-        self.read_packet().await?;
-        Ok(())
     }
 
     /// 读取并丢弃下一个包（drop_packet 语义），但若是 OK 包则先送

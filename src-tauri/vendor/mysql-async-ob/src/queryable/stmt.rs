@@ -311,7 +311,7 @@ impl crate::Conn {
         let mut nchar_flags = Vec::with_capacity(num);
         let defs = packets
             .into_iter()
-            .map(|mut x| {
+            .map(|x| {
                 let parsed = ParseBuf(&x).parse::<Column>(());
                 match parsed {
                     Ok(col) => {

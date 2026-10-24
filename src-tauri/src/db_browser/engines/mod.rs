@@ -6642,12 +6642,6 @@ async fn ob_oracle_usernames(conn: &mut mysql_async::Conn) -> Result<Vec<String>
     Ok(names)
 }
 
-/// OB Oracle 容错计数（失败返回 None；列值走文本协议按 i64 解析）
-async fn ob_oracle_count_opt(conn: &mut mysql_async::Conn, sql: &str) -> Option<i64> {
-    use mysql_async::prelude::Queryable as _;
-    conn.query_first::<i64, _>(sql).await.ok().flatten()
-}
-
 /// DBA 字典视图自适应（DBeaver OracleUtils.getAdminAllViewPrefix 同义的
 /// 自动探测形态）：探测 dba_objects 可读（SELECT ANY DICTIONARY /
 /// SELECT_CATALOG_ROLE）即切 DBA_*（实例全量可见），否则 ALL_*（仅当前

@@ -638,7 +638,6 @@ pub async fn db_explain(
         &session.cancel,
         &engine_kind,
         mode.as_deref(),
-        &dialect_key,
         &user_stmts,
         analyze,
     )
@@ -686,13 +685,13 @@ async fn exec_collect(
     }
 
 /// db_explain 命令与真机测试 CLI（examples/db_engine_test）共用的执行核心：
-/// 方言装配 + 逐条执行 + 结构化解析。引擎锁与取消信号由调用方持有
+/// 方言装配 + 逐条执行 + 结构化解析。引擎锁与取消信号由调用方持有；
+/// 语句切分与只读校验也由调用方按方言键完成（本函数只用 engine_kind/mode）
 pub async fn explain_core(
     engine: &mut DbEngine,
     cancel: &Arc<tokio::sync::Notify>,
     engine_kind: &str,
     mode: Option<&str>,
-    dialect_key: &str,
     user_stmts: &[sqlsplit::SplitStatement],
     analyze: bool,
 ) -> Result<Vec<explain::ExplainPlan>, String> {
