@@ -6,7 +6,7 @@
  * 卸载即断开会话。全部会话状态内部留存（tab 常驻隐藏切换不丢）。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlignLeft,
@@ -352,6 +352,21 @@ export function DbSessionView({
     [contextMenuRef],
     () => setContextMenu(null),
   );
+
+  // 右键菜单视口夹取（与 useAnchoredPanel 同口径：右/下越界回拉，最小间距 8px）。
+  // 菜单在光标处展开，靠近窗口右下角时不做夹取会被裁掉半截——挂载后按实际
+  // 尺寸量一次，值不变则不 setState，effect 自然收敛不会来回抖。
+  useLayoutEffect(() => {
+    if (!contextMenu) return;
+    const el = contextMenuRef.current;
+    if (!el) return;
+    const gap = 8;
+    const left = Math.max(gap, Math.min(contextMenu.x, window.innerWidth - gap - el.offsetWidth));
+    const top = Math.max(gap, Math.min(contextMenu.y, window.innerHeight - gap - el.offsetHeight));
+    if (left !== contextMenu.x || top !== contextMenu.y) {
+      setContextMenu((cur) => (cur ? { ...cur, x: left, y: top } : cur));
+    }
+  }, [contextMenu]);
 
   const [treeWidth, setTreeWidth] = useState(TREE_DEFAULT_WIDTH);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -927,33 +942,12 @@ export function DbSessionView({
           }}
           onDoubleClick={() => handleNodeClick(branch.node)}
           onContextMenu={(e) => {
-            // 表/视图/物化视图/函数/过程/序列/触发器提供右键菜单；其余用系统默认
-            if (
-              [
-                'table',
-                'view',
-                'mview',
-                'ftable',
-                'extension',
-                'dblink',
-                'recycle',
-                'datatype',
-                'tablespace',
-                'user',
-                'role',
-                'function',
-                'procedure',
-                'sequence',
-                'trigger',
-                'synonym',
-                'package',
-                'event',
-                'rule',
-              ].includes(branch.node.kind)
-            ) {
-              e.preventDefault();
-              setContextMenu({ x: e.clientX, y: e.clientY, node: branch.node });
-            }
+            // 树节点一律吃掉原生右键菜单：WebView 自带菜单（Windows 上会出
+            //「刷新/另存为/检查」等浏览器项）与工作台风格割裂。菜单项按
+            // node.kind 过滤；schema/分组/列这类没有对象动作的节点也给
+            //「复制名称」，保证任何节点右键都是同一套自定义弹层
+            e.preventDefault();
+            setContextMenu({ x: e.clientX, y: e.clientY, node: branch.node });
           }}
           style={{ paddingLeft: 8 + depth * 14 }}
           className={cn(
@@ -1160,13 +1154,26 @@ export function DbSessionView({
               className="z-[120] min-w-44 overflow-hidden rounded-lg border border-border bg-menu p-1 shadow-lg select-none"
             >
               {(() => {
-                // Redis 键：table 节点即 key（detail=值类型）——「表详情」语义即
-                // 键详情，另附编辑/TTL/删除三个写入口（只读会话隐藏）；创建索引
-                // 对 Redis 无意义，只对 SQL 表保留
+                // 菜单命名统一为「动词 + 对象」：查看数据 / 查看详情 / 查看定义 /
+                // 创建索引 / 复制名称——表、视图、物化视图与例程走同一套措辞，
+                // 不再出现「表详情」用在视图上、「定义」单独成词的不一致
+                //
+                // Redis 键：table 节点即 key（detail=值类型）——「查看详情」语义
+                // 即键详情，另附编辑/TTL/删除三个写入口（只读会话隐藏）；创建
+                // 索引对 Redis 无意义，只对 SQL 表保留
                 const node = contextMenu.node;
                 const isRedisKey = meta.engine === 'redis' && node.kind === 'table';
+                const isDataNode =
+                  node.kind === 'table' || node.kind === 'view' || node.kind === 'mview';
+                // 容器/列节点没有对象动作（库=刷新树、分组=展开、列=纯信息），
+                // 只保留「复制名称」，保证任何节点右键都有同一套弹层
+                const isContainerNode =
+                  node.kind === 'database' ||
+                  node.kind === 'schema' ||
+                  node.kind === 'group' ||
+                  node.kind === 'column';
                 const items: { key: string; label: string; action: () => void }[] = [];
-                if (node.kind === 'table' || node.kind === 'view' || node.kind === 'mview') {
+                if (isDataNode) {
                   items.push(
                     {
                       key: 'viewData',
@@ -1175,14 +1182,14 @@ export function DbSessionView({
                     },
                     {
                       key: 'detail',
-                      label: isRedisKey ? t('db.objectDefinition') : t('db.tableDetail'),
+                      label: t('db.viewDetail'),
                       action: () => openTableDetail(node),
                     },
                   );
-                } else {
+                } else if (!isContainerNode) {
                   items.push({
                     key: 'definition',
-                    label: t('db.objectDefinition'),
+                    label: t('db.viewDefinition'),
                     action: () => handleNodeClick(node),
                   });
                 }

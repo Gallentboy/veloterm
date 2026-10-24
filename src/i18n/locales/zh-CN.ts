@@ -176,6 +176,10 @@ export default {
     refreshObject: '刷新',
     viewData: '查看数据',
     tableDetail: '表详情（DDL / 列 / 索引）',
+    /** 右键菜单：表/视图/物化视图统一措辞（不用「表详情」指视图） */
+    viewDetail: '查看详情',
+    /** 右键菜单：过程/函数/触发器/序列等统一措辞 */
+    viewDefinition: '查看定义',
     createIndex: '创建索引',
     copyQualifiedName: '复制名称',
     tab_ddl: 'DDL',
