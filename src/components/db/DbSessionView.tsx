@@ -92,6 +92,44 @@ interface TreeBranch {
   loading: boolean;
 }
 
+/** 节点 → 目录父层参数（懒加载与刷新共用；不可展开的节点返回 null） */
+function catalogParentOf(node: CatalogNode): CatalogParentArg | null {
+  if (node.kind === 'database' || node.kind === 'schema') {
+    return { kind: 'schema', schema: node.name };
+  }
+  if (node.kind === 'group') {
+    // group 的 key 形如 `{schema}#{group}`（后端约定）
+    const [schema, group] = node.key.split('#');
+    return schema && group ? ({ kind: 'group', schema, group } as CatalogParentArg) : null;
+  }
+  if (node.kind === 'table' || node.kind === 'view' || node.kind === 'mview') {
+    // 表/视图的 key 是 "schema.table"
+    const schema = node.key.split('.')[0] ?? node.name;
+    return { kind: 'table', schema, table: node.name };
+  }
+  return null;
+}
+
+/** 按「根 → children」可达性剪掉已不存在的分支（刷新后对象被删/改名时用） */
+function pruneUnreachableBranches(
+  map: Map<string, TreeBranch>,
+  rootKeys: string[],
+): void {
+  const reachable = new Set<string>();
+  const stack = [...rootKeys];
+  while (stack.length > 0) {
+    const key = stack.pop();
+    if (!key || reachable.has(key)) continue;
+    const branch = map.get(key);
+    if (!branch) continue;
+    reachable.add(key);
+    for (const child of branch.children ?? []) stack.push(child.key);
+  }
+  for (const key of [...map.keys()]) {
+    if (!reachable.has(key)) map.delete(key);
+  }
+}
+
 /** 一条语句的结果（结果集或 DML 摘要/错误） */
 interface StatementResult {
   index: number;
@@ -103,6 +141,10 @@ interface StatementResult {
   elapsedMs: number;
   error: string | null;
 }
+
+/** 结果面板对象页上限（每页一个 Monaco 只读实例，不设限会无限吃内存）：
+ * 满员后再打开新对象，最左（最旧）一页被自动挤掉，依次滚动 */
+const OBJECT_PAGE_LIMIT = 10;
 
 /** 结果面板里的对象页（查看定义 / 表详情），与多结果集 tab 同排 */
 interface ObjectPage {
@@ -279,50 +321,67 @@ export function DbSessionView({
   // 对象页（查看定义 / 表详情）：与会话的多结果集 tab 同排展示（结果面板
   // 位置，不占最外层会话 tab 栏）。同一对象（同变体同 schema.name）重复
   // 打开时激活既有页并递增 refreshToken 触发重取——终端 tab 同款语义。
+  // 上限 10 页（每页一个 Monaco 只读实例，不设限会无限吃内存）：满员后再
+  // 打开新对象，最左（最旧）一页被自动挤掉，依次滚动。
   const [objectPages, setObjectPages] = useState<ObjectPage[]>([]);
   // 激活项：null = 结果集视图；否则为对象页 key
   const [activeObjectKey, setActiveObjectKey] = useState<string | null>(null);
   const objectPageSeq = useRef(0);
+  // 列表 ref 镜像：打开/关闭要在事件处理器里同步算好「下一状态 + 激活页」
+  // 再一次性提交——不能依赖 setObjectPages 的 updater（惰性执行，事件处
+  // 理器里读不到其计算结果，此前把 setActiveObjectKey 放 updater 内或用
+  // 闭包变量传值都导致「tab 出现但没激活、要手点一次才拉取」）
+  const objectPagesRef = useRef<ObjectPage[]>([]);
+  useEffect(() => {
+    objectPagesRef.current = objectPages;
+  }, [objectPages]);
   const openObjectPage = useCallback((req: OpenObjectTabRequest) => {
     const dedupeKey = `${req.variant}:${req.schema}.${req.name}`;
-    setObjectPages((current) => {
-      const existing = current.find((p) => p.dedupeKey === dedupeKey);
-      if (existing) {
-        setActiveObjectKey(existing.key);
-        // 激活同时刷新内容（对象可能已变更）
-        return current.map((p) =>
-          p.key === existing.key ? { ...p, refreshToken: p.refreshToken + 1 } : p,
-        );
-      }
-      objectPageSeq.current += 1;
-      const key = `obj-${objectPageSeq.current}`;
-      setActiveObjectKey(key);
-      return [
-        ...current,
-        {
-          key,
-          dedupeKey,
-          sessionId: req.sessionId,
-          schema: req.schema,
-          name: req.name,
-          kind: req.kind,
-          variant: req.variant,
-          refreshToken: 0,
-        },
-      ];
-    });
+    const current = objectPagesRef.current;
+    const existing = current.find((p) => p.dedupeKey === dedupeKey);
+    if (existing) {
+      // 激活既有页并刷新内容（对象可能已变更）
+      objectPagesRef.current = current.map((p) =>
+        p.key === existing.key ? { ...p, refreshToken: p.refreshToken + 1 } : p,
+      );
+      setObjectPages(objectPagesRef.current);
+      setActiveObjectKey(existing.key);
+      return;
+    }
+    objectPageSeq.current += 1;
+    const key = `obj-${objectPageSeq.current}`;
+    let next: ObjectPage[] = [
+      ...current,
+      {
+        key,
+        dedupeKey,
+        sessionId: req.sessionId,
+        schema: req.schema,
+        name: req.name,
+        kind: req.kind,
+        variant: req.variant,
+        refreshToken: 0,
+      },
+    ];
+    // 超限挤掉最左（最旧）页；新页即为激活页，无需顺延特判
+    if (next.length > OBJECT_PAGE_LIMIT) {
+      next = next.slice(next.length - OBJECT_PAGE_LIMIT);
+    }
+    objectPagesRef.current = next;
+    setObjectPages(next);
+    setActiveObjectKey(key);
   }, []);
   const closeObjectPage = useCallback((key: string) => {
-    setObjectPages((current) => {
-      const idx = current.findIndex((p) => p.key === key);
-      const next = current.filter((p) => p.key !== key);
-      setActiveObjectKey((active) => {
-        if (active !== key) return active;
-        // 关掉当前页：退到相邻对象页，没有则回结果集视图
-        const neighbor = next[Math.min(idx, next.length - 1)];
-        return neighbor ? neighbor.key : null;
-      });
-      return next;
+    const current = objectPagesRef.current;
+    const idx = current.findIndex((p) => p.key === key);
+    const next = current.filter((p) => p.key !== key);
+    objectPagesRef.current = next;
+    setObjectPages(next);
+    setActiveObjectKey((active) => {
+      if (active !== key) return active;
+      // 关掉当前页：退到相邻对象页，没有则回结果集视图
+      const neighbor = next[Math.min(idx, next.length - 1)];
+      return neighbor ? neighbor.key : null;
     });
   }, []);
   // 对象页（查看定义/表详情）内嵌在结果面板，与会话同生命周期
@@ -372,77 +431,166 @@ export function DbSessionView({
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const sessionIdRef = useRef<string | null>(null);
+  /** 最近一次树状态：刷新按钮按它恢复展开态/已加载内容（不进 useCallback 依赖） */
+  const branchesRef = useRef<Map<string, TreeBranch>>(new Map());
+  useEffect(() => {
+    branchesRef.current = branches;
+  }, [branches]);
 
-  const catalogLoad = useCallback(async (sessionId: string, currentDb?: string | null) => {
-    setBranches(new Map());
-    setRoots([]);
-    setTreeSearch('');
-    try {
-      const nodes = await dbCatalog(sessionId, null);
-      const map = new Map<string, TreeBranch>();
-      const keys: string[] = [];
-      for (const node of nodes) {
-        map.set(node.key, { node, expanded: false, children: null, loading: false });
-        keys.push(node.key);
+  /**
+   * 拉取对象树。
+   *
+   * `preserve` 供刷新按钮使用：保留展开态、已加载子层与搜索关键字，只把各层
+   * 内容重新拉一遍做增删——刷新不会把用户展开的树「合上」，也不会把树滚动
+   * 位置弹回顶部。连接 / 切库仍走非保留重建（上下文已变，旧展开态无意义）。
+   */
+  const catalogLoad = useCallback(
+    async (sessionId: string, currentDb?: string | null, opts?: { preserve?: boolean }) => {
+      const preserve = opts?.preserve === true;
+      // prev = 刷新前的快照；非保留路径为 null（整棵重建）
+      const prev = preserve ? branchesRef.current : null;
+      if (!preserve) {
+        setBranches(new Map());
+        setRoots([]);
+        setTreeSearch('');
       }
-      setBranches(map);
-      setRoots(keys);
+      try {
+        const nodes = await dbCatalog(sessionId, null);
+        const map = new Map<string, TreeBranch>();
+        const keys: string[] = [];
+        for (const node of nodes) {
+          const old = prev?.get(node.key);
+          map.set(node.key, {
+            node,
+            // 刷新：同一节点的展开态原样保留
+            expanded: old?.expanded ?? false,
+            // 先沿用已加载内容，避免刷新瞬间整棵树塌陷/闪烁，随后各层重拉覆盖
+            children: old?.children ?? null,
+            loading: false,
+          });
+          keys.push(node.key);
+        }
+        if (prev) {
+          // 旧子层（分组/对象/列）整份带入，再按可达性剪枝：被删掉的对象
+          // 自然消失，新增对象由下面各层重拉补进来——只做增删，不动状态
+          for (const [k, b] of prev) {
+            if (!map.has(k)) map.set(k, b);
+          }
+          pruneUnreachableBranches(map, keys);
+        }
+        setBranches(map);
+        setRoots(keys);
 
-      // 预载当前库（连接 / 切库 / 刷新后）：库 → 分组 → 对象两层拉全进内存供搜索过滤，
-      // 分支保持折叠（展开态不变）；单组拉取失败降级为该组懒加载，整层失败静默
-      const dbNode =
-        currentDb &&
-        nodes.find(
-          (n) => (n.kind === 'database' || n.kind === 'schema') && n.name === currentDb,
-        );
-      if (dbNode) {
-        try {
-          const groups = await dbCatalog(sessionId, { kind: 'schema', schema: dbNode.name });
-          // group 取 key 的 `#` 后段（与手动展开同源）：SQL 引擎分组节点的 name 是大写
-          // TABLE 而 ObjectGroup::parse 只认小写，直接传 name 会整组拉空
-          const results = await Promise.all(
-            groups.map((g) => {
-              const group = g.key.split('#')[1] ?? g.name;
-              return dbCatalog(
-                sessionId,
-                { kind: 'group', schema: dbNode.name, group } as CatalogParentArg,
-              )
-                .then((children) => ({ g, children }))
-                .catch(() => null);
-            }),
-          );
-          setBranches((current) => {
-            // 树已被后续操作重建或用户已手动展开（切库/刷新竞态）则放弃合并
-            const dbBranch = current.get(dbNode.key);
-            if (!dbBranch || dbBranch.children != null) return current;
-            const next = new Map(current);
-            next.set(dbNode.key, { ...dbBranch, children: groups });
-            for (const r of results) {
-              // 单组预载失败：children 保持 null，展开时走懒加载兜底（不写入空数组短路）
-              if (!r) continue;
-              const { g, children } = r;
-              const existing = next.get(g.key);
-              if (existing) {
-                next.set(g.key, { ...existing, children });
-              } else {
-                next.set(g.key, { node: g, expanded: false, children, loading: false });
-              }
-              for (const obj of children) {
-                if (!next.has(obj.key)) {
-                  next.set(obj.key, { node: obj, expanded: false, children: null, loading: false });
+        // 预载当前库（连接 / 切库 / 刷新后）：库 → 分组 → 对象两层拉全进内存供搜索过滤，
+        // 分支保持折叠（展开态不变）；单组拉取失败降级为该组懒加载，整层失败静默
+        const dbNode = currentDb
+          ? (nodes.find(
+              (n) => (n.kind === 'database' || n.kind === 'schema') && n.name === currentDb,
+            ) ?? null)
+          : null;
+        if (dbNode) {
+          try {
+            const groups = await dbCatalog(sessionId, { kind: 'schema', schema: dbNode.name });
+            // group 取 key 的 `#` 后段（与手动展开同源）：SQL 引擎分组节点的 name 是大写
+            // TABLE 而 ObjectGroup::parse 只认小写，直接传 name 会整组拉空
+            const results = await Promise.all(
+              groups.map((g) => {
+                const group = g.key.split('#')[1] ?? g.name;
+                return dbCatalog(
+                  sessionId,
+                  { kind: 'group', schema: dbNode.name, group } as CatalogParentArg,
+                )
+                  .then((children) => ({ g, children }))
+                  .catch(() => null);
+              }),
+            );
+            setBranches((current) => {
+              // 树已被后续操作重建、且非刷新路径下用户已手动展开（切库竞态）则放弃合并；
+              // 刷新路径本身就是「覆盖为最新内容」，不设该守卫
+              const dbBranch = current.get(dbNode.key);
+              if (!dbBranch) return current;
+              if (!preserve && dbBranch.children != null) return current;
+              const next = new Map(current);
+              next.set(dbNode.key, { ...dbBranch, children: groups });
+              for (const r of results) {
+                // 单组预载失败：children 保持 null，展开时走懒加载兜底（不写入空数组短路）
+                if (!r) continue;
+                const { g, children } = r;
+                const existing = next.get(g.key);
+                if (existing) {
+                  next.set(g.key, { ...existing, children });
+                } else {
+                  next.set(g.key, { node: g, expanded: false, children, loading: false });
+                }
+                for (const obj of children) {
+                  if (!next.has(obj.key)) {
+                    next.set(obj.key, { node: obj, expanded: false, children: null, loading: false });
+                  }
                 }
               }
-            }
-            return next;
-          });
-        } catch {
-          // 预载失败不阻塞：分支保持懒加载语义
+              return next;
+            });
+          } catch {
+            // 预载失败不阻塞：分支保持懒加载语义
+          }
         }
+
+        if (prev) {
+          // 其余已展开分支逐层重拉（当前库的库/分组层上面已覆盖，跳过免得重复取）：
+          // 展开的表刷新列清单、展开的其他 schema 刷新分组/对象；单层失败保留旧内容
+          const groupsUnderDb = new Set(
+            dbNode
+              ? [...prev.values()]
+                  .filter((b) => b.node.kind === 'group' && b.node.key.startsWith(`${dbNode.name}#`))
+                  .map((b) => b.node.key)
+              : [],
+          );
+          const expanded = [...prev.values()]
+            .filter(
+              (b) =>
+                b.expanded && !groupsUnderDb.has(b.node.key) && b.node.key !== dbNode?.key,
+            )
+            .map((b) => ({ key: b.node.key, parent: catalogParentOf(b.node) }))
+            .filter((x): x is { key: string; parent: CatalogParentArg } => x.parent != null);
+          if (expanded.length > 0) {
+            const refreshed = await Promise.all(
+              expanded.map(async ({ key, parent }) => {
+                try {
+                  return { key, children: await dbCatalog(sessionId, parent) };
+                } catch {
+                  return null;
+                }
+              }),
+            );
+            setBranches((current) => {
+              const next = new Map(current);
+              for (const r of refreshed) {
+                // 该分支在剪枝后已不存在（对象被删）或本次拉取失败：保持原样
+                if (!r) continue;
+                const b = next.get(r.key);
+                if (!b) continue;
+                next.set(r.key, { ...b, children: r.children, loading: false });
+                for (const child of r.children) {
+                  if (!next.has(child.key)) {
+                    next.set(child.key, {
+                      node: child,
+                      expanded: false,
+                      children: null,
+                      loading: false,
+                    });
+                  }
+                }
+              }
+              return next;
+            });
+          }
+        }
+      } catch (e) {
+        setConnectError(String(e));
       }
-    } catch (e) {
-      setConnectError(String(e));
-    }
-  }, []);
+    },
+    [],
+  );
 
   const connect = useCallback(
     async (connection: DbConnectionRecord) => {
@@ -1102,7 +1250,8 @@ export function DbSessionView({
             className="size-7 rounded-lg text-foreground-subtle hover:text-foreground"
             onClick={() => {
               const sid = sessionIdRef.current;
-              if (sid) void catalogLoad(sid, meta.database);
+              // preserve：保留展开态/已加载子层/搜索关键字，只重拉内容做增删
+              if (sid) void catalogLoad(sid, meta.database, { preserve: true });
             }}
           >
             <RefreshCw className="size-3.5" />
@@ -1504,7 +1653,16 @@ export function DbSessionView({
                         ) : (
                           <Braces className="size-3 text-terminal-magenta" />
                         )}
-                        <span className="max-w-32 truncate">{page.name}</span>
+                        {/* 标题截断在 max-w-32：悬停给完整限定名（schema.name）。
+                            走共享 ControlHintTooltip（portal + fixed + 空间不足
+                            自动翻转），tab 栏的 overflow 裁不到它；标题字号用
+                            组件内置 text-ui-sm，比 tab 正文大一档便于辨认 */}
+                        <ControlHintTooltip
+                          title={`${page.schema}.${page.name}`}
+                          side="top"
+                        >
+                          <span className="max-w-32 truncate">{page.name}</span>
+                        </ControlHintTooltip>
                       </button>
                       <button
                         type="button"
