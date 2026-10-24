@@ -20,6 +20,7 @@
 
 pub mod engines;
 pub mod explain;
+mod sql_completion;
 /// Oracle 19c 错误消息全量中文译文（构建期嵌入、零堆分配稀疏查找）。
 /// 数据是机器辅助翻译、非官方译文；查不到时调用方回落 engines 里的
 /// `oracle_ora_hint` 精简摘要表。
@@ -101,6 +102,9 @@ pub struct DbSession {
     pub pending_tx_statements: Arc<AtomicUsize>,
     /// 当前事务内累计影响的行数
     pub pending_tx_rows: Arc<AtomicU64>,
+    /// SQL 补全目录缓存（表/列清单，见 sql_completion.rs；失效走
+    /// db_sql_completions_invalidate 与切库）
+    pub completion_cache: std::sync::Mutex<sql_completion::SqlCompletionCache>,
 }
 
 impl DbSession {
@@ -293,6 +297,7 @@ pub async fn db_connect(
         in_transaction: Arc::new(AtomicBool::new(false)),
         pending_tx_statements: Arc::new(AtomicUsize::new(0)),
         pending_tx_rows: Arc::new(AtomicU64::new(0)),
+        completion_cache: std::sync::Mutex::new(sql_completion::SqlCompletionCache::default()),
     });
     state
         .sessions
@@ -334,6 +339,40 @@ pub async fn db_catalog(
     };
     let mut engine = session.engine.lock().await;
     engine.catalog(&parent).await
+}
+
+/// SQL 编辑器 schema 感知补全（表/列/别名）：cursor 上下文解析与目录解析
+/// 全在后端（sql_completion.rs），前端只做 CompletionItem 薄映射。
+/// cursorOffset 为 UTF-16 码元偏移（monaco getOffsetAt 同语义）。
+#[tauri::command]
+pub async fn db_sql_completions(
+    state: State<'_, DbState>,
+    session_id: String,
+    sql: String,
+    cursor_offset: usize,
+) -> Result<sql_completion::SqlCompletionResult, String> {
+    let session = state.get(&session_id)?;
+    // Redis 是逐行命令不是 SQL，目录形态也不适用：直接空建议
+    if matches!(&*session.engine.lock().await, DbEngine::Redis { .. }) {
+        return Ok(sql_completion::SqlCompletionResult {
+            suggestions: vec![],
+            word_start: 0,
+        });
+    }
+    sql_completion::sql_completions(&session, &sql, cursor_offset).await
+}
+
+/// 补全目录缓存失效（前端对象树 catalogLoad：连接/切库/刷新时调用）
+#[tauri::command]
+pub async fn db_sql_completions_invalidate(
+    state: State<'_, DbState>,
+    session_id: String,
+) -> Result<(), String> {
+    let session = state.get(&session_id)?;
+    if let Ok(mut cache) = session.completion_cache.lock() {
+        cache.clear();
+    }
+    Ok(())
 }
 
 /// 目录父层（前端参数形态；None = 根层）。
@@ -1183,7 +1222,11 @@ pub async fn db_use_database(
         }
         DbEngine::Closed => return Err("连接已关闭".to_string()),
     }
-    // 更新并返回元信息（PG 重连路径里 server_version 可能变化，MySQL 保持原值）
+    // 更新并返回元信息（PG 重连路径里 server_version 可能变化，MySQL 保持原值）；
+    // 顺带失效补全目录缓存（当前库已变，表清单要按新库重拉）
+    if let Ok(mut cache) = session.completion_cache.lock() {
+        cache.clear();
+    }
     let mut meta = session
         .meta
         .write()

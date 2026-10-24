@@ -194,6 +194,41 @@ export function dbCatalog(
   return invoke('db_catalog', { sessionId, parent });
 }
 
+/** schema 补全建议（后端 db_sql_completions 解析 cursor 上下文与目录后产出；
+ * 排序前缀 `!1/!2/!3` 压过静态关键字 provider 的 0/1/2 段） */
+export interface DbSqlCompletionItem {
+  label: string;
+  /** column | table | schema（映射 Field / Class / Module 图标） */
+  kind: 'column' | 'table' | 'schema';
+  detail: string;
+  insertText: string;
+  sort: string;
+}
+
+export interface DbSqlCompletionResult {
+  suggestions: DbSqlCompletionItem[];
+  /** 被替换词的起始偏移（UTF-16 码元，monaco getPositionAt 同语义） */
+  wordStart: number;
+}
+
+/**
+ * SQL 编辑器 schema 感知补全（表/列/别名）：cursor 上下文解析与目录解析
+ * 全在后端（光标前缀由后端按 cursorOffset 切），前端只做 CompletionItem 薄映射。
+ * cursorOffset 用 monaco `model.getOffsetAt(position)`（UTF-16 码元）。
+ */
+export function dbSqlCompletions(
+  sessionId: string,
+  sql: string,
+  cursorOffset: number,
+): Promise<DbSqlCompletionResult> {
+  return invoke('db_sql_completions', { sessionId, sql, cursorOffset });
+}
+
+/** 补全目录缓存失效（对象树 catalogLoad：连接/切库/刷新时调用） */
+export function dbSqlCompletionsInvalidate(sessionId: string): Promise<void> {
+  return invoke('db_sql_completions_invalidate', { sessionId });
+}
+
 /** 流式查询事件（后端按 300 行/批发来，与 Rust QueryEvent 的 tag=type 对齐）。 */
 export type DbQueryEvent =
   | { type: 'started'; statementCount: number }
