@@ -583,8 +583,7 @@ async fn cached_columns(
     cache: &std::sync::Mutex<SqlCompletionCache>,
     schema: &str,
     table: &str,
-) -> Result<Vec<ColumnEntry>, String> {
-    let key = format!("{}.{}", schema.to_ascii_lowercase(), table.to_ascii_lowercase());
+) -> Result<Vec<ColumnEntry>, String> {    let key = format!("{}.{}", schema.to_ascii_lowercase(), table.to_ascii_lowercase());
     if let Some(v) = cache.lock().ok().and_then(|c| c.columns.get(&key).cloned()) {
         return Ok(v);
     }
@@ -595,13 +594,41 @@ async fn cached_columns(
     Ok(v)
 }
 
+/// 一条表引用的列：先对目录规范名再查——大小写敏感引擎（Oracle/达梦目录存
+/// 大写 EMP，用户敲小写 emp；PG 反向存小写）拿原样名查列会零行返回空建议。
+/// 显式两段限定的库名也先对顶层名单规范（sc → SCOTT）；都不中（非表类对象/
+/// 清单外对象）按原样兑底试一趟
+async fn ref_columns(
+    engine: &mut DbEngine,
+    cache: &std::sync::Mutex<SqlCompletionCache>,
+    current_db: &str,
+    r: &RefTable,
+) -> Result<Vec<ColumnEntry>, String> {
+    let schema = if r.schema.is_empty() {
+        current_db.to_string()
+    } else {
+        let schemas = cached_schemas(engine, cache).await.unwrap_or_default();
+        schemas
+            .iter()
+            .find(|s| s.eq_ignore_ascii_case(&r.schema))
+            .cloned()
+            .unwrap_or_else(|| r.schema.clone())
+    };
+    let tables = cached_tables(engine, cache, &schema).await.unwrap_or_default();
+    let (cs, ct) = tables
+        .iter()
+        .find(|t| t.name.eq_ignore_ascii_case(&r.table))
+        .map(|t| (t.schema.clone(), t.name.clone()))
+        .unwrap_or((schema, r.table.clone()));
+    cached_columns(engine, cache, &cs, &ct).await
+}
+
 /// 主入口：解析光标上下文并产出建议（Redis 引擎由命令层提前拦下，不进此处）
 pub async fn sql_completions(
     session: &DbSession,
     sql: &str,
     cursor_offset_utf16: usize,
-) -> Result<SqlCompletionResult, String> {
-    let prefix = &sql[..utf16_to_byte(sql, cursor_offset_utf16)];
+) -> Result<SqlCompletionResult, String> {    let prefix = &sql[..utf16_to_byte(sql, cursor_offset_utf16)];
     let ctx = parse_cursor_context(prefix);
     let word_start_u16 = byte_to_utf16(prefix, ctx.word_start);
     let empty = || SqlCompletionResult {
@@ -628,8 +655,7 @@ pub async fn sql_completions(
         let ql = q.to_ascii_lowercase();
         // ① 别名
         if let Some(t) = ctx.aliases.get(&ql) {
-            let schema = if t.schema.is_empty() { current_db.clone() } else { t.schema.clone() };
-            let cols = cached_columns(&mut engine, cache, &schema, &t.table).await?;
+            let cols = ref_columns(&mut engine, cache, &current_db, t).await?;
             return Ok(SqlCompletionResult {
                 suggestions: column_drafts(&cols, &t.table),
                 word_start: word_start_u16,
@@ -690,8 +716,7 @@ pub async fn sql_completions(
     let mut merged: Vec<SqlCompletionItem> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
     for r in &ctx.referenced {
-        let schema = if r.schema.is_empty() { current_db.clone() } else { r.schema.clone() };
-        let cols = cached_columns(&mut engine, cache, &schema, &r.table).await?;
+        let cols = ref_columns(&mut engine, cache, &current_db, r).await?;
         for c in &cols {
             let key = c.name.to_ascii_lowercase();
             if seen.contains(&key) {
