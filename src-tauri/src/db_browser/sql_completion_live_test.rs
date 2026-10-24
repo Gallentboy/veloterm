@@ -173,6 +173,45 @@ async fn sql_completion_live_oracle() {
     );
     println!("mid-statement v.ve → {} 列", r.suggestions.len());
 
+    // ⑥ 不带别名（中段裸列名）：SELECT ve FROM velocomplv（无别名，FROM 在光标后）
+    let sql = format!("SELECT ve FROM {typed}");
+    let r = super::sql_completion::sql_completions(&session, &sql, "SELECT ve".len())
+        .await
+        .expect("无别名中段补全失败");
+    println!(
+        "no-alias mid SELECT ve → {:?}",
+        r.suggestions.iter().map(|s| &s.label).collect::<Vec<_>>()
+    );
+    assert!(
+        r.suggestions.iter().any(|s| s.label == "VELOID"),
+        "无别名中段应对出 VELOID"
+    );
+
+    // ⑦ 不带别名（裸表名当限定符）：SELECT velocomplv.ve FROM velocomplv
+    let sql = format!("SELECT {typed}.ve FROM {typed}");
+    let cursor = format!("SELECT {typed}.ve").len();
+    let r = super::sql_completion::sql_completions(&session, &sql, cursor)
+        .await
+        .expect("裸表名限定补全失败");
+    println!(
+        "bare-table qualifier → {:?}",
+        r.suggestions.iter().map(|s| &s.label).collect::<Vec<_>>()
+    );
+    assert!(
+        r.suggestions.iter().any(|s| s.label == "VELOID"),
+        "裸表名限定应对出 VELOID"
+    );
+
+    // ⑧ 不带别名（语句尾部 WHERE 裸列名）：SELECT * FROM velocomplv WHERE velo|
+    let sql = format!("SELECT * FROM {typed} WHERE velo");
+    let r = super::sql_completion::sql_completions(&session, &sql, sql.len())
+        .await
+        .expect("WHERE 尾部补全失败");
+    assert!(
+        r.suggestions.iter().any(|s| s.label == "VELOID"),
+        "WHERE 尾部裸列名应对出 VELOID"
+    );
+
     // 清理测试表
     let mut engine = session.engine.lock().await;
     engine
