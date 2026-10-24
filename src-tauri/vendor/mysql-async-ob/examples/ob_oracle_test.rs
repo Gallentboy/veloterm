@@ -140,6 +140,14 @@ async fn probe_api_transaction(
     }
 }
 
+fn hex_dump(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         host: String::new(),
@@ -737,30 +745,31 @@ async fn main() {
                     let mut parts = Vec::new();
                     let mut problems: Vec<String> = Vec::new();
                     for (i, (name, cs)) in meta.iter().enumerate() {
-                        let rendered = match vals.get(i) {
-                            Some(oceanbase_async::Value::Bytes(b)) => {
-                                oceanbase_async::ob_types::decode_nchar_bytes(*cs, b)
-                            }
-                            other => other.map(value_render).unwrap_or_else(|| "NULL".into()),
-                        };
+                        // N 列已由驱动 next_row 内联解码为 UTF-8（类型标记驱动，
+                        // JDBC typeOracleMap 语义），此处直接渲染
+                        let rendered = vals
+                            .get(i)
+                            .map(value_render)
+                            .unwrap_or_else(|| "NULL".into());
                         if rendered == "NULL" {
                             problems.push(format!("{name} 列为 NULL"));
                         }
                         parts.push(format!("{name}[cs={cs}]={rendered}"));
                     }
-                    // NVARCHAR2 往返（字符集解码正确性——JDBC 同款 UTF-16BE）
+                    // NVARCHAR2 往返（驱动级解码后的正确性断言）
                     if let Some(i) = col("C_NVARCHAR") {
                         if let Some(oceanbase_async::Value::Bytes(b)) = vals.get(i) {
-                            let dec = oceanbase_async::ob_types::decode_nchar_bytes(meta[i].1, b);
+                            let dec = String::from_utf8_lossy(b);
                             if dec != "NVARCHAR中文字符串" {
                                 problems.push(format!(
-                                    "NVARCHAR2 解码不符（cs={}）：期望 NVARCHAR中文字符串，得 {dec:?}",
-                                    meta[i].1
+                                    "NVARCHAR2 解码不符（cs={}，hex={}）：期望 NVARCHAR中文字符串，得 {dec:?}",
+                                    meta[i].1,
+                                    hex_dump(b)
                                 ));
                             }
                         }
                     }
-                    // INTERVAL 语义拆解
+                    // INTERVAL 语义拆解（失败附原始字节 hex，供下轮定位真实形态）
                     if let Some(i) = col("C_IYM") {
                         if let Some(oceanbase_async::Value::Bytes(b)) = vals.get(i) {
                             match oceanbase_async::ob_types::parse_ob_interval(
@@ -768,7 +777,10 @@ async fn main() {
                             ) {
                                 Some(iv) if iv.years == 1 && iv.months == 2 => {}
                                 other => {
-                                    problems.push(format!("INTERVAL YM 解析不符: {other:?}"));
+                                    problems.push(format!(
+                                        "INTERVAL YM 解析不符（hex={}）: {other:?}",
+                                        hex_dump(b)
+                                    ));
                                 }
                             }
                         }
@@ -784,7 +796,10 @@ async fn main() {
                                     && iv.seconds == 5
                                     && iv.micros == 6 => {}
                                 other => {
-                                    problems.push(format!("INTERVAL DS 解析不符: {other:?}"));
+                                    problems.push(format!(
+                                        "INTERVAL DS 解析不符（hex={}）: {other:?}",
+                                        hex_dump(b)
+                                    ));
                                 }
                             }
                         }

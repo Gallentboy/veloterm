@@ -16,6 +16,7 @@ pub const UTF16LE_CHARSET_IDS: &[u16] = &[56, 62];
 
 /// 按列字符集编号解码文本协议的字节值：双字节族走对应端序，其余按 UTF-8。
 /// 奇数字节长度不是合法 UTF-16，回落 UTF-8 lossy（乱码可见、可诊断）。
+#[inline]
 pub fn decode_nchar_bytes(charset_id: u16, bytes: &[u8]) -> String {
     let try_utf16 = |little: bool| -> Option<String> {
         if bytes.len() % 2 != 0 {
@@ -43,6 +44,40 @@ pub fn decode_nchar_bytes(charset_id: u16, bytes: &[u8]) -> String {
         }
     }
     String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// 就地解码一行值里的 N 列（字符集编号驱动——语义诚实的服务器可用，
+/// 兑底形态；真机实测 OB 虚报 utf8mb4 时用 decode_row_by_flags）。
+#[inline]
+pub fn decode_row_nchar(charsets: &[u16], values: &mut [crate::Value]) {
+    for (cs, val) in charsets.iter().zip(values.iter_mut()) {
+        let utf16 = UTF16BE_CHARSET_IDS.contains(cs) || UTF16LE_CHARSET_IDS.contains(cs);
+        if !utf16 {
+            continue;
+        }
+        if let crate::Value::Bytes(b) = val {
+            *val = crate::Value::Bytes(decode_nchar_bytes(*cs, b).into());
+        }
+    }
+}
+
+/// 按列级 N 类型标记就地解码（真机实测修正：OB 把 NVARCHAR2/NCHAR 列的
+/// 字符集编号虚报为 utf8mb4（cs=46，与 VARCHAR2 同号）但字节是大端
+/// UTF-16——字符集编号不可依据；JDBC 按 typeOracleMap 的类型码 207/208
+/// 分派 nCharacterEncoding=UTF-16BE 解码，本函数同语义，标记由
+/// read_column_defs 重映射时从原始类型字节记录）。非 N 列不动。
+#[inline]
+pub fn decode_row_by_flags(flags: &[bool], values: &mut [crate::Value]) {
+    for (is_n, val) in flags.iter().zip(values.iter_mut()) {
+        if !*is_n {
+            continue;
+        }
+        if let crate::Value::Bytes(b) = val {
+            // 54 = utf16_general_ci，即大端解码；奇数字节/非法序列时
+            // decode_nchar_bytes 内部回落 lossy UTF-8（可诊断）
+            *val = crate::Value::Bytes(decode_nchar_bytes(54, b).into());
+        }
+    }
 }
 
 /// INTERVAL 值的结构化拆解（JDBC 语义为 String，此解析供校验与展示）
@@ -156,6 +191,46 @@ mod tests {
         assert_eq!(decode_nchar_bytes(45, "普通UTF8列".as_bytes()), "普通UTF8列");
         // 奇数字节 + 双字节编号 → 回落 lossy UTF-8（可诊断乱码）
         assert_eq!(decode_nchar_bytes(54, &[0xe4, 0xb8, 0xad]), "中");
+    }
+
+    /// 行级就地解码（类型标记驱动——真机实测 cs 虚报 utf8mb4 不可依据）
+    #[test]
+    fn decode_row_by_flags_inplace() {
+        let text = "NVARCHAR中文字符串";
+        let be: Vec<u8> = text
+            .encode_utf16()
+            .flat_map(|u| u.to_be_bytes())
+            .collect();
+        let mut values = vec![
+            crate::Value::Bytes(be.into()),
+            crate::Value::Bytes("普通列".as_bytes().to_vec().into()),
+            crate::Value::Int(42),
+        ];
+        decode_row_by_flags(&[true, false, false], &mut values);
+        match values.first() {
+            Some(crate::Value::Bytes(b)) => {
+                assert_eq!(String::from_utf8_lossy(b), text)
+            }
+            _ => panic!("形态不符"),
+        }
+        match values.get(1) {
+            Some(crate::Value::Bytes(b)) => {
+                assert_eq!(String::from_utf8_lossy(b), "普通列")
+            }
+            _ => panic!("形态不符"),
+        }
+    }
+
+    /// 行级就地解码（字符集编号驱动兑底）
+    #[test]
+    fn decode_row_nchar_by_charset_inplace() {
+        let be: Vec<u8> = "N列".encode_utf16().flat_map(|u| u.to_be_bytes()).collect();
+        let mut values = vec![crate::Value::Bytes(be.into())];
+        decode_row_nchar(&[54], &mut values);
+        match values.first() {
+            Some(crate::Value::Bytes(b)) => assert_eq!(String::from_utf8_lossy(b), "N列"),
+            _ => panic!("形态不符"),
+        }
     }
 
     /// INTERVAL 语义解析：真机回传形态的期望值（+001-02 / +002 03:04:05.000006）

@@ -146,7 +146,9 @@ pub struct Ob20Header {
 
 /// CRC-16（poly 0x8005 反射形态 0xA001、初值 0、无 xorout——与 libobclient
 /// 的 `ob_crc16` 表实现等价；CRC-16/ARC，"123456789" 校验值 0xBB3D）。
-/// 逐位实现而非抄表：表只是本算法的查表加速。
+/// 逐位实现而非抄表：表只是本算法的查表加速。（ob20 激活时逐包调用，
+/// 热路径标 #[inline]）
+#[inline]
 pub fn ob_crc16(mut crc: u16, data: &[u8]) -> u16 {
     for &byte in data {
         crc ^= u16::from(byte);
@@ -263,6 +265,8 @@ pub fn wrap_packet(ctx: &Ob20Ctx, mysql_payload: &[u8], complen_for_checksum: u3
 
 /// CRC32C（Castagnoli）——逐位实现，poly 反射形态 0x82F63B78、初值
 /// 0xFFFFFFFF、先异或 0xFFFFFFFF 输出。对齐 Java `OceanBaseCRC32C`。
+///（ob20 激活时逐包调用，热路径标 #[inline]）
+#[inline]
 pub fn crc32c(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFF_FFFF;
     for &byte in data {
@@ -326,16 +330,6 @@ pub fn set_last_packet_flag(packet: &mut [u8]) {
 /// | 209 | ROWID | 行标识 |
 /// | 210 | ORA_BLOB | 二进制大对象 |
 /// | 211 | ORA_CLOB | 字符大对象 |
-pub fn remap_ob_column_type(raw: &[u8]) -> Vec<u8> {
-    // 列定义包的 column_type 字段偏移取决于 schema 长度（lenenc），无法简单
-    // 定位——在 read_column_defs 里直接对解析前的原始包字节做后处理不现实。
-    // 这里返回一个映射表供调用方在解析失败时查找。
-    // 实际的 hook 点在 queryable/stmt.rs::read_column_defs：解析失败时
-    // 把包字节里的类型码替换为 253（VAR_STRING）再重试。
-    let _ = raw;
-    Vec::new()
-}
-
 /// OB Oracle 扩展类型码集合（需要降级处理的码值）
 pub const OB_ORACLE_EXT_TYPES: &[u8] = &[
     160, 161, 162, 163, // COMPLEX/ARRAY/STRUCT/CURSOR
