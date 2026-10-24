@@ -311,19 +311,30 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                     // 服务端 Warning（go-ora case 15 + NewWarningObject）
                     row_common::read_warning(conn).await?;
                 }
-                11 | 19 => {
-                    // 参数方向 / 绑定方向（go-ora case 11/19：resultSet.load 形态
-                    // 头 + 每列一个方向字节）
+                19 => {
+                    // 服务端流控信号（v2 case 19）：零载荷，回写单字节 19 并继续
+                    // 读响应流。原实现把它并入 case 11 的绑定方向载荷一起解析，
+                    // 读走不存在的字段导致流错位——真机上长 SQL / 含中文语句的
+                    // 响应流会以「invalid int size: 66」类解码错误暴露
+                    let mut w = TtcWriter::new();
+                    w.put_bytes(&[19]);
+                    conn.send_writer(w).await?;
+                    continue;
+                }
+                11 => {
+                    // 绑定方向（v2 case 11 = ResultSet.load 头 + 每列方向字节）：
+                    // 跳 1 + i2 列数低段 + i4 列数高段（×0x100 组合，v2 原式）
+                    // + i4 行数 + i2 UAC + DLC + DLC
                     conn.ensure_in_buffer(1).await?;
                     let mut r = TtcReader::new(&mut conn.in_buffer);
-                    let _ = r.get_byte()?; // skip
-                    let n1 = r.get_int(2, true, true)? as usize;
-                    let _ = r.get_int(4, true, true)?;
+                    let _ = r.get_byte()?;
+                    let n1 = r.get_int(2, true, true)? as i64;
+                    let n2 = r.get_int(4, true, true)? as i64;
                     let _ = r.get_int(4, true, true)?;
                     let _ = r.get_int(2, true, true)?;
                     let _ = r.get_dlc()?;
                     let _ = r.get_dlc()?;
-                    let col_count = n1; // 近似：多字节列数形态罕见，普通查询 n1 即列数
+                    let col_count = (n1 + n2 * 0x100) as usize;
                     for _ in 0..col_count {
                         conn.ensure_in_buffer(1).await?;
                         let mut r = TtcReader::new(&mut conn.in_buffer);
