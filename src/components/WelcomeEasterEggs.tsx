@@ -43,8 +43,11 @@ const BUDDHA_LINES = [
   '======`-.____`-.___\\_____/___.-`____.-\'======',
   '                   `=---=\'',
 ];
-const BUDDHA_EYES_LINE = 2;
-const BUDDHA_BLINK_LINE = '                  88" - "88';
+/** 眼睛所在行与眨眼形态：脸行 (| -_- |)——原版神态即闭目打坐，动效是
+ * 偶尔睁眼（o_o）160ms 再闭回（入定中被惊扰的喜感）；上行 88" . "88
+ * 中间的点属头顶纹路，不是眼睛（曾错认） */
+const BUDDHA_EYES_LINE = 3;
+const BUDDHA_BLINK_LINE = '                  (| o_o |)';
 
 /** 通用眨眼 hook：约 everyMs 闭眼 closeMs 毫秒 */
 function useBlink(everyMs: number, closeMs: number) {
