@@ -112,6 +112,7 @@ pub fn run() {
             db_browser::db_list_databases,
             db_browser::db_set_auto_commit,
             db_browser::db_get_auto_commit,
+            db_browser::db_get_tx_status,
             db_browser::db_commit,
             db_browser::db_rollback,
             db_browser::db_use_database,

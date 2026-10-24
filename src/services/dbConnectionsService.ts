@@ -210,7 +210,19 @@ export type DbQueryEvent =
       elapsedMs: number;
     }
   | { type: 'statementError'; index: number; message: string }
-  | { type: 'done'; elapsedMs: number; cancelled: boolean };
+  | {
+      type: 'done';
+      elapsedMs: number;
+      cancelled: boolean;
+      txStatus?: DbTxStatus;
+    };
+
+export interface DbTxStatus {
+  autoCommit: boolean;
+  inTransaction: boolean;
+  statementCount: number;
+  affectedRows: number;
+}
 
 export interface DbQueryOptions {
   maxRows?: number;
@@ -282,9 +294,14 @@ export function dbUseDatabase(sessionId: string, database: string): Promise<DbSe
   return invoke('db_use_database', { sessionId, database });
 }
 
-/** 切换会话级自动提交（true=每语句自动落库、false=显式事务）。 */
-export function dbSetAutoCommit(sessionId: string, autoCommit: boolean): Promise<boolean> {
+/** 切换会话级自动提交（true=每语句自动落库、false=显式事务），返回更新后的事务状态。 */
+export function dbSetAutoCommit(sessionId: string, autoCommit: boolean): Promise<DbTxStatus> {
   return invoke('db_set_auto_commit', { sessionId, autoCommit });
+}
+
+/** 查询会话当前的事务状态与未提交修改统计。 */
+export function dbGetTxStatus(sessionId: string): Promise<DbTxStatus> {
+  return invoke('db_get_tx_status', { sessionId });
 }
 
 /** 查询会话当前自动提交状态。 */
@@ -293,12 +310,12 @@ export function dbGetAutoCommit(sessionId: string): Promise<boolean> {
 }
 
 /** 提交当前事务（显式事务模式下的提交按钮）。 */
-export function dbCommit(sessionId: string): Promise<void> {
+export function dbCommit(sessionId: string): Promise<DbTxStatus> {
   return invoke('db_commit', { sessionId });
 }
 
 /** 回滚当前事务。 */
-export function dbRollback(sessionId: string): Promise<void> {
+export function dbRollback(sessionId: string): Promise<DbTxStatus> {
   return invoke('db_rollback', { sessionId });
 }
 

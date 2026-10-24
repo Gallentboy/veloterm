@@ -207,6 +207,8 @@ export default {
     autoCommitHint: 'When on, each DML statement commits automatically; when off, explicit transaction mode — use Commit or Rollback buttons',
     commitTx: 'Commit',
     rollbackTx: 'Rollback',
+    txPendingHint: '{{count}} uncommitted statement(s) in current transaction ({{rows}} rows affected)',
+    txNoPendingHint: 'No uncommitted changes in current transaction',
     runAll: 'Execute all (⌘↵)',
     runSelected: 'Run selection (⌘⇧↵)',
     ctxCopy: 'Copy',
