@@ -47,7 +47,7 @@ impl Routine<FetchResponse> for FetchRoutine {
         writer.put_uint(self.count as u64, 2, true, true);
 
         debug!("Sending Fetch for cursor {} (count: {})", self.cursor_id, self.count);
-        conn.send_writer(writer).await?;
+        conn.send_request(writer).await?;
 
         let mut rows: Vec<Row> = Vec::new();
         let mut has_more_rows = true;
@@ -127,8 +127,9 @@ impl Routine<FetchResponse> for FetchRoutine {
                     super::summary::read_end_of_call(conn).await?;
                 }
                 19 => {
-                    // 服务端流控信号（v2 case 19）：零载荷，回写单字节 19 并继续
-                    // 读响应流——不能落到 other 的静默跳过（不回 ACK 流就错位）
+                    // 服务端流控信号（v2 case 19 全语义）：清残留、回写 19、
+                    // 继续读——不能落到 other 的静默跳过（不回 ACK 流就错位）
+                    conn.reset_read_buffer();
                     let mut w = TtcWriter::new();
                     w.put_bytes(&[19]);
                     conn.send_writer(w).await?;
