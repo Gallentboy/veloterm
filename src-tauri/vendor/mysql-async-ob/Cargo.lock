@@ -996,7 +996,6 @@ name = "oceanbase_async"
 version = "0.35.1"
 dependencies = [
  "bytes",
- "crc32fast",
  "crossbeam",
  "flate2",
  "futures-core",

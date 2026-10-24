@@ -130,6 +130,9 @@ struct ConnInner {
     /// MySQL 协议里该位是 MORE_RESULTS_EXISTS，OB 重定义为 Oracle 模式
     /// 指示）。veloterm 分叉新增。
     ob_is_oracle_mode: bool,
+    /// 读写管道已实际切换为 ob20 编解码（switch_to_ob20 置位；诊断用，
+    /// 区分「客户端 opts 开了」与「服务端回显确认后真切了」）
+    ob20_active: bool,
 }
 
 impl fmt::Debug for ConnInner {
@@ -181,6 +184,7 @@ impl ConnInner {
             active_since: Instant::now(),
             ob_capability: 0,
             ob_is_oracle_mode: false,
+            ob20_active: false,
         }
     }
 
@@ -253,6 +257,16 @@ impl Conn {
     /// 的 bit 2 / 值 4）。仅在握手完成后有效；普通 MySQL 恒 false。
     pub fn ob_is_oracle_mode(&self) -> bool {
         self.inner.ob_is_oracle_mode
+    }
+
+    /// 服务端回显的 OB 能力位（0 = 未收到回显，诊断用）
+    pub fn ob_capability_echo(&self) -> u64 {
+        self.inner.ob_capability
+    }
+
+    /// 读写管道是否已实际切换为 ob20 编解码（诊断用）
+    pub fn ob20_active(&self) -> bool {
+        self.inner.ob20_active
     }
 
     /// Turns on/off automatic connection reset (see [`crate::PoolOpts::with_reset_connection`]).
@@ -782,6 +796,7 @@ impl Conn {
             if let Some(stream) = self.inner.stream.as_mut() {
                 stream.enable_ob20(self.inner.id, max_allowed_packet);
             }
+            self.inner.ob20_active = true;
         }
         Ok(())
     }
@@ -790,13 +805,19 @@ impl Conn {
         let packet = self.read_packet().await?;
         match packet.first() {
             Some(0x00) => {
-                // ok packet for empty password
+                // ok packet for empty password——同样送 handle_ok 捕获 OB 回显
+                //（与 native 路径同型，上游在此丢弃包内容）
+                if let Ok(ok) =
+                    ParseBuf(&packet).parse::<OkPacketDeserializer<CommonOkPacket>>(self.capabilities())
+                {
+                    self.handle_ok(ok.into_inner().into_owned());
+                }
                 Ok(())
             }
             Some(0x01) => match packet.get(1) {
                 Some(0x03) => {
-                    // auth ok
-                    self.drop_packet().await
+                    // auth ok——后续包是 auth 最终 OK，送 handle_ok 捕获 OB 回显
+                    self.drop_packet_capture_ok().await
                 }
                 Some(0x04) => {
                     let pass = self.inner.opts.pass().unwrap_or_default();
@@ -820,7 +841,7 @@ impl Conn {
                         );
                         self.write_bytes(&encrypted_pass).await?;
                     };
-                    self.drop_packet().await?;
+                    self.drop_packet_capture_ok().await?;
                     Ok(())
                 }
                 _ => Err(DriverError::UnexpectedPacket {
@@ -843,7 +864,20 @@ impl Conn {
     async fn continue_mysql_native_password_auth(&mut self) -> Result<()> {
         let packet = self.read_packet().await?;
         match packet.first() {
-            Some(0x00) => Ok(()),
+            Some(0x00) => {
+                // auth 最终 OK 包不能丢弃：OB 能力回显（ob_capability_flag，
+                // session-track）与 Oracle 模式位（status bit 2）都在这个包里。
+                // 上游在此直接 Ok(()) 丢弃内容，导致 switch_to_ob20 永不激活、
+                // oracle 模式检测恒 false（真机实测 read_settings 照发 MySQL
+                // 探测被拒 ORA-00900）。解析失败不影响认证结果判定（包类型
+                // 已确认是 OK）
+                if let Ok(ok) =
+                    ParseBuf(&packet).parse::<OkPacketDeserializer<CommonOkPacket>>(self.capabilities())
+                {
+                    self.handle_ok(ok.into_inner().into_owned());
+                }
+                Ok(())
+            }
             Some(0xfe) if !self.inner.auth_switched => {
                 let auth_switch = if packet.len() > 1 {
                     ParseBuf(&packet).parse(())?
@@ -990,6 +1024,22 @@ impl Conn {
 
     async fn drop_packet(&mut self) -> Result<()> {
         self.read_packet().await?;
+        Ok(())
+    }
+
+    /// 读取并丢弃下一个包（drop_packet 语义），但若是 OK 包则先送
+    /// handle_ok——caching_sha2 认证收尾两处读的都是 auth 最终 OK，
+    /// OB 能力回显与 Oracle 模式位在其中（上游直接丢弃包内容，
+    /// veloterm 分叉补捕获；解析失败不影响包丢弃语义）
+    async fn drop_packet_capture_ok(&mut self) -> Result<()> {
+        let packet = self.read_packet().await?;
+        if packet.first() == Some(&0x00) {
+            if let Ok(ok) =
+                ParseBuf(&packet).parse::<OkPacketDeserializer<CommonOkPacket>>(self.capabilities())
+            {
+                self.handle_ok(ok.into_inner().into_owned());
+            }
+        }
         Ok(())
     }
 
