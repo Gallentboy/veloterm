@@ -370,6 +370,18 @@ body {
   }
 }
 
+/* 数据库连接中的不确定进度条（来回滑动的短条）：连接时长不可预知，
+   用 indeterminate 形态而非假进度百分比 */
+@keyframes db-connect-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(400%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .marquee-text.marquee-active .marquee-text-inner {
     animation: none;
