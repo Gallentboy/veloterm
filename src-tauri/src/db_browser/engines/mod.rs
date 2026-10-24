@@ -5600,8 +5600,11 @@ impl DbEngine {
                     .collect();
 
                 if columns.is_empty() {
-                    // DML / DDL / PLSQL 无结果集：affected 走 rows_affected
+                    // DML / DDL / PLSQL 无结果集：affected 走 rows_affected。
+                    // go-ora Connection.ExecContext 的 stmt.Close() 收尾同型：
+                    // 无结果集也要关游标（PLSQL 隐式结果集由 close 逐个处理）
                     let affected = rs.rows_affected();
+                    let _ = rs.close().await;
                     return Ok(ExecSummary {
                         affected: Some(affected),
                         ..Default::default()
@@ -5642,6 +5645,9 @@ impl DbEngine {
                                 }
                                 Ok(None) => break,
                                 Err(e) => {
+                                    // 出错也先关游标再上抛（go-ora 的 defer
+                                    // stmt.Close() 语义）：否则服务端游标泄漏
+                                    let _ = rs.close().await;
                                     return Err(format!("Oracle 行读取错误：{}", oracle_err(e)));
                                 }
                             }
@@ -5655,6 +5661,9 @@ impl DbEngine {
                 if maybe_more {
                     summary.truncated = true;
                 }
+                // 行数上限截断 / 正常取尽 / 取消 —— 统一关游标（go-ora
+                // stmt.Close 收尾语义：判 cursorID != 0 才发包，幂等）
+                let _ = rs.close().await;
                 Ok(summary)
             }
             DbEngine::Redis { conn, db, .. } => {
