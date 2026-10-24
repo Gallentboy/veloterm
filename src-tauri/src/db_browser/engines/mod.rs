@@ -749,10 +749,12 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 // 详情」入口：定义块 = 与 table_detail 同一份检视文本，
                 // call_template = 该类型最自然的读取命令（前端可一键执行）。
                 // 同 table_detail：临时切到 key 所属逻辑库再切回。
-                let target = parse_redis_db(schema).unwrap_or(*db);
+                let target = redis_db_of(schema, *db)?;
                 redis_select(conn, target).await?;
                 let inspected = async {
-                    let type_name = redis_key_type(conn, name).await?;
+                    let type_name = redis_key_type(conn, name).await.map_err(|e| {
+                        redis_key_miss_hint(e, target, schema)
+                    })?;
                     let definition = redis_inspect_block(conn, name, &type_name).await;
                     Ok::<_, String>((definition, redis_read_command(name, &type_name)))
                 }
@@ -1059,10 +1061,12 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 // 条）。detail 放元素的角色标签（field / index / member /
                 // score / id），前端列表直接可见而不必展开。
                 // 同 table_detail：临时切到 key 所属逻辑库再切回。
-                let target = parse_redis_db(schema).unwrap_or(*db);
+                let target = redis_db_of(schema, *db)?;
                 redis_select(conn, target).await?;
                 let entries = async {
-                    let type_name = redis_key_type(conn, table).await?;
+                    let type_name = redis_key_type(conn, table)
+                        .await
+                        .map_err(|e| redis_key_miss_hint(e, target, schema))?;
                     Ok::<_, String>(redis_key_entries(conn, table, &type_name).await)
                 }
                 .await;
@@ -1636,6 +1640,29 @@ pub(crate) fn parse_redis_db(value: &str) -> Option<u32> {
         .map(|_| trimmed.get(2..).unwrap_or_default())
         .unwrap_or(trimmed);
     digits.trim().parse::<u32>().ok()
+}
+
+/// key 所属逻辑库：schema 可解析（`db3` / `3`）用之，否则回退会话当前库。
+///
+/// **为什么不直接 unwrap_or**：schema 解析失败意味着调用方传了非库名的
+/// schema（老调用方传裸 key、或树节点 key 形态变更），静默回退当前库会
+/// 去错库找 key、最终以「未找到该 key」误报——把「参数不对」伪装成
+/// 「key 过期」。这里保留回退（前端老路径兼容），但失败信息经
+/// [`redis_key_miss_hint`] 带上实际查找的库名，一眼能看出是库错位。
+#[inline]
+pub(crate) fn redis_db_of(schema: &str, current_db: u32) -> Result<u32, String> {
+    Ok(parse_redis_db(schema).unwrap_or(current_db))
+}
+
+/// key 未找到时的诊断增强：附上实际查找的库与传入的 schema 原文。
+/// 跨库误用（浏览 db3 的 key 但在 db0 执行）是最常见成因，光说「key 已
+/// 过期」会把用户引向错误方向。
+pub(crate) fn redis_key_miss_hint(err: String, db: u32, schema: &str) -> String {
+    if err.contains("未找到该 key") {
+        format!("{err}（在 db{db} 中查找，schema 参数「{schema}」）")
+    } else {
+        err
+    }
 }
 
 // ── TLS 构造 ──────────────────────────────────────────────────────────────
