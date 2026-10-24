@@ -177,6 +177,10 @@ export default {
     refreshObject: 'Refresh',
     viewData: 'View data',
     tableDetail: 'Table detail (DDL / columns / indexes)',
+    /** Context menu: same wording for tables / views / materialized views */
+    viewDetail: 'View detail',
+    /** Context menu: same wording for routines / triggers / sequences */
+    viewDefinition: 'View definition',
     createIndex: 'Create index',
     copyQualifiedName: 'Copy name',
     tab_ddl: 'DDL',
