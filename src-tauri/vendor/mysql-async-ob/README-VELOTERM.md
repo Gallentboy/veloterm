@@ -54,6 +54,25 @@ cd src-tauri/vendor/mysql-async-ob && cargo test --lib io::ob20_codec
 上游自带的 `conn::*` / `pool::*` 测试需要真实 MySQL 服务器（ConnectionRefused），
 与分叉无关。
 
+## 真机测试工具（`examples/ob_oracle_test`）
+
+独立 CLI：输入 OB Oracle 连接参数 → 跑完 26 项全链路测试（OB20 协议/
+Oracle 模式检测/目录查询/表详情/数据读写/事务/错误处理），每项输出
+PASS/WARN/FAIL 与耗时。测试表自动创建自动清理。
+
+```bash
+# 本机（macOS/Linux）
+cd src-tauri/vendor/mysql-async-ob
+cargo run --example ob_oracle_test -- --host <ip> --port 2881 --user <user[@tenant]> --pass <pwd>
+
+# Windows（CI 出的 exe，零依赖）
+ob_oracle_test.exe --host <ip> --port 2881 --user <user[@tenant]> --pass <pwd>
+```
+
+`--no-ob20` 可关掉 OB20 协议层做对照。Windows x64 exe 由 `test-ob-rust.yml`
+车道出包（tag `test_ob_rust` 触发），零外部依赖安装（纯 Rust 分叉无 vcpkg/
+OpenSSL 依赖）。
+
 ## 已知边界
 
 - 未实现：全链路追踪（FLT）/会话同步（SESS_INFO）的 extra 区**发送**——只跳过

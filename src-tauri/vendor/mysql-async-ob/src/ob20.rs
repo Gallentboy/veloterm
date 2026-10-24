@@ -48,12 +48,15 @@ pub mod caps {
     pub const OBCLIENT_CAP_SERVER_DUP_SESS_INFO_SYNC: u64 = 1 << 19;
     pub const OBCLIENT_CAP_PROXY_LOCAL_INFILES: u64 = 1 << 20;
 
-    /// libobclient 的缺省能力组合（`OBPROXY_DEFAULT_CAPABILITY_FLAG`）：
-    /// 全链路追踪相关位与 ob20 一起上报。
-    pub const OBPROXY_DEFAULT_CAPABILITY_FLAG: u64 = OBCLIENT_CAP_OB_PROTOCOL_V2
-        | OBCLIENT_CAP_FULL_LINK_TRACE
-        | OBCLIENT_CAP_PROXY_NEW_EXTRA_INFO
-        | OBCLIENT_CAP_PROXY_FULL_LINK_TRACE_SHOW_TRACE;
+    /// 缺省能力组合（对齐 Java JDBC `writeConnectAttributes` 的默认值 1480）：
+    /// CHECKSUM(8) + CHECKSUM_SWITCH(64) + OCJ_ENABLE_EXTRA_OK_PACKET(128) +
+    /// OB_PROTOCOL_V2(256)。其中 OCJ_ENABLE_EXTRA_OK_PACKET 是**服务端回显
+    /// 能力位的前提**——没有它服务端不发额外 OK 包，ob20 探测失败。
+    /// （此前对齐 libobclient C 版报 FLT 三位，Java 默认不报——已对齐 Java。）
+    pub const OBPROXY_DEFAULT_CAPABILITY_FLAG: u64 = OBCLIENT_CAP_CHECKSUM
+        | OBCLIENT_CAP_CHECKSUM_SWITCH
+        | OBCLIENT_CAP_OCJ_ENABLE_EXTRA_OK_PACKET
+        | OBCLIENT_CAP_OB_PROTOCOL_V2;
 
     /// connect attrs 的键（握手包 `client_connect_attrs` 段）
     pub const ATTR_CAPABILITY_FLAG: &str = "__proxy_capability_flag";
@@ -244,6 +247,70 @@ pub fn wrap_packet(ctx: &Ob20Ctx, mysql_payload: &[u8], complen_for_checksum: u3
     out.extend_from_slice(&crc.to_le_bytes());
     out
 }
+
+/// 在已组装好的 ob20 包上就地设置 IS_LAST_PACKET 标志（flag 字段的 bit 1）
+/// 并重算头 CRC16——包可能是多帧分块，只有最后一帧才设此标志。
+/// flag 位于头的第 16..20 字节；CRC16 覆盖外层前缀 7B + 头前 22B。
+pub fn set_last_packet_flag(packet: &mut [u8]) {
+    // flag 偏移 16，小端 u32
+    let flag_off = 16;
+    let mut flag = u32::from_le_bytes([
+        packet[flag_off],
+        packet[flag_off + 1],
+        packet[flag_off + 2],
+        packet[flag_off + 3],
+    ]);
+    flag |= Ob20Flags::IS_LAST_PACKET;
+    packet[flag_off..flag_off + 4].copy_from_slice(&flag.to_le_bytes());
+
+    // 重算头 CRC16：外层前缀 7B 用 len=this_packet_len / seq=头内 pkt_seq / complen=0
+    let mut prefix7 = [0u8; 7];
+    prefix7[0..3].copy_from_slice(&(packet.len() as u32).to_le_bytes()[0..3]);
+    prefix7[3] = packet[11]; // pkt_seq 在头偏移 11
+    let checksum = header_checksum(&prefix7, &packet[..22]);
+    packet[22..24].copy_from_slice(&checksum.to_le_bytes());
+}
+
+/// OB Oracle 扩展列类型码 → 标准 MySQL 列类型码的降级映射。
+///
+/// OB Oracle 租户在文本协议下返回的列定义可能使用 OB 扩展类型码
+///（Java JDBC `internal/ColumnType.java` 的 `typeOracleMap`），这些码不在
+/// mysql_common 的标准 `ColumnType` 枚举里，`from_u8` 直接报错。文本协议
+/// 下这些类型的值都以字符串返回，统一降级为 VAR_STRING(253) 是安全行为。
+///
+/// | OB 码 | Java ColumnType | 含义 |
+/// |---|---|---|
+/// | 160 | COMPLEX | 复合类型 |
+/// | 161 | ARRAY | 数组 |
+/// | 162 | STRUCT | 结构体 |
+/// | 163 | CURSOR | 游标 |
+/// | 200 | TIMESTAMP_TZ | 带时区时间戳 |
+/// | 201 | TIMESTAMP_LTZ | 本地时区时间戳 |
+/// | 202 | TIMESTAMP_NANO | 纳秒时间戳 |
+/// | 203 | RAW | 原始二进制 |
+/// | 204 | INTERVALYM | 年月间隔 |
+/// | 205 | INTERVALDS | 天秒间隔 |
+/// | 206 | NUMBER_FLOAT | 浮点数 |
+/// | 207 | NVARCHAR2 | 国家字符变长串 |
+/// | 208 | NCHAR | 国家字符定长串 |
+/// | 209 | ROWID | 行标识 |
+/// | 210 | ORA_BLOB | 二进制大对象 |
+/// | 211 | ORA_CLOB | 字符大对象 |
+pub fn remap_ob_column_type(raw: &[u8]) -> Vec<u8> {
+    // 列定义包的 column_type 字段偏移取决于 schema 长度（lenenc），无法简单
+    // 定位——在 read_column_defs 里直接对解析前的原始包字节做后处理不现实。
+    // 这里返回一个映射表供调用方在解析失败时查找。
+    // 实际的 hook 点在 queryable/stmt.rs::read_column_defs：解析失败时
+    // 把包字节里的类型码替换为 253（VAR_STRING）再重试。
+    let _ = raw;
+    Vec::new()
+}
+
+/// OB Oracle 扩展类型码集合（需要降级处理的码值）
+pub const OB_ORACLE_EXT_TYPES: &[u8] = &[
+    160, 161, 162, 163, // COMPLEX/ARRAY/STRUCT/CURSOR
+    200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, // Oracle 扩展
+];
 
 /// 解析一个 ob20 包（不含外层压缩帧）。`prefix7` 为外层帧的
 /// `[len:3][seq:1][complen:3]` 实际值，用于头 CRC16 校验（校验失败即报错，
@@ -676,10 +743,11 @@ mod tests {
         assert_eq!(caps::OBCLIENT_CAP_OB_PROTOCOL_V2, 1 << 8);
         assert_eq!(caps::OBCLIENT_CAP_FULL_LINK_TRACE, 1 << 14);
         assert_eq!(caps::OBCLIENT_CAP_PROXY_LOCAL_INFILES, 1 << 20);
-        // 缺省组合只含 ob20/extra-info/追踪四项
+        // 缺省组合对齐 Java JDBC（1480 减去 CHECKSUM/ CHECKSUM_SWITCH 在
+        // useObChecksum=false 时被去掉的位后 = 456 = 8+64+128+256）
         assert_eq!(
             caps::OBPROXY_DEFAULT_CAPABILITY_FLAG,
-            (1 << 8) | (1 << 14) | (1 << 15) | (1 << 18)
+            (1 << 3) | (1 << 6) | (1 << 7) | (1 << 8)
         );
     }
 

@@ -1108,6 +1108,14 @@ impl Opts {
             | CapabilityFlags::CLIENT_DEPRECATE_EOF
             | CapabilityFlags::CLIENT_PLUGIN_AUTH;
 
+        // OB Oracle：告知服务端客户端认识 Oracle 模式（Java JDBC 的
+        // initializeClientCapabilities 基础值含 1<<27 常开）。用 from_bits_retain
+        // 构造——mysql_common 的 CapabilityFlags 未定义此位，直接插会 panic。
+        // OB 能力位（不在 MySQL 标准表中）：
+        //   1<<27 = CLIENT_SUPPORT_ORACLE（Java JDBC 常开上报）
+        //   1<<29 = CLIENT_SUPPORT_LOB_LOCATOR（Java 有 supportLobLocator 选项）
+        out |= CapabilityFlags::from_bits_retain(1 << 27);
+
         if self.inner.mysql_opts.db_name.is_some() {
             out |= CapabilityFlags::CLIENT_CONNECT_WITH_DB;
         }

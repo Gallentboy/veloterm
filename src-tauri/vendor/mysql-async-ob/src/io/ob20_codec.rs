@@ -39,6 +39,12 @@ pub struct Ob20Codec {
     decode_buf: PooledBuf,
 }
 
+/// 外层压缩开关：Java JDBC 的 OB20 实现恒不压缩（uncompressLength 恒 0，
+/// checkHeader 里收到非零直接报错），libobclient C 版则做压缩——服务端两种
+/// 都应支持，但对齐 Java 参考行为可排除真机验证时的一个变量。
+/// 压缩代码保留，后续真机验证后可开开关尝试。
+const OUTER_COMPRESS: bool = false;
+
 impl Ob20Codec {
     pub fn new(connection_id: u32, max_allowed_packet: usize) -> Self {
         Self {
@@ -117,19 +123,34 @@ impl Encoder<PooledBuf> for Ob20Codec {
             mysql_packet.extend_from_slice(chunk);
 
             // ob20 包（头 CRC16 的 complen 口径恒 0）；头内 pkt_seq 必须
-            // 与外层帧序号一致（libobclient 用同一计数器 compress_pkt_nr）
+            // 与外层帧序号一致（libobclient 用同一计数器 compress_pkt_nr）。
+            // 最后一块设 IS_LAST_PACKET 标志（Java JDBC 的 commandEnd 语义：
+            // 服务端据此知道当前 request 的回复可以结束）
             self.ctx.pkt_seq = self.outer_seq_id;
-            let ob20_packet = ob20::wrap_packet(&self.ctx, &mysql_packet, 0);
+            let is_last_chunk = chunk_len < OB20_MAX_CHUNK;
+            let mut ob20_packet = ob20::wrap_packet(&self.ctx, &mysql_packet, 0);
+            if is_last_chunk {
+                ob20::set_last_packet_flag(&mut ob20_packet);
+            }
 
-            // 外层压缩协议帧：压缩不划算（≥原始长度）则原样发、uncompressed 置 0
-            let compressed = self.zlib_compress(&ob20_packet)?;
+            // 外层压缩协议帧：压缩不划算（≥原始长度）则原样发、uncompressed 置 0。
+            // 默认不压缩（OUTER_COMPRESS=false，对齐 Java JDBC 行为——它的
+            // uncompressLength 恒 0，从不做外层 zlib）
             let seq = self.outer_seq_id;
             self.outer_seq_id = self.outer_seq_id.wrapping_add(1);
-            if compressed.len() < ob20_packet.len() {
-                dst.extend_from_slice(&(compressed.len() as u32).to_le_bytes()[0..3]);
-                dst.put_u8(seq);
-                dst.extend_from_slice(&(ob20_packet.len() as u32).to_le_bytes()[0..3]);
-                dst.extend_from_slice(&compressed);
+            if OUTER_COMPRESS {
+                let compressed = self.zlib_compress(&ob20_packet)?;
+                if compressed.len() < ob20_packet.len() {
+                    dst.extend_from_slice(&(compressed.len() as u32).to_le_bytes()[0..3]);
+                    dst.put_u8(seq);
+                    dst.extend_from_slice(&(ob20_packet.len() as u32).to_le_bytes()[0..3]);
+                    dst.extend_from_slice(&compressed);
+                } else {
+                    dst.extend_from_slice(&(ob20_packet.len() as u32).to_le_bytes()[0..3]);
+                    dst.put_u8(seq);
+                    dst.extend_from_slice(&[0, 0, 0]);
+                    dst.extend_from_slice(&ob20_packet);
+                }
             } else {
                 dst.extend_from_slice(&(ob20_packet.len() as u32).to_le_bytes()[0..3]);
                 dst.put_u8(seq);
@@ -138,7 +159,7 @@ impl Encoder<PooledBuf> for Ob20Codec {
             }
 
             // 标准终止条件：本块 < 上限（含补尾空块的情形）
-            if chunk_len < OB20_MAX_CHUNK {
+            if is_last_chunk {
                 break;
             }
         }

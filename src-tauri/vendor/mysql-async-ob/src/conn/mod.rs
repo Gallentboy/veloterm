@@ -125,6 +125,11 @@ struct ConnInner {
     /// 服务端在 OK 包 session-track 回显的 OB 能力位（ob_capability_flag）；
     /// 含 OB_PROTOCOL_V2 位时握手后切 ob20（veloterm 分叉新增）
     ob_capability: u64,
+    /// 服务端告知当前连接是 Oracle 租户模式（OK 包 status_flags 的 bit 2，
+    /// 值 4——Java JDBC `ServerStatus.OB_SERVER_USE_ORACLE_MODE`；标准
+    /// MySQL 协议里该位是 MORE_RESULTS_EXISTS，OB 重定义为 Oracle 模式
+    /// 指示）。veloterm 分叉新增。
+    ob_is_oracle_mode: bool,
 }
 
 impl fmt::Debug for ConnInner {
@@ -175,6 +180,7 @@ impl ConnInner {
             reset_upon_returning_to_a_pool: false,
             active_since: Instant::now(),
             ob_capability: 0,
+            ob_is_oracle_mode: false,
         }
     }
 
@@ -243,6 +249,12 @@ impl Conn {
         self.inner.last_ok_packet.as_ref()
     }
 
+    /// 服务端告知当前连接是 OceanBase Oracle 租户模式（OK 包 status_flags
+    /// 的 bit 2 / 值 4）。仅在握手完成后有效；普通 MySQL 恒 false。
+    pub fn ob_is_oracle_mode(&self) -> bool {
+        self.inner.ob_is_oracle_mode
+    }
+
     /// Turns on/off automatic connection reset (see [`crate::PoolOpts::with_reset_connection`]).
     ///
     /// Only makes sense for pooled connections.
@@ -286,7 +298,11 @@ impl Conn {
                 self.inner.ob_capability = cap;
             }
         }
-        self.inner.status = ok_packet.status_flags();
+        // Oracle 模式检测：OK 包 status_flags 的 bit 2（值 4）——服务端告知
+        // 当前连接是 Oracle 租户（Java JDBC ServerStatus.OB_SERVER_USE_ORACLE_MODE）
+        let status = ok_packet.status_flags();
+        self.inner.ob_is_oracle_mode = status.contains(StatusFlags::from_bits_retain(4));
+        self.inner.status = status;
         self.inner.last_err_packet = None;
         self.inner.last_ok_packet = Some(ok_packet);
     }
@@ -1174,6 +1190,41 @@ impl Conn {
             match action {
                 Action::Load(cfg) => cfg.apply(self, loaded.next()),
                 Action::Apply(cfg) => cfg.apply(self),
+            }
+        }
+
+        // Oracle 模式专属初始化：Java JDBC `sendCharsetVariables` 的
+        // isOracleMode 分支——OB Oracle 租户不能无 FROM DUAL 查系统变量
+        //（SELECT @@xxx 报语法错）；NLS NCHAR 字符集需要显式设置才能正确
+        // 解码 NVARCHAR2/NCHAR 列。两句查询都是 best-effort：失败不阻断连接
+        //（某些服务端/代理不支持时退化为不设置）。
+        if self.inner.ob_is_oracle_mode {
+            let charset: Option<String> = self
+                .query_internal::<Row, String>("SELECT @@NLS_NCHAR_CHARACTERSET FROM DUAL".to_string())
+                .await
+                .ok()
+                .flatten()
+                .map(|row| row.unwrap())
+                .and_then(|vals| {
+                    vals.first().cloned().and_then(|v| match v {
+                        crate::Value::Bytes(b) => String::from_utf8(b).ok(),
+                        crate::Value::Int(i) => Some(i.to_string()),
+                        _ => None,
+                    })
+                });
+            if let Some(cs) = charset {
+                let normalized = if cs.to_uppercase().contains("UTF8") {
+                    "UTF8"
+                } else if cs.to_uppercase().contains("UTF16") {
+                    "UTF16"
+                } else {
+                    cs.as_str()
+                };
+                let _ = self
+                    .query_internal::<Row, String>(format!(
+                        "SET NCHARACTER_SET_CONNECTION = '{normalized}'"
+                    ))
+                    .await;
             }
         }
 
