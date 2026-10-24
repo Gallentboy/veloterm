@@ -1179,6 +1179,13 @@ export default {
     manual: 'User manual',
     openSettings: 'Open settings',
     buddha: 'Buddha bless · zero bugs',
+    cowCaption: 'cowsay · dev wisdom',
+    cowMoo: 'Moo~',
+    cowQuotes:
+      'Works on my machine\nIt is not a bug, it is a feature\nIt worked yesterday\nJust one more fix\nRefactoring. Again.\nShip it on Friday\nI will commit it soon (no)\nComments? Never heard of it\nThe bug is in the compiler\nNull pointer? Impossible',
+    trainCaption: 'The sl train — you mistyped ls again',
+    matrixCaption: 'Welcome to the Matrix',
+    eggSwitch: 'Next easter egg',
   },
   settings: {
     title: 'Settings',
