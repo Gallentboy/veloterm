@@ -291,7 +291,15 @@ async fn main() {
     let cancel: Arc<tokio::sync::Notify> = Arc::new(tokio::sync::Notify::new());
 
     // 02 库/schema 清单
-    let mut schema = args.schema.clone().unwrap_or_else(|| args.user.clone());
+    // Oracle 的 owner 名在字典里恒为大写（未加引号创建的用户）；应用前端
+    // 从 all_users 拿的是正确大小写，CLI 缺省对 Oracle 大写化免得查空
+    let mut schema = args.schema.clone().unwrap_or_else(|| {
+        if args.engine == "oracle" {
+            args.user.to_uppercase()
+        } else {
+            args.user.clone()
+        }
+    });
     step(&mut r, "list_databases", || async {
         match engine.list_databases().await {
             Ok(list) if !list.is_empty() => {
@@ -523,22 +531,31 @@ async fn main() {
     })
     .await;
 
-    // 10 多语句流式（DUAL ×2）
+    // 10 多语句流式（与 db_query 同款：先 sqlsplit 切分再逐条 exec——
+    // Oracle 不吃带分号的多语句原文，ORA-00911）
+    let dk_multi = dialect_key.clone();
     step(&mut r, "query_multi", || async {
-        match query(
-            &mut engine,
-            &cancel,
+        let stmts = sqlsplit::split_statements(
+            &dk_multi,
             "SELECT 1 AS V FROM DUAL; SELECT 2 AS V FROM DUAL",
-        )
-        .await
-        {
-            Ok((cols, rows)) if rows.len() == 1 && cols.len() == 1 => {
-                let v = rows.first().and_then(|r| r.first().cloned()).unwrap_or_default();
-                Outcome::Pass(format!("列 [{}] 值 [{}]", cols.join(","), v))
-            }
-            Ok((cols, rows)) => Outcome::Fail(format!("行数 {} 列数 {}", rows.len(), cols.len())),
-            Err(e) => Outcome::Fail(e),
+        );
+        if stmts.len() != 2 {
+            return Outcome::Fail(format!("切分出 {} 条（应为 2）", stmts.len()));
         }
+        let mut vals: Vec<String> = Vec::new();
+        for s in &stmts {
+            match query(&mut engine, &cancel, &s.sql).await {
+                Ok((_cols, rows)) => {
+                    vals.push(
+                        rows.first()
+                            .and_then(|r| r.first().cloned())
+                            .unwrap_or_default(),
+                    );
+                }
+                Err(e) => return Outcome::Fail(e),
+            }
+        }
+        Outcome::Pass(format!("两条各 1 行：[{}]", vals.join(",")))
     })
     .await;
 
