@@ -59,7 +59,9 @@ export interface SuggestionDraft {
   kind: 'column' | 'table' | 'schema';
   detail: string;
   insertText: string;
-  /** 稳定排序前缀（列 1 / 表 2 / schema 3，再按名字） */
+  /** 稳定排序前缀。静态关键字 provider（sqlLanguage.ts）用 `0`(snippet)/`1`(关键字)
+   * /`2`(函数)，schema 建议必须永远排在它们前：取 `!`（ASCII 0x21 < '0'），
+   * 段内再分 列 !1 / 表 !2 / schema !3 */
   sort: string;
 }
 
@@ -274,14 +276,14 @@ export async function resolveSchemaSuggestions(
     const lowerCurrent = currentSchema.toLowerCase();
     return [
       ...tableDrafts(tables),
-      ...schemas
+        ...schemas
         .filter((s) => s.toLowerCase() !== lowerCurrent)
         .map((s) => ({
           label: s,
           kind: 'schema' as const,
           detail: 'SCHEMA',
           insertText: `${s}.`,
-          sort: `3${s.toLowerCase()}`,
+          sort: `!3${s.toLowerCase()}`,
         })),
     ];
   }
@@ -302,7 +304,7 @@ export async function resolveSchemaSuggestions(
           ? `${merged.get(key)!.detail} · ${ref.table}.${c.name}`
           : `${ref.table}.${c.name} · ${c.dataType}`,
         insertText: c.name,
-        sort: `1${key}`,
+        sort: `!1${key}`,
       };
       merged.set(key, draft);
     }
@@ -316,7 +318,7 @@ function columnDrafts(cols: SchemaColumn[], table: string): SuggestionDraft[] {
     kind: 'column' as const,
     detail: `${table}.${c.name} · ${c.dataType}`,
     insertText: c.name,
-    sort: `1${c.name.toLowerCase()}`,
+    sort: `!1${c.name.toLowerCase()}`,
   }));
 }
 
@@ -326,7 +328,7 @@ function tableDrafts(tables: SchemaTable[]): SuggestionDraft[] {
     kind: 'table' as const,
     detail: `${t.schema} · ${KIND_LABEL[t.kind] ?? t.kind.toUpperCase()}`,
     insertText: t.name,
-    sort: `2${t.name.toLowerCase()}`,
+    sort: `!2${t.name.toLowerCase()}`,
   }));
 }
 
