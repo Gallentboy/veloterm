@@ -2,6 +2,11 @@
 
 纯 Rust 原生异步 Oracle 客户端驱动（基于 Tokio），零 C/C++ 动态库依赖（无需 Oracle Instant Client / OCI / ODPI-C）。
 
+> **本地修补记录**（升级 / 重放提示：以下是对上游参照实现 sijms/go-ora **v2**（本地检出 `~/github/go-ora`）的偏差修正，换树或升级时需逐条复核）：
+> 1. **TTC 消息 19（服务端流控）误并入 case 11 解析**（`src/conn/routines/exec.rs` / `fetch.rs`）：v2 的 `case 19` 是零载荷流控信号——客户端须**回写单字节 19 并继续读响应流**。移植版原先把 `11 | 19` 合并按「绑定方向」的 ResultSet.load 头 + 逐列方向字节解析，19 到来时读走不存在的字段导致 TTC 流错位——真机上长 SQL / 含中文语句的响应流以 `Type decode error: invalid int size: 66`（把后续文本字节当压缩 int 的 size）暴露。fetch 轮原先落 `other` 静默跳过（不回 ACK）同样错位，一并修复。
+> 2. **case 11 列数组合公式**（`exec.rs`）：v2 `ResultSet.load` 的列数 = `i2 低段 + i4 高段 × 0x100`，移植版原先只取 i2（>255 列的宽结果集会截断方向字节循环）。
+
+
 对标 `mysql_async` 的成熟架构设计，全面基于 **Tokio + `tokio_util::codec::Framed` + 异步 `Routine` 状态机** 实现 Oracle 专有的 **TNS（传输网络层）** 与 **TTC（双任务通用数据层）** 协议。
 
 ---

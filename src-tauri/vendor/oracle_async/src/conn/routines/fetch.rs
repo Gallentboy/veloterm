@@ -126,6 +126,14 @@ impl Routine<FetchResponse> for FetchRoutine {
                     // EndOfCall：消费尾随字段后继续等真正的 4（可能是上一语句残留）
                     super::summary::read_end_of_call(conn).await?;
                 }
+                19 => {
+                    // 服务端流控信号（v2 case 19）：零载荷，回写单字节 19 并继续
+                    // 读响应流——不能落到 other 的静默跳过（不回 ACK 流就错位）
+                    let mut w = TtcWriter::new();
+                    w.put_bytes(&[19]);
+                    conn.send_writer(w).await?;
+                    continue;
+                }
                 other => {
                     trace!("Skipping fetch response message code: {other}");
                 }

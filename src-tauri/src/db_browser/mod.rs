@@ -641,18 +641,28 @@ pub async fn db_explain(
         let plan_table = {
             let mut engine = session.engine.lock().await;
             let mut found = None;
+            let mut first_err = String::new();
             for name in ["PLAN_TABLE", "TOAD_PLAN_TABLE"] {
                 let probe = format!("SELECT 1 FROM {name} WHERE ROWNUM = 1");
-                if engine
+                if let Err(e) = engine
                     .exec_streaming(&probe, 1, &session.cancel, |_| {}, |_| {})
                     .await
-                    .is_ok()
                 {
-                    found = Some(name);
-                    break;
+                    // ORA-00942（表或视图不存在）→ 换下一候选；其他错误
+                    //（协议/网络/权限）原样上抛——别把驱动问题误报成缺表
+                    if !e.contains("ORA-00942") && first_err.is_empty() {
+                        first_err = e;
+                    }
+                    continue;
                 }
+                found = Some(name);
+                break;
             }
-            found
+            match found {
+                Some(name) => Some(name),
+                None if first_err.is_empty() => None,
+                None => return Err(first_err),
+            }
         };
         let Some(plan_table) = plan_table else {
             return Err(
