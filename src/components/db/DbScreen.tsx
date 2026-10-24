@@ -1,13 +1,16 @@
 /**
  * 数据库工作台页：多 tab 外壳（ZkScreen 同型，常驻挂载切页/切 tab 状态保留）。
- * tab 双击重命名；关 tab = 断开会话；加号下拉选已保存连接开新会话。
+ * tab 双击重命名；关 tab = 断开会话（对象 tab 随所属会话级联关闭）；
+ * 加号下拉选已保存连接开新会话。对象树「查看定义 / 表详情」在 tab 栏开
+ * 对象 tab（终端 tab 同款交互：新开不覆盖、重复打开同一对象复用并刷新）。
  * 数据库主机页「连接」经 window 事件 veloterm:db-connect-host 递入。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, Database, Plus, X } from 'lucide-react';
+import { Braces, ChevronDown, Database, Plus, Table2, X } from 'lucide-react';
 
+import { DbObjectTab, type DbObjectTabPayload, type DbSessionApi, type OpenObjectTabRequest } from '@/components/db/DbObjectTab';
 import { DbSessionView } from '@/components/db/DbSessionView';
 import {
   dbConnectionList,
@@ -16,11 +19,21 @@ import {
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { cn } from '@/lib/utils';
 
+/** 会话 tab 向外壳暴露的对象信息（去重复用键 + 载荷） */
+interface DbObjectInfo {
+  /** 所属会话 tab 的 key（级联关闭与 sessionApi 派发用） */
+  sessionKey: number;
+  dedupeKey: string;
+  payload: DbObjectTabPayload;
+}
+
 interface DbTab {
   key: number;
   customTitle: string | null;
   baseTitle: string | null;
   pendingConnection: DbConnectionRecord | null;
+  /** 非空 = 对象 tab（查看定义 / 表详情），否则为会话 tab */
+  object?: DbObjectInfo;
 }
 
 export function DbScreen({ isVisible = true }: { isVisible?: boolean }) {
@@ -37,6 +50,9 @@ export function DbScreen({ isVisible = true }: { isVisible?: boolean }) {
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+  // 会话 api 注册表（对象 tab 的「插入模板/运行」回写所属会话的编辑器）：
+  // DbSessionView 挂载注册、卸载摘除；ref 形态使注册不触发重渲
+  const sessionApisRef = useRef(new Map<number, DbSessionApi>());
 
   // + 号下拉
   const [menuOpen, setMenuOpen] = useState(false);
@@ -81,6 +97,58 @@ export function DbScreen({ isVisible = true }: { isVisible?: boolean }) {
     [],
   );
 
+  /**
+   * 打开对象 tab（查看定义 / 表详情）：同一对象（同会话同变体同全名）已有
+   * tab 则激活并递增 refreshToken 触发重取，否则新建——终端 tab 同款
+   * 「重复打开 = 切回既有页」语义
+   */
+  const openObjectTab = useCallback((sessionKey: number, req: OpenObjectTabRequest) => {
+    const dedupeKey = `${req.sessionId}:${req.variant}:${req.schema}.${req.name}`;
+    setTabs((current) => {
+      const existing = current.find((tab) => tab.object?.dedupeKey === dedupeKey);
+      if (existing && existing.object) {
+        setActiveKey(existing.key);
+        // 激活的同时刷新内容（对象可能已变更）
+        return current.map((tab) =>
+          tab.key === existing.key && tab.object
+            ? {
+                ...tab,
+                object: {
+                  ...tab.object,
+                  payload: { ...tab.object.payload, refreshToken: tab.object.payload.refreshToken + 1 },
+                },
+              }
+            : tab,
+        );
+      }
+      const key = nextKeyRef.current;
+      nextKeyRef.current += 1;
+      return [
+        ...current,
+        {
+          key,
+          customTitle: null,
+          baseTitle: req.name,
+          pendingConnection: null,
+          object: {
+            sessionKey,
+            dedupeKey,
+            payload: { ...req, refreshToken: 0 },
+          },
+        },
+      ];
+    });
+  }, []);
+
+  /** 会话 api 注册/摘除（DbSessionView 挂载期调用） */
+  const registerSessionApi = useCallback((key: number, api: DbSessionApi | null) => {
+    if (api) {
+      sessionApisRef.current.set(key, api);
+    } else {
+      sessionApisRef.current.delete(key);
+    }
+  }, []);
+
   // 数据库主机页「连接」入口（window 自定义事件；本组件常驻挂载监听器始终在）
   useEffect(() => {
     const onConnect = (event: Event) => {
@@ -95,12 +163,20 @@ export function DbScreen({ isVisible = true }: { isVisible?: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /** 关 tab：会话 tab 关闭时其对象 tab 级联关闭（内容依托该会话取数） */
   const closeTab = (key: number) => {
     setTabs((current) => {
       const idx = current.findIndex((tab) => tab.key === key);
-      const next = current.filter((tab) => tab.key !== key);
-      if (key === activeKey) {
-        const neighbor = next[Math.min(idx, next.length - 1)];
+      const closing = current.find((tab) => tab.key === key);
+      const removeKeys = new Set<number>([key]);
+      if (closing && !closing.object) {
+        for (const tab of current) {
+          if (tab.object?.sessionKey === key) removeKeys.add(tab.key);
+        }
+      }
+      const next = current.filter((tab) => !removeKeys.has(tab.key));
+      if (removeKeys.has(activeKey)) {
+        const neighbor = next[Math.min(Math.max(idx - (removeKeys.size - 1), 0), next.length - 1)];
         setActiveKey(neighbor ? neighbor.key : 0);
       }
       return next;
@@ -149,7 +225,15 @@ export function DbScreen({ isVisible = true }: { isVisible?: boolean }) {
                 setRenameValue(tab.customTitle ?? tab.baseTitle ?? '');
               }}
             >
-              <Database className="size-3.5 shrink-0" />
+              {tab.object ? (
+                tab.object.payload.variant === 'tableDetail' ? (
+                  <Table2 className="size-3.5 shrink-0" />
+                ) : (
+                  <Braces className="size-3.5 shrink-0" />
+                )
+              ) : (
+                <Database className="size-3.5 shrink-0" />
+              )}
               {renamingKey === tab.key ? (
                 <input
                   autoFocus
@@ -168,6 +252,11 @@ export function DbScreen({ isVisible = true }: { isVisible?: boolean }) {
                   {tab.customTitle ?? tab.baseTitle ?? t('db.newTab')}
                 </span>
               )}
+              {tab.object ? (
+                <span className="shrink-0 rounded bg-surface px-1 font-mono text-[9px] text-foreground-subtle select-none">
+                  {t(tab.object.payload.variant === 'tableDetail' ? 'db.tableDetailShort' : 'db.objectDefinition')}
+                </span>
+              ) : null}
               <button
                 type="button"
                 className="shrink-0 rounded p-0.5 text-foreground-subtlest opacity-0 transition-opacity group-hover/tab:opacity-100 hover:text-foreground"
@@ -244,7 +333,7 @@ export function DbScreen({ isVisible = true }: { isVisible?: boolean }) {
         </div>
       </div>
 
-      {/* 会话视图（常驻隐藏，状态保留；卸载即断开会话） */}
+      {/* 视图（常驻隐藏，状态保留；会话 tab 卸载即断开会话） */}
       {tabs.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-1 select-none">
           <Database className="size-6 text-foreground-subtlest" />
@@ -252,18 +341,35 @@ export function DbScreen({ isVisible = true }: { isVisible?: boolean }) {
           <span className="text-ui-xs text-foreground-subtlest/70">{t('db.noTabsHint')}</span>
         </div>
       ) : (
-        tabs.map((tab) => (
-          <div
-            key={tab.key}
-            className={cn('flex min-h-0 flex-1 flex-col', tab.key !== activeKey && 'hidden')}
-          >
-            <DbSessionView
+        tabs.map((tab) =>
+          tab.object ? (
+            <div
               key={tab.key}
-              pendingConnection={tab.pendingConnection}
-              onBaseTitle={(title) => setBaseTitle(tab.key, title)}
-            />
-          </div>
-        ))
+              className={cn('flex min-h-0 flex-1 flex-col', tab.key !== activeKey && 'hidden')}
+            >
+              <DbObjectTab
+                payload={tab.object.payload}
+                sessionApi={sessionApisRef.current.get(tab.object.sessionKey)}
+                onGoToSession={() => setActiveKey(tab.object?.sessionKey ?? tab.key)}
+                onClose={() => closeTab(tab.key)}
+              />
+            </div>
+          ) : (
+            <div
+              key={tab.key}
+              className={cn('flex min-h-0 flex-1 flex-col', tab.key !== activeKey && 'hidden')}
+            >
+              <DbSessionView
+                key={tab.key}
+                pendingConnection={tab.pendingConnection}
+                tabKey={tab.key}
+                onBaseTitle={(title) => setBaseTitle(tab.key, title)}
+                onOpenObjectTab={(req) => openObjectTab(tab.key, req)}
+                onRegisterSessionApi={registerSessionApi}
+              />
+            </div>
+          ),
+        )
       )}
     </div>
   );

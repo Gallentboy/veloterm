@@ -173,6 +173,9 @@ export default {
     group_event: 'Events',
     group_rule: 'Rules',
     objectDefinition: 'Definition',
+    /** Object tab badge (DbScreen tab bar) and refresh button */
+    tableDetailShort: 'Detail',
+    refreshObject: 'Refresh',
     viewData: 'View data',
     tableDetail: 'Table detail (DDL / columns / indexes)',
     createIndex: 'Create index',
