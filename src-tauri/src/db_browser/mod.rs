@@ -21,6 +21,9 @@
 pub mod engines;
 pub mod explain;
 mod sql_completion;
+/// schema 补全真机回归（#[ignore]，读本机 veloterm.db 的 oracle 连接直连验证）
+#[cfg(test)]
+mod sql_completion_live_test;
 /// Oracle 19c 错误消息全量中文译文（构建期嵌入、零堆分配稀疏查找）。
 /// 数据是机器辅助翻译、非官方译文；查不到时调用方回落 engines 里的
 /// `oracle_ora_hint` 精简摘要表。
