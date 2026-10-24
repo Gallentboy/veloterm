@@ -408,7 +408,12 @@ export function DbSessionView({
   // Redis 键管理/诊断对话框（editor/ttl/delete 携带键作用域；node.key 的
   // `.` 前段是逻辑库 dbN——key 本身可含点，但 schema 不含）
   const [redisDialog, setRedisDialog] = useState<
-    | { kind: 'editor' | 'ttl' | 'delete'; keyName: string; keyDb: string; keyType: string }
+    | {
+        kind: 'editor' | 'ttl' | 'ttlView' | 'delete';
+        keyName: string;
+        keyDb: string;
+        keyType: string;
+      }
     | { kind: 'slowlog' | 'bigkeys' }
     | null
   >(null);
@@ -1414,12 +1419,25 @@ export function DbSessionView({
                 if (isRedisKey && !meta.readonly) {
                   const keyDb = node.key.split('.')[0] ?? '';
                   const keyType = node.detail ?? 'string';
+                  // 菜单顺序按使用频率：删除（破坏性放首位，视觉上远离常用项）
+                  // → 查看 TTL（只读）→ 设置 TTL → 设置值（仅 string）
                   items.push(
                     {
-                      key: 'editKey',
-                      label: t('db.redisEditKey'),
+                      key: 'deleteKey',
+                      label: t('db.redisDeleteKeyTitle'),
                       action: () =>
-                        setRedisDialog({ kind: 'editor', keyName: node.name, keyDb, keyType }),
+                        setRedisDialog({ kind: 'delete', keyName: node.name, keyDb, keyType }),
+                    },
+                    {
+                      key: 'ttlView',
+                      label: t('db.redisTtlViewTitle'),
+                      action: () =>
+                        setRedisDialog({
+                          kind: 'ttlView',
+                          keyName: node.name,
+                          keyDb,
+                          keyType,
+                        }),
                     },
                     {
                       key: 'ttl',
@@ -1427,13 +1445,22 @@ export function DbSessionView({
                       action: () =>
                         setRedisDialog({ kind: 'ttl', keyName: node.name, keyDb, keyType }),
                     },
-                    {
-                      key: 'deleteKey',
-                      label: t('db.redisDeleteKeyTitle'),
-                      action: () =>
-                        setRedisDialog({ kind: 'delete', keyName: node.name, keyDb, keyType }),
-                    },
                   );
+                  // string 的值可直接覆盖写（SET）：其他类型是多元素结构，
+                  // 编辑走「编辑值」对话框（逐元素增删改）
+                  if (keyType === 'string') {
+                    items.push({
+                      key: 'setValue',
+                      label: t('db.redisSetValue'),
+                      action: () =>
+                        setRedisDialog({
+                          kind: 'editor',
+                          keyName: node.name,
+                          keyDb,
+                          keyType,
+                        }),
+                    });
+                  }
                 }
                 if (node.kind === 'table' && meta.engine !== 'redis') {
                   items.push({
@@ -1505,6 +1532,17 @@ export function DbSessionView({
           currentDb={meta.database}
           onClose={() => setRedisDialog(null)}
           onChanged={() => void catalogLoad(meta.sessionId, meta.database)}
+        />
+      ) : null}
+      {meta && redisDialog?.kind === 'ttlView' ? (
+        <RedisTtlModal
+          sessionId={meta.sessionId}
+          keyName={redisDialog.keyName}
+          keyDb={redisDialog.keyDb || undefined}
+          currentDb={meta.database}
+          mode="view"
+          onClose={() => setRedisDialog(null)}
+          onChanged={() => undefined}
         />
       ) : null}
       {meta && redisDialog?.kind === 'delete' ? (

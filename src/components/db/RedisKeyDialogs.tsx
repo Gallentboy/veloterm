@@ -166,7 +166,7 @@ export function RedisKeyEditorModal({
 
   return (
     <Modal
-      title={`${t('db.redisEditKey')} · ${keyName}`}
+      title={`${t(data?.kind === 'string' ? 'db.redisSetValue' : 'db.redisEditKey')} · ${keyName}`}
       onClose={onClose}
       className="w-[520px]"
       footer={
@@ -406,6 +406,7 @@ export function RedisTtlModal({
   keyName,
   keyDb,
   currentDb,
+  mode = 'set',
   onClose,
   onChanged,
 }: {
@@ -414,11 +415,14 @@ export function RedisTtlModal({
   keyDb: string | undefined;
   /** 会话当前逻辑库（跨库时命令用 SELECT 夹心包裹） */
   currentDb: string | null;
+  /** view = 只读查看当前 TTL（无输入框与写入按钮）；set = 查看 + 设置 */
+  mode?: 'view' | 'set';
   onClose: () => void;
   /** 任一修改成功后回调（父层刷新对象树） */
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
+  const isView = mode === 'view';
   const [ttl, setTtl] = useState<number | null>(null);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -462,33 +466,39 @@ export function RedisTtlModal({
 
   return (
     <Modal
-      title={`${t('db.redisTtlTitle')} · ${keyName}`}
+      title={`${t(isView ? 'db.redisTtlViewTitle' : 'db.redisTtlTitle')} · ${keyName}`}
       onClose={onClose}
       className="w-[420px]"
       footer={
-        <>
-          <Button
-            variant="ghost"
-            size="lg"
-            className="h-8 px-3 text-ui-base"
-            disabled={busy || ttl === -1 || ttl === -2}
-            onClick={() => void apply(`PERSIST ${quoted}`)}
-          >
-            {t('db.redisRemoveTtl')}
-          </Button>
-          <div className="flex-1" />
+        isView ? (
           <Button variant="ghost" size="lg" className="h-8 px-3 text-ui-base" onClick={onClose}>
             {t('common.close', '关闭')}
           </Button>
-          <Button
-            size="lg"
-            className="h-8 px-4 text-ui-base"
-            disabled={busy || !inputValid}
-            onClick={() => void apply(`EXPIRE ${quoted} ${seconds}`)}
-          >
-            {t('db.redisApplyTtl')}
-          </Button>
-        </>
+        ) : (
+          <>
+            <Button
+              variant="ghost"
+              size="lg"
+              className="h-8 px-3 text-ui-base"
+              disabled={busy || ttl === -1 || ttl === -2}
+              onClick={() => void apply(`PERSIST ${quoted}`)}
+            >
+              {t('db.redisRemoveTtl')}
+            </Button>
+            <div className="flex-1" />
+            <Button variant="ghost" size="lg" className="h-8 px-3 text-ui-base" onClick={onClose}>
+              {t('common.close', '关闭')}
+            </Button>
+            <Button
+              size="lg"
+              className="h-8 px-4 text-ui-base"
+              disabled={busy || !inputValid}
+              onClick={() => void apply(`EXPIRE ${quoted} ${seconds}`)}
+            >
+              {t('db.redisApplyTtl')}
+            </Button>
+          </>
+        )
       }
     >
       <div className="flex flex-col gap-3">
@@ -501,18 +511,22 @@ export function RedisTtlModal({
             <Spinner className="size-3" />
           ) : ttl === -1 ? (
             <span className="font-mono text-foreground">{t('db.redisTtlForever')}</span>
+          ) : ttl === -2 ? (
+            <span className="font-mono text-foreground">{t('db.redisKeyGone')}</span>
           ) : (
             <span className="font-mono text-foreground">{ttl} s</span>
           )}
         </div>
-        <FormField label={t('db.redisTtlSecondsLabel')} hint={t('db.redisTtlHint')}>
-          <TextInput
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="3600"
-            className="font-mono"
-          />
-        </FormField>
+        {isView ? null : (
+          <FormField label={t('db.redisTtlSecondsLabel')} hint={t('db.redisTtlHint')}>
+            <TextInput
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="3600"
+              className="font-mono"
+            />
+          </FormField>
+        )}
       </div>
     </Modal>
   );
