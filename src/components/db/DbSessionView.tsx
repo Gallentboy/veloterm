@@ -1104,7 +1104,18 @@ export function DbSessionView({
               void toggleBranch(key);
             }
           }}
-          onDoubleClick={() => handleNodeClick(branch.node)}
+          onDoubleClick={() => {
+            // Redis 成员节点（key 展开后的 field/member/元素）双击即复制值：
+            // 它没有对象动作（handleNodeClick 无此分支），而值正是用户想要的
+            if (meta?.engine === 'redis' && branch.node.kind === 'column') {
+              const value = (branch.node.detail ?? '').split(' · ').slice(1).join(' · ');
+              if (value) {
+                void navigator.clipboard.writeText(value).catch(() => undefined);
+              }
+              return;
+            }
+            handleNodeClick(branch.node);
+          }}
           onContextMenu={(e) => {
             // 树节点一律吃掉原生右键菜单：WebView 自带菜单（Windows 上会出
             //「刷新/另存为/检查」等浏览器项）与工作台风格割裂。菜单项按
@@ -1346,6 +1357,13 @@ export function DbSessionView({
                 // 索引对 Redis 无意义，只对 SQL 表保留
                 const node = contextMenu.node;
                 const isRedisKey = meta.engine === 'redis' && node.kind === 'table';
+                // Redis 成员节点（key 展开后的 field/member/元素）：detail 形如
+                // "field · value"（后端拼的），值是用户最想拿的东西——单独给
+                // 「复制值」，只复制 role 分隔符之后的部分
+                const isRedisMember = meta.engine === 'redis' && node.kind === 'column';
+                const redisMemberValue = isRedisMember
+                  ? (node.detail ?? '').split(' · ').slice(1).join(' · ')
+                  : '';
                 const isDataNode =
                   node.kind === 'table' || node.kind === 'view' || node.kind === 'mview';
                 // 容器/列节点没有对象动作（库=刷新树、分组=展开、列=纯信息），
@@ -1405,6 +1423,19 @@ export function DbSessionView({
                     key: 'createIndex',
                     label: t('db.createIndex'),
                     action: () => insertCreateIndexTemplate(node),
+                  });
+                }
+                // Redis 成员节点：值是行尾截断的灰色小字，右键单独给「复制值」
+                // （成员名走下面的「复制名称」，两者语义不同）
+                if (isRedisMember && redisMemberValue) {
+                  items.push({
+                    key: 'copyValue',
+                    label: t('db.copyValue'),
+                    action: () => {
+                      void navigator.clipboard
+                        .writeText(redisMemberValue)
+                        .catch(() => undefined);
+                    },
                   });
                 }
                 items.push({
