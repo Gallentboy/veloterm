@@ -1829,47 +1829,7 @@ export function DbSessionView({
 
         {/* 编辑器 + 结果 */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* SQL 编辑器区（高度可拖拽，见下方分割条） */}
-          <div
-            className="shrink-0 border-b border-border/50"
-            style={{ height: editorHeight }}
-          >
-            <SqlEditor
-              ref={sqlEditorRef}
-              value={sql}
-              onChange={setSql}
-              onRun={() => void runQuery()}
-              onRunSelection={() => void runQuery(selectionRef.current)}
-              onSelectionChange={handleSelectionChange}
-              onExplain={explainSelection}
-              redisMode={meta.engine === 'redis'}
-              completionsSessionId={meta.engine === 'redis' ? null : meta.sessionId}
-              formatEngine={meta.engine === 'redis' ? null : meta.engine}
-            />
-          </div>
-
-          {/* 编辑器/结果 分割条：与 ZK 树栏拖拽条同款——4px 热区 + hover 显示细胶囊 */}
-          <div
-            role="separator"
-            aria-orientation="horizontal"
-            aria-label={t('db.sqlEditorResize')}
-            aria-valuemin={SQL_EDITOR_MIN_HEIGHT}
-            aria-valuemax={SQL_EDITOR_MAX_HEIGHT}
-            aria-valuenow={editorHeight}
-            tabIndex={0}
-            onPointerDown={handleEditorResizePointerDown}
-            onPointerMove={handleEditorResizePointerMove}
-            onPointerUp={finishEditorResize}
-            onPointerCancel={finishEditorResize}
-            className={cn(
-              'group/db-handle relative z-10 flex h-1 w-full shrink-0 cursor-ns-resize touch-none items-center justify-center bg-transparent outline-none focus:outline-none focus-visible:ring-0',
-              "after:pointer-events-none after:absolute after:inset-x-0 after:h-0.5 after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-['']",
-              'hover:after:opacity-100 focus-visible:after:opacity-100',
-              isEditorResizing && 'after:opacity-100',
-            )}
-          />
-
-          {/* 执行工具栏 */}
+          {/* 执行工具栏（编辑器上方）：全部执行/执行选中/格式化/行数上限 */}
           <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-border/50 bg-surface/40 px-2 select-none">
             <button
               type="button"
@@ -1955,6 +1915,46 @@ export function DbSessionView({
               </span>
             ) : null}
           </div>
+
+          {/* SQL 编辑器区（高度可拖拽，见下方分割条） */}
+          <div
+            className="shrink-0 border-b border-border/50"
+            style={{ height: editorHeight }}
+          >
+            <SqlEditor
+              ref={sqlEditorRef}
+              value={sql}
+              onChange={setSql}
+              onRun={() => void runQuery()}
+              onRunSelection={() => void runQuery(selectionRef.current)}
+              onSelectionChange={handleSelectionChange}
+              onExplain={explainSelection}
+              redisMode={meta.engine === 'redis'}
+              completionsSessionId={meta.engine === 'redis' ? null : meta.sessionId}
+              formatEngine={meta.engine === 'redis' ? null : meta.engine}
+            />
+          </div>
+
+          {/* 编辑器/结果 分割条：与 ZK 树栏拖拽条同款——4px 热区 + hover 显示细胶囊 */}
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label={t('db.sqlEditorResize')}
+            aria-valuemin={SQL_EDITOR_MIN_HEIGHT}
+            aria-valuemax={SQL_EDITOR_MAX_HEIGHT}
+            aria-valuenow={editorHeight}
+            tabIndex={0}
+            onPointerDown={handleEditorResizePointerDown}
+            onPointerMove={handleEditorResizePointerMove}
+            onPointerUp={finishEditorResize}
+            onPointerCancel={finishEditorResize}
+            className={cn(
+              'group/db-handle relative z-10 flex h-1 w-full shrink-0 cursor-ns-resize touch-none items-center justify-center bg-transparent outline-none focus:outline-none focus-visible:ring-0',
+              "after:pointer-events-none after:absolute after:inset-x-0 after:h-0.5 after:rounded-full after:bg-foreground-subtlest/50 after:opacity-0 after:transition-opacity after:content-['']",
+              'hover:after:opacity-100 focus-visible:after:opacity-100',
+              isEditorResizing && 'after:opacity-100',
+            )}
+          />
 
           {/* 结果面板：对象页（查看定义/表详情）与多结果集 tab 同排；执行计划独立占满 */}
           <div className="flex min-h-0 flex-1 flex-col">
