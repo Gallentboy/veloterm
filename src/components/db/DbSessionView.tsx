@@ -1156,30 +1156,28 @@ export function DbSessionView({
   };
 
   if (connecting) {
-    // 连接加载态：居中卡片（图标 + 文案 + 进度条）。图标按视区比例缩放
-    // （clamp 到 56~112px，视觉约占主视区高度的 1/3 组合块），比原先
-    // 20px 小转圈更符合「正在建立连接」的量级预期
+    // 连接加载态：纯居中组合（无卡片容器）——大号数据库轮廓 + 旋转指示
+    // + 文案 + 不确定进度条。图标按视区比例缩放（clamp 56~112px），
+    // 整体组合块视觉约占主视区高度的 1/3
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-4 select-none">
-        <div className="flex flex-col items-center gap-4 rounded-xl border border-border/25 bg-surface/10 px-10 py-8">
-          <div className="relative flex items-center justify-center">
-            <Database
-              className="text-foreground-subtlest/40"
-              style={{ width: 'clamp(56px, 14vmin, 112px)', height: 'clamp(56px, 14vmin, 112px)' }}
-              strokeWidth={1}
-            />
-            <Loader2
-              className="absolute animate-spin text-primary/70"
-              style={{ width: 'clamp(28px, 7vmin, 56px)', height: 'clamp(28px, 7vmin, 56px)' }}
-              strokeWidth={2}
-            />
-          </div>
-          <span className="text-ui-base font-medium text-foreground-subtle">
-            {t('db.connecting')}
-          </span>
-          <div className="h-0.5 w-40 overflow-hidden rounded-full bg-border/60">
-            <div className="h-full w-1/3 animate-[db-connect-slide_1.4s_ease-in-out_infinite] rounded-full bg-primary/70" />
-          </div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-5 select-none">
+        <div className="relative flex items-center justify-center">
+          <Database
+            className="text-foreground-subtlest/40"
+            style={{ width: 'clamp(56px, 14vmin, 112px)', height: 'clamp(56px, 14vmin, 112px)' }}
+            strokeWidth={1}
+          />
+          <Loader2
+            className="absolute animate-spin text-primary/70"
+            style={{ width: 'clamp(28px, 7vmin, 56px)', height: 'clamp(28px, 7vmin, 56px)' }}
+            strokeWidth={2}
+          />
+        </div>
+        <span className="text-ui-base font-medium text-foreground-subtle">
+          {t('db.connecting')}
+        </span>
+        <div className="h-0.5 w-40 overflow-hidden rounded-full bg-border/60">
+          <div className="h-full w-1/3 animate-[db-connect-slide_1.4s_ease-in-out_infinite] rounded-full bg-primary/70" />
         </div>
       </div>
     );
