@@ -4,7 +4,6 @@ import {
   ChevronRight,
   Database,
   FilePlus,
-  Loader2,
   Network,
   RefreshCw,
   Trash2,
@@ -17,6 +16,7 @@ import { SelectMenu } from '@/components/ui/SelectMenu';
 import { FormField, PasswordInput, TextArea, TextInput } from '@/components/hosts/formFields';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Tooltip } from '@/components/ui/tooltip';
+import { Spinner } from '@/components/ui/spinner';
 import {
   ACL_ALL,
   ACL_BITS,
@@ -1126,7 +1126,7 @@ function ZkSessionView({
             <div className="flex items-center justify-between px-3 py-1.5">
               <div className="flex min-w-0 items-center gap-1.5">
                 <span className="text-ui-sm text-foreground-subtle select-none">{t('zk.treeTitle')}</span>
-                {searching ? <Loader2 className="size-3 animate-spin text-foreground-subtle" /> : null}
+                {searching ? <Spinner className="size-3 text-foreground-subtle" /> : null}
               </div>
               <div className="flex shrink-0 items-center gap-0.5">
                 <ControlHintTooltip title={t('zk.refreshTree')} side="bottom">
@@ -1164,7 +1164,7 @@ function ZkSessionView({
                 />
                 <span className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center">
                   {searching ? (
-                    <Loader2 className="size-3 animate-spin text-foreground-subtle" />
+                    <Spinner className="size-3 text-foreground-subtle" />
                   ) : searchQuery ? (
                     <button
                       type="button"

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Loader2, Maximize2, Minus, Plus, RotateCcw } from 'lucide-react';
+import { Maximize2, Minus, Plus, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { prepareImagePreview } from '@/services/imagePreviewService';
 
@@ -183,7 +184,7 @@ export function ImagePreview({ imagePath, onConvertedFile, className }: ImagePre
       >
         {loading && !error ? (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background-alt/70">
-            <Loader2 className="size-6 animate-spin text-foreground-subtle" />
+            <Spinner className="size-6 text-foreground-subtle" />
             <span className="text-ui-xs text-foreground-subtlest select-none">
               {t('image.loading')}
             </span>

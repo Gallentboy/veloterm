@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { ExcelPreview } from '@/components/files/ExcelPreview';
 import { downloadRemoteFile, type TransferHandle, type TransferProgress } from '@/services/sftpService';
+import { Spinner } from '@/components/ui/spinner';
 
 export interface ExcelRemotePreviewProps {
   /** SFTP 会话 id（下载远端文件用） */
@@ -119,7 +119,7 @@ export function ExcelRemotePreview({
     const percent = progress?.percent ?? 0;
     return (
       <div className={cn('flex min-h-0 flex-1 flex-col items-center justify-center gap-3', className)}>
-        <Loader2 className="size-5 animate-spin text-foreground-subtle" />
+        <Spinner className="size-5 text-foreground-subtle" />
         <span className="text-ui-sm text-foreground-subtle">
           {t('excel.downloading', '正在下载表格... {{percent}}% ({{size}})', {
             percent: percent.toFixed(0),

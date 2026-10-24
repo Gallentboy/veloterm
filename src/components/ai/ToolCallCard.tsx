@@ -1,6 +1,7 @@
-import { ChevronRight, Loader2, Play } from 'lucide-react';
+import { ChevronRight, Play } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
+import { Spinner } from '@/components/ui/spinner';
 
 export interface ToolCallCardData {
   name: string;
@@ -32,7 +33,7 @@ export function ToolCallCard({ toolCall }: { toolCall: ToolCallCardData }) {
     >
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-ui-xs text-foreground-subtle">
         {toolCall.running ? (
-          <Loader2 className="size-3 animate-spin text-primary" />
+          <Spinner className="size-3 text-primary" />
         ) : (
           <Play className="size-3 text-success" />
         )}

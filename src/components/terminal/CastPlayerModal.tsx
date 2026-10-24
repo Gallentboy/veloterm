@@ -12,12 +12,13 @@
  * mergeTerminalTheme 与主终端一致。
  */
 
-import { Copy, FileDown, FileText, Film, Loader2, Pause, Play, RotateCcw, Video } from 'lucide-react';
+import { Copy, FileDown, FileText, Film, Pause, Play, RotateCcw, Video } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { useTranslation } from 'react-i18next';
 
 import { Modal } from '@/components/ui/modal';
+import { Spinner } from '@/components/ui/spinner';
 import { writeClipboardText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
 import { exportCastFile, exportGifFile, exportLogFile, exportMp4File } from '@/terminal/castExport';
@@ -144,7 +145,7 @@ export function CastPlayerModal({ recording, onClose }: CastPlayerModalProps) {
         {gifBusy || mp4Busy ? (
           <div className="absolute inset-0 z-40 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
             <div className="flex flex-col items-center gap-3">
-              <Loader2 className="size-8 animate-spin text-primary" strokeWidth={2} />
+              <Spinner className="size-8 text-primary" strokeWidth={2} />
               <span className="font-mono text-ui-sm text-foreground select-none">
                 {mp4Busy
                   ? mp4Phase === 'mp4'
@@ -264,7 +265,7 @@ export function CastPlayerModal({ recording, onClose }: CastPlayerModalProps) {
               }}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-ui-xs text-foreground transition-colors hover:bg-hover disabled:opacity-50"
             >
-              {gifBusy ? <Loader2 className="size-3.5 animate-spin" /> : <Film className="size-3.5" />}
+              {gifBusy ? <Spinner className="size-3.5" /> : <Film className="size-3.5" />}
               {t('terminal.recording.player.exportGif')}
             </button>
             <button
@@ -284,7 +285,7 @@ export function CastPlayerModal({ recording, onClose }: CastPlayerModalProps) {
               }}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-ui-xs text-foreground transition-colors hover:bg-hover disabled:opacity-50"
             >
-              {mp4Busy ? <Loader2 className="size-3.5 animate-spin" /> : <Video className="size-3.5" />}
+              {mp4Busy ? <Spinner className="size-3.5" /> : <Video className="size-3.5" />}
               {t('terminal.recording.player.exportMp4')}
             </button>
           </div>

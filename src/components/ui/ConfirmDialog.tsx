@@ -1,7 +1,8 @@
-import { Loader2, Trash2 } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import { useEffect, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 
 export interface ConfirmDialogProps {
   /** 打开状态；null/关闭时组件不渲染 */
@@ -90,7 +91,7 @@ export function ConfirmDialog({
             className="h-8 gap-1.5 px-3 text-ui-base"
           >
             {busy ? (
-              <Loader2 className="size-4 animate-spin" />
+              <Spinner className="size-4" />
             ) : (
               <Trash2 className="size-4" />
             )}

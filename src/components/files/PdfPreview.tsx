@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { renderPdfPage } from '@/services/pdfPreviewService';
 
@@ -239,7 +240,7 @@ export function PdfPreview({ pdfPath, onRenderedFile, className }: PdfPreviewPro
             尺寸为 0，绝对定位的 spinner 会不可见）。spinner + 文案居中。 */}
         {loading && !error ? (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background-alt/70">
-            <Loader2 className="size-6 animate-spin text-foreground-subtle" />
+            <Spinner className="size-6 text-foreground-subtle" />
             <span className="text-ui-xs text-foreground-subtlest select-none">
               {t('pdf.rendering')}
             </span>

@@ -1,7 +1,8 @@
-import { Loader2, RefreshCw, TriangleAlert, X } from 'lucide-react';
+import { RefreshCw, TriangleAlert, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import type { EditorFileDescriptor, EditorFileStatus } from '@/editor/types';
 
@@ -106,7 +107,7 @@ function EditorTabStatusMark({ status, label }: { status: EditorFileStatus; labe
         </span>
       );
     case 'saving':
-      return <Loader2 className="size-3.5 shrink-0 animate-spin text-foreground-subtle" aria-label={label} />;
+      return <Spinner className="size-3.5 shrink-0 text-foreground-subtle" aria-label={label} />;
     case 'offline':
       return <RefreshCw className="size-3.5 shrink-0 text-foreground-subtlest" aria-label={label} />;
     case 'conflict':

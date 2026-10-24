@@ -18,7 +18,6 @@ import {
   Globe,
   HardDrive,
   Link,
-  Loader2,
   Package,
   Play,
   Puzzle,
@@ -33,6 +32,7 @@ import {
 } from 'lucide-react';
 
 import { DataTable } from '@/components/ui/DataTable';
+import { Spinner } from '@/components/ui/spinner';
 import { ReadOnlySqlView } from '@/components/db/ReadOnlySqlView';
 import { nodeIcon } from '@/components/db/DbSessionView';
 import {
@@ -192,7 +192,7 @@ export function DbObjectTab({
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
-        <Loader2 className="size-4 animate-spin" />
+        <Spinner className="size-4" />
         {t('db.loadingDefinition')}
       </div>
     );

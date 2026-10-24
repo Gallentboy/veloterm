@@ -3,7 +3,6 @@ import {
   Check,
   Copy,
   History,
-  Loader2,
   Radio,
   Search,
   Trash2,
@@ -13,6 +12,7 @@ import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef,
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { cn } from '@/lib/utils';
+import { Spinner } from '@/components/ui/spinner';
 
 export interface LogViewerProps {
   initialContent?: string;
@@ -444,7 +444,7 @@ export const LogViewer = memo(function LogViewer({
               className="flex items-center gap-1.5 rounded-full border border-border/70 bg-surface/70 px-3 py-1 text-[11px] text-foreground-subtle transition-colors hover:bg-hover hover:text-foreground disabled:opacity-40"
             >
               {loadingEarlier ? (
-                <Loader2 className="size-3 animate-spin text-foreground-subtle" />
+                <Spinner className="size-3 text-foreground-subtle" />
               ) : (
                 <History className="size-3" />
               )}
@@ -460,7 +460,7 @@ export const LogViewer = memo(function LogViewer({
         {/* 首次加载状态 */}
         {loading && lines.length === 0 ? (
           <div className="flex h-32 items-center justify-center gap-2 text-foreground-subtle">
-            <Loader2 className="size-4 animate-spin" />
+            <Spinner className="size-4" />
             <span>Tail 读取中...</span>
           </div>
         ) : null}

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Pencil, PlugZap, Server, Trash2 } from 'lucide-react';
+import { Pencil, PlugZap, Server, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
+import { Spinner } from '@/components/ui/spinner';
 import { FormField, PasswordInput, TextInput } from '@/components/hosts/formFields';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import {
@@ -145,7 +146,7 @@ export function RelaysScreen() {
                 if (state.kind === 'testing')
                   return (
                     <span className="flex shrink-0 items-center gap-1 text-ui-xs text-foreground-subtle select-none">
-                      <Loader2 className="size-3 animate-spin" />
+                      <Spinner className="size-3" />
                       {t('relays.testing')}
                     </span>
                   );
@@ -309,7 +310,7 @@ function RelayFormDialog({
       footer={
         <>
           <Button variant="outline" size="lg" className="h-8 px-3 text-ui-base" disabled={testing} onClick={() => void handleTest()}>
-            {testing ? <Loader2 className="size-3.5 animate-spin" /> : <PlugZap className="size-3.5" />}
+            {testing ? <Spinner className="size-3.5" /> : <PlugZap className="size-3.5" />}
             {t('relays.test')}
           </Button>
           <div className="flex-1" />

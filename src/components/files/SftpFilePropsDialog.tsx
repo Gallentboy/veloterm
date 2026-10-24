@@ -1,7 +1,8 @@
-import { AlertCircle, ChevronDown, File, Folder, Link2, Loader2 } from 'lucide-react';
+import { AlertCircle, ChevronDown, File, Folder, Link2 } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import {
   chmodRemote,
@@ -522,7 +523,7 @@ export function SftpFilePropsDialog(props: SftpFilePropsDialogProps) {
               disabled={!dirty || applying || editingDisabled}
               onClick={() => void apply()}
             >
-              {applying ? <Loader2 className="size-3 animate-spin" /> : null}
+              {applying ? <Spinner className="size-3" /> : null}
               <span>{t('files.propsApply')}</span>
             </Button>
           </div>

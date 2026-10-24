@@ -3,7 +3,6 @@ import {
   ArrowLeftRight,
   Columns2,
   FileDiff,
-  Loader2,
   Rows2,
   X,
 } from 'lucide-react';
@@ -11,6 +10,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as monaco from 'monaco-editor';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { loadRemoteContent } from '@/editor/contentLoader';
 import { resolveLanguageIdWithContent } from '@/editor/languageMap';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
@@ -283,7 +283,7 @@ export const SftpFileDiffModal = memo(function SftpFileDiffModal({
           {loading ? (
             <div className="absolute inset-0 flex items-center justify-center bg-popover/80 backdrop-blur-xs">
               <div className="flex items-center gap-2 text-ui-sm text-foreground-subtle">
-                <Loader2 className="size-4 animate-spin" />
+                <Spinner className="size-4" />
                 <span>加载文件对比数据中...</span>
               </div>
             </div>

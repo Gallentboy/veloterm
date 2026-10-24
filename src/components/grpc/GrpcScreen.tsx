@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, ChevronRight, Network, Pencil, Play, Plus, SearchCheck, Settings2, Table2, Trash2, TriangleAlert, X } from 'lucide-react';
+import { ChevronRight, Network, Pencil, Play, Plus, SearchCheck, Settings2, Table2, Trash2, TriangleAlert, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { SelectMenu } from '@/components/ui/SelectMenu';
+import { Spinner } from '@/components/ui/spinner';
 import { FormField, PasswordInput, TextArea, TextInput } from '@/components/hosts/formFields';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { writeClipboardText } from '@/lib/clipboard';
@@ -414,7 +415,7 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
           disabled={calling}
           onClick={() => void handleCall()}
         >
-          {calling ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+          {calling ? <Spinner className="size-3.5" /> : <Play className="size-3.5" />}
           {calling ? t('grpc.calling') : t('grpc.call')}
         </Button>
         <Button variant="outline" size="lg" className="h-7 px-2.5 text-ui-xs" onClick={handleClear}>
@@ -444,7 +445,7 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
                     disabled={listing || !target.trim()}
                     onClick={() => void handleListServices()}
                   >
-                    {listing ? <Loader2 className="size-3.5 animate-spin" /> : <SearchCheck className="size-3.5" />}
+                    {listing ? <Spinner className="size-3.5" /> : <SearchCheck className="size-3.5" />}
                   </Button>
                 </ControlHintTooltip>
               </div>
@@ -476,7 +477,7 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
                     disabled={listingMethods || !service.trim() || !target.trim()}
                     onClick={() => void handleListMethods()}
                   >
-                    {listingMethods ? <Loader2 className="size-3.5 animate-spin" /> : <SearchCheck className="size-3.5" />}
+                    {listingMethods ? <Spinner className="size-3.5" /> : <SearchCheck className="size-3.5" />}
                   </Button>
                 </ControlHintTooltip>
               </div>
@@ -498,7 +499,7 @@ function GrpcSessionView({ initialSeed }: { initialSeed?: GrpcCallSeed | null })
                     disabled={fetchingSchema || !method.trim() || !service.trim() || !target.trim()}
                     onClick={() => void handleFetchSchema()}
                   >
-                    {fetchingSchema ? <Loader2 className="size-3.5 animate-spin" /> : <Table2 className="size-3.5" />}
+                    {fetchingSchema ? <Spinner className="size-3.5" /> : <Table2 className="size-3.5" />}
                   </Button>
                 </ControlHintTooltip>
               </div>

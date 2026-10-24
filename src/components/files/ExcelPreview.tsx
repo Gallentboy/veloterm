@@ -1,9 +1,10 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, Copy, FileSpreadsheet, Loader2, Search, X, AlertCircle } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, Copy, FileSpreadsheet, Search, X, AlertCircle } from 'lucide-react';
 import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import { CellTooltipPortal, useCellTooltip } from '@/components/files/CellTooltip';
 import { cn } from '@/lib/utils';
+import { Spinner } from '@/components/ui/spinner';
 
 export interface ExcelWorkbookInfo {
   sheetNames: string[];
@@ -272,7 +273,7 @@ export const ExcelPreview = memo(function ExcelPreview({
     if (workbookLoading) {
     return (
       <div className={cn('flex h-full w-full flex-col items-center justify-center gap-3 bg-popover', className)}>
-        <Loader2 className="size-5 animate-spin text-foreground-subtle" />
+        <Spinner className="size-5 text-foreground-subtle" />
         <span className="text-ui-sm text-foreground-subtle">
           {t('files.loadingWorkbook', '正在解析工作簿...')}
         </span>
@@ -369,7 +370,7 @@ export const ExcelPreview = memo(function ExcelPreview({
       >
         {sheetLoading ? (
           <div className="flex h-full min-h-[200px] w-full flex-col items-center justify-center gap-2">
-            <Loader2 className="size-5 animate-spin text-foreground-subtle" />
+            <Spinner className="size-5 text-foreground-subtle" />
             <span className="text-ui-xs text-foreground-subtle">
               {t('excel.loadingSheet', '正在读取工作表数据...')}
             </span>

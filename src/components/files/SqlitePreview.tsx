@@ -6,7 +6,6 @@ import {
   Check,
   Copy,
   Database,
-  Loader2,
   Play,
   Search,
   Table2,
@@ -17,6 +16,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import { CellTooltipPortal, useCellTooltip } from '@/components/files/CellTooltip';
 import { cn } from '@/lib/utils';
+import { Spinner } from '@/components/ui/spinner';
 
 export interface SqliteTableSummary {
   name: string;
@@ -216,7 +216,7 @@ export const SqlitePreview = memo(function SqlitePreview({
   if (metaLoading) {
     return (
       <div className={cn('flex h-full w-full items-center justify-center bg-popover text-ui-sm text-foreground-subtle', className)}>
-        <Loader2 className="size-5 animate-spin mr-2" />
+        <Spinner className="size-5 mr-2" />
         <span>正在读取 SQLite 数据库结构...</span>
       </div>
     );
@@ -261,7 +261,7 @@ export const SqlitePreview = memo(function SqlitePreview({
               className="absolute right-1 flex items-center gap-1 rounded bg-surface px-2 py-0.5 text-ui-xs font-sans font-medium text-foreground hover:bg-hover disabled:opacity-40"
             >
               {queryLoading ? (
-                <Loader2 className="size-3 animate-spin text-foreground-subtle" />
+                <Spinner className="size-3 text-foreground-subtle" />
               ) : (
                 <Play className="size-3 text-terminal-green fill-terminal-green" />
               )}
