@@ -1161,7 +1161,7 @@ export function DbSessionView({
     // 20px 小转圈更符合「正在建立连接」的量级预期
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-4 select-none">
-        <div className="flex flex-col items-center gap-4 rounded-xl border border-border/50 bg-surface/30 px-10 py-8 shadow-sm">
+        <div className="flex flex-col items-center gap-4 rounded-xl border border-border/25 bg-surface/10 px-10 py-8">
           <div className="relative flex items-center justify-center">
             <Database
               className="text-foreground-subtlest/40"
