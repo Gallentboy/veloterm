@@ -110,6 +110,58 @@ impl ObInterval {
     }
 }
 
+/// OB 在**文本协议**里对 INTERVAL 回传的其实是结构化二进制（真机 hex
+/// 实证）：
+/// - YEAR TO MONTH（7B）：`[符号1B][years LE u32][months u8][年精度 u8]`
+///   例 `00 01 00 00 00 02 03` = +001-02（YEAR(3)）
+/// - DAY TO SECOND（14B）：`[符号1B][days LE u32][时][分][秒]
+///   [小数秒 LE u32 纳秒][日精度 u8][秒精度 u8]`
+///   例 `00 02 00 00 00 03 04 05 70 17 00 00 03 06` = +002 03:04:05.000006
+///   （0x1770=6000ns=6µs，尾 03 06 = DAY(3) SECOND(6)）
+/// 符号字节：0 = 正；非 0 按负处理（负值真机待验证，断言失败会常 hex）
+pub fn parse_ob_interval_binary(bytes: &[u8]) -> Option<ObInterval> {
+    if bytes.len() < 6 {
+        return None;
+    }
+    let le32 = |o: usize| -> Option<u32> {
+        let b = bytes.get(o..o + 4)?;
+        Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let negative = bytes.first().is_some_and(|b| *b != 0);
+    let mut out = ObInterval::zero(negative);
+    if bytes.len() >= 7 && bytes.len() <= 8 {
+        // YEAR TO MONTH：尾字节是年精度元数据，忽略
+        out.years = le32(1)? as i64;
+        out.months = *bytes.get(5)? as i64;
+        Some(out)
+    } else if bytes.len() >= 12 {
+        // DAY TO SECOND：尾字节是日/秒精度元数据，忽略；小数秒纳秒→微秒
+        out.days = le32(1)? as i64;
+        out.hours = *bytes.get(5)? as i64;
+        out.minutes = *bytes.get(6)? as i64;
+        out.seconds = *bytes.get(7)? as i64;
+        out.micros = (le32(8)? as i64) / 1000;
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// INTERVAL 的 wire 解析总入口：字节首字节非 ASCII 符号/数字即二进制形态
+///（真机实证 OB 文本协议发二进制），否则按文本形态解析（lossy）。
+/// JDBC 的 ColumnType 对 204/205 映射 String，但实测字节是结构化二进制
+/// ——本解析器以真机字节为准。
+pub fn parse_ob_interval_wire(bytes: &[u8]) -> Option<ObInterval> {
+    let looks_binary = !bytes
+        .first()
+        .is_some_and(|b| b.is_ascii_digit() || *b == b'+' || *b == b'-');
+    if looks_binary {
+        parse_ob_interval_binary(bytes)
+    } else {
+        parse_ob_interval(&String::from_utf8_lossy(bytes))
+    }
+}
+
 /// 解析 OB 文本协议回传的 INTERVAL 值（真机回传形态实证后锁定）：
 /// - YEAR TO MONTH：`[-]YY[-MM]`，如 `+001-02`、`-03-04`
 /// - DAY TO SECOND：`[-]DD HH:MM:SS[.FFFFFF]`，如 `+002 03:04:05.000006`
@@ -257,5 +309,35 @@ mod tests {
         assert!(parse_ob_interval("abc").is_none());
         assert!(parse_ob_interval("1-2-3-4").is_none());
         assert!(parse_ob_interval("+1 02:03").is_none());
+    }
+
+    /// INTERVAL 二进制 wire 形态（真机 hex fixture 锁定）：
+    /// `00 01 00 00 00 02 03` = +001-02（YEAR(3)）、
+    /// `00 02 00 00 00 03 04 05 70 17 00 00 03 06` = +002 03:04:05.000006
+    #[test]
+    fn parse_interval_binary_wire() {
+        let ym = parse_ob_interval_binary(&[0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x03]).unwrap();
+        assert_eq!((ym.negative, ym.years, ym.months, ym.days), (false, 1, 2, 0));
+        let ds = parse_ob_interval_binary(&[
+            0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x04, 0x05, 0x70, 0x17, 0x00, 0x00, 0x03, 0x06,
+        ])
+        .unwrap();
+        assert_eq!(
+            (ds.negative, ds.days, ds.hours, ds.minutes, ds.seconds, ds.micros),
+            (false, 2, 3, 4, 5, 6)
+        );
+        // 负值（符号字节非 0）与 wire 总入口的字节/文本分派
+        let neg = parse_ob_interval_binary(&[0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x03]).unwrap();
+        assert!(neg.negative && neg.years == 1 && neg.months == 2);
+        assert_eq!(
+            parse_ob_interval_wire(&[0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x03])
+                .map(|v| (v.years, v.months)),
+            Some((1, 2))
+        );
+        assert_eq!(
+            parse_ob_interval_wire(b"+001-02").map(|v| (v.years, v.months)),
+            Some((1, 2))
+        );
+        assert!(parse_ob_interval_binary(&[0x00, 0x01]).is_none());
     }
 }

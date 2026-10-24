@@ -716,7 +716,7 @@ async fn main() {
                      TO_DATE('2026-01-15 10:30:00','YYYY-MM-DD HH24:MI:SS'), \
                      TO_TIMESTAMP('2026-01-15 10:30:00.123456','YYYY-MM-DD HH24:MI:SS.FF6'), \
                      '类型测试', N'NVARCHAR中文字符串', 'CLOB大对象文本', \
-                     TO_YMINTERVAL('+001-02'), TO_DSINTERVAL('+002 03:04:05.000006'))"
+                     TO_YMINTERVAL('-001-02'), TO_DSINTERVAL('+002 03:04:05.000006'))"
                 ))
                 .await;
             // query_iter 拿列元数据（名称 + 字符集编号）再收行
@@ -772,10 +772,8 @@ async fn main() {
                     // INTERVAL 语义拆解（失败附原始字节 hex，供下轮定位真实形态）
                     if let Some(i) = col("C_IYM") {
                         if let Some(oceanbase_async::Value::Bytes(b)) = vals.get(i) {
-                            match oceanbase_async::ob_types::parse_ob_interval(
-                                &String::from_utf8_lossy(b),
-                            ) {
-                                Some(iv) if iv.years == 1 && iv.months == 2 => {}
+                            match oceanbase_async::ob_types::parse_ob_interval_wire(b) {
+                                Some(iv) if iv.negative && iv.years == 1 && iv.months == 2 => {}
                                 other => {
                                     problems.push(format!(
                                         "INTERVAL YM 解析不符（hex={}）: {other:?}",
@@ -787,9 +785,7 @@ async fn main() {
                     }
                     if let Some(i) = col("C_IDS") {
                         if let Some(oceanbase_async::Value::Bytes(b)) = vals.get(i) {
-                            match oceanbase_async::ob_types::parse_ob_interval(
-                                &String::from_utf8_lossy(b),
-                            ) {
+                            match oceanbase_async::ob_types::parse_ob_interval_wire(b) {
                                 Some(iv) if iv.days == 2
                                     && iv.hours == 3
                                     && iv.minutes == 4
