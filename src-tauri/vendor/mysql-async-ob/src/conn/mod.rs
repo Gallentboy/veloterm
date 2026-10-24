@@ -314,7 +314,10 @@ impl Conn {
     fn capture_auth_ok_state(&mut self, packet: &[u8]) {
         if let Some(status) = bare_ok_status(packet) {
             self.inner.status = StatusFlags::from_bits_retain(status);
-            self.inner.ob_is_oracle_mode = status & 4 != 0;
+            // 单向闩锁同 handle_ok：只置真不清零
+            if status & 4 != 0 {
+                self.inner.ob_is_oracle_mode = true;
+            }
             crate::obdbg!(
                 "capture_auth_ok_state: 宽容解析 status={status:#06x} bit2(oracle)={}",
                 self.inner.ob_is_oracle_mode
@@ -345,10 +348,17 @@ impl Conn {
         } else {
             crate::obdbg!("handle_ok: 无 session_track 段");
         }
-        // Oracle 模式检测：OK 包 status_flags 的 bit 2（值 4）——服务端告知
-        // 当前连接是 Oracle 租户（Java JDBC ServerStatus.OB_SERVER_USE_ORACLE_MODE）
+        // Oracle 模式检测：OK 包 status_flags 的 bit 2（值 4）。真机实测该位
+        // 只在 auth OK 置位（0x0024），后续查询 OK 不带——必须单向闩锁（对齐
+        // libobclient ma_read_ok_packet 的 `if (server_status &
+        // SERVER_ORACLE_MODE) oracle_mode = TRUE`，只置真不清零）：此前
+        // 无条件覆盖，read_settings 的 NLS 查询把自己的 OK 读回来就把 auth
+        // 时捕获的 oracle 位清了（真机日志实锤：宽容提取 oracle=true →
+        // 两条查询 handle_ok 后检测变回 false）
         let status = ok_packet.status_flags();
-        self.inner.ob_is_oracle_mode = status.contains(StatusFlags::from_bits_retain(4));
+        if status.contains(StatusFlags::from_bits_retain(4)) {
+            self.inner.ob_is_oracle_mode = true;
+        }
         self.inner.status = status;
         self.inner.last_err_packet = None;
         self.inner.last_ok_packet = Some(ok_packet);
