@@ -1201,30 +1201,35 @@ impl Conn {
             }
         }
 
-        // OB Oracle 模式下不发这条 MySQL 方言探测查询（ORA-00900，实测
-        // `SELECT @@max_allowed_packet,@@wait_timeout` 被拒「near
-        // '@wait_timeout'」）——直接用默认值，与 NLS 分支同一段 Oracle
-        // 专属逻辑遥相呼应；MySQL 模式行为不变。
-        let oracle_mode = self.inner.ob_is_oracle_mode;
+        // OB 场景下不发这条 MySQL 方言探测查询（真机实测 Oracle 租户拒收
+        // `SELECT @@max_allowed_packet,@@wait_timeout`，ORA-00900）。判据取
+        // 两者之一即跳过：oracle 模式位（OK 包 status bit 2——真机实测部分
+        // obproxy/observer 组合不置位，不能作唯一依据）或 opts.ob_protocol20
+        // （客户端显式声明对方是 OB——app/CLI 只有 OB 连接才开）。OB MySQL
+        // 模式损失一次探测精度（改用默认值：max_allowed_packet 缺省、
+        // wait_timeout 28800s 同 MySQL 缺省），无协议影响。纯 MySQL 连接
+        // （ob_protocol20 恒 false 且无 oracle 位）行为不变。
+        let skip_mysql_probe =
+            self.inner.ob_is_oracle_mode || self.inner.opts.ob_protocol20();
 
         let mut actions = vec![
             if let Some(x) = self.opts().max_allowed_packet() {
                 Action::Apply(CfgData::MaxAllowedPacket(x))
-            } else if oracle_mode {
+            } else if skip_mysql_probe {
                 Action::Apply(CfgData::MaxAllowedPacket(DEFAULT_MAX_ALLOWED_PACKET))
             } else {
                 Action::Load(Cfg::MaxAllowedPacket)
             },
             if let Some(x) = self.opts().wait_timeout() {
                 Action::Apply(CfgData::WaitTimeout(x))
-            } else if oracle_mode {
+            } else if skip_mysql_probe {
                 Action::Apply(CfgData::WaitTimeout(DEFAULT_WAIT_TIMEOUT))
             } else {
                 Action::Load(Cfg::WaitTimeout)
             },
         ];
 
-        if self.inner.opts.prefer_socket() && self.inner.socket.is_none() && !oracle_mode {
+        if self.inner.opts.prefer_socket() && self.inner.socket.is_none() && !skip_mysql_probe {
             actions.push(Action::Load(Cfg::Socket))
         }
 
