@@ -282,6 +282,26 @@ export function dbUseDatabase(sessionId: string, database: string): Promise<DbSe
   return invoke('db_use_database', { sessionId, database });
 }
 
+/** 切换会话级自动提交（true=每语句自动落库、false=显式事务）。 */
+export function dbSetAutoCommit(sessionId: string, autoCommit: boolean): Promise<boolean> {
+  return invoke('db_set_auto_commit', { sessionId, autoCommit });
+}
+
+/** 查询会话当前自动提交状态。 */
+export function dbGetAutoCommit(sessionId: string): Promise<boolean> {
+  return invoke('db_get_auto_commit', { sessionId });
+}
+
+/** 提交当前事务（显式事务模式下的提交按钮）。 */
+export function dbCommit(sessionId: string): Promise<void> {
+  return invoke('db_commit', { sessionId });
+}
+
+/** 回滚当前事务。 */
+export function dbRollback(sessionId: string): Promise<void> {
+  return invoke('db_rollback', { sessionId });
+}
+
 /** 用表单草稿临时建连拉取可选数据库清单（拉完即断）；编辑态密码留空时后端从库补。 */
 export function dbListDatabasesForRecord(
   record: DbConnectionRecord,

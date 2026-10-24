@@ -460,6 +460,88 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
         }
     }
 
+    /// 提交当前事务。各引擎实现方式不同：
+    /// - MySQL/PG/SQLite/达梦：发送 COMMIT SQL 或协议命令
+    /// - Oracle：协议级 simpleObject 0x0E（不占游标资源）
+    /// - Redis：无事务概念，返回错误
+    pub async fn commit(&mut self) -> Result<(), String> {
+        match self {
+            DbEngine::MySql(conn) => {
+                use mysql_async::prelude::Queryable as _;
+                conn.query_drop("COMMIT").await.map_err(|e| format!("MySQL：{e}"))
+            }
+            DbEngine::Postgres(client) => {
+                client.simple_query("COMMIT").await.map_err(|e| format!("PostgreSQL：{e}")).map(|_| ())
+            }
+            DbEngine::Oracle(conn) => {
+                conn.commit().await.map_err(|e| format!("Oracle：{}", crate::db_browser::engines::oracle_err(e)))
+            }
+            DbEngine::Dameng(_) => {
+                self.with_dameng(|client| client.commit().map_err(|e| format!("达梦：{e}"))).await
+            }
+            DbEngine::Sqlite(_) => {
+                self.with_sqlite(|conn| conn.execute("COMMIT", []).map(|_| ()).map_err(|e| format!("SQLite：{e}"))).await
+            }
+            DbEngine::Redis { .. } => Err("Redis 没有事务概念".to_string()),
+            DbEngine::Closed => Err("连接已关闭".to_string()),
+        }
+    }
+
+    /// 回滚当前事务。实现方式同 [`commit`]，只是发送 ROLLBACK。
+    pub async fn rollback(&mut self) -> Result<(), String> {
+        match self {
+            DbEngine::MySql(conn) => {
+                use mysql_async::prelude::Queryable as _;
+                conn.query_drop("ROLLBACK").await.map_err(|e| format!("MySQL：{e}"))
+            }
+            DbEngine::Postgres(client) => {
+                client.simple_query("ROLLBACK").await.map_err(|e| format!("PostgreSQL：{e}")).map(|_| ())
+            }
+            DbEngine::Oracle(conn) => {
+                conn.rollback().await.map_err(|e| format!("Oracle：{}", crate::db_browser::engines::oracle_err(e)))
+            }
+            DbEngine::Dameng(_) => {
+                self.with_dameng(|client| client.rollback().map_err(|e| format!("达梦：{e}"))).await
+            }
+            DbEngine::Sqlite(_) => {
+                self.with_sqlite(|conn| conn.execute("ROLLBACK", []).map(|_| ()).map_err(|e| format!("SQLite：{e}"))).await
+            }
+            DbEngine::Redis { .. } => Err("Redis 没有事务概念".to_string()),
+            DbEngine::Closed => Err("连接已关闭".to_string()),
+        }
+    }
+
+    /// 切换自动提交。true→false 开启显式事务，false→true 逐条自动提交。
+    /// 各引擎实现方式：
+    /// - MySQL：`SET autocommit=0/1`（服务端会话级）
+    /// - 达梦：本地标志位（opts[0] 逐语句决定）
+    /// - Oracle：本地标志位（执行层在 auto_commit=true 时逐 DML 追加协议级
+    ///   commit；Oracle 协议没有 SET autocommit 命令）
+    /// - PG/SQLite：本地标志位（执行层在 auto_commit=false 时逐语句前置
+    ///   BEGIN 检查——PG 的 simple_query 不支持嵌套 BEGIN，SQLite 的
+    ///   autocommit 是连接属性，显式事务用 BEGIN 打开）
+    /// - Redis：无事务概念
+    pub async fn set_auto_commit(&mut self, val: bool) -> Result<(), String> {
+        match self {
+            DbEngine::MySql(conn) => {
+                use mysql_async::prelude::Queryable as _;
+                let sql = if val { "SET autocommit=1" } else { "SET autocommit=0" };
+                conn.query_drop(sql).await.map_err(|e| format!("MySQL：{e}"))
+            }
+            DbEngine::Dameng(_) => {
+                self.with_dameng(move |client| {
+                    client.set_auto_commit(val);
+                    Ok(())
+                }).await
+            }
+            // Oracle / PG / SQLite 的自动提交由执行层控制（本地标志位），
+            // 这里只确认连接可用
+            DbEngine::Oracle(_) | DbEngine::Postgres(_) | DbEngine::Sqlite(_) => Ok(()),
+            DbEngine::Redis { .. } => Err("Redis 没有事务概念".to_string()),
+            DbEngine::Closed => Err("连接已关闭".to_string()),
+        }
+    }
+
 
 
 
