@@ -171,14 +171,22 @@ fn strip_ident_quotes(s: &str) -> &str {
     }
 }
 
-/// 解析光标前文本，产出补全上下文（详见模块头注释）
-pub fn parse_cursor_context(text_before_cursor: &str) -> CursorContext {
-    // 当前语句 = 最后一个分号之后（分号在字符串里被误切对「取更靠后一段」
-    // 无碍：最坏把字面量前的语句并入）
-    let stmt = match text_before_cursor.rfind(';') {
-        Some(pos) => &text_before_cursor[pos + 1..],
-        None => text_before_cursor,
-    };
+/// 解析光标处上下文，产出补全上下文（详见模块头注释）。
+///
+/// 入参是**全文 + 光标字节偏移**（不是光标前缀）：表引用与别名扫描跑在
+/// 「包含光标的完整语句」上（前后分号定界）——补全常发生在语句中段，
+/// 典型如 `SELECT t.u| FROM TUSER t`：别名 t 的定义在光标**之后**，只看
+/// 前缀就永远对不上。光标词 / 限定符 / 表名位判定仍只看光标前缀。
+pub fn parse_cursor_context(text: &str, cursor: usize) -> CursorContext {
+    // 语句边界：光标前最后一个分号之后 → 光标后第一个分号之前
+    let stmt_start = text.get(..cursor).unwrap_or(text).rfind(';').map(|p| p + 1).unwrap_or(0);
+    let stmt_end = text
+        .get(cursor..)
+        .unwrap_or_default()
+        .find(';')
+        .map(|p| cursor + p)
+        .unwrap_or(text.len());
+    let stmt = text.get(stmt_start..stmt_end).unwrap_or_default();
 
     let toks = tokenize(stmt);
     let mut aliases: HashMap<String, RefTable> = HashMap::new();
@@ -276,13 +284,16 @@ pub fn parse_cursor_context(text_before_cursor: &str) -> CursorContext {
         i = end;
     }
 
-    // 光标词与限定符：从尾部回扫 `[标识符] 空白? . 空白? [词]`
-    let (qualifier, _word, word_start) = scan_word_and_qualifier(stmt);
+    // 光标词与限定符：只看光标前缀（语句内 stmt_start..cursor），从尾部回扫
+    // `[标识符] 空白? . 空白? [词]`；word_start 补回语句起点得全文绝对偏移
+    let prefix = text.get(stmt_start..cursor).unwrap_or_default();
+    let (qualifier, _word, word_start_rel) = scan_word_and_qualifier(prefix);
+    let word_start = stmt_start + word_start_rel;
 
-    // 表名位：最后一个表关键字后只有标识符/限定符字符（表名可能敲到一半）。
+    // 表名位：光标前缀的尾部是 `[表名位字符]*`，其前有空白，再前是表关键字。
     // 限定形态不走此标志——建议解析的限定分支先行返回；含空白后的位置
     // （FROM t |）视为列名位（正在敲别名/列）
-    let table_position = ends_with_table_position(stmt);
+    let table_position = ends_with_table_position(prefix);
 
     CursorContext {
         qualifier,
@@ -628,9 +639,9 @@ pub async fn sql_completions(
     session: &DbSession,
     sql: &str,
     cursor_offset_utf16: usize,
-) -> Result<SqlCompletionResult, String> {    let prefix = &sql[..utf16_to_byte(sql, cursor_offset_utf16)];
-    let ctx = parse_cursor_context(prefix);
-    let word_start_u16 = byte_to_utf16(prefix, ctx.word_start);
+) -> Result<SqlCompletionResult, String> {    let cursor_byte = utf16_to_byte(sql, cursor_offset_utf16);
+    let ctx = parse_cursor_context(sql, cursor_byte);
+    let word_start_u16 = byte_to_utf16(sql, ctx.word_start);
     let empty = || SqlCompletionResult {
         suggestions: vec![],
         word_start: word_start_u16,
@@ -749,7 +760,11 @@ mod tests {
     use super::*;
 
     fn ctx(s: &str) -> CursorContext {
-        parse_cursor_context(s)
+        parse_cursor_context(s, s.len())
+    }
+
+    fn ctx_at(s: &str, cursor: usize) -> CursorContext {
+        parse_cursor_context(s, cursor)
     }
 
     #[test]
@@ -850,6 +865,29 @@ mod tests {
         let r = c.referenced.first().expect("引号表名");
         assert_eq!(r.table, "My Table");
         assert_eq!(c.aliases.get("x").map(|t| t.table.as_str()), Some("My Table"));
+    }
+
+    #[test]
+    fn mid_statement_alias_defined_after_cursor() {
+        // SELECT 列表在 FROM 之前：别名定义在光标之后也要能解析（补全最常见
+        // 的中段编辑场景）
+        let c = ctx_at("SELECT t.u FROM TUSER t", 10);
+        assert_eq!(c.qualifier.as_deref(), Some("t"));
+        assert_eq!(c.aliases.get("t").map(|t| t.table.as_str()), Some("TUSER"));
+        assert_eq!(c.word_start, 9);
+
+        // 裸列名位同样受益：语句后半的 FROM 收集得到引用表
+        let c = ctx_at("SELECT u FROM TUSER t WHERE ", 8);
+        assert!(c.qualifier.is_none());
+        assert_eq!(
+            c.referenced.first().map(|t| t.table.as_str()),
+            Some("TUSER")
+        );
+
+        // 光标后的分号仍是语句边界：尾巴的下一句不污染本句
+        let c = ctx_at("SELECT t.u FROM TUSER t; SELECT * FROM dual", 10);
+        assert_eq!(c.aliases.len(), 1);
+        assert!(c.referenced.iter().all(|r| r.table != "dual"));
     }
 
     #[test]

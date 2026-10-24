@@ -161,6 +161,18 @@ async fn sql_completion_live_oracle() {
         .expect("表名点补全失败");
     assert!(!r.suggestions.is_empty(), "大写表名点应出列");
 
+    // ⑤ 语句中段编辑：SELECT 列表在 FROM 之前（别名定义在光标之后）
+    let sql = format!("SELECT v.ve FROM {typed} v");
+    let r = super::sql_completion::sql_completions(&session, &sql, "SELECT v.ve".len())
+        .await
+        .expect("中段补全失败");
+    assert!(
+        r.suggestions.iter().any(|s| s.label == "VELOID"),
+        "中段 v.ve 应对出 VELOID，got {:?}",
+        r.suggestions.iter().map(|s| &s.label).collect::<Vec<_>>()
+    );
+    println!("mid-statement v.ve → {} 列", r.suggestions.len());
+
     // 清理测试表
     let mut engine = session.engine.lock().await;
     engine
