@@ -627,15 +627,26 @@ pub async fn db_explain(
     }
 
     let mut engine = session.engine.lock().await;
+    explain_core(
+        &mut engine,
+        &session.cancel,
+        &engine_kind,
+        mode.as_deref(),
+        &dialect_key,
+        &user_stmts,
+        analyze,
+    )
+    .await
+}
 
-    /// 执行一条语句并收集（列头, 行）；取消信号透传，60s 超时。回调须
-    /// Send + 'static（Oracle 同步引擎把回调移入 spawn_blocking），收集器
-    /// 走 Arc<Mutex>（与 db_query 的行计数同型），执行完锁取
-    async fn exec_collect(
-        engine: &mut DbEngine,
-        cancel: &Arc<tokio::sync::Notify>,
-        sql: &str,
-    ) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
+/// 执行一条语句并收集（列头, 行）；取消信号透传，60s 超时。回调须
+/// Send + 'static（Oracle 同步引擎把回调移入 spawn_blocking），收集器
+/// 走 Arc<Mutex>（与 db_query 的行计数同型），执行完锁取
+async fn exec_collect(
+    engine: &mut DbEngine,
+    cancel: &Arc<tokio::sync::Notify>,
+    sql: &str,
+) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
         let columns: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let rows: Arc<Mutex<Vec<Vec<String>>>> = Arc::new(Mutex::new(Vec::new()));
         let cols_sink = Arc::clone(&columns);
@@ -668,6 +679,17 @@ pub async fn db_explain(
         Ok((columns, rows))
     }
 
+/// db_explain 命令与真机测试 CLI（examples/db_engine_test）共用的执行核心：
+/// 方言装配 + 逐条执行 + 结构化解析。引擎锁与取消信号由调用方持有
+pub async fn explain_core(
+    engine: &mut DbEngine,
+    cancel: &Arc<tokio::sync::Notify>,
+    engine_kind: &str,
+    mode: Option<&str>,
+    dialect_key: &str,
+    user_stmts: &[sqlsplit::SplitStatement],
+    analyze: bool,
+) -> Result<Vec<explain::ExplainPlan>, String> {
     let mut plans: Vec<explain::ExplainPlan> = Vec::with_capacity(user_stmts.len());
     if engine_kind == "oracle" {
         // plan 表探测（PLAN_TABLE/TOAD_PLAN_TABLE 候选 + ORA-00942 甄别，
@@ -677,8 +699,8 @@ pub async fn db_explain(
         let mut first_err = String::new();
         for name in ["PLAN_TABLE", "TOAD_PLAN_TABLE"] {
             match exec_collect(
-                &mut engine,
-                &session.cancel,
+                engine,
+                cancel,
                 &format!("SELECT 1 FROM {name} WHERE ROWNUM = 1"),
             )
             .await
@@ -714,8 +736,8 @@ pub async fn db_explain(
             let sid = format!("VELOTERM_{stamp:X}{i}");
             // 落表动词：失败整体上抛（PLAN_TABLE 类诊断直达用户）
             exec_collect(
-                &mut engine,
-                &session.cancel,
+                engine,
+                cancel,
                 &format!(
                     "EXPLAIN PLAN SET STATEMENT_ID = '{sid}' INTO {plan_table} FOR {}",
                     stmt.sql
@@ -723,8 +745,8 @@ pub async fn db_explain(
             )
             .await?;
             let (cols, rows) = exec_collect(
-                &mut engine,
-                &session.cancel,
+                engine,
+                cancel,
                 &format!(
                     "SELECT * FROM {plan_table} WHERE STATEMENT_ID = '{sid}' ORDER BY ID"
                 ),
@@ -734,10 +756,9 @@ pub async fn db_explain(
         }
     } else {
         // 前缀式引擎（MySQL/PG/SQLite/达梦/OB MySQL）：装配与用户语句一一对应
-        let assembled =
-            explain_statements(&engine_kind, mode.as_deref(), &user_stmts, analyze)?;
+        let assembled = explain_statements(engine_kind, mode, user_stmts, analyze)?;
         for (stmt, (sql, _)) in user_stmts.iter().zip(assembled) {
-            let (cols, rows) = exec_collect(&mut engine, &session.cancel, &sql).await?;
+            let (cols, rows) = exec_collect(engine, cancel, &sql).await?;
             plans.push(explain::parse_plan(&cols, &rows, &stmt.sql));
         }
     }

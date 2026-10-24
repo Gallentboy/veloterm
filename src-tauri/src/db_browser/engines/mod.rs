@@ -4089,7 +4089,8 @@ impl DbEngine {
     /// - PG：pg_class relkind='m' 物化视图 + pg_trigger（PostgreSchema 同源）
     /// - Oracle：all_objects 加 TRIGGER/CLUSTER（OracleSchema 同源）
     /// - 达梦：SYSOBJECTS 基表（DamengMetaModel 同源，原生口径而非 ALL_* 兼容层）
-    async fn catalog_groups(&mut self, schema: &str) -> Result<Vec<CatalogNode>, String> {
+    /// 对象树分组计数（真机测试 CLI examples/db_engine_test 直驱）
+    pub async fn catalog_groups(&mut self, schema: &str) -> Result<Vec<CatalogNode>, String> {
         match self {
             DbEngine::MySql(conn) => {
                 use mysql_async::prelude::Queryable as _;
@@ -4644,7 +4645,8 @@ impl DbEngine {
     }
 
     /// 分组内的对象清单。
-    async fn catalog_objects(
+    /// 分组内对象清单（真机测试 CLI 同驱）
+    pub async fn catalog_objects(
         &mut self,
         schema: &str,
         group: ObjectGroup,
@@ -5249,7 +5251,8 @@ impl DbEngine {
         }
     }
 
-    async fn catalog_columns(
+    /// 表/视图的列清单（树第三层；真机测试 CLI 同驱）
+    pub async fn catalog_columns(
         &mut self,
         schema: &str,
         table: &str,
