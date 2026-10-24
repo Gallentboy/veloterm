@@ -1340,21 +1340,21 @@ export function DbSessionView({
               className={cn(
                 'flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-ui-xs transition-colors select-none',
                 autoCommit
-                  ? 'text-foreground-subtle hover:text-foreground'
-                  : 'bg-primary/15 font-medium text-primary',
+                  ? 'bg-primary/15 font-medium text-primary'
+                  : 'text-foreground-subtle hover:text-foreground',
               )}
               title={t('db.autoCommitHint')}
             >
               <span
                 className={cn(
                   'relative h-3.5 w-6 rounded-full transition-colors',
-                  autoCommit ? 'bg-border' : 'bg-primary',
+                  autoCommit ? 'bg-primary' : 'bg-border',
                 )}
               >
                 <span
                   className={cn(
                     'absolute top-0.5 size-2.5 rounded-full bg-background transition-all',
-                    autoCommit ? 'left-0.5' : 'left-3',
+                    autoCommit ? 'left-3' : 'left-0.5',
                   )}
                 />
               </span>
