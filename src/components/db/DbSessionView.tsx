@@ -34,6 +34,7 @@ import {
   Square,
   Table2,
   TextSelect,
+  WandSparkles,
   ShieldCheck,
   Trash2,
   Type,
@@ -50,7 +51,7 @@ import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { DataTable } from '@/components/ui/DataTable';
 import { Spinner } from '@/components/ui/spinner';
 import { SelectMenu } from '@/components/ui/SelectMenu';
-import { SqlEditor } from '@/components/db/SqlEditor';
+import { SqlEditor, type SqlEditorHandle } from '@/components/db/SqlEditor';
 import { ExplainPlanGraph } from '@/components/db/ExplainPlanGraph';
 import {
   RedisBigkeysModal,
@@ -511,6 +512,8 @@ export function DbSessionView({
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const sessionIdRef = useRef<string | null>(null);
+  /** SQL 编辑器命令句柄（工具栏「格式化」按钮调 format()） */
+  const sqlEditorRef = useRef<SqlEditorHandle | null>(null);
   /** 最近一次树状态：刷新按钮按它恢复展开态/已加载内容（不进 useCallback 依赖） */
   const branchesRef = useRef<Map<string, TreeBranch>>(new Map());
   useEffect(() => {
@@ -1832,6 +1835,7 @@ export function DbSessionView({
             style={{ height: editorHeight }}
           >
             <SqlEditor
+              ref={sqlEditorRef}
               value={sql}
               onChange={setSql}
               onRun={() => void runQuery()}
@@ -1840,6 +1844,7 @@ export function DbSessionView({
               onExplain={explainSelection}
               redisMode={meta.engine === 'redis'}
               completionsSessionId={meta.engine === 'redis' ? null : meta.sessionId}
+              formatEngine={meta.engine === 'redis' ? null : meta.engine}
             />
           </div>
 
@@ -1884,6 +1889,18 @@ export function DbSessionView({
               <TextSelect className="size-3 text-terminal-green" />
               {t('db.runSelected')}
             </button>
+            {meta.engine !== 'redis' ? (
+              <button
+                type="button"
+                disabled={!sql.trim()}
+                onClick={() => void sqlEditorRef.current?.format()}
+                title={t('db.formatSqlHint')}
+                className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground hover:bg-hover disabled:opacity-40"
+              >
+                <WandSparkles className="size-3 text-terminal-green" />
+                {t('db.formatSql')}
+              </button>
+            ) : null}
             {running ? (
               <button
                 type="button"

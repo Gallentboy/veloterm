@@ -378,6 +378,18 @@ pub async fn db_sql_completions_invalidate(
     Ok(())
 }
 
+/// 格式化 SQL（sqlformat 0.5：纯空白/缩进/折行规整，参数占位符不替换，
+/// 关键字大小写不强制改写）。无会话依赖的纯函数；dialect 传引擎名
+///（postgres → 数组语法 Dialect::PostgreSql，其余走 Generic）
+#[tauri::command]
+pub fn db_format_sql(sql: String, dialect: Option<String>) -> String {
+    let mut options = sqlformat::FormatOptions::default(); // 2 空格缩进
+    if dialect.as_deref() == Some("postgres") {
+        options.dialect = sqlformat::Dialect::PostgreSql;
+    }
+    sqlformat::format(&sql, &sqlformat::QueryParams::None, &options)
+}
+
 /// 目录父层（前端参数形态；None = 根层）。
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -1254,8 +1266,26 @@ pub async fn sqlite_file_pick() -> Result<Option<String>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::explain_statements;
+    use super::{db_format_sql, explain_statements};
     use crate::db_browser::sqlsplit::split_statements;
+
+    #[test]
+    fn format_sql_basics() {
+        let out = db_format_sql(
+            "SELECT id, NAME from t_user WHERE id=1 and name like 'a%'".into(),
+            None,
+        );
+        // 折行 + 缩进生效，token 无丢失，字符串字面量原样
+        assert!(out.contains('\n'), "应折行：{out}");
+        assert!(out.contains("t_user") && out.contains("'a%'"), "{out}");
+        // 大小写：sqlformat 的 uppercase=None 不强制改写用户输入的关键字
+        assert!(out.contains("SELECT"), "保留用户大写关键字：{out}");
+        assert!(out.contains("from"), "保留用户小写关键字：{out}");
+
+        // 多语句与分号保留
+        let out2 = db_format_sql("select 1; select 2".into(), None);
+        assert!(out2.contains(';'), "{out2}");
+    }
 
     /// 各引擎的 EXPLAIN 方言装配向量（口径对齐 DBeaver，MySQL 的
     /// EXTENDED 偏离与 OB Oracle 跳过见 explain_statements 注释）

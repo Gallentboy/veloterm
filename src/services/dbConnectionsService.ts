@@ -229,6 +229,14 @@ export function dbSqlCompletionsInvalidate(sessionId: string): Promise<void> {
   return invoke('db_sql_completions_invalidate', { sessionId });
 }
 
+/**
+ * 格式化 SQL（后端 sqlformat：纯空白/缩进/折行规整，关键字大小写保留）。
+ * dialect 传引擎名（postgres 启用数组语法，其余通用）。
+ */
+export function dbFormatSql(sql: string, dialect?: string): Promise<string> {
+  return invoke('db_format_sql', { sql, dialect });
+}
+
 /** 流式查询事件（后端按 300 行/批发来，与 Rust QueryEvent 的 tag=type 对齐）。 */
 export type DbQueryEvent =
   | { type: 'started'; statementCount: number }

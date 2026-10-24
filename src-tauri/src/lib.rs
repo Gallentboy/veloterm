@@ -108,6 +108,7 @@ pub fn run() {
             db_browser::db_catalog,
             db_browser::db_sql_completions,
             db_browser::db_sql_completions_invalidate,
+            db_browser::db_format_sql,
             db_browser::db_query,
             db_browser::db_query_cancel,
             db_browser::db_explain,
