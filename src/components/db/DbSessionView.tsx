@@ -64,6 +64,7 @@ import {
   dbCatalog,
   dbConnect,
   dbDisconnect,
+  dbExplain,
   dbListDatabases,
   dbObjectDefinition,
   dbQuery,
@@ -655,8 +656,79 @@ export function DbSessionView({
     [meta],
   );
 
+  // dbQuery / dbExplain 共用的流式事件处理：结果面板数组的增量更新
+  const handleQueryEvent = useCallback((event: DbQueryEvent) => {
+    setResults((current) => {
+      const next = [...current];
+      const findIdx = (i: number) => next.findIndex((r) => r.index === i);
+      switch (event.type) {
+        case 'statementStart': {
+          next.push({
+            index: event.index,
+            sql: event.sql,
+            columns: [],
+            rows: [],
+            affected: null,
+            truncated: false,
+            elapsedMs: 0,
+            error: null,
+          });
+          break;
+        }
+        case 'columns': {
+          const i = findIdx(event.index);
+          if (i >= 0) next[i] = { ...next[i], columns: event.columns };
+          break;
+        }
+        case 'rows': {
+          const i = findIdx(event.index);
+          if (i >= 0) {
+            next[i] = { ...next[i], rows: [...next[i].rows, ...event.rows] };
+          }
+          break;
+        }
+        case 'statementDone': {
+          const i = findIdx(event.index);
+          if (i >= 0) {
+            next[i] = {
+              ...next[i],
+              affected: event.affected,
+              truncated: event.truncated,
+              elapsedMs: event.elapsedMs,
+            };
+          }
+          break;
+        }
+        case 'statementError': {
+          const i = findIdx(event.index);
+          if (i >= 0) {
+            next[i] = { ...next[i], error: event.message };
+          } else {
+            next.push({
+              index: event.index,
+              sql: '',
+              columns: [],
+              rows: [],
+              affected: null,
+              truncated: false,
+              elapsedMs: 0,
+              error: event.message,
+            });
+          }
+          break;
+        }
+        default:
+          break;
+      }
+      return next;
+    });
+    if (event.type === 'statementDone' || event.type === 'statementError') {
+      setActiveResult((cur) => cur); // 保持当前
+    }
+  }, []);
+
   const runQuery = useCallback(
-    async (overrideSql?: string) => {
+    async (overrideSql?: string, explain = false) => {
       const sessionId = sessionIdRef.current;
       const text = (overrideSql ?? sql).trim();
       if (!sessionId || running || !text) return;
@@ -666,81 +738,20 @@ export function DbSessionView({
       setObjectDef(null); // 新查询让位：定义/表详情视图隐藏
       setTableDetail(null);
       try {
-        await dbQuery(
-          sessionId,
-          text,
-        (event: DbQueryEvent) => {
-          setResults((current) => {
-            const next = [...current];
-            const findIdx = (i: number) => next.findIndex((r) => r.index === i);
-            switch (event.type) {
-              case 'statementStart': {
-                next.push({
-                  index: event.index,
-                  sql: event.sql,
-                  columns: [],
-                  rows: [],
-                  affected: null,
-                  truncated: false,
-                  elapsedMs: 0,
-                  error: null,
-                });
-                break;
-              }
-              case 'columns': {
-                const i = findIdx(event.index);
-                if (i >= 0) next[i] = { ...next[i], columns: event.columns };
-                break;
-              }
-              case 'rows': {
-                const i = findIdx(event.index);
-                if (i >= 0) {
-                  next[i] = { ...next[i], rows: [...next[i].rows, ...event.rows] };
-                }
-                break;
-              }
-              case 'statementDone': {
-                const i = findIdx(event.index);
-                if (i >= 0) {
-                  next[i] = {
-                    ...next[i],
-                    affected: event.affected,
-                    truncated: event.truncated,
-                    elapsedMs: event.elapsedMs,
-                  };
-                }
-                break;
-              }
-              case 'statementError': {
-                const i = findIdx(event.index);
-                if (i >= 0) {
-                  next[i] = { ...next[i], error: event.message };
-                } else {
-                  next.push({
-                    index: event.index,
-                    sql: '',
-                    columns: [],
-                    rows: [],
-                    affected: null,
-                    truncated: false,
-                    elapsedMs: 0,
-                    error: event.message,
-                  });
-                }
-                break;
-              }
-              default:
-                break;
-            }
-            return next;
+        // 查看执行计划走后端 db_explain（方言装配对齐 DBeaver）；
+        // analyze 恒 false——带执行的计划需前端显式入口后再开
+        if (explain) {
+          await dbExplain(sessionId, text, false, handleQueryEvent, {
+            maxRows: rowCap,
+            timeoutMs: DEFAULT_TIMEOUT_MS,
           });
-          if (event.type === 'statementDone' || event.type === 'statementError') {
-            setActiveResult((cur) => cur); // 保持当前
-          }
-        },
-        { maxRows: rowCap, timeoutMs: DEFAULT_TIMEOUT_MS },
-      );
-    } catch (e) {
+        } else {
+          await dbQuery(sessionId, text, handleQueryEvent, {
+            maxRows: rowCap,
+            timeoutMs: DEFAULT_TIMEOUT_MS,
+          });
+        }
+      } catch (e) {
       setResults([
         {
           index: 0,
@@ -756,27 +767,17 @@ export function DbSessionView({
     } finally {
       setRunning(false);
     }
-  }, [running, rowCap, sql]);
+  }, [running, rowCap, sql, handleQueryEvent]);
 
-  // 查看执行计划：按引擎拼 EXPLAIN 方言走既有 dbQuery 通道（各引擎的
-  // EXPLAIN 都是返回结果集的语句，后端零改动即可用；方言依据与真机验证
-  // 清单见 docs/sql-explain-plan-support.md）：Oracle 系两段式（EXPLAIN PLAN
-  // FOR 隐式提交 + PLAN_TABLE 前提，第二段取 DBMS_XPLAN 文本）；SQLite 走
-  // EXPLAIN QUERY PLAN（只读白名单 AST/降级两路均含 EXPLAIN，只读会话可用）；
-  // MySQL / PG / 达梦 / OB MySQL 为前缀式
+  // 查看执行计划：走后端 db_explain 命令——方言装配在后端（口径对齐
+  // DBeaver，调研与真机验证清单见 docs/sql-explain-plan-support.md；
+  // OB Oracle 模式后端明确拒绝），多语句选中逐条出计划
   const explainSelection = useCallback(
     (text: string) => {
       if (!meta) return;
-      const stmt = text.trim().replace(/;+\s*$/, '');
+      const stmt = text.trim();
       if (!stmt) return;
-      const oracleDialect = isOracleDialect(meta.engine, meta.mode, meta.compatibleMode);
-      const explainSql =
-        meta.engine === 'sqlite'
-          ? `EXPLAIN QUERY PLAN ${stmt};`
-          : oracleDialect
-            ? `EXPLAIN PLAN FOR ${stmt};\nSELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY());`
-            : `EXPLAIN ${stmt};`;
-      void runQuery(explainSql);
+      void runQuery(stmt, true);
     },
     [meta, runQuery],
   );

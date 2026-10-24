@@ -239,6 +239,28 @@ export function dbQueryCancel(sessionId: string): Promise<void> {
   return invoke('db_query_cancel', { sessionId });
 }
 
+/** 查看执行计划（SQL 编辑器右键菜单）：方言由后端按 DBeaver 口径装配
+ * （MySQL 裸 EXPLAIN / PG EXPLAIN/(ANALYZE,BUFFERS) / SQLite EXPLAIN QUERY
+ * PLAN / 达梦 EXPLAIN / Oracle STATEMENT_ID 两段式；OB Oracle 拒绝）。
+ * analyze=true 会真实执行语句，仅对只读语句放行（后端事前拒绝 DML）。 */
+export function dbExplain(
+  sessionId: string,
+  sql: string,
+  analyze: boolean,
+  onEvent: (event: DbQueryEvent) => void,
+  options?: DbQueryOptions,
+): Promise<void> {
+  const channel = new Channel<DbQueryEvent>();
+  channel.onmessage = onEvent;
+  return invoke('db_explain', {
+    sessionId,
+    sql,
+    analyze,
+    maxRows: options?.maxRows,
+    timeoutMs: options?.timeoutMs,
+  });
+}
+
 /** 可切换的数据库清单（MySQL=全部 schema；PG=服务器上可连的库）。 */
 export function dbListDatabases(sessionId: string): Promise<string[]> {
   return invoke('db_list_databases', { sessionId });
