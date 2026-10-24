@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 
 import { DataTable } from '@/components/ui/DataTable';
+import { ReadOnlySqlView } from '@/components/db/ReadOnlySqlView';
 import { nodeIcon } from '@/components/db/DbSessionView';
 import {
   dbObjectDefinition,
@@ -109,11 +110,15 @@ function definitionIcon(kind: string) {
 
 export function DbObjectTab({
   payload,
+  active = true,
   onInsertSql,
   onRunSql,
   onClose,
 }: {
   payload: DbObjectTabPayload;
+  /** 是否激活（keep-alive 非激活页 hidden）：透传给 ReadOnlySqlView，
+   * 共享 Monaco 实例由激活者独占（搬 DOM + setModel） */
+  active?: boolean;
   /** 模板写入所属会话的 SQL 编辑器（不执行） */
   onInsertSql: (sql: string) => void;
   /** 写入所属会话编辑器并立即执行 */
@@ -213,14 +218,12 @@ export function DbObjectTab({
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border/50 bg-surface/30 px-2 select-none">
           {nodeIcon(payload.kind === 'view' ? 'view' : 'table')}
+          {/* 标题截断不在此处加 tooltip：tab 页已有同名 tooltip，正文头部再加会双弹 */}
           <span className="max-w-44 truncate font-mono text-ui-xs font-semibold text-foreground">
             {payload.name}
           </span>
           {detail.comment ? (
-            <span
-              className="hidden max-w-52 truncate rounded bg-surface px-1.5 py-px text-ui-xs text-foreground-subtle lg:inline-block"
-              title={detail.comment}
-            >
+            <span className="hidden max-w-52 truncate rounded bg-surface px-1.5 py-px text-ui-xs text-foreground-subtle lg:inline-block">
               {detail.comment}
             </span>
           ) : null}
@@ -292,11 +295,14 @@ export function DbObjectTab({
           </button>
         </div>
         {subTab === 'ddl' ? (
-          <div className="scrollbar-slim min-h-0 flex-1 overflow-auto p-3">
-            <pre className="whitespace-pre-wrap break-all font-mono text-ui-xs leading-relaxed text-foreground select-text">
-              {detail.ddl}
-            </pre>
-          </div>
+          // DDL 用 Monaco 只读渲染（SQL 高亮 + 折行）；共享单实例，
+          // modelKey 同页刷新复用同键（content 变化走 setValue 不重建）
+          <ReadOnlySqlView
+            active={active}
+            modelKey={`${payload.variant}:${payload.schema}.${payload.name}:ddl`}
+            content={detail.ddl}
+            className="scrollbar-slim min-h-0 flex-1"
+          />
         ) : subTab === 'columns' ? (
           <DataTable className="flex-1" columns={detail.columnHeaders} rows={detail.columns} />
         ) : subTab === 'indexes' ? (
@@ -411,11 +417,12 @@ export function DbObjectTab({
           {notice}
         </div>
       ) : null}
-      <div className="scrollbar-slim min-h-0 flex-1 overflow-auto p-3">
-        <pre className="whitespace-pre-wrap break-all font-mono text-ui-xs leading-relaxed text-foreground select-text">
-          {definition.definition}
-        </pre>
-      </div>
+      <ReadOnlySqlView
+        active={active}
+        modelKey={`${payload.variant}:${payload.schema}.${payload.name}:def`}
+        content={definition.definition}
+        className="min-h-0 flex-1"
+      />
     </div>
   );
 }

@@ -98,7 +98,7 @@ PDF 与图片预览的原生引擎是 **app crate** 的依赖（不进 coreutils
 
 ### 前端约定
 
-- 弹层（下拉/右键菜单）一律 portal 到 `document.body` + fixed 定位（共享 `useAnchoredPanel`：视口夹取、空间不足上翻）；关闭判定用 `useDismissOnOutsidePointer` 的多 ref 排除区（触发器与弹层不同子树）。tooltip 同一约定走共享 `useTooltipPlacement`（`side` 是期望侧，空间不足自动翻对侧、两侧都放不下视口夹取）——两套 tooltip 组件（`ControlHintTooltip` / `ui/tooltip`）都已接上，禁止再写内联 absolute 定位的提示层（会被 tab 栏/底部工具栏的 overflow 裁掉）。
+- 弹层（下拉/右键菜单）一律 portal 到 `document.body` + fixed 定位（共享 `useAnchoredPanel`：视口夹取、空间不足上翻）；关闭判定用 `useDismissOnOutsidePointer` 的多 ref 排除区（触发器与弹层不同子树）。tooltip 同一约定走共享 `useTooltipPlacement`（`side` 是期望侧，空间不足自动翻对侧、两侧都放不下视口夹取）——两套 tooltip 组件（`ControlHintTooltip` / `ui/tooltip`）都已接上，禁止再写内联 absolute 定位的提示层（会被 tab 栏/底部工具栏的 overflow 裁掉）。**严禁原生提示组件**：HTML `title` 属性（浏览器原生 tooltip，延迟约 1s、样式不可定制、不随主题）与原生 `alert/confirm/prompt` 一律不得使用——悬停提示必须走上述两套共享组件，确认/输入一律走项目内 Modal/Dialog；存量原生 title 属欠账，触及该行时随手替换。
 - 表单字段容器 `FormField` 用 div 不用 label——WebKit 会把 label 内点击转发给第一个可标签化后代，曾致「取消新建命令后下拉自动展开」。
 - 颜色/字号全部走语义 token（`bg-selected` / `border-hover` / `text-ui-*` 随 `--ui-font-size` 缩放）；选中态不用主色三件套（primary 边框+底色+文字），主色只留给活动指示。
 - Monaco 经 `import * as monaco from 'monaco-editor'` 全量入口（81 语言高亮全离线）；worker 用 `new Worker(new URL(...), { type: 'module' })` 让 Rspack 产独立 chunk，`new URL` 必须内联在 `new Worker` 里。
