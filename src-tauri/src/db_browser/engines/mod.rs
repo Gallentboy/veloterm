@@ -2882,16 +2882,17 @@ impl DbEngine {
                     .await;
                 }
                 use mysql_async::prelude::Queryable as _;
-                // 序列：原生 MySQL 无此对象（AUTO_INCREMENT 列即其替代形态），
-                // 树上也不会出现序列分组，此处仅防御性拒绝。OB MySQL 租户有
-                // 序列（树上会列出来），服务端没有 SHOW CREATE SEQUENCE，
-                // 故从字典/`SHOW SEQUENCES` 的列拼等价 DDL（见
-                // ob_mysql_sequence_definition 的探测链）
+                // 序列：MySQL 本身没有序列对象（AUTO_INCREMENT 列即其替代
+                // 形态），取定义直接返回空——不报错，前端 DDL 面板自然空白。
+                // OB MySQL 租户虽然有 CREATE SEQUENCE（树上会列出名字），但
+                // 服务端没有 SHOW CREATE SEQUENCE、也没有可复用的标准元数据
+                // 视图，官方 ODC 4.5 同样只给名字，这里一并返回空。
                 if kind == "sequence" {
-                    if conn.ob_compat_mode() == Some(mysql_async::ObCompatMode::MySql) {
-                        return ob_mysql_sequence_definition(conn, schema, name).await;
-                    }
-                    return Err("MySQL 没有序列对象".to_string());
+                    return Ok(ObjectDefinition {
+                        definition: String::new(),
+                        call_template: String::new(),
+                        arg_count: 0,
+                    });
                 }
                 // 触发器：DBeaver MySQLTrigger 同源——SHOW CREATE TRIGGER
                 //（列名含 "Create Trigger"；无调用骨架，返回空 template）
@@ -6240,11 +6241,17 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAnyServerCert {
 }
 
 /// 系统根证书 → PEM 文本（mysql_async 的 Ca::Inline 吃 PEM 字节）。
+///
+/// **每张证书必须各自一层 `BEGIN/END CERTIFICATE`**：把所有证书的 base64
+/// 塞进同一个块里时，多张证书之间会出现 `=` 填充导致 PEM 解码失败；即使
+/// 恰好无填充，解出来的也是「多张 DER 首尾相接」的字节，webpki 会按单张
+/// 证书解析并拒收——系统根证书必然 ≥2 张，verify-full 因此稳定连不上。
 fn native_roots_pem() -> Result<String, String> {
     let native = rustls_native_certs::load_native_certs();
     let mut pem = String::new();
     for cert in native.certs {
         let b64 = base64::engine::general_purpose::STANDARD.encode(cert.as_ref());
+        pem.push_str("-----BEGIN CERTIFICATE-----\n");
         let mut rest = b64.as_str();
         while rest.len() > 64 {
             let (line, tail) = rest.split_at(64);
@@ -6254,13 +6261,12 @@ fn native_roots_pem() -> Result<String, String> {
         }
         pem.push_str(rest);
         pem.push('\n');
+        pem.push_str("-----END CERTIFICATE-----\n");
     }
     if pem.is_empty() {
         return Err("未找到系统根证书（verify-full 模式需要）".to_string());
     }
-    Ok(format!(
-        "-----BEGIN CERTIFICATE-----\n{pem}-----END CERTIFICATE-----\n"
-    ))
+    Ok(pem)
 }
 
 
@@ -6385,210 +6391,6 @@ async fn ob_oracle_mviews(
     );
     conn.query::<String, _>(sql).await.unwrap_or_default()
 }
-
-// ── OB MySQL 序列定义 ───────────────────────────────────────────────────
-//
-// MySQL 协议本身**没有「序列协议」**：序列是 OB 在 MySQL 模式下的扩展对象
-// （`CREATE SEQUENCE` / `NEXTVAL`），取元数据只能靠普通 COM_QUERY 文本查询，
-// 与驱动版本无关（mysql_async 只负责把 SQL 发出去、把结果集读回来）。
-//
-// 服务端当前没有 `SHOW CREATE SEQUENCE`——OB MySQL 语法里 `SHOW CREATE` 只
-// 覆盖 TABLE/VIEW/PROCEDURE/FUNCTION/TRIGGER/TENANT/TABLEGROUP/USER（见 ODC
-// 自带的 OBParser.g4，该文件可能滞后于服务端，故仍把它当第一优先级探测）。
-// 因此其余来源都是「查行集再按列名拼等价 DDL」，按「越标准越靠前」排序：
-// 1. `SHOW CREATE SEQUENCE`（若某版本支持，最权威，直接返回原文）
-// 2. `information_schema.SEQUENCES`（MySQL/MariaDB 的标准元数据入口）
-// 3. `SHOW SEQUENCES IN <db>`（OB 自己的列举语句）
-// 4. `oceanbase.DBA_SEQUENCES`（Oracle 兼容视图，最后兜底）
-//
-// 列名同时接受 MySQL/MariaDB 风格（TABLE_SCHEMA/TABLE_NAME/INCREMENT/
-// MINIMUM_VALUE/CYCLE_OPTION）与 Oracle 风格（SEQUENCE_OWNER/SEQUENCE_NAME/
-// INCREMENT_BY/MIN_VALUE/CYCLE_FLAG），按「列名大写 → 值」映射取值，
-// 任一来源能拼出必需属性即返回；都拿不到 INCREMENT BY 时给明确文案，
-// 绝不返回空定义。
-
-/// Row 转「列名大写 → 值」映射（`SELECT *` / `SHOW` 的列名随版本漂移，
-/// 按名取值比按下标稳）
-fn ob_row_value_map(row: &mysql_async::Row) -> std::collections::HashMap<String, String> {
-    let mut map = std::collections::HashMap::new();
-    for (i, col) in row.columns_ref().iter().enumerate() {
-        let key = col.name_str().to_ascii_uppercase();
-        if let Some(v) = row.get::<String, _>(i) {
-            let v = v.trim().to_string();
-            if !v.is_empty() {
-                map.insert(key, v);
-            }
-        }
-    }
-    map
-}
-
-/// 按候选列名取第一个存在的值
-fn ob_seq_attr<'a>(
-    map: &'a std::collections::HashMap<String, String>,
-    keys: &[&str],
-) -> Option<&'a str> {
-    keys.iter().find_map(|k| map.get(*k).map(String::as_str))
-}
-
-/// Y/YES/1/TRUE/ON 视为真（各版本字典的布尔呈现不一致）
-fn ob_seq_flag(
-    map: &std::collections::HashMap<String, String>,
-    keys: &[&str],
-) -> Option<bool> {
-    ob_seq_attr(map, keys).map(|v| {
-        matches!(
-            v.to_ascii_uppercase().as_str(),
-            "Y" | "YES" | "1" | "TRUE" | "ON"
-        )
-    })
-}
-
-/// 由属性拼等价 `CREATE SEQUENCE`；缺 INCREMENT BY 视为「属性不足」返回 None
-/// （增量是序列语义的核心，缺了拼出来的 DDL 会误导用户）。
-fn ob_build_sequence_ddl(
-    schema: &str,
-    name: &str,
-    map: &std::collections::HashMap<String, String>,
-) -> Option<String> {
-    let inc = ob_seq_attr(map, &["INCREMENT_BY", "INCREMENT"])?;
-    let ident = |v: &str| format!("`{}`", v.replace('`', "``"));
-    let mut ddl = format!(
-        "CREATE SEQUENCE {}.{}",
-        ident(schema),
-        ident(name)
-    );
-    if let Some(v) = ob_seq_attr(map, &["START_WITH", "START_VALUE", "START"]) {
-        ddl.push_str(&format!("\n  START WITH {v}"));
-    }
-    ddl.push_str(&format!("\n  INCREMENT BY {inc}"));
-    if let Some(v) = ob_seq_attr(map, &["MIN_VALUE", "MINIMUM_VALUE", "MINVALUE"]) {
-        ddl.push_str(&format!("\n  MINVALUE {v}"));
-    }
-    if let Some(v) = ob_seq_attr(map, &["MAX_VALUE", "MAXIMUM_VALUE", "MAXVALUE"]) {
-        ddl.push_str(&format!("\n  MAXVALUE {v}"));
-    }
-    if let Some(c) = ob_seq_flag(map, &["CYCLE_FLAG", "CYCLE_OPTION", "IS_CYCLE", "CYCLE"]) {
-        ddl.push_str(if c { "\n  CYCLE" } else { "\n  NOCYCLE" });
-    }
-    if let Some(o) = ob_seq_flag(map, &["ORDER_FLAG", "ORDER_OPTION", "SEQ_ORDER", "ORDER"]) {
-        ddl.push_str(if o { "\n  ORDER" } else { "\n  NOORDER" });
-    }
-    if let Some(v) = ob_seq_attr(map, &["CACHE_SIZE", "CACHE"]) {
-        if v == "0" || v.eq_ignore_ascii_case("NOCACHE") {
-            ddl.push_str("\n  NOCACHE");
-        } else {
-            ddl.push_str(&format!("\n  CACHE {v}"));
-        }
-    }
-    ddl.push(';');
-    Some(ddl)
-}
-
-/// OB MySQL 序列定义（探测链见上方模块注释）
-async fn ob_mysql_sequence_definition(
-    conn: &mut mysql_async::Conn,
-    schema: &str,
-    name: &str,
-) -> Result<ObjectDefinition, String> {
-    use mysql_async::prelude::Queryable as _;
-    let s = schema.replace('`', "``");
-    let n = name.replace('`', "``");
-
-    // 1) SHOW CREATE SEQUENCE：当前 OB MySQL 语法没有，高版本若支持则最权威
-    if let Ok(mut result) = conn
-        .query_iter(format!("SHOW CREATE SEQUENCE `{s}`.`{n}`"))
-        .await
-    {
-        let create_idx = result
-            .columns_ref()
-            .iter()
-            .position(|c| c.name_str().to_lowercase().contains("create"));
-        let ddl = match create_idx {
-            Some(idx) => result
-                .collect::<mysql_async::Row>()
-                .await
-                .ok()
-                .and_then(|rows| rows.into_iter().next())
-                .and_then(|row| row.get::<String, usize>(idx))
-                .unwrap_or_default(),
-            None => {
-                // 语句能执行但列形态不符（不该出现）：丢弃结果继续下一级
-                let _ = result.drop_result().await;
-                String::new()
-            }
-        };
-        if !ddl.trim().is_empty() {
-            return Ok(ObjectDefinition {
-                definition: ddl,
-                call_template: String::new(),
-                arg_count: 0,
-            });
-        }
-    }
-
-    // 2) 行集型来源：全是普通 COM_QUERY 文本查询（MySQL 协议没有「序列协议」
-    //    这类东西，序列是 OB 在 MySQL 模式下的扩展对象），按「越标准越靠前」：
-    //    information_schema.SEQUENCES（MySQL/MariaDB 标准元数据入口，OB 若
-    //    做了兼容即可用）→ SHOW SEQUENCES IN（OB 自己的列举语句）→
-    //    oceanbase.DBA_SEQUENCES（Oracle 兼容视图，最后兜底）。
-    //    任一来源能拼出必需属性即返回；查询失败/列不足静默进入下一级。
-    let sources = [
-        // MariaDB/MySQL 风格列名：TABLE_SCHEMA / TABLE_NAME / START_VALUE /
-        // MINIMUM_VALUE / MAXIMUM_VALUE / INCREMENT / CYCLE_OPTION
-        "SELECT * FROM information_schema.SEQUENCES".to_string(),
-        format!("SHOW SEQUENCES IN `{s}`"),
-        "SELECT * FROM oceanbase.DBA_SEQUENCES".to_string(),
-    ];
-    for sql in sources {
-        let Ok(rows) = conn.query::<mysql_async::Row, _>(sql).await else {
-            continue;
-        };
-        for row in rows {
-            let map = ob_row_value_map(&row);
-            let owner_ok = ob_seq_attr(
-                &map,
-                &[
-                    "TABLE_SCHEMA",
-                    "SEQUENCE_SCHEMA",
-                    "SEQUENCE_OWNER",
-                    "OWNER",
-                    "DATABASE_NAME",
-                    "SCHEMA_NAME",
-                ],
-            )
-            .map(|o| o.eq_ignore_ascii_case(schema))
-            .unwrap_or(true);
-            // SHOW SEQUENCES 的单列形态列名可能就是 SEQUENCE_NAME；MySQL 无此
-            // 对象时也可能没有名字列——都按候选名取，取不到就跳过该行
-            let name_ok = ob_seq_attr(
-                &map,
-                &["SEQUENCE_NAME", "TABLE_NAME", "NAME"],
-            )
-            .map(|v| v.eq_ignore_ascii_case(name))
-            .unwrap_or(false);
-            if owner_ok
-                && name_ok
-                && let Some(ddl) = ob_build_sequence_ddl(schema, name, &map)
-            {
-                return Ok(ObjectDefinition {
-                    definition: ddl,
-                    call_template: String::new(),
-                    arg_count: 0,
-                });
-            }
-        }
-    }
-
-    Err(
-        "OceanBase MySQL 模式的序列定义无法读取：服务端没有 SHOW CREATE SEQUENCE，\
-         且 information_schema.SEQUENCES / SHOW SEQUENCES / oceanbase.DBA_SEQUENCES \
-         均未返回可用的序列属性\
-         （对象树仍会列出序列名）"
-            .to_string(),
-    )
-}
-
 
 /// OB MySQL 物化视图清单（`OCEANBASE.DBA_MVIEWS`，ODC
 /// `OBMySQLSchemaAccessor.listMViews` 同源）。
@@ -6765,6 +6567,23 @@ mod tests {
         for name in ["T1", "my_mlog", "MLOG_T1", "mv_container_x"] {
             assert!(!ob_internal_object(name), "{name} 是普通表");
         }
+    }
+
+    /// 系统根证书 → PEM：每张证书必须各自一层 BEGIN/END。
+    /// 曾经把所有证书的 base64 塞进同一个块——多证书时中间会出现 `=` 填充，
+    /// 或解出「多张 DER 首尾相接」的字节，两种都让 PEM/证书解析失败，
+    /// MySQL 的 verify-full 因此稳定连不上（系统根证书必然多于一张）。
+    #[test]
+    fn native_roots_pem_one_block_per_cert() {
+        let native = rustls_native_certs::load_native_certs();
+        if native.certs.is_empty() {
+            return; // 无系统根证书的环境（精简容器）跳过
+        }
+        let pem = native_roots_pem().expect("应能生成 PEM");
+        let begins = pem.matches("-----BEGIN CERTIFICATE-----").count();
+        let ends = pem.matches("-----END CERTIFICATE-----").count();
+        assert_eq!(begins, native.certs.len(), "每张证书应各自一层 BEGIN");
+        assert_eq!(begins, ends, "BEGIN/END 必须成对");
     }
 
     /// Redis extra_options 解析：合法 camelCase JSON 取值、非法/空 JSON 按
