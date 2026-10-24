@@ -294,6 +294,23 @@ impl Conn {
         self.write_data(&bytes).await
     }
 
+    /// 发起新请求（v2 每命令 ResetBuffer 的读侧对位）：先清空输入残留再发送。
+    /// 命令级防毒——上一语句解码失败/提前退出留在缓冲里的字节不再毒化本
+    /// 会话的后续交互（真机症状：一次解码错误后所有查询持续报
+    /// invalid int size）。响应中途的流控回写（case 19 的 echo）不经此方法
+    pub async fn send_request(&mut self, writer: TtcWriter) -> Result<()> {
+        self.reset_read_buffer();
+        self.send_writer(writer).await
+    }
+
+    /// 清空输入缓冲残留（v2 resetRead 同型；丢弃量留 trace 便于诊断）
+    pub fn reset_read_buffer(&mut self) {
+        if !self.in_buffer.is_empty() {
+            trace!("discard {} residual input bytes", self.in_buffer.len());
+        }
+        self.in_buffer.clear();
+    }
+
     /// Read until at least `needed` bytes are in `self.in_buffer`, filling from incoming DATA packets.
     /// RESEND / MARKER 已在 read_packet 内消化（重传/跳过），此处只会看到
     /// DATA / REFUSE / 其它控制包。
@@ -406,7 +423,7 @@ impl Conn {
     async fn simple_object(&mut self, operation_id: u8) -> Result<()> {
         let mut w = TtcWriter::new();
         w.put_bytes(&[3, operation_id, 0]);
-        self.send_writer(w).await?;
+        self.send_request(w).await?;
         loop {
             let msg = self.get_byte().await?;
             if msg == 4 {
@@ -449,7 +466,7 @@ impl Conn {
         w.put_bytes(&[0x11, 0x69, 0, 1, 1, 1]);
         w.put_uint(cursor_id as u64, 4, true, true);
         w.put_bytes(&[3, 0x93, 0]);
-        self.send_writer(w).await?;
+        self.send_request(w).await?;
         // 读掉响应（4/9 皆可终止——关游标的回包可能只有 EndOfCall 9 而无 4，
         // 真机实测：只在 4 上终止会永久等待）
         loop {

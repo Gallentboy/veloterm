@@ -20,7 +20,7 @@ impl Routine<()> for PingRoutine {
         debug!("Pinging Oracle server (MsgCode 3, Op 0x93)");
         let mut writer = TtcWriter::new();
         writer.put_bytes(&[3, 0x93, 0]);
-        conn.send_writer(writer).await?;
+        conn.send_request(writer).await?;
 
         loop {
             let msg = conn.get_byte().await?;

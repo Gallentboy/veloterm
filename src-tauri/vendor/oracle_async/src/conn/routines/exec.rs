@@ -198,7 +198,7 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
             self.params.len(),
             self.sql
         );
-        conn.send_writer(writer).await?;
+        conn.send_request(writer).await?;
 
         // Read response stream
         let mut columns: Vec<ColumnMeta> = Vec::new();
@@ -312,10 +312,12 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                     row_common::read_warning(conn).await?;
                 }
                 19 => {
-                    // 服务端流控信号（v2 case 19）：零载荷，回写单字节 19 并继续
-                    // 读响应流。原实现把它并入 case 11 的绑定方向载荷一起解析，
-                    // 读走不存在的字段导致流错位——真机上长 SQL / 含中文语句的
-                    // 响应流会以「invalid int size: 66」类解码错误暴露
+                    // 服务端流控信号（v2 case 19 全语义）：先清输入残留
+                    //（ResetBuffer），回写单字节 19 后继续读——服务端会重开
+                    // 干净的响应流。原实现把它并入 case 11 的绑定方向载荷一起
+                    // 解析，读走不存在的字段导致流错位——真机上长 SQL /
+                    // 含中文语句的响应流会以「invalid int size」类解码错误暴露
+                    conn.reset_read_buffer();
                     let mut w = TtcWriter::new();
                     w.put_bytes(&[19]);
                     conn.send_writer(w).await?;

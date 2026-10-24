@@ -5,6 +5,7 @@
 > **本地修补记录**（升级 / 重放提示：以下是对上游参照实现 sijms/go-ora **v2**（本地检出 `~/github/go-ora`）的偏差修正，换树或升级时需逐条复核）：
 > 1. **TTC 消息 19（服务端流控）误并入 case 11 解析**（`src/conn/routines/exec.rs` / `fetch.rs`）：v2 的 `case 19` 是零载荷流控信号——客户端须**回写单字节 19 并继续读响应流**。移植版原先把 `11 | 19` 合并按「绑定方向」的 ResultSet.load 头 + 逐列方向字节解析，19 到来时读走不存在的字段导致 TTC 流错位——真机上长 SQL / 含中文语句的响应流以 `Type decode error: invalid int size: 66`（把后续文本字节当压缩 int 的 size）暴露。fetch 轮原先落 `other` 静默跳过（不回 ACK）同样错位，一并修复。
 > 2. **case 11 列数组合公式**（`exec.rs`）：v2 `ResultSet.load` 的列数 = `i2 低段 + i4 高段 × 0x100`，移植版原先只取 i2（>255 列的宽结果集会截断方向字节循环）。
+> 3. **命令级输入残留清理 / 防毒**（`conn/mod.rs` + `exec.rs` / `fetch.rs` / `ping.rs` / `close_cursor` / `simple_object`）：v2 每条命令发起前 `ResetBuffer()`（含 `resetRead` 清空输入缓冲），case 19 的流控回写同样先清再写。移植版原先从不清理输入残留——一次解码错误/提前退出后，残留字节永久毒化会话（真机症状：某条语句失败后，之前能跑的 SQL 全部持续报 `invalid int size`）。现新增 `send_request`（= 清残留 + 发送）用于所有请求发起点，`reset_read_buffer` 供 19 回写复用。
 
 
 对标 `mysql_async` 的成熟架构设计，全面基于 **Tokio + `tokio_util::codec::Framed` + 异步 `Routine` 状态机** 实现 Oracle 专有的 **TNS（传输网络层）** 与 **TTC（双任务通用数据层）** 协议。
