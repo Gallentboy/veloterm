@@ -983,7 +983,10 @@ mod tests {
         let stmts = split_statements("mysql", "SELECT 1; SELECT 2");
         let assembled = explain_statements("mysql", None, &stmts, false).unwrap();
         assert_eq!(assembled.len(), 2);
-        assert_eq!(assembled[1].0, "EXPLAIN SELECT 2");
+        assert_eq!(
+            assembled.get(1).map(|x| x.0.as_str()),
+            Some("EXPLAIN SELECT 2")
+        );
     }
 
     /// Redis 无执行计划概念，直接拒绝
