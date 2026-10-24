@@ -58,14 +58,6 @@
 //!     mysql_async = { version = "*", default-features = false, features = ["default-rustls"] }
 //!     ```
 //!
-//! *   `native-tls-tls` – enables TLS via `native-tls`
-//!
-//!     **Example:**
-//!
-//!     ```toml
-//!     [dependencies]
-//!     mysql_async = { version = "*", default-features = false, features = ["minimal", "native-tls-tls"] }
-//!
 //! *   `rustls-tls` - enables rustls TLS backend with no provider. You should enable one
 //!     of existing providers using `aws-lc-rs` or `ring` features:
 //!
@@ -109,10 +101,7 @@
 //!
 //! SSL support comes in two flavors:
 //!
-//! 1.  Based on native-tls – this is the default option, that usually works without pitfalls
-//!     (see the `native-tls-tls` crate feature).
-//!
-//! 2.  Based on rustls – TLS backend written in Rust (see the `rustls-tls` crate feature).
+//! 1.  Based on rustls – TLS backend written in Rust (see the `rustls-tls` crate feature).
 //!
 //!     Please also note a few things about rustls:
 //!     -   it will fail if you'll try to connect to the server by its IP address,
@@ -482,7 +471,7 @@ pub use self::conn::Conn;
 #[doc(inline)]
 pub use self::conn::pool::Pool;
 
-#[cfg(any(feature = "native-tls-tls", feature = "rustls-tls"))]
+#[cfg(feature = "rustls-tls")]
 #[doc(inline)]
 pub use self::error::tls::TlsError;
 
@@ -498,7 +487,7 @@ pub use self::query::QueryWithParams;
 pub use self::queryable::transaction::IsolationLevel;
 
 #[doc(inline)]
-#[cfg(any(feature = "rustls", feature = "native-tls-tls"))]
+#[cfg(feature = "rustls")]
 pub use self::opts::ClientIdentity;
 
 #[doc(inline)]

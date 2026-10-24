@@ -663,10 +663,9 @@ impl DmClient {
                 // 塞进 ExecuteRetInfo.explain 字段由 getExplain() 取，不是结果集——
                 // 这里按同一口径包成单列结果集（列名 EXPLAIN_PLAN），使工作台的
                 // 表格/解析通道无需特判
-                let mut pos = 0usize;
                 if f.body.len() >= 4 {
                     let text_len = le_i32(&f.body, 0).max(0) as usize;
-                    pos = 4;
+                    let pos = 4usize;
                     let avail = f.body.len().saturating_sub(pos);
                     let take = text_len.min(avail);
                     let text = self

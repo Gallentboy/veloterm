@@ -6,11 +6,7 @@
 // option. All files in the project carrying such notice may not be copied,
 // modified, or distributed except according to those terms.
 
-mod native_tls_opts;
 mod rustls_opts;
-
-#[cfg(feature = "native-tls-tls")]
-pub use native_tls_opts::ClientIdentity;
 
 #[cfg(feature = "rustls-tls")]
 pub use rustls_opts::ClientIdentity;
@@ -147,7 +143,7 @@ pub enum PathOrBuf<'a> {
 
 impl<'a> PathOrBuf<'a> {
     /// Will either read data from disk or return the buffered data.
-    pub async fn read(&self) -> io::Result<Cow<[u8]>> {
+    pub async fn read(&self) -> io::Result<Cow<'_, [u8]>> {
         match self {
             PathOrBuf::Path(x) => tokio::fs::read(x.as_ref()).await.map(Cow::Owned),
             PathOrBuf::Buf(x) => Ok(Cow::Borrowed(x.as_ref())),
@@ -192,16 +188,8 @@ impl<'a> From<&'a [u8]> for PathOrBuf<'a> {
 /// ```
 /// # use mysql_async::SslOpts;
 /// # use std::path::Path;
-/// # #[cfg(any(feature = "native-tls-tls", feature = "rustls-tls"))]
+/// # #[cfg(feature = "rustls-tls")]
 /// # use mysql_async::ClientIdentity;
-/// // With native-tls
-/// # #[cfg(feature = "native-tls-tls")]
-/// let ssl_opts = SslOpts::default()
-///     .with_client_identity(Some(ClientIdentity::new(Path::new("/path").into())
-///         .with_password("******")
-///     ));
-///
-/// // With rustls
 /// # #[cfg(feature = "rustls-tls")]
 /// let ssl_opts = SslOpts::default()
 ///     .with_client_identity(Some(ClientIdentity::new(
@@ -211,7 +199,7 @@ impl<'a> From<&'a [u8]> for PathOrBuf<'a> {
 /// ```
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Default)]
 pub struct SslOpts {
-    #[cfg(any(feature = "native-tls-tls", feature = "rustls-tls"))]
+    #[cfg(feature = "rustls-tls")]
     client_identity: Option<ClientIdentity>,
     root_certs: Vec<PathOrBuf<'static>>,
     disable_built_in_roots: bool,
@@ -221,7 +209,7 @@ pub struct SslOpts {
 }
 
 impl SslOpts {
-    #[cfg(any(feature = "native-tls-tls", feature = "rustls-tls"))]
+    #[cfg(feature = "rustls-tls")]
     pub fn with_client_identity(mut self, identity: Option<ClientIdentity>) -> Self {
         self.client_identity = identity;
         self
@@ -309,7 +297,7 @@ impl SslOpts {
         self
     }
 
-    #[cfg(any(feature = "native-tls-tls", feature = "rustls-tls"))]
+    #[cfg(feature = "rustls-tls")]
     pub fn client_identity(&self) -> Option<&ClientIdentity> {
         self.client_identity.as_ref()
     }

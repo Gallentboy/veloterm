@@ -1,4 +1,3 @@
-#![cfg(any(feature = "native-tls-tls", feature = "rustls"))]
+#![cfg(feature = "rustls")]
 
-mod native_tls_io;
 mod rustls_io;

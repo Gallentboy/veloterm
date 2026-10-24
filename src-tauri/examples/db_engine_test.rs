@@ -534,7 +534,6 @@ async fn main() {
             &cancel,
             &engine_kind,
             None,
-            &dk,
             &stmts,
             false,
         )

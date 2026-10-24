@@ -54,13 +54,12 @@ fn build_oracle_error_table() {
         .get("_meta")
         .and_then(|m| m.get("entry_count"))
         .and_then(|v| v.as_u64())
+        && declared as usize != arr.len()
     {
-        if declared as usize != arr.len() {
-            fail(format!(
-                "[oracle-errors] _meta.entry_count({declared}) 与实际条数({}) 不符",
-                arr.len()
-            ));
-        }
+        fail(format!(
+            "[oracle-errors] _meta.entry_count({declared}) 与实际条数({}) 不符",
+            arr.len()
+        ));
     }
     let mut entries: Vec<(String, String, String, String)> = Vec::with_capacity(arr.len());
     for e in arr {
@@ -99,10 +98,10 @@ fn build_oracle_error_table() {
 
     // 去重校验：重复 code 会让二分结果不确定
     for w in rows.windows(2) {
-        if let [a, b] = w {
-            if a.0 == b.0 {
-                fail(format!("[oracle-errors] 重复错误码: ORA-{:05}", a.0));
-            }
+        if let [a, b] = w
+            && a.0 == b.0
+        {
+            fail(format!("[oracle-errors] 重复错误码: ORA-{:05}", a.0));
         }
     }
 

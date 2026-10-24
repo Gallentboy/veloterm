@@ -185,8 +185,6 @@ impl Encoder<PooledBuf> for PacketCodec {
 #[derive(Debug)]
 pub(crate) enum Endpoint {
     Plain(Option<TcpStream>),
-    #[cfg(feature = "native-tls-tls")]
-    Secure(#[pin] tokio_native_tls::TlsStream<TcpStream>),
     #[cfg(feature = "rustls-tls")]
     Secure(#[pin] tokio_rustls::client::TlsStream<tokio::net::TcpStream>),
     #[cfg(unix)]
@@ -233,11 +231,6 @@ impl Endpoint {
                 CheckTcpStream(stream).await?;
                 Ok(())
             }
-            #[cfg(feature = "native-tls-tls")]
-            Endpoint::Secure(tls_stream) => {
-                CheckTcpStream(tls_stream.get_mut().get_mut().get_mut()).await?;
-                Ok(())
-            }
             #[cfg(feature = "rustls-tls")]
             Endpoint::Secure(tls_stream) => {
                 let stream = tls_stream.get_mut().0;
@@ -253,12 +246,12 @@ impl Endpoint {
         }
     }
 
-    #[cfg(any(feature = "native-tls-tls", feature = "rustls-tls"))]
+    #[cfg(feature = "rustls-tls")]
     pub fn is_secure(&self) -> bool {
         matches!(self, Endpoint::Secure(_))
     }
 
-    #[cfg(all(not(feature = "native-tls-tls"), not(feature = "rustls")))]
+    #[cfg(not(feature = "rustls"))]
     pub async fn make_secure(
         &mut self,
         _domain: String,
@@ -266,7 +259,7 @@ impl Endpoint {
     ) -> crate::error::Result<()> {
         panic!(
             "Client had asked for TLS connection but TLS support is disabled. \
-            Please enable one of the following features: [\"native-tls-tls\", \"rustls-tls\"]"
+            Please enable the \"rustls-tls\" feature"
         )
     }
 
@@ -274,10 +267,6 @@ impl Endpoint {
         match *self {
             Endpoint::Plain(Some(ref stream)) => stream.set_nodelay(val)?,
             Endpoint::Plain(None) => unreachable!(),
-            #[cfg(feature = "native-tls-tls")]
-            Endpoint::Secure(ref stream) => {
-                stream.get_ref().get_ref().get_ref().set_nodelay(val)?
-            }
             #[cfg(feature = "rustls-tls")]
             Endpoint::Secure(ref stream) => {
                 let stream = stream.get_ref().0;
@@ -303,13 +292,6 @@ impl From<Socket> for Endpoint {
     }
 }
 
-#[cfg(feature = "native-tls-tls")]
-impl From<tokio_native_tls::TlsStream<TcpStream>> for Endpoint {
-    fn from(stream: tokio_native_tls::TlsStream<TcpStream>) -> Self {
-        Endpoint::Secure(stream)
-    }
-}
-
 /* TODO
 #[cfg(feature = "rustls-tls")]
 */
@@ -325,8 +307,6 @@ impl AsyncRead for Endpoint {
             EndpointProj::Plain(ref mut stream) => {
                 Pin::new(stream.as_mut().unwrap()).poll_read(cx, buf)
             }
-            #[cfg(feature = "native-tls-tls")]
-            EndpointProj::Secure(ref mut stream) => stream.as_mut().poll_read(cx, buf),
             #[cfg(feature = "rustls-tls")]
             EndpointProj::Secure(ref mut stream) => stream.as_mut().poll_read(cx, buf),
             #[cfg(unix)]
@@ -346,8 +326,6 @@ impl AsyncWrite for Endpoint {
             EndpointProj::Plain(ref mut stream) => {
                 Pin::new(stream.as_mut().unwrap()).poll_write(cx, buf)
             }
-            #[cfg(feature = "native-tls-tls")]
-            EndpointProj::Secure(ref mut stream) => stream.as_mut().poll_write(cx, buf),
             #[cfg(feature = "rustls-tls")]
             EndpointProj::Secure(ref mut stream) => stream.as_mut().poll_write(cx, buf),
             #[cfg(unix)]
@@ -364,8 +342,6 @@ impl AsyncWrite for Endpoint {
             EndpointProj::Plain(ref mut stream) => {
                 Pin::new(stream.as_mut().unwrap()).poll_flush(cx)
             }
-            #[cfg(feature = "native-tls-tls")]
-            EndpointProj::Secure(ref mut stream) => stream.as_mut().poll_flush(cx),
             #[cfg(feature = "rustls-tls")]
             EndpointProj::Secure(ref mut stream) => stream.as_mut().poll_flush(cx),
             #[cfg(unix)]
@@ -382,8 +358,6 @@ impl AsyncWrite for Endpoint {
             EndpointProj::Plain(ref mut stream) => {
                 Pin::new(stream.as_mut().unwrap()).poll_shutdown(cx)
             }
-            #[cfg(feature = "native-tls-tls")]
-            EndpointProj::Secure(ref mut stream) => stream.as_mut().poll_shutdown(cx),
             #[cfg(feature = "rustls-tls")]
             EndpointProj::Secure(ref mut stream) => stream.as_mut().poll_shutdown(cx),
             #[cfg(unix)]
@@ -506,7 +480,7 @@ impl Stream {
         )));
     }
 
-    #[cfg(any(feature = "native-tls-tls", feature = "rustls-tls"))]
+    #[cfg(feature = "rustls-tls")]
     pub(crate) fn is_secure(&self) -> bool {
         self.codec.as_ref().unwrap().get_ref().is_secure()
     }
@@ -594,8 +568,6 @@ mod test {
             super::Endpoint::Plain(Some(stream)) => stream,
             #[cfg(feature = "rustls-tls")]
             super::Endpoint::Secure(tls_stream) => tls_stream.get_ref().0,
-            #[cfg(feature = "native-tls-tls")]
-            super::Endpoint::Secure(tls_stream) => tls_stream.get_ref().get_ref().get_ref(),
             _ => unreachable!(),
         };
         let sock = unsafe {
