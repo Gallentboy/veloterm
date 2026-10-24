@@ -77,7 +77,7 @@ export function WorkspaceHelpMenuButton({ onShowAbout, onOpenManual }: Workspace
       </ControlHintTooltip>
 
       {open ? (
-        <div className="absolute right-0 top-full z-50 mt-1 min-w-44 rounded-lg border border-border bg-menu p-1 shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 rounded-lg border border-border bg-menu p-1 shadow-lg">
           <DropdownItem
             icon={<BookOpen className="size-4 shrink-0 text-primary" />}
             onSelect={() => {
