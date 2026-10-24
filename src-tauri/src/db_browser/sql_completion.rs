@@ -62,11 +62,49 @@ const TABLE_KEYWORDS: [&str; 4] = ["from", "join", "update", "into"];
 
 /// 别名位的停用词：表名后紧跟这些词时不是别名（SQL 常见子句/联结词）
 const ALIAS_STOPWORDS: &[&str] = &[
-    "on", "using", "where", "set", "values", "group", "order", "by", "limit", "offset", "having",
-    "left", "right", "inner", "outer", "cross", "full", "natural", "join", "union", "minus",
-    "intersect", "select", "from", "for", "with", "when", "then", "else", "end", "and", "or",
-    "not", "as", "lateral", "partition", "duplicate", "returning", "wait", "nowait", "where",
-    "into", "update",
+    "on",
+    "using",
+    "where",
+    "set",
+    "values",
+    "group",
+    "order",
+    "by",
+    "limit",
+    "offset",
+    "having",
+    "left",
+    "right",
+    "inner",
+    "outer",
+    "cross",
+    "full",
+    "natural",
+    "join",
+    "union",
+    "minus",
+    "intersect",
+    "select",
+    "from",
+    "for",
+    "with",
+    "when",
+    "then",
+    "else",
+    "end",
+    "and",
+    "or",
+    "not",
+    "as",
+    "lateral",
+    "partition",
+    "duplicate",
+    "returning",
+    "wait",
+    "nowait",
+    "where",
+    "into",
+    "update",
 ];
 
 struct Tok {
@@ -75,10 +113,12 @@ struct Tok {
     ident: bool,
 }
 
+#[inline(always)]
 fn is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
 }
 
+#[inline(always)]
 fn is_ident_start(b: u8) -> bool {
     b.is_ascii_alphabetic() || b == b'_' || b == b'$'
 }
@@ -102,19 +142,25 @@ fn tokenize(stmt: &str) -> Vec<Tok> {
             while b.get(i).is_some_and(|&x| x != b'\n') {
                 i += 1;
             }
-            out.push(Tok { start, end: i, ident: false });
+            out.push(Tok {
+                start,
+                end: i,
+                ident: false,
+            });
             continue;
         }
         if c == b'/' && b.get(i.wrapping_add(1)) == Some(&b'*') {
             let start = i;
             i += 2;
-            while i + 1 < b.len()
-                && !(b.get(i) == Some(&b'*') && b.get(i + 1) == Some(&b'/'))
-            {
+            while i + 1 < b.len() && !(b.get(i) == Some(&b'*') && b.get(i + 1) == Some(&b'/')) {
                 i += 1;
             }
             i = (i + 2).min(b.len());
-            out.push(Tok { start, end: i, ident: false });
+            out.push(Tok {
+                start,
+                end: i,
+                ident: false,
+            });
             continue;
         }
         if c == b'\'' {
@@ -124,7 +170,11 @@ fn tokenize(stmt: &str) -> Vec<Tok> {
                 i += 1;
             }
             i = (i + 1).min(b.len());
-            out.push(Tok { start, end: i, ident: false });
+            out.push(Tok {
+                start,
+                end: i,
+                ident: false,
+            });
             continue;
         }
         if c == b'"' || c == b'`' || c == b'[' {
@@ -143,7 +193,11 @@ fn tokenize(stmt: &str) -> Vec<Tok> {
                 i += 1;
             }
             i = (i + 1).min(b.len());
-            out.push(Tok { start, end: i, ident: true });
+            out.push(Tok {
+                start,
+                end: i,
+                ident: true,
+            });
             continue;
         }
         if is_ident_start(c) {
@@ -151,15 +205,24 @@ fn tokenize(stmt: &str) -> Vec<Tok> {
             while b.get(i).is_some_and(|&x| is_word_byte(x)) {
                 i += 1;
             }
-            out.push(Tok { start, end: i, ident: true });
+            out.push(Tok {
+                start,
+                end: i,
+                ident: true,
+            });
             continue;
         }
-        out.push(Tok { start: i, end: i + 1, ident: false });
+        out.push(Tok {
+            start: i,
+            end: i + 1,
+            ident: false,
+        });
         i += 1;
     }
     out
 }
 
+#[inline]
 fn strip_ident_quotes(s: &str) -> &str {
     match (s.as_bytes().first(), s.as_bytes().last()) {
         (Some(b'"'), Some(b'"')) | (Some(b'`'), Some(b'`')) | (Some(b'['), Some(b']'))
@@ -186,7 +249,12 @@ fn strip_ident_quotes(s: &str) -> &str {
 ///   方言特有语法）回退行级 token 扫描启发式，语义同前端初版。
 pub fn parse_cursor_context(text: &str, cursor: usize, engine: &str) -> CursorContext {
     // 语句边界：光标前最后一个分号之后 → 光标后第一个分号之前
-    let stmt_start = text.get(..cursor).unwrap_or(text).rfind(';').map(|p| p + 1).unwrap_or(0);
+    let stmt_start = text
+        .get(..cursor)
+        .unwrap_or(text)
+        .rfind(';')
+        .map(|p| p + 1)
+        .unwrap_or(0);
     let stmt_end = text
         .get(cursor..)
         .unwrap_or_default()
@@ -241,6 +309,7 @@ fn ast_tables_and_aliases(
     Some((aliases, referenced))
 }
 
+#[inline]
 fn push_ref(r: RefTable, referenced: &mut Vec<RefTable>) {
     let dup = referenced.iter().any(|x| {
         x.table.eq_ignore_ascii_case(&r.table) && x.schema.eq_ignore_ascii_case(&r.schema)
@@ -378,13 +447,10 @@ fn token_scan_tables(stmt: &str) -> (HashMap<String, RefTable>, Vec<RefTable>) {
         aliases: &mut HashMap<String, RefTable>,
         referenced: &mut Vec<RefTable>,
     ) -> usize {
-        let text =
-            |t: &Tok| stmt.get(t.start..t.end).unwrap_or_default();
+        let text = |t: &Tok| stmt.get(t.start..t.end).unwrap_or_default();
         let mut schema = String::new();
-        let mut table = strip_ident_quotes(
-            toks.get(start).map(text).unwrap_or_default(),
-        )
-        .to_string();
+        let mut table =
+            strip_ident_quotes(toks.get(start).map(text).unwrap_or_default()).to_string();
         let mut end = start + 1;
         if let (Some(dot), Some(name)) = (toks.get(end), toks.get(end + 1).filter(|t| t.ident))
             && !dot.ident
@@ -436,15 +502,15 @@ fn token_scan_tables(stmt: &str) -> (HashMap<String, RefTable>, Vec<RefTable>) {
             depth = depth.saturating_sub(1);
         }
         // 括号内的表（子查询）不进外层作用域：其列在外层不可见
-        if depth > 0
-            || !t.ident
-            || !TABLE_KEYWORDS.contains(&text.to_ascii_lowercase().as_str())
-        {
+        if depth > 0 || !t.ident || !TABLE_KEYWORDS.contains(&text.to_ascii_lowercase().as_str()) {
             i += 1;
             continue;
         }
         // FROM ( 子查询：跳过（派生表列不可知）
-        if toks.get(i + 1).is_some_and(|n| !n.ident && n.text_is(stmt, "(")) {
+        if toks
+            .get(i + 1)
+            .is_some_and(|n| !n.ident && n.text_is(stmt, "("))
+        {
             i += 1;
             continue;
         }
@@ -454,7 +520,9 @@ fn token_scan_tables(stmt: &str) -> (HashMap<String, RefTable>, Vec<RefTable>) {
         }
         // FROM a, b 旧式逗号联表：每段都是表引用（各可带别名）
         let mut end = consume_ref(i + 1, &toks, stmt, &mut aliases, &mut referenced);
-        while toks.get(end).is_some_and(|n| !n.ident && n.text_is(stmt, ","))
+        while toks
+            .get(end)
+            .is_some_and(|n| !n.ident && n.text_is(stmt, ","))
             && toks.get(end + 1).is_some_and(|n| n.ident)
         {
             end = consume_ref(end + 1, &toks, stmt, &mut aliases, &mut referenced);
@@ -465,6 +533,7 @@ fn token_scan_tables(stmt: &str) -> (HashMap<String, RefTable>, Vec<RefTable>) {
 }
 
 impl Tok {
+    #[inline(always)]
     fn text_is(&self, stmt: &str, expect: &str) -> bool {
         &stmt[self.start..self.end] == expect
     }
@@ -492,9 +561,8 @@ fn scan_word_and_qualifier(stmt: &str) -> (Option<String>, String, usize) {
         }
         let mut m = k;
         while m > 0
-            && b.get(m - 1).is_some_and(|&x| {
-                is_word_byte(x) || matches!(x, b'"' | b'`' | b'[' | b']')
-            })
+            && b.get(m - 1)
+                .is_some_and(|&x| is_word_byte(x) || matches!(x, b'"' | b'`' | b'[' | b']'))
         {
             m -= 1;
         }
@@ -509,9 +577,8 @@ fn ends_with_table_position(stmt: &str) -> bool {
     let mut i = b.len();
     // 表名位字符：词字符 + 限定符字符（. " ` [ ]）
     while i > 0
-        && b.get(i - 1).is_some_and(|&x| {
-            is_word_byte(x) || matches!(x, b'.' | b'"' | b'`' | b'[' | b']')
-        })
+        && b.get(i - 1)
+            .is_some_and(|&x| is_word_byte(x) || matches!(x, b'.' | b'"' | b'`' | b'[' | b']'))
     {
         i -= 1;
     }
@@ -563,6 +630,7 @@ pub struct SqlCompletionCache {
 }
 
 impl SqlCompletionCache {
+    #[inline]
     pub fn clear(&mut self) {
         self.schemas = None;
         self.tables.clear();
@@ -632,6 +700,7 @@ fn table_drafts(tables: &[TableEntry]) -> Vec<SqlCompletionItem> {
 
 /// UTF-16 码元偏移 → 字节偏移（前端 cursorOffset / monaco getOffsetAt 均为
 /// UTF-16 语义；非 ASCII 的 SQL 标识符两侧需换算）
+#[inline]
 fn utf16_to_byte(s: &str, off: usize) -> usize {
     let mut units = 0usize;
     for (i, ch) in s.char_indices() {
@@ -643,6 +712,7 @@ fn utf16_to_byte(s: &str, off: usize) -> usize {
     s.len()
 }
 
+#[inline(always)]
 fn byte_to_utf16(s: &str, byte: usize) -> usize {
     s[..byte].chars().map(char::len_utf16).sum()
 }
@@ -754,7 +824,12 @@ async fn cached_columns(
     cache: &std::sync::Mutex<SqlCompletionCache>,
     schema: &str,
     table: &str,
-) -> Result<Vec<ColumnEntry>, String> {    let key = format!("{}.{}", schema.to_ascii_lowercase(), table.to_ascii_lowercase());
+) -> Result<Vec<ColumnEntry>, String> {
+    let key = format!(
+        "{}.{}",
+        schema.to_ascii_lowercase(),
+        table.to_ascii_lowercase()
+    );
     if let Some(v) = cache.lock().ok().and_then(|c| c.columns.get(&key).cloned()) {
         return Ok(v);
     }
@@ -785,7 +860,9 @@ async fn ref_columns(
             .cloned()
             .unwrap_or_else(|| r.schema.clone())
     };
-    let tables = cached_tables(engine, cache, &schema).await.unwrap_or_default();
+    let tables = cached_tables(engine, cache, &schema)
+        .await
+        .unwrap_or_default();
     let (cs, ct) = tables
         .iter()
         .find(|t| t.name.eq_ignore_ascii_case(&r.table))
@@ -807,7 +884,10 @@ pub async fn sql_completions(
             .meta
             .read()
             .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
-        (meta.engine.clone(), meta.database.clone().unwrap_or_default())
+        (
+            meta.engine.clone(),
+            meta.database.clone().unwrap_or_default(),
+        )
     };
     let ctx = parse_cursor_context(sql, cursor_byte, &engine);
     let word_start_u16 = byte_to_utf16(sql, ctx.word_start);
@@ -894,9 +974,7 @@ pub async fn sql_completions(
             let key = c.name.to_ascii_lowercase();
             if seen.contains(&key) {
                 // 同名列：detail 追加第二个出处（表名区分）
-                if let Some(prev) = merged.iter_mut().find(|d| {
-                    d.sort == format!("!1{key}")
-                }) {
+                if let Some(prev) = merged.iter_mut().find(|d| d.sort == format!("!1{key}")) {
                     prev.detail = format!("{} · {}.{}", prev.detail, r.table, c.name);
                 }
                 continue;
@@ -998,10 +1076,7 @@ mod tests {
     fn comments_do_not_trigger_scan() {
         let c = ctx("SELECT 1 -- from secret\nFROM t ");
         assert_eq!(c.referenced.len(), 1);
-        assert_eq!(
-            c.referenced.first().map(|t| t.table.as_str()),
-            Some("t")
-        );
+        assert_eq!(c.referenced.first().map(|t| t.table.as_str()), Some("t"));
     }
 
     #[test]
@@ -1018,7 +1093,11 @@ mod tests {
 
     #[test]
     fn dot_inside_string_literal_is_not_qualifier() {
-        assert!(ctx("SELECT * FROM emp WHERE c1 = 'ab.'").qualifier.is_none());
+        assert!(
+            ctx("SELECT * FROM emp WHERE c1 = 'ab.'")
+                .qualifier
+                .is_none()
+        );
     }
 
     #[test]
@@ -1026,7 +1105,10 @@ mod tests {
         let c = ctx(r#"SELECT * FROM "My Table" x WHERE "#);
         let r = c.referenced.first().expect("引号表名");
         assert_eq!(r.table, "My Table");
-        assert_eq!(c.aliases.get("x").map(|t| t.table.as_str()), Some("My Table"));
+        assert_eq!(
+            c.aliases.get("x").map(|t| t.table.as_str()),
+            Some("My Table")
+        );
     }
 
     #[test]
@@ -1056,10 +1138,17 @@ mod tests {
     fn ast_path_joins_and_nested_scope() {
         // 语法完整的语句走 AST 主路：JOIN 链别名、标量子查询隔离、
         // UNION 两臂都在作用域内
-        let c = ctx("SELECT (SELECT max(1) FROM secret_tab) FROM emp e UNION ALL SELECT * FROM dept d");
+        let c =
+            ctx("SELECT (SELECT max(1) FROM secret_tab) FROM emp e UNION ALL SELECT * FROM dept d");
         let tables: Vec<&str> = c.referenced.iter().map(|r| r.table.as_str()).collect();
-        assert!(tables.contains(&"emp") && tables.contains(&"dept"), "{tables:?}");
-        assert!(!tables.contains(&"secret_tab"), "标量子查询内的表不得进外层");
+        assert!(
+            tables.contains(&"emp") && tables.contains(&"dept"),
+            "{tables:?}"
+        );
+        assert!(
+            !tables.contains(&"secret_tab"),
+            "标量子查询内的表不得进外层"
+        );
         assert_eq!(c.aliases.get("e").map(|t| t.table.as_str()), Some("emp"));
         assert_eq!(c.aliases.get("d").map(|t| t.table.as_str()), Some("dept"));
 
@@ -1081,7 +1170,10 @@ mod tests {
         // 想象宽（JOIN 无 ON 也能解析）——真正的降级触发是悬空点/缺子句等
         let c = ctx("SELECT * FROM emp e JOIN dep");
         let tables: Vec<&str> = c.referenced.iter().map(|r| r.table.as_str()).collect();
-        assert!(tables.contains(&"emp") && tables.contains(&"dep"), "{tables:?}");
+        assert!(
+            tables.contains(&"emp") && tables.contains(&"dep"),
+            "{tables:?}"
+        );
         assert_eq!(c.aliases.get("e").map(|t| t.table.as_str()), Some("emp"));
 
         // 真正解析不了的形态：尾部悬空点（光标词所在）→ 降级路接住
