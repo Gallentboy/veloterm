@@ -691,7 +691,18 @@ impl DmClient {
             None if frames.iter().any(|f| f.cmd == 0 || f.cmd == CMD_MORE_RESULTS) => {
                 Ok(ExecuteResult::Affected(0))
             }
-            None => Err(DmError::protocol("执行未产生有效结果帧")),
+            // 帧转储进错误信息：EXPLAIN 等特殊语句的回包帧形态（cmd/len/ret）
+            // 无 JDBC 侧先例可对照（驱动 jar 全树无 EXPLAIN 特判，服务端处理），
+            // 真机转储一次即可定位该按哪种帧解析
+            None => Err(DmError::protocol(format!(
+                "执行未产生有效结果帧（{} 帧：{}）",
+                frames.len(),
+                frames
+                    .iter()
+                    .map(|f| format!("cmd={} len={} ret={}", f.cmd, f.length, f.retcode))
+                    .collect::<Vec<_>>()
+                    .join("，")
+            ))),
         }
     }
 

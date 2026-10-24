@@ -2091,7 +2091,12 @@ impl DbEngine {
                     .map_err(|e| format!("Oracle 读取表统计失败：{}", oracle_err(e)))?
                 {
                     (
-                        oracle_row_string(&row, 0),
+                        {
+                            // 空值渲染为字面 "NULL" 字符串——归一为空串，
+                            // 免得表详情注释徽标显示「NULL」
+                            let raw = oracle_row_string(&row, 0);
+                            if raw == "NULL" { String::new() } else { raw }
+                        },
                         {
                             let raw = oracle_row_string(&row, 1);
                             if raw.is_empty() || raw == "NULL" {
@@ -2758,7 +2763,10 @@ impl DbEngine {
                     {
                         Some(row) => {
                             (
-                                dm_row_string(&row, 0),
+                                {
+                                    let raw = dm_row_string(&row, 0);
+                                    if raw == "NULL" { String::new() } else { raw }
+                                },
                                 {
                                     let raw = dm_row_string(&row, 1);
                                     if raw.is_empty() || raw == "NULL" {
@@ -3188,6 +3196,42 @@ impl DbEngine {
                 // 是函数返回值，排除）
                 // 字典视图前缀自适应（DBA 权限 → dba_*）
                 let dict_p = oracle_dict_prefix(conn).await;
+                // 视图：无 all_source 源码，走 GET_DDL（UI 主路径是表详情，
+                // 此分支供定义视图/CLI 全链路测试直取）
+                if kind == "view" {
+                    let ddl_sql = format!(
+                        "SELECT DBMS_METADATA.GET_DDL('VIEW', {}, {}) FROM dual",
+                        ob_quote_literal(name),
+                        ob_quote_literal(schema)
+                    );
+                    let mut ddl = String::new();
+                    if let Ok(mut rs) = conn.query(&ddl_sql).await
+                        && let Ok(Some(row)) = rs.next_row().await
+                    {
+                        ddl = oracle_row_string(&row, 0);
+                    }
+                    if ddl.trim().is_empty() {
+                        // 降级 all_views 文本（旧库 GET_DDL 权限缺失时）
+                        let vs = format!(
+                            "SELECT text FROM all_views WHERE owner = {} AND view_name = {}",
+                            ob_quote_literal(schema),
+                            ob_quote_literal(name)
+                        );
+                        if let Ok(mut rs) = conn.query(&vs).await
+                            && let Ok(Some(row)) = rs.next_row().await
+                        {
+                            ddl = oracle_row_string(&row, 0);
+                        }
+                    }
+                    if ddl.trim().is_empty() {
+                        return Err("未找到该视图（可能已被删除）".to_string());
+                    }
+                    return Ok(ObjectDefinition {
+                        definition: ddl,
+                        call_template: String::new(),
+                        arg_count: 0,
+                    });
+                }
                 // DB Link：all_db_links 无源码，重建 CREATE DATABASE LINK 语句
                 //（字典里本就无口令列，不回显）
                 // 用户自定义类型：GET_DDL 出完整 CREATE OR REPLACE TYPE 语句
@@ -3791,8 +3835,32 @@ impl DbEngine {
                         .map(|row| dm_text_at(row, 0))
                         .collect::<Vec<_>>()
                         .join("");
+                    // ALL_SOURCE 无行时降级 GET_DDL：系统内置过程（SYSDBA 的
+                    // SP_ARCH_*/SP_DB_* 等）源码不对外暴露但 GET_DDL 可出规约
+                    //（真机实测 ALL_SOURCE 查不到、GET_DDL 待验——两者都空则
+                    // 明确报「无源码」而非误报「可能已被删除」）
                     if definition.trim().is_empty() {
-                        return Err("未找到该函数/过程（可能已被删除）".to_string());
+                        let ddl = dm_query_first_string(
+                            client,
+                            &format!(
+                                "SELECT DBMS_METADATA.GET_DDL('{obj_type}', ?, ?) FROM DUAL"
+                            ),
+                            &[
+                                dm_pure::Param::Str(name_o.clone()),
+                                dm_pure::Param::Str(schema_o.clone()),
+                            ],
+                        )
+                        .unwrap_or_default();
+                        if ddl.trim().is_empty() {
+                            return Err(format!(
+                                "{name_o}：ALL_SOURCE 与 GET_DDL 均无源码（系统内置对象？）"
+                            ));
+                        }
+                        return Ok(ObjectDefinition {
+                            definition: ddl,
+                            call_template: String::new(),
+                            arg_count: 0,
+                        });
                     }
                     let arg_count = dm_query_rows(
                         client,
