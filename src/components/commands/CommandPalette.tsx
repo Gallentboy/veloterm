@@ -95,9 +95,13 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   // 容器化定位（与 Modal 的 containerSelector 同机制、DbHostsScreen 先例）：
   // 遮罩 portal 到主内容区 <main>（AppShell 已挂 relative）内用 absolute，
-  // 只盖主内容区并在其视窗内居中；拿不到容器（测试环境等）退全屏 fixed。
-  // 必须在早退之前调用（hook 顺序：闭→开不得增减 hook，否则 React 崩）
-  const [mainContainer] = useState(() => document.querySelector<HTMLElement>('main'));
+  // 只盖主内容区并在其视窗内居中；拿不到容器退全屏 fixed。
+  // 本组件应用启动即常驻挂载——首帧渲染期 <main> 尚未提交进 DOM，
+  // useState 惰性初始化会拿到 null 且永不重试；改在提交后（effect）解析
+  const [mainContainer, setMainContainer] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setMainContainer(document.querySelector<HTMLElement>('main'));
+  }, []);
 
   if (!open) return null;
 
