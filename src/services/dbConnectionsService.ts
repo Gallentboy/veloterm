@@ -282,6 +282,9 @@ export interface TableDetail {
   /** 约束（PK/U/F/C）：name / type / columns | definition / references */
   constraintHeaders: string[];
   constraints: string[][];
+  /** 反向外键（哪些表引用了本表）：name / 引用表 / 引用列 | 定义 / 被引用列 */
+  referenceHeaders: string[];
+  references: string[][];
 }
 
 export function dbTableDetail(
