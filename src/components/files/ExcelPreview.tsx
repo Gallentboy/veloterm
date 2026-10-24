@@ -489,8 +489,8 @@ export const ExcelPreview = memo(function ExcelPreview({
 
       {/* 底部工作表 Tab 栏与状态栏 */}
       <div className="flex shrink-0 items-center justify-between border-t border-border/70 bg-surface/60 px-3 py-1.5 text-ui-xs">
-        {/* 工作表切换标签栏：隐藏显式滚动条，保留滚轮自然横向滑动，防止压边切半 */}
-        <div className="flex items-center gap-1 overflow-x-auto min-w-0 pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/* 工作表切换标签栏：细胶囊滚动条（scrollbar-hair 3px、hover 4px），防止压边切半 */}
+        <div className="scrollbar-hair flex items-center gap-1 overflow-x-auto min-w-0 pr-2">
           <div className="flex shrink-0 items-center gap-1 text-foreground-subtle mr-1 select-none">
             <FileSpreadsheet className="size-3.5" />
           </div>

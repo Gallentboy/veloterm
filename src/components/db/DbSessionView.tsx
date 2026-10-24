@@ -1451,7 +1451,7 @@ export function DbSessionView({
               </div>
             ) : (
               <>
-                <div className="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b border-border/50 bg-surface/30 px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden select-none">
+                <div className="scrollbar-hair flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b border-border/50 bg-surface/30 px-2 select-none">
                   {results.map((result, i) => (
                     <button
                       key={result.index}

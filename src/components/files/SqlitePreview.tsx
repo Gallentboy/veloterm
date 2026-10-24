@@ -418,8 +418,8 @@ export const SqlitePreview = memo(function SqlitePreview({
 
       {/* 底部表清单 Tabs 栏与状态统计 */}
       <div className="flex shrink-0 items-center justify-between border-t border-border/70 bg-surface/60 px-3 py-1.5 text-ui-xs">
-        {/* 数据表选择横向滑动栏：隐藏显式滚动条，保留滚轮自然横向滑动，防止压边切半 */}
-        <div className="flex items-center gap-1 overflow-x-auto min-w-0 pr-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/* 数据表选择横向滑动栏：细胶囊滚动条（scrollbar-hair 3px、hover 4px），防止压边切半 */}
+        <div className="scrollbar-hair flex items-center gap-1 overflow-x-auto min-w-0 pr-2">
           <div className="flex shrink-0 items-center gap-1 text-foreground-subtle mr-1 select-none font-sans font-medium">
             <Database className="size-3.5 text-terminal-cyan" />
             <span>{t('files.sqliteTables')}:</span>

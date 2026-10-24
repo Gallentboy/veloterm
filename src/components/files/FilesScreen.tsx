@@ -576,7 +576,7 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor, o
     >
       {/* 顶部多 Tab 栏（完全对齐 ZCode Terminal 顶栏规范） */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5">
-        <div className="scrollbar-slim flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden">
+        <div className="scrollbar-hair flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden">
           {sessions.length > 0 ? (
             <div
               role="tablist"
