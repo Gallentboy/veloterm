@@ -1411,17 +1411,23 @@ impl DbEngine {
                     .map_err(|e| format!("MySQL 查询索引失败：{e}"))?;
                 // 表达式索引列（MySQL 8.0.13+ 函数索引）：EXPRESSION 部件的
                 // COLUMN_NAME 是系统占位名，真实定义在 EXPRESSION 列——聚列
-                // 仍走 GROUP_CONCAT，按（索引名, 序号）overlay 回填；
-                // 8.0.13 之前无该列，查询失败按无表达式处理
-                let expr_rows: Vec<(String, i64, String)> = conn
-                    .exec(
-                        "SELECT INDEX_NAME, SEQ_IN_INDEX, EXPRESSION \
-                         FROM information_schema.statistics \
-                         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND EXPRESSION IS NOT NULL",
-                        (schema, table),
-                    )
-                    .await
-                    .unwrap_or_default();
+                // 仍走 GROUP_CONCAT，按（索引名, 序号）overlay 回填。
+                // EXPRESSION 是 MySQL 8.0.13+ 专有列：按服务端版本/分支先判定，
+                // 老版本与 MariaDB 直接跳过——否则每次表详情都发一条注定失败的
+                // 查询（除了白耗一次往返，错误日志里也会留痕）
+                let expr_rows: Vec<(String, i64, String)> =
+                    if !conn.is_mariadb() && conn.server_version() >= (8, 0, 13) {
+                        conn.exec(
+                            "SELECT INDEX_NAME, SEQ_IN_INDEX, EXPRESSION \
+                             FROM information_schema.statistics \
+                             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND EXPRESSION IS NOT NULL",
+                            (schema, table),
+                        )
+                        .await
+                        .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
                 let idx_exprs: std::collections::HashMap<(String, i64), String> = expr_rows
                     .into_iter()
                     .map(|(n, s, e)| ((n, s), e))
@@ -1441,6 +1447,11 @@ impl DbEngine {
                 // REFERENTIAL_CONSTRAINTS 补外键引用目标与 UPDATE/DELETE 规则
                 //（DBeaver MySQLCatalog 同源）。GROUP_CONCAT 聚列
                 // 行形态：name / type / 聚合列 / 引用表 / 引用列 / update_rule / delete_rule
+                //
+                // GROUP BY 必须含 CONSTRAINT_SCHEMA：第 5 列是关联子查询，引用了
+                // kcu.CONSTRAINT_SCHEMA；MySQL 8 默认 sql_mode 的 ONLY_FULL_GROUP_BY
+                // 会以「Expression #5 ... not in GROUP BY clause」直接拒绝整条查询
+                //（5.7+ 默认即如此，MariaDB 默认不开）。
                 type MySqlConstraintRow = (
                     String,
                     String,
@@ -1479,7 +1490,7 @@ impl DbEngine {
                           AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME \
                          WHERE kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ? \
                            AND kcu.REFERENCED_TABLE_NAME IS NULL \
-                         GROUP BY kcu.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, \
+                         GROUP BY kcu.CONSTRAINT_SCHEMA, kcu.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, \
                            rc.REFERENCED_TABLE_NAME, rc.UPDATE_RULE, rc.DELETE_RULE",
                         (schema, table),
                     )
@@ -4172,21 +4183,23 @@ impl DbEngine {
                     .await
                     .map_err(|e| format!("MySQL 查询例程清单失败：{e}"))?;
                 // 序列：OB MySQL 租户走专有语法 SHOW SEQUENCES（OB 的
-                // information_schema 没有 sequences 表，旧口径恒 0）；其余
-                // 回落 information_schema.sequences（MariaDB 有、MySQL 8 无）
-                let sequences: i64 = match ob_mysql_sequences(conn, schema).await {
-                    Some(names) => names.len() as i64,
-                    None => match conn
-                        .exec_first::<i64, _, _>(
-                            "SELECT COUNT(*) FROM information_schema.sequences \
-                             WHERE sequence_schema = ?",
-                            (schema,),
-                        )
-                        .await
-                    {
-                        Ok(Some(n)) => n,
-                        _ => 0,
-                    },
+                // information_schema 没有 sequences 表，旧口径恒 0）；其余只在
+                // MariaDB 上查 information_schema.sequences（MySQL 全系没有该表，
+                // 先按分支判定，避免每次展开都发一条注定失败的查询）
+                let sequences: i64 = if let Some(names) = ob_mysql_sequences(conn, schema).await {
+                    names.len() as i64
+                } else if conn.is_mariadb() {
+                    conn.exec_first::<i64, _, _>(
+                        "SELECT COUNT(*) FROM information_schema.sequences \
+                         WHERE sequence_schema = ?",
+                        (schema,),
+                    )
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0)
+                } else {
+                    0
                 };
                 // 触发器：DBeaver TriggerCache 同源（TRIGGER_SCHEMA 过滤）
                 let triggers: i64 = conn
@@ -4857,6 +4870,11 @@ impl DbEngine {
                 // - 序列：OB 专有语法 SHOW SEQUENCES（information_schema 无此表）
                 // - 表：滤掉物化视图的容器表/日志表（内部实现，不是用户对象）
                 let ob_mysql = conn.ob_compat_mode() == Some(mysql_async::ObCompatMode::MySql);
+                // 原生 MySQL 全系没有序列对象（information_schema.sequences 是
+                // MariaDB 专有表）：非 MariaDB 直接返回空集，不去发注定失败的查询
+                if group == ObjectGroup::Sequence && !ob_mysql && !conn.is_mariadb() {
+                    return Ok(Vec::new());
+                }
                 let mut names: Vec<String> = if ob_mysql && group == ObjectGroup::Sequence {
                     match ob_mysql_sequences(conn, schema).await {
                         Some(list) => list,
