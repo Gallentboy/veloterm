@@ -874,8 +874,16 @@ export function DbSessionView({
     [meta],
   );
 
-  // dbQuery / dbExplain 共用的流式事件处理：结果面板数组的增量更新
+  // dbQuery / dbExplain 共用的流式事件处理：结果面板数组的增量更新。
+  // done 事件只带事务状态（不动结果数组），须在 setResults 更新器外处理——
+  // 更新器必须是纯函数，在里头调别的 setState 属反模式
   const handleQueryEvent = useCallback((event: DbQueryEvent) => {
+    if (event.type === 'done') {
+      if (event.txStatus) {
+        setTxStatus(event.txStatus);
+      }
+      return;
+    }
     setResults((current) => {
       const next = [...current];
       const findIdx = (i: number) => next.findIndex((r) => r.index === i);
@@ -932,12 +940,6 @@ export function DbSessionView({
               elapsedMs: 0,
               error: event.message,
             });
-          }
-          break;
-        }
-        case 'done': {
-          if (event.txStatus) {
-            setTxStatus(event.txStatus);
           }
           break;
         }
@@ -1375,6 +1377,25 @@ export function DbSessionView({
             </button>
             {!autoCommit ? (
               <>
+                {/* 待提交徽标：紧跟自动提交开关，实时反映当前事务的未提交修改数 */}
+                {txStatus.inTransaction && txStatus.statementCount > 0 ? (
+                  <span
+                    title={t('db.txPendingHint', {
+                      count: txStatus.statementCount,
+                      rows: txStatus.affectedRows,
+                    })}
+                    className="select-none rounded bg-warning/15 px-1.5 py-0.5 text-ui-xs font-medium text-warning"
+                  >
+                    {t('db.txPendingBadge', { count: txStatus.statementCount })}
+                  </span>
+                ) : (
+                  <span
+                    title={t('db.txNoPendingHint')}
+                    className="select-none px-1 text-ui-xs text-foreground-subtle"
+                  >
+                    {t('db.txNoPendingBadge')}
+                  </span>
+                )}
                 <button
                   type="button"
                   disabled={running || !txStatus.inTransaction || txStatus.statementCount === 0}
@@ -1401,10 +1422,7 @@ export function DbSessionView({
                   )}
                 >
                   <CheckCircle2 className="size-3" />
-                  <span>
-                    {t('db.commitTx')}
-                    {txStatus.statementCount > 0 ? ` (${txStatus.statementCount})` : ''}
-                  </span>
+                  {t('db.commitTx')}
                 </button>
                 <button
                   type="button"

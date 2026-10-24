@@ -349,13 +349,18 @@ pub enum CatalogParentArg {
 // ── 查询执行 ───────────────────────────────────────────────────────────────
 
 /// 流式查询事件（Tauri Channel 逐批发给前端）。
+/// 枚举级 rename_all 只重命名变体名，变体字段不吃它——多词字段（elapsed_ms、
+/// tx_status 等）必须逐变体补 rename_all，否则前端读到的是 undefined
+/// （曾致 TxStatus 永远到不了前端、提交按钮点不亮）
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum QueryEvent {
+    #[serde(rename_all = "camelCase")]
     Started { statement_count: usize },
     StatementStart { index: usize, sql: String },
     Columns { index: usize, columns: Vec<String> },
     Rows { index: usize, rows: Vec<Vec<String>>, total: usize },
+    #[serde(rename_all = "camelCase")]
     StatementDone {
         index: usize,
         affected: Option<u64>,
@@ -365,6 +370,7 @@ pub enum QueryEvent {
         elapsed_ms: u64,
     },
     StatementError { index: usize, message: String },
+    #[serde(rename_all = "camelCase")]
     Done {
         elapsed_ms: u64,
         cancelled: bool,
@@ -563,13 +569,12 @@ async fn run_statements_streaming(
                     if summary.affected.is_some()
                         && matches!(&*engine, DbEngine::Oracle(_))
                         && let DbEngine::Oracle(conn) = &mut *engine
+                        && let Err(e) = conn.commit().await
                     {
-                        if let Err(e) = conn.commit().await {
-                            let _ = on_event.send(QueryEvent::StatementError {
-                                index,
-                                message: format!("自动提交失败：{e}（事务保持打开）"),
-                            });
-                        }
+                        let _ = on_event.send(QueryEvent::StatementError {
+                            index,
+                            message: format!("自动提交失败：{e}（事务保持打开）"),
+                        });
                     }
                     session.reset_tx_status();
                 } else {
