@@ -155,6 +155,8 @@ pub enum ObjectGroup {
     Trigger,
     /// 物化视图（PG 的 pg_class relkind='m'；MySQL/OB MySQL 模式无此类型）
     MaterializedView,
+    /// 外部表（PG relkind='f'，FDW 外部数据封装；DBeaver Foreign Tables 同义）
+    ForeignTable,
     /// 同义词（Oracle 系特有：Oracle ALL_SYNONYMS / 达梦 SYSOBJECTS）
     Synonym,
     /// 包（Oracle 系特有：PACKAGE / PACKAGE BODY）
@@ -181,6 +183,7 @@ impl ObjectGroup {
             ObjectGroup::Sequence => "sequence",
             ObjectGroup::Trigger => "trigger",
             ObjectGroup::MaterializedView => "mview",
+            ObjectGroup::ForeignTable => "ftable",
             ObjectGroup::Synonym => "synonym",
             ObjectGroup::Package => "package",
             ObjectGroup::Event => "event",
@@ -203,6 +206,7 @@ impl ObjectGroup {
             "sequence" => Some(ObjectGroup::Sequence),
             "trigger" => Some(ObjectGroup::Trigger),
             "mview" | "materialized view" => Some(ObjectGroup::MaterializedView),
+            "ftable" | "foreign table" => Some(ObjectGroup::ForeignTable),
             "synonym" => Some(ObjectGroup::Synonym),
             "package" => Some(ObjectGroup::Package),
             "event" => Some(ObjectGroup::Event),
@@ -1445,13 +1449,30 @@ impl DbEngine {
                     )
                     .await
                     .map_err(|e| format!("MySQL 查询索引失败：{e}"))?;
+                // 表达式索引列（MySQL 8.0.13+ 函数索引）：EXPRESSION 部件的
+                // COLUMN_NAME 是系统占位名，真实定义在 EXPRESSION 列——聚列
+                // 仍走 GROUP_CONCAT，按（索引名, 序号）overlay 回填；
+                // 8.0.13 之前无该列，查询失败按无表达式处理
+                let expr_rows: Vec<(String, i64, String)> = conn
+                    .exec(
+                        "SELECT INDEX_NAME, SEQ_IN_INDEX, EXPRESSION \
+                         FROM information_schema.statistics \
+                         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND EXPRESSION IS NOT NULL",
+                        (schema, table),
+                    )
+                    .await
+                    .unwrap_or_default();
+                let idx_exprs: std::collections::HashMap<(String, i64), String> = expr_rows
+                    .into_iter()
+                    .map(|(n, s, e)| ((n, s), e))
+                    .collect();
                 let indexes: Vec<Vec<String>> = idx_rows
                     .iter()
                     .map(|(name, non_unique, cols)| {
                         vec![
                             name.clone(),
                             if *non_unique == 0 { "UNIQUE".into() } else { "".into() },
-                            cols.clone(),
+                            apply_index_expr_overlay(cols, name, &idx_exprs),
                         ]
                     })
                     .collect();
@@ -1880,6 +1901,30 @@ impl DbEngine {
                     ]);
                 }
 
+                // 函数索引表达式（DBeaver OracleSchema 同源走
+                // ALL_IND_EXPRESSIONS）：函数索引的 all_ind_columns 列名是
+                // SYS_NC 占位名，真实表达式在 COLUMN_EXPRESSION（LONG 类型
+                // 进不了 LISTAGG，按位置单独取回回填）。查询失败（权限/
+                // LONG 边界）按无表达式处理，聚列退回占位名
+                let expr_sql = format!(
+                    "SELECT INDEX_NAME, COLUMN_POSITION, COLUMN_EXPRESSION \
+                     FROM all_ind_expressions \
+                     WHERE INDEX_OWNER = {} AND TABLE_NAME = {} \
+                     ORDER BY INDEX_NAME, COLUMN_POSITION",
+                    ob_quote_literal(schema),
+                    ob_quote_literal(table)
+                );
+                let mut idx_exprs: std::collections::HashMap<(String, i64), String> =
+                    std::collections::HashMap::new();
+                if let Ok(mut expr_rs) = conn.query(&expr_sql).await {
+                    while let Ok(Some(row)) = expr_rs.next_row().await {
+                        let pos = oracle_row_string(&row, 1).parse::<i64>().unwrap_or(0);
+                        let expr = oracle_row_string(&row, 2);
+                        if pos > 0 && expr != "NULL" {
+                            idx_exprs.insert((oracle_row_string(&row, 0), pos), expr);
+                        }
+                    }
+                }
                 let idx_sql = format!(
                     "SELECT i.index_name, i.uniqueness, \
                             LISTAGG(c.column_name, ', ') WITHIN GROUP \
@@ -1902,16 +1947,18 @@ impl DbEngine {
                     .await
                     .map_err(|e| format!("Oracle 读取索引失败：{}", oracle_err(e)))?
                 {
+                    let name = oracle_row_string(&row, 0);
                     let is_unique = if oracle_row_string(&row, 1) == "UNIQUE" {
                         "UNIQUE".to_string()
                     } else {
                         String::new()
                     };
-                    indexes.push(vec![
-                        oracle_row_string(&row, 0),
-                        is_unique,
-                        oracle_row_string(&row, 2),
-                    ]);
+                    let cols = apply_index_expr_overlay(
+                        &oracle_row_string(&row, 2),
+                        &name,
+                        &idx_exprs,
+                    );
+                    indexes.push(vec![name, is_unique, cols]);
                 }
 
                 // DDL 降级：列元数据拼装（含 NOT NULL）
@@ -3037,6 +3084,125 @@ impl DbEngine {
                         arg_count: 0,
                     });
                 }
+                // 外部表（relkind='f'，FDW）：PG 无现成 pg_get_xxxdef
+                //（pg_get_viewdef 不适用），DDL 手工拼装——server 与表级选项在
+                // information_schema.foreign_tables / foreign_table_options，
+                // 列走 pg_attribute + format_type（DBeaver PostgreTableForeign
+                // 的 generateSource 同义），列级选项在 foreign_column_options
+                if kind == "ftable" {
+                    let q = |v: &str| format!("\"{}\"", v.replace('"', "\"\""));
+                    let srv_row = client
+                        .query_opt(
+                            "SELECT ft.foreign_server_name \
+                             FROM information_schema.foreign_tables ft \
+                             WHERE ft.foreign_table_schema = $1 \
+                               AND ft.foreign_table_name = $2",
+                            &[&schema, &name],
+                        )
+                        .await
+                        .map_err(|e| format!("PostgreSQL 拉取外部表信息失败：{e}"))?
+                        .ok_or_else(|| "未找到该外部表（可能已被删除）".to_string())?;
+                    let server: String = srv_row
+                        .try_get(0)
+                        .map_err(|e| format!("PostgreSQL 读取外部表信息失败：{e}"))?;
+                    let col_rows = client
+                        .query(
+                            "SELECT a.attname, format_type(a.atttypid, a.atttypmod), \
+                                    a.attnotnull, pg_get_expr(ad.adbin, ad.adrelid) \
+                             FROM pg_catalog.pg_attribute a \
+                             LEFT JOIN pg_catalog.pg_attrdef ad \
+                               ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
+                             WHERE a.attrelid = format('%I.%I', $1, $2)::regclass \
+                               AND a.attnum > 0 AND NOT a.attisdropped \
+                             ORDER BY a.attnum",
+                            &[&schema, &name],
+                        )
+                        .await
+                        .map_err(|e| format!("PostgreSQL 拉取外部表列结构失败：{e}"))?;
+                    // 列级选项（FDW 的列名映射等）：attname → OPTIONS 串
+                    let col_opt_rows = client
+                        .query(
+                            "SELECT attname, option_name, option_value \
+                             FROM information_schema.foreign_column_options \
+                             WHERE foreign_table_schema = $1 \
+                               AND foreign_table_name = $2 ORDER BY attname",
+                            &[&schema, &name],
+                        )
+                        .await
+                        .unwrap_or_default();
+                    let mut col_opts: std::collections::HashMap<String, Vec<String>> =
+                        std::collections::HashMap::new();
+                    for row in &col_opt_rows {
+                        if let (Ok(att), Ok(k), Ok(v)) = (
+                            row.try_get::<_, String>(0),
+                            row.try_get::<_, String>(1),
+                            row.try_get::<_, String>(2),
+                        ) {
+                            col_opts.entry(att).or_default().push(format!("{k} '{v}'"));
+                        }
+                    }
+                    let col_lines: Vec<String> = col_rows
+                        .iter()
+                        .filter_map(|row| {
+                            let att: String = row.try_get(0).ok()?;
+                            let ty: String = row.try_get(1).ok()?;
+                            let notnull: bool = row.try_get(2).ok()?;
+                            let dflt: Option<String> = row.try_get(3).ok()?;
+                            let mut line = format!("  {} {}", q(&att), ty);
+                            if let Some(d) = dflt {
+                                line.push_str(&format!(" DEFAULT {d}"));
+                            }
+                            if notnull {
+                                line.push_str(" NOT NULL");
+                            }
+                            if let Some(opts) = col_opts.get(&att) {
+                                line.push_str(&format!(" OPTIONS ({})", opts.join(", ")));
+                            }
+                            Some(line)
+                        })
+                        .collect();
+                    let opt_rows = client
+                        .query(
+                            "SELECT option_name, option_value \
+                             FROM information_schema.foreign_table_options \
+                             WHERE foreign_table_schema = $1 \
+                               AND foreign_table_name = $2 ORDER BY option_name",
+                            &[&schema, &name],
+                        )
+                        .await
+                        .unwrap_or_default();
+                    let table_opts = opt_rows
+                        .iter()
+                        .filter_map(|row| {
+                            Some(format!(
+                                "{} '{}'",
+                                row.try_get::<_, String>(0).ok()?,
+                                row.try_get::<_, String>(1).ok()?,
+                            ))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let mut definition = format!(
+                        "CREATE FOREIGN TABLE {}.{} (\n{}\n) SERVER {}",
+                        q(schema),
+                        q(name),
+                        col_lines.join(",\n"),
+                        q(&server)
+                    );
+                    if !table_opts.is_empty() {
+                        definition.push_str(&format!(" OPTIONS ({table_opts})"));
+                    }
+                    definition.push(';');
+                    return Ok(ObjectDefinition {
+                        definition,
+                        call_template: format!(
+                            "SELECT * FROM {}.{} LIMIT 100;",
+                            q(schema),
+                            q(name)
+                        ),
+                        arg_count: 0,
+                    });
+                }
                 let row = client
                     .query_opt(
                         "SELECT pg_get_functiondef(p.oid), p.pronargs \
@@ -3617,7 +3783,7 @@ impl DbEngine {
                         "SELECT c.relkind::char::text, COUNT(*) \
                          FROM pg_catalog.pg_class c \
                          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-                         WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','S') \
+                         WHERE n.nspname = $1 AND c.relkind IN ('r','v','m','S','f') \
                          GROUP BY c.relkind",
                         &[&schema],
                     )
@@ -3684,12 +3850,13 @@ impl DbEngine {
                         .map(|(_, c)| *c)
                         .unwrap_or(0)
                 };
-                Ok(group_nodes(
-                    schema,
-                    GroupCounts {
-                        triggers: Some(triggers),
-                        mviews: Some(count_of("m", &relkind)),
-                        rules: Some(rules),
+                    Ok(group_nodes(
+                        schema,
+                        GroupCounts {
+                            triggers: Some(triggers),
+                            mviews: Some(count_of("m", &relkind)),
+                            foreign_tables: Some(count_of("f", &relkind)),
+                            rules: Some(rules),
                         ..GroupCounts::base(
                             count_of("r", &relkind),
                             count_of("v", &relkind),
@@ -4087,8 +4254,12 @@ impl DbEngine {
                 "event_name",
             ),
             // 同义词 / 包 / 规则：不适用 MySQL/PG 通用模板（Oracle 系/PG 专属），
-            // 各引擎臂单独处理；这里给空集占位
-            ObjectGroup::Synonym | ObjectGroup::Package | ObjectGroup::Rule => {
+            // 各引擎臂单独处理；这里给空集占位（外部表同理，仅 PG 有且在
+            // Postgres 臂单独拼 pg_catalog 查询）
+            ObjectGroup::Synonym
+            | ObjectGroup::Package
+            | ObjectGroup::Rule
+            | ObjectGroup::ForeignTable => {
                 (
                     "SELECT NULL AS name FROM DUAL WHERE 1 = 0",
                     "SELECT NULL AS name WHERE 1 = 0",
@@ -4141,6 +4312,12 @@ impl DbEngine {
                         "SELECT c.relname FROM pg_catalog.pg_class c \
                          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
                          WHERE n.nspname = $1 AND c.relkind = 'm' \
+                         ORDER BY c.relname",
+                    ),
+                    ObjectGroup::ForeignTable => Some(
+                        "SELECT c.relname FROM pg_catalog.pg_class c \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                         WHERE n.nspname = $1 AND c.relkind = 'f' \
                          ORDER BY c.relname",
                     ),
                     ObjectGroup::Rule => Some(
@@ -4223,6 +4400,7 @@ impl DbEngine {
                     ObjectGroup::View => "view",
                     ObjectGroup::Trigger
                     | ObjectGroup::MaterializedView
+                    | ObjectGroup::ForeignTable
                     | ObjectGroup::Synonym
                     | ObjectGroup::Package
                     | ObjectGroup::Event
@@ -4372,6 +4550,7 @@ impl DbEngine {
                            AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PKGS' ORDER BY NAME"
                     }
                     ObjectGroup::MaterializedView
+                    | ObjectGroup::ForeignTable
                     | ObjectGroup::Event
                     | ObjectGroup::Rule
                     // Redis 六型已在函数入口的 early return 拦掉，不可达；
@@ -5198,6 +5377,8 @@ struct GroupCounts {
     triggers: Option<i64>,
     /// None = 引擎无物化视图（MySQL / Oracle 普通视图树之外另列）
     mviews: Option<i64>,
+    /// None = 引擎无外部表（PG relkind='f'，FDW）
+    foreign_tables: Option<i64>,
     /// None = 引擎无同义词（Oracle 系特有）
     synonyms: Option<i64>,
     /// None = 引擎无包（Oracle 系特有）
@@ -5219,6 +5400,7 @@ impl GroupCounts {
             sequences,
             triggers: None,
             mviews: None,
+            foreign_tables: None,
             synonyms: None,
             packages: None,
             events: None,
@@ -5236,6 +5418,9 @@ fn group_nodes(schema: &str, counts: GroupCounts) -> Vec<CatalogNode> {
     ];
     if let Some(m) = counts.mviews {
         groups.push((ObjectGroup::MaterializedView, "MATERIALIZED VIEW", m));
+    }
+    if let Some(f) = counts.foreign_tables {
+        groups.push((ObjectGroup::ForeignTable, "FOREIGN TABLE", f));
     }
     groups.push((ObjectGroup::Function, "FUNCTION", counts.functions));
     groups.push((ObjectGroup::Procedure, "PROCEDURE", counts.procedures));
@@ -5407,6 +5592,29 @@ fn format_float(v: f64) -> String {
     } else {
         format!("{v}")
     }
+}
+
+/// 索引聚列的表达式回填：主查询 GROUP_CONCAT/LISTAGG 按序号聚出的列串，
+/// 用（索引名, 序号）→ 表达式 的 overlay 按位置替换（表达式/函数索引部件的
+/// 列名是系统占位名，真实定义在 overlay）；序号从 1 起与部件序一致
+fn apply_index_expr_overlay(
+    cols: &str,
+    index_name: &str,
+    overlay: &std::collections::HashMap<(String, i64), String>,
+) -> String {
+    if overlay.is_empty() || cols.is_empty() {
+        return cols.to_string();
+    }
+    cols.split(", ")
+        .enumerate()
+        .map(|(i, part)| {
+            overlay
+                .get(&(index_name.to_string(), i as i64 + 1))
+                .map(String::as_str)
+                .unwrap_or(part)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// 字节数 → 人类可读（B / KB / MB / GB / TB，一位小数）。表大小展示用。
