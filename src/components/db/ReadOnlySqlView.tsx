@@ -7,9 +7,11 @@
  * model（内容 + 行缓冲），实例不增、库与 worker 本就全局一份。此前每页
  * 一个 editor 实例（DOM 视图 + ViewModel 各一套），页数多时线性吃内存。
  *
- * 模型生命周期：挂载 createModel（modelKey 需全局唯一）、content 变化
- * setValue（只读无 undo 顾虑）、卸载 dispose——keep-alive 切页不卸载故
- * 模型保留（切回零重取零 token 化），子视图切换/页关闭会卸载即释放。
+ * 模型生命周期：挂载 createModel（不指定 Uri——Monaco 自动生成唯一 Uri，
+ * 固定 Uri 在多会话同开同一对象/重开时序下会撞「model already exists」
+ * 直接崩树；只读高亮走语言参数不依赖 Uri）、content 变化 setValue（只读
+ * 无 undo 顾虑）、卸载 dispose——keep-alive 切页不卸载故模型保留（切回
+ * 零重取零 token 化），子视图切换/页关闭会卸载即释放。
  */
 
 import * as monaco from 'monaco-editor';
@@ -27,11 +29,7 @@ let emptyModel: monaco.editor.ITextModel | null = null;
 
 function getEmptyModel(): monaco.editor.ITextModel {
   if (!emptyModel || emptyModel.isDisposed()) {
-    emptyModel = monaco.editor.createModel(
-      '',
-      'sql',
-      monaco.Uri.parse('inmemory://db-object-readonly-empty'),
-    );
+    emptyModel = monaco.editor.createModel('', 'sql');
   }
   return emptyModel;
 }
@@ -80,27 +78,20 @@ function getSharedEditor(): monaco.editor.IStandaloneCodeEditor {
 interface ReadOnlySqlViewProps {
   content: string;
   className?: string;
-  /** 模型唯一键（createModel 的 Uri；重复 Uri 抛异常）——对象页内
-   * variant:schema.name:子视图，同页刷新复用同键（setValue 更新） */
-  modelKey: string;
   /** 是否激活（激活者独占共享 editor：搬 DOM + setModel）。keep-alive 的
    * 非激活视图持有 model 但不附着。默认 true（单视图场景） */
   active?: boolean;
 }
 
-export function ReadOnlySqlView({ content, className, modelKey, active = true }: ReadOnlySqlViewProps) {
+export function ReadOnlySqlView({ content, className, active = true }: ReadOnlySqlViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const modelRef = useRef<monaco.editor.ITextModel | null>(null);
 
-  // 模型生命周期：挂载建（modelKey 稳定则整生命周期一个）、卸载释放。
-  // content 在依赖里是为了捕获挂载时的初值——刷新走 setValue 不重建
+  // 模型生命周期：挂载建一次（无 Uri，Monaco 自动唯一——固定 Uri 多会话
+  // 同开同一对象会撞「model already exists」崩树）、卸载释放
   useEffect(() => {
     const editor = getSharedEditor();
-    const model = monaco.editor.createModel(
-      content,
-      'sql',
-      monaco.Uri.parse(`inmemory://db-object-readonly-${modelKey}`),
-    );
+    const model = monaco.editor.createModel(content, 'sql');
     modelRef.current = model;
     return () => {
       // editor 还挂着这个 model 时先摘下（dispose 被引用的 model 会抛）
@@ -110,7 +101,9 @@ export function ReadOnlySqlView({ content, className, modelKey, active = true }:
       model.dispose();
       modelRef.current = null;
     };
-  }, [modelKey, content]);
+    // 仅挂载时建：content 初值捕获于创建，后续变化走 setValue 不重建
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 内容更新（对象页刷新/重复打开）：setValue 重 token 化，无历史残留
   useEffect(() => {
@@ -139,7 +132,7 @@ export function ReadOnlySqlView({ content, className, modelKey, active = true }:
     }
     // attach 时容器刚从 hidden 恢复（同一提交内 class 已生效），布局有效
     editor.layout();
-  }, [active, modelKey, content]);
+  }, [active]);
 
   return <div ref={containerRef} className={className} />;
 }
