@@ -758,6 +758,29 @@ export function DbSessionView({
     }
   }, [running, rowCap, sql]);
 
+  // 查看执行计划：按引擎拼 EXPLAIN 方言走既有 dbQuery 通道（各引擎的
+  // EXPLAIN 都是返回结果集的语句，后端零改动即可用；方言依据与真机验证
+  // 清单见 docs/sql-explain-plan-support.md）：Oracle 系两段式（EXPLAIN PLAN
+  // FOR 隐式提交 + PLAN_TABLE 前提，第二段取 DBMS_XPLAN 文本）；SQLite 走
+  // EXPLAIN QUERY PLAN（只读白名单 AST/降级两路均含 EXPLAIN，只读会话可用）；
+  // MySQL / PG / 达梦 / OB MySQL 为前缀式
+  const explainSelection = useCallback(
+    (text: string) => {
+      if (!meta) return;
+      const stmt = text.trim().replace(/;+\s*$/, '');
+      if (!stmt) return;
+      const oracleDialect = isOracleDialect(meta.engine, meta.mode, meta.compatibleMode);
+      const explainSql =
+        meta.engine === 'sqlite'
+          ? `EXPLAIN QUERY PLAN ${stmt};`
+          : oracleDialect
+            ? `EXPLAIN PLAN FOR ${stmt};\nSELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY());`
+            : `EXPLAIN ${stmt};`;
+      void runQuery(explainSql);
+    },
+    [meta, runQuery],
+  );
+
   // 切换当前数据库：MySQL=USE；PG=重连（后端换引擎）；切换后刷新对象树。
   // SQLite 无连接级切库（后端为空操作），UI 侧下拉已禁用，此函数不会被触发
   const handleUseDatabase = useCallback(
@@ -1295,6 +1318,7 @@ export function DbSessionView({
               onRun={() => void runQuery()}
               onRunSelection={() => void runQuery(selectionRef.current)}
               onSelectionChange={handleSelectionChange}
+              onExplain={explainSelection}
               redisMode={meta.engine === 'redis'}
             />
           </div>
