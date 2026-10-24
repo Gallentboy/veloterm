@@ -147,6 +147,9 @@ export interface CatalogNode {
     | 'view'
     | 'mview'
     | 'ftable'
+    | 'extension'
+    | 'dblink'
+    | 'recycle'
     | 'function'
     | 'procedure'
     | 'sequence'
@@ -271,7 +274,10 @@ export function dbObjectDefinition(
     | 'package'
     | 'event'
     | 'rule'
-    | 'ftable',
+    | 'ftable'
+    | 'extension'
+    | 'dblink'
+    | 'recycle',
 ): Promise<ObjectDefinition> {
   return invoke('db_object_definition', { sessionId, schema, name, kind });
 }

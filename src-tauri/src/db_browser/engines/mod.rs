@@ -157,6 +157,12 @@ pub enum ObjectGroup {
     MaterializedView,
     /// 外部表（PG relkind='f'，FDW 外部数据封装；DBeaver Foreign Tables 同义）
     ForeignTable,
+    /// 扩展（PG pg_extension，按 extnamespace 归属 schema）
+    Extension,
+    /// DB Link（Oracle all_db_links）
+    DbLink,
+    /// 回收站（Oracle/达梦 dba_recyclebin/user_recyclebin，BIN$ 闪回对象）
+    RecycleBin,
     /// 同义词（Oracle 系特有：Oracle ALL_SYNONYMS / 达梦 SYSOBJECTS）
     Synonym,
     /// 包（Oracle 系特有：PACKAGE / PACKAGE BODY）
@@ -184,6 +190,9 @@ impl ObjectGroup {
             ObjectGroup::Trigger => "trigger",
             ObjectGroup::MaterializedView => "mview",
             ObjectGroup::ForeignTable => "ftable",
+            ObjectGroup::Extension => "extension",
+            ObjectGroup::DbLink => "dblink",
+            ObjectGroup::RecycleBin => "recycle",
             ObjectGroup::Synonym => "synonym",
             ObjectGroup::Package => "package",
             ObjectGroup::Event => "event",
@@ -207,6 +216,9 @@ impl ObjectGroup {
             "trigger" => Some(ObjectGroup::Trigger),
             "mview" | "materialized view" => Some(ObjectGroup::MaterializedView),
             "ftable" | "foreign table" => Some(ObjectGroup::ForeignTable),
+            "extension" => Some(ObjectGroup::Extension),
+            "dblink" | "db link" => Some(ObjectGroup::DbLink),
+            "recycle" | "recyclebin" => Some(ObjectGroup::RecycleBin),
             "synonym" => Some(ObjectGroup::Synonym),
             "package" => Some(ObjectGroup::Package),
             "event" => Some(ObjectGroup::Event),
@@ -3084,6 +3096,38 @@ impl DbEngine {
                         arg_count: 0,
                     });
                 }
+                // 扩展（pg_extension）：无源码概念，重建安装语句并标注已装
+                // 版本（DBeaver PostgreExtension 的 DDL 同义）；extrelocatable
+                // 留在注释里供迁移参考
+                if kind == "extension" {
+                    let row = client
+                        .query_opt(
+                            "SELECT e.extversion, e.extrelocatable \
+                             FROM pg_catalog.pg_extension e \
+                             JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace \
+                             WHERE n.nspname = $1 AND e.extname = $2",
+                            &[&schema, &name],
+                        )
+                        .await
+                        .map_err(|e| format!("PostgreSQL 拉取扩展信息失败：{e}"))?
+                        .ok_or_else(|| "未找到该扩展（可能已被卸载）".to_string())?;
+                    let version: String = row
+                        .try_get(0)
+                        .map_err(|e| format!("PostgreSQL 读取扩展信息失败：{e}"))?;
+                    let relocatable: bool = row.try_get(1).unwrap_or(false);
+                    let q = |v: &str| format!("\"{}\"", v.replace('"', "\"\""));
+                    let definition = format!(
+                        "-- 已安装版本 {version}（{}）\nCREATE EXTENSION {} WITH SCHEMA {};",
+                        if relocatable { "可重定位" } else { "不可重定位" },
+                        q(name),
+                        q(schema)
+                    );
+                    return Ok(ObjectDefinition {
+                        definition,
+                        call_template: String::new(),
+                        arg_count: 0,
+                    });
+                }
                 // 外部表（relkind='f'，FDW）：PG 无现成 pg_get_xxxdef
                 //（pg_get_viewdef 不适用），DDL 手工拼装——server 与表级选项在
                 // information_schema.foreign_tables / foreign_table_options，
@@ -3234,6 +3278,121 @@ impl DbEngine {
                 // 定义：all_source 按行拼回（CREATE OR REPLACE 前缀在首行内）；
                 // 入参个数：all_arguments 的具名参数（argument_name 为 NULL 的
                 // 是函数返回值，排除）
+                // DB Link：all_db_links 无源码，重建 CREATE DATABASE LINK 语句
+                //（字典里本就无口令列，不回显）
+                if kind == "dblink" {
+                    let sql = format!(
+                        "SELECT username, host, DECODE(owner, 'PUBLIC', 'PUBLIC', 'USER') \
+                         FROM all_db_links \
+                         WHERE owner = {} AND db_link = {}",
+                        ob_quote_literal(schema),
+                        ob_quote_literal(name)
+                    );
+                    let mut rs = conn
+                        .query(&sql)
+                        .await
+                        .map_err(|e| format!("Oracle 拉取 DB Link 定义失败：{}", oracle_err(e)))?;
+                    let row = rs
+                        .next_row()
+                        .await
+                        .map_err(|e| format!("Oracle 读取 DB Link 定义失败：{}", oracle_err(e)))?
+                        .ok_or_else(|| "未找到该 DB Link（可能已被删除）".to_string())?;
+                    let user = oracle_row_string(&row, 0);
+                    let host = oracle_row_string(&row, 1);
+                    let scope = oracle_row_string(&row, 2);
+                    let mut definition = String::from("CREATE ");
+                    if scope == "PUBLIC" {
+                        definition.push_str("PUBLIC ");
+                    }
+                    definition.push_str(&format!("DATABASE LINK \"{name}\""));
+                    if user != "NULL" {
+                        definition.push_str(&format!(
+                            " CONNECT TO {user} IDENTIFIED BY \"***\""
+                        ));
+                    }
+                    if host != "NULL" {
+                        definition.push_str(&format!(" USING '{host}'"));
+                    }
+                    definition.push(';');
+                    return Ok(ObjectDefinition {
+                        definition,
+                        call_template: format!("SELECT 1 FROM DUAL@\"{name}\";"),
+                        arg_count: 0,
+                    });
+                }
+                // 回收站对象：生成 FLASHBACK 恢复 / PURGE 清除语句提示（同名
+                // 多次 DROP 会产生多个 BIN$ 版本，按 DROPTIME 倒序逐个列出；
+                // dba 视图无权限时降级 user_recyclebin）
+                if kind == "recycle" {
+                    let dba_sql = format!(
+                        "SELECT OBJECT_NAME, TYPE, DROPTIME FROM dba_recyclebin \
+                         WHERE OWNER = {} AND ORIGINAL_NAME = {} \
+                         ORDER BY DROPTIME DESC",
+                        ob_quote_literal(schema),
+                        ob_quote_literal(name)
+                    );
+                    let mut bins: Vec<(String, String, String)> = Vec::new();
+                    match conn.query(&dba_sql).await {
+                        Ok(mut rs) => {
+                            while let Ok(Some(row)) = rs.next_row().await {
+                                let obj = oracle_row_string(&row, 0);
+                                if obj != "NULL" {
+                                    bins.push((
+                                        obj,
+                                        oracle_row_string(&row, 1),
+                                        oracle_row_string(&row, 2),
+                                    ));
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            let login =
+                                oracle_scalar_string(conn, "SELECT USER FROM dual").await;
+                            if !login.is_empty() && login.eq_ignore_ascii_case(schema) {
+                                let user_sql = format!(
+                                    "SELECT OBJECT_NAME, TYPE, DROPTIME FROM user_recyclebin \
+                                     WHERE ORIGINAL_NAME = {} ORDER BY DROPTIME DESC",
+                                    ob_quote_literal(name)
+                                );
+                                if let Ok(mut rs) = conn.query(&user_sql).await {
+                                    while let Ok(Some(row)) = rs.next_row().await {
+                                        let obj = oracle_row_string(&row, 0);
+                                        if obj != "NULL" {
+                                            bins.push((
+                                                obj,
+                                                oracle_row_string(&row, 1),
+                                                oracle_row_string(&row, 2),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if bins.is_empty() {
+                        return Err("未找到该回收站对象（可能已被清除或恢复）".to_string());
+                    }
+                    let mut lines: Vec<String> = vec![format!(
+                        "-- 回收站对象 {} 个（原名 {name}），恢复用 FLASHBACK、彻底删除用 PURGE：",
+                        bins.len()
+                    )];
+                    for (obj, otype, droptime) in &bins {
+                        lines.push(format!("-- {obj}（{otype}，DROP 于 {droptime}）"));
+                        lines.push(format!("FLASHBACK TABLE \"{obj}\" TO BEFORE DROP;"));
+                        lines.push(format!("PURGE TABLE \"{obj}\";"));
+                    }
+                    let call_template = bins
+                        .first()
+                        .map(|(obj, _, _)| {
+                            format!("FLASHBACK TABLE \"{obj}\" TO BEFORE DROP;")
+                        })
+                        .unwrap_or_default();
+                    return Ok(ObjectDefinition {
+                        definition: lines.join("\n"),
+                        call_template,
+                        arg_count: 0,
+                    });
+                }
                 if kind == "sequence" {
                     let ddl_sql = format!(
                         "SELECT DBMS_METADATA.GET_DDL('SEQUENCE', {}, {}) FROM dual",
@@ -3452,6 +3611,55 @@ impl DbEngine {
                             call_template: format!(
                                 "SELECT \"{schema_o}\".\"{name_o}\".NEXTVAL FROM DUAL;"
                             ),
+                            arg_count: 0,
+                        });
+                    }
+                    // 回收站：DBA_RECYCLEBIN 生成 FLASHBACK / PURGE 语句提示
+                    //（达梦 FLASHBACK DROP 语法同 Oracle，表名需 schema 限定）
+                    if kind_o == "recycle" {
+                        let rows = dm_query_rows(
+                            client,
+                            "SELECT OBJECT_NAME, TYPE, DROPTIME FROM DBA_RECYCLEBIN \
+                             WHERE OWNER = ? AND ORIGINAL_NAME = ? \
+                             ORDER BY DROPTIME DESC",
+                            &[
+                                dm_pure::Param::Str(schema_o.clone()),
+                                dm_pure::Param::Str(name_o.clone()),
+                            ],
+                        )
+                        .unwrap_or_default();
+                        if rows.is_empty() {
+                            return Err("未找到该回收站对象（可能已被清除或恢复）".to_string());
+                        }
+                        let mut lines: Vec<String> = vec![format!(
+                            "-- 回收站对象 {} 个（原名 {name_o}），恢复用 FLASHBACK、彻底删除用 PURGE：",
+                            rows.len()
+                        )];
+                        for row in &rows {
+                            let obj = dm_row_string(row, 0);
+                            if obj == "NULL" {
+                                continue;
+                            }
+                            let otype = dm_row_string(row, 1);
+                            let droptime = dm_row_string(row, 2);
+                            lines.push(format!("-- {obj}（{otype}，DROP 于 {droptime}）"));
+                            lines.push(format!(
+                                "FLASHBACK TABLE \"{schema_o}\".\"{obj}\" TO BEFORE DROP;"
+                            ));
+                            lines.push(format!("PURGE TABLE \"{schema_o}\".\"{obj}\";"));
+                        }
+                        let call_template = rows
+                            .first()
+                            .map(|row| {
+                                let obj = dm_row_string(row, 0);
+                                format!(
+                                    "FLASHBACK TABLE \"{schema_o}\".\"{obj}\" TO BEFORE DROP;"
+                                )
+                            })
+                            .unwrap_or_default();
+                        return Ok(ObjectDefinition {
+                            definition: lines.join("\n"),
+                            call_template,
                             arg_count: 0,
                         });
                     }
@@ -3844,6 +4052,21 @@ impl DbEngine {
                     .flatten()
                     .and_then(|row| row.try_get::<_, i64>(0).ok())
                     .unwrap_or(0);
+                // 扩展（DBeaver PostgreSchema.ExtensionCache 同源）：
+                // pg_extension 按 extnamespace 归属 schema；查询失败容错为 0
+                //（极老版本无该表）
+                let extensions: i64 = client
+                    .query_opt(
+                        "SELECT COUNT(*) FROM pg_catalog.pg_extension e \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace \
+                         WHERE n.nspname = $1",
+                        &[&schema],
+                    )
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|row| row.try_get::<_, i64>(0).ok())
+                    .unwrap_or(0);
                 let count_of = |kind: &str, rows: &[(String, i64)]| {
                     rows.iter()
                         .find(|(k, _)| *k == kind)
@@ -3856,6 +4079,7 @@ impl DbEngine {
                             triggers: Some(triggers),
                             mviews: Some(count_of("m", &relkind)),
                             foreign_tables: Some(count_of("f", &relkind)),
+                            extensions: Some(extensions),
                             rules: Some(rules),
                         ..GroupCounts::base(
                             count_of("r", &relkind),
@@ -3899,12 +4123,40 @@ impl DbEngine {
                         .map(|(_, c)| *c)
                         .unwrap_or(0)
                 };
+                // DB Link（all_db_links 按 owner；PUBLIC 链接不归入单 schema）
+                let db_link_sql = format!(
+                    "SELECT COUNT(*) FROM all_db_links WHERE owner = {}",
+                    ob_quote_literal(schema)
+                );
+                let db_links = oracle_count_opt(conn, &db_link_sql).await.unwrap_or(0);
+                // 回收站（DBeaver Recycle Bin 同义）：dba_recyclebin 按 owner
+                // 计数；普通用户无 dba 视图权限时降级 user_recyclebin（只含登录
+                // 用户对象，故仅当展开的 schema 即登录用户时计入）
+                let rb_dba_sql = format!(
+                    "SELECT COUNT(*) FROM dba_recyclebin WHERE owner = {}",
+                    ob_quote_literal(schema)
+                );
+                let recyclebin = match oracle_count_opt(conn, &rb_dba_sql).await {
+                    Some(c) => c,
+                    None => {
+                        let login = oracle_scalar_string(conn, "SELECT USER FROM dual").await;
+                        if !login.is_empty() && login.eq_ignore_ascii_case(schema) {
+                            oracle_count_opt(conn, "SELECT COUNT(*) FROM user_recyclebin")
+                                .await
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        }
+                    }
+                };
                 Ok(group_nodes(
                     schema,
                     GroupCounts {
                         triggers: Some(count_of("TRIGGER")),
                         synonyms: Some(count_of("SYNONYM")),
                         packages: Some(count_of("PACKAGE")),
+                        db_links: Some(db_links),
+                        recyclebin: Some(recyclebin),
                         ..GroupCounts::base(
                             count_of("TABLE"),
                             count_of("VIEW"),
@@ -4113,10 +4365,21 @@ impl DbEngine {
                             .map(|row| dm_row_i64(row.as_slice(), 1))
                             .unwrap_or(0)
                     };
+                    // 回收站（DM8 RECYCLEBIN 参数开启后可用，DBA_RECYCLEBIN
+                    // 视图同 Oracle 形态）；未开启/无视图时容错为 0
+                    let dm_recyclebin = dm_query_rows(
+                        client,
+                        "SELECT COUNT(*) FROM DBA_RECYCLEBIN WHERE OWNER = ?",
+                        &bind,
+                    )
+                    .ok()
+                    .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                    .unwrap_or(0);
                     Ok(group_nodes(
                         &schema_o,
                         GroupCounts {
                             triggers: Some(triggers),
+                            recyclebin: Some(dm_recyclebin),
                             // 同义词（SUBTYPE$='SYN'）与包（SUBTYPE$='PKGS'）
                             synonyms: Some(
                                 dm_query_rows(
@@ -4254,12 +4517,15 @@ impl DbEngine {
                 "event_name",
             ),
             // 同义词 / 包 / 规则：不适用 MySQL/PG 通用模板（Oracle 系/PG 专属），
-            // 各引擎臂单独处理；这里给空集占位（外部表同理，仅 PG 有且在
-            // Postgres 臂单独拼 pg_catalog 查询）
+            // 各引擎臂单独处理；这里给空集占位（外部表/扩展/DB Link/回收站
+            // 同理，均由对应引擎臂单独拼 SQL）
             ObjectGroup::Synonym
             | ObjectGroup::Package
             | ObjectGroup::Rule
-            | ObjectGroup::ForeignTable => {
+            | ObjectGroup::ForeignTable
+            | ObjectGroup::Extension
+            | ObjectGroup::DbLink
+            | ObjectGroup::RecycleBin => {
                 (
                     "SELECT NULL AS name FROM DUAL WHERE 1 = 0",
                     "SELECT NULL AS name WHERE 1 = 0",
@@ -4327,6 +4593,12 @@ impl DbEngine {
                          WHERE n.nspname = $1 AND r.rulename <> '_RETURN' \
                          ORDER BY r.rulename",
                     ),
+                    ObjectGroup::Extension => Some(
+                        "SELECT e.extname FROM pg_catalog.pg_extension e \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace \
+                         WHERE n.nspname = $1 \
+                         ORDER BY e.extname",
+                    ),
                     _ => None,
                 };
                 let final_sql = sql_pg_dyn.unwrap_or(sql_pg);
@@ -4347,7 +4619,83 @@ impl DbEngine {
             }
             DbEngine::Oracle(conn) => {
                 // all_objects 按对象类型列（Oracle 无 information_schema）；
-                // 对象类型大写、BIN$ 回收站滤除
+                // 对象类型大写、BIN$ 回收站滤除；INVALID 对象以徽标 detail 标出
+                //（DBeaver 对失效对象标红同义，VALID 不标降噪）。
+                // DB Link / 回收站不在 all_objects，单独走 all_db_links /
+                // dba_recyclebin（dba 视图无权限时降级 user_recyclebin）
+                if group == ObjectGroup::DbLink {
+                    let sql = format!(
+                        "SELECT db_link, username, host FROM all_db_links \
+                         WHERE owner = {} ORDER BY db_link",
+                        ob_quote_literal(schema)
+                    );
+                    let mut rs = conn
+                        .query(&sql)
+                        .await
+                        .map_err(|e| format!("Oracle 查询 DB Link 清单失败：{}", oracle_err(e)))?;
+                    let mut nodes = Vec::new();
+                    while let Some(row) = rs
+                        .next_row()
+                        .await
+                        .map_err(|e| format!("Oracle 读取 DB Link 清单失败：{}", oracle_err(e)))?
+                    {
+                        let name = oracle_row_string(&row, 0);
+                        let user = oracle_row_string(&row, 1);
+                        let host = oracle_row_string(&row, 2);
+                        let detail = match (user != "NULL", host != "NULL") {
+                            (true, true) => Some(format!("{user}@{host}")),
+                            (true, false) => Some(user),
+                            (false, true) => Some(host),
+                            (false, false) => None,
+                        };
+                        nodes.push(CatalogNode {
+                            key: format!("{schema}.{name}"),
+                            name,
+                            kind: kind.clone(),
+                            detail,
+                        });
+                    }
+                    return Ok(nodes);
+                }
+                if group == ObjectGroup::RecycleBin {
+                    let dba_sql = format!(
+                        "SELECT OBJECT_NAME, ORIGINAL_NAME, TYPE FROM dba_recyclebin \
+                         WHERE OWNER = {} ORDER BY DROPTIME DESC",
+                        ob_quote_literal(schema)
+                    );
+                    let mut nodes: Vec<CatalogNode> = Vec::new();
+                    match conn.query(&dba_sql).await {
+                        Ok(mut rs) => {
+                            while let Ok(Some(row)) = rs.next_row().await {
+                                if let Some(node) = recycle_node(&row, schema, &kind) {
+                                    nodes.push(node);
+                                }
+                            }
+                        }
+                        // 无 dba 视图权限：user_recyclebin 只含登录用户对象，
+                        // 仅当展开的 schema 即登录用户时降级可用
+                        Err(_) => {
+                            let login =
+                                oracle_scalar_string(conn, "SELECT USER FROM dual").await;
+                            if !login.is_empty()
+                                && login.eq_ignore_ascii_case(schema)
+                                && let Ok(mut rs) = conn
+                                    .query(
+                                        "SELECT OBJECT_NAME, ORIGINAL_NAME, TYPE \
+                                         FROM user_recyclebin ORDER BY DROPTIME DESC",
+                                    )
+                                    .await
+                            {
+                                while let Ok(Some(row)) = rs.next_row().await {
+                                    if let Some(node) = recycle_node(&row, schema, &kind) {
+                                        nodes.push(node);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return Ok(nodes);
+                }
                 let obj_type = match group {
                     ObjectGroup::Table => "TABLE",
                     ObjectGroup::View => "VIEW",
@@ -4358,12 +4706,12 @@ impl DbEngine {
                     ObjectGroup::Trigger => "TRIGGER",
                     ObjectGroup::Synonym => "SYNONYM",
                     ObjectGroup::Package => "PACKAGE",
-                    // Redis/事件/规则分组不适用 Oracle（树上不会出现）；
+                    // Redis/事件/规则/扩展分组不适用 Oracle（树上不会出现）；
                     // 给个不存在的类型名让服务端返回空集
                     _ => "VELOTERM_UNREACHABLE",
                 };
                 let sql = format!(
-                    "SELECT object_name FROM all_objects \
+                    "SELECT object_name, status FROM all_objects \
                      WHERE owner = {} AND object_type = {} \
                        AND object_name NOT LIKE 'BIN$%' ORDER BY object_name",
                     ob_quote_literal(schema),
@@ -4380,11 +4728,17 @@ impl DbEngine {
                     .map_err(|e| format!("Oracle 读取对象清单失败：{}", oracle_err(e)))?
                 {
                     let name = oracle_row_string(&row, 0);
+                    // INVALID 才标（触发器/过程/视图失效常见，全标 VALID 太吵）
+                    let status = oracle_row_string(&row, 1);
                     nodes.push(CatalogNode {
                         key: format!("{schema}.{name}"),
                         name,
                         kind: kind.clone(),
-                        detail: None,
+                        detail: if status == "INVALID" {
+                            Some(status)
+                        } else {
+                            None
+                        },
                     });
                 }
                 Ok(nodes)
@@ -4401,6 +4755,9 @@ impl DbEngine {
                     ObjectGroup::Trigger
                     | ObjectGroup::MaterializedView
                     | ObjectGroup::ForeignTable
+                    | ObjectGroup::Extension
+                    | ObjectGroup::DbLink
+                    | ObjectGroup::RecycleBin
                     | ObjectGroup::Synonym
                     | ObjectGroup::Package
                     | ObjectGroup::Event
@@ -4503,6 +4860,49 @@ impl DbEngine {
                 // 各分组对应各自的达梦字典表（序列的 owner 列叫 SEQUENCE_OWNER）；
                 // 表/视图不用 ALL_OBJECTS 而是专用字典，避开回收站对象与同名的
                 // 分区子表（ALL_OBJECTS 里会出现）
+                // 回收站（DM8 RECYCLEBIN 参数开启后可用）：DBA_RECYCLEBIN 视图
+                // 同 Oracle 形态，key 用 BIN$ 实名防同名多版本冲突、显示名用
+                // 原名；未开启/无视图时容错为空
+                if let ObjectGroup::RecycleBin = group {
+                    let schema_o = schema.to_string();
+                    let kind_o = kind.clone();
+                    return self
+                        .with_dameng(move |client| {
+                            let rows = dm_query_rows(
+                                client,
+                                "SELECT OBJECT_NAME, ORIGINAL_NAME, TYPE FROM DBA_RECYCLEBIN \
+                                 WHERE OWNER = ? ORDER BY DROPTIME DESC",
+                                &[dm_pure::Param::Str(schema_o.clone())],
+                            )
+                            .unwrap_or_default();
+                            Ok(rows
+                                .iter()
+                                .filter_map(|row| {
+                                    let obj = dm_row_string(row, 0);
+                                    if obj == "NULL" {
+                                        return None;
+                                    }
+                                    let original = dm_row_string(row, 1);
+                                    let otype = dm_row_string(row, 2);
+                                    Some(CatalogNode {
+                                        key: format!("{schema_o}.{obj}"),
+                                        name: if original == "NULL" {
+                                            obj
+                                        } else {
+                                            original
+                                        },
+                                        kind: kind_o.clone(),
+                                        detail: if otype == "NULL" {
+                                            None
+                                        } else {
+                                            Some(otype)
+                                        },
+                                    })
+                                })
+                                .collect())
+                        })
+                        .await;
+                }
                 let sql = match group {
                     ObjectGroup::Table => {
                         "SELECT NAME FROM SYSOBJECTS t, SYSOBJECTS s \
@@ -4551,6 +4951,10 @@ impl DbEngine {
                     }
                     ObjectGroup::MaterializedView
                     | ObjectGroup::ForeignTable
+                    | ObjectGroup::Extension
+                    | ObjectGroup::DbLink
+                    // 回收站已在函数入口单独处理，此处不可达
+                    | ObjectGroup::RecycleBin
                     | ObjectGroup::Event
                     | ObjectGroup::Rule
                     // Redis 六型已在函数入口的 early return 拦掉，不可达；
@@ -5379,6 +5783,12 @@ struct GroupCounts {
     mviews: Option<i64>,
     /// None = 引擎无外部表（PG relkind='f'，FDW）
     foreign_tables: Option<i64>,
+    /// None = 引擎无扩展（PG pg_extension）
+    extensions: Option<i64>,
+    /// None = 引擎无 DB Link（Oracle all_db_links）
+    db_links: Option<i64>,
+    /// None = 引擎无回收站（Oracle/达梦 BIN$ 闪回对象）
+    recyclebin: Option<i64>,
     /// None = 引擎无同义词（Oracle 系特有）
     synonyms: Option<i64>,
     /// None = 引擎无包（Oracle 系特有）
@@ -5401,6 +5811,9 @@ impl GroupCounts {
             triggers: None,
             mviews: None,
             foreign_tables: None,
+            extensions: None,
+            db_links: None,
+            recyclebin: None,
             synonyms: None,
             packages: None,
             events: None,
@@ -5439,6 +5852,15 @@ fn group_nodes(schema: &str, counts: GroupCounts) -> Vec<CatalogNode> {
     }
     if let Some(r) = counts.rules {
         groups.push((ObjectGroup::Rule, "RULE", r));
+    }
+    if let Some(x) = counts.extensions {
+        groups.push((ObjectGroup::Extension, "EXTENSION", x));
+    }
+    if let Some(d) = counts.db_links {
+        groups.push((ObjectGroup::DbLink, "DB LINK", d));
+    }
+    if let Some(r) = counts.recyclebin {
+        groups.push((ObjectGroup::RecycleBin, "RECYCLE BIN", r));
     }
     groups
         .into_iter()
@@ -5592,6 +6014,41 @@ fn format_float(v: f64) -> String {
     } else {
         format!("{v}")
     }
+}
+
+/// Oracle 容错计数：查询失败（权限/视图缺失）返回 None
+async fn oracle_count_opt(conn: &mut oracle_async::Conn, sql: &str) -> Option<i64> {
+    let mut rs = conn.query(sql).await.ok()?;
+    let row = rs.next_row().await.ok()??;
+    oracle_row_string(&row, 0).parse::<i64>().ok()
+}
+
+/// Oracle 标量字符串（容错：失败/空结果返回空串）
+async fn oracle_scalar_string(conn: &mut oracle_async::Conn, sql: &str) -> String {
+    match conn.query(sql).await {
+        Ok(mut rs) => match rs.next_row().await {
+            Ok(Some(row)) => oracle_row_string(&row, 0),
+            _ => String::new(),
+        },
+        Err(_) => String::new(),
+    }
+}
+
+/// 回收站行 → CatalogNode（OBJECT_NAME/ORIGINAL_NAME/TYPE 三列形态；
+/// key 用 BIN$ 实名防同名多版本冲突，显示名用 ORIGINAL_NAME）
+fn recycle_node(row: &oracle_async::Row, schema: &str, kind: &str) -> Option<CatalogNode> {
+    let obj = oracle_row_string(row, 0);
+    if obj == "NULL" {
+        return None;
+    }
+    let original = oracle_row_string(row, 1);
+    let otype = oracle_row_string(row, 2);
+    Some(CatalogNode {
+        key: format!("{schema}.{obj}"),
+        name: if original == "NULL" { obj } else { original },
+        kind: kind.to_string(),
+        detail: if otype == "NULL" { None } else { Some(otype) },
+    })
 }
 
 /// 索引聚列的表达式回填：主查询 GROUP_CONCAT/LISTAGG 按序号聚出的列串，
