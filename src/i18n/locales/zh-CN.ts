@@ -207,6 +207,8 @@ export default {
     rollbackTx: '回滚',
     txPendingHint: '当前事务有 {{count}} 条未提交修改（累计影响 {{rows}} 行）',
     txNoPendingHint: '当前无未提交修改',
+    txPendingBadge: '待提交:{{count}}',
+    txNoPendingBadge: '无未提交',
     needsArgs: '该对象有 {{count}} 个参数：调用语句已插入编辑器，补参后 ⌘↵ 执行',
     runAll: '全部执行 (⌘↵)',
     runSelected: '执行选中 (⌘⇧↵)',

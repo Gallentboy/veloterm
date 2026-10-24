@@ -209,6 +209,8 @@ export default {
     rollbackTx: 'Rollback',
     txPendingHint: '{{count}} uncommitted statement(s) in current transaction ({{rows}} rows affected)',
     txNoPendingHint: 'No uncommitted changes in current transaction',
+    txPendingBadge: 'Pending: {{count}}',
+    txNoPendingBadge: 'No pending changes',
     runAll: 'Execute all (⌘↵)',
     runSelected: 'Run selection (⌘⇧↵)',
     ctxCopy: 'Copy',
