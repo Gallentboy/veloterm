@@ -1675,27 +1675,14 @@ export function DbSessionView({
                     </div>
                   ))}
                 </div>
-                {activeObjectKey ? (
-                  (() => {
-                    const page = objectPages.find((p) => p.key === activeObjectKey);
-                    return page ? (
-                      <DbObjectTab
-                        key={page.key}
-                        payload={{
-                          sessionId: page.sessionId,
-                          schema: page.schema,
-                          name: page.name,
-                          kind: page.kind,
-                          variant: page.variant,
-                          refreshToken: page.refreshToken,
-                        }}
-                        onInsertSql={insertSql}
-                        onRunSql={runSql}
-                        onClose={() => closeObjectPage(page.key)}
-                      />
-                    ) : null;
-                  })()
-                ) : currentResult ? (
+                {/* 结果集视图：对象页激活时隐藏（keep-alive，不卸载） */}
+                <div
+                  className={cn(
+                    'flex min-h-0 flex-1 flex-col',
+                    activeObjectKey !== null && 'hidden',
+                  )}
+                >
+                {currentResult ? (
                   currentResult.error ? (
                     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3 select-text">
                       <div className="flex items-center gap-1.5 text-ui-sm text-destructive">
@@ -1751,6 +1738,34 @@ export function DbSessionView({
                     </div>
                   )
                 ) : null}
+                </div>
+
+                {/* 对象页常驻挂载（keep-alive，终端 tab 同款）：切走仅
+                    display:none，已取数据、滚动位置与 Monaco 实例全保留，
+                    切回零重取零重建；激活由 hidden 切换驱动 */}
+                {objectPages.map((page) => (
+                  <div
+                    key={page.key}
+                    className={cn(
+                      'flex min-h-0 flex-1 flex-col',
+                      activeObjectKey !== page.key && 'hidden',
+                    )}
+                  >
+                    <DbObjectTab
+                      payload={{
+                        sessionId: page.sessionId,
+                        schema: page.schema,
+                        name: page.name,
+                        kind: page.kind,
+                        variant: page.variant,
+                        refreshToken: page.refreshToken,
+                      }}
+                      onInsertSql={insertSql}
+                      onRunSql={runSql}
+                      onClose={() => closeObjectPage(page.key)}
+                    />
+                  </div>
+                ))}
               </>
             )}
           </div>
