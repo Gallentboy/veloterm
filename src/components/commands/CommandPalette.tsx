@@ -1,6 +1,7 @@
 import { CornerDownLeft, Pin, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 import { useCommands } from '@/services/commandStore';
 import {
@@ -94,9 +95,16 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
 
   if (!open) return null;
 
-  return (
+  // 容器化定位（与 Modal 的 containerSelector 同机制、DbHostsScreen 先例）：
+  // 遮罩 portal 到主内容区 <main>（AppShell 已挂 relative）内用 absolute，
+  // 只盖主内容区并在其视窗内居中；拿不到容器（测试环境等）退全屏 fixed
+  const [mainContainer] = useState(() => document.querySelector<HTMLElement>('main'));
+  const overlay = (
     <div
-      className="fixed inset-0 z-[80] flex items-start justify-center bg-black/25 pt-[15vh]"
+      className={cn(
+        'z-[80] flex items-start justify-center bg-black/25 pt-[15vh]',
+        mainContainer ? 'absolute inset-0' : 'fixed inset-0',
+      )}
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -191,4 +199,6 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
       </div>
     </div>
   );
+
+  return mainContainer ? createPortal(overlay, mainContainer) : overlay;
 }
