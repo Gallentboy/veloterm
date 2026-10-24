@@ -173,12 +173,6 @@ agg = { path = "vendor/agg" }
 # Oracle 引擎：oracle_async（纯 Rust 原生异步驱动，TNS/TTC 线路协议）vendor 树，
 # 零 C 依赖（无需 Oracle Instant Client / OCI / ODPI-C），Tokio 异步全链路。
 oracle_async = { path = "vendor/oracle_async" }
-# OceanBase Oracle 模式引擎：libobclient（OceanBase Connector/C）的手写 FFI
-# sys crate，vendor 树 path 依赖（gif2mp4-sys 同先例——库本体由
-# vendor/obconnector-c 预编译、静态档案在 vendor/obclient-lib/，build.rs
-# 只做档案校验与链接旗标、不编译任何 C 代码）。安全包装（spawn_blocking
-# 适配、行流、错误转 String）在 src/db_browser/obclient.rs。
-obclnt-sys = { path = "vendor/obclnt-sys" }
 # 达梦 DM8 引擎：dm-pure（纯 Rust 自实现 DM 网络协议）vendor 树，MIT。
 # 零外部数据库依赖（无需达梦 Instant Client / libdmdpi），8 个纯 Rust 依赖、
 # 无构建脚本、无 tokio（同步 std::net，engines.rs 经 spawn_blocking 包裹）。

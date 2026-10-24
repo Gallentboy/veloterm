@@ -5,10 +5,10 @@
 //! 原生异步驱动，零 C 依赖无需 Oracle Instant Client，Tokio 全链路异步；
 //! PL/SQL 经 sqlsplit 整段化，隐式结果集（Msg 27）由 QueryResult 自动接续，
 //! database 字段在 Oracle 语义 =
-//! 服务名，「切库」= CURRENT_SCHEMA；OceanBase 双模式——MySQL 模式租户
-//! 复用 mysql_async 臂、Oracle 模式租户走 vendor obclnt-sys/libobclient
-//!（obclient.rs 安全包装 + with_obclient 阻塞包裹，database 字段同
-//! Oracle 语义 = 初始 schema）；SQLite 是本地文件库——`password` 字段
+//! 服务名，「切库」= CURRENT_SCHEMA；OceanBase 双模式——两模式都走纯 Rust
+//! 分叉驱动 vendor/mysql-async-ob（MySQL 模式复用 mysql_async 臂，Oracle
+//! 模式经其 ob_protocol20 路径，database 字段同 Oracle 语义 = 初始
+//! schema）；SQLite 是本地文件库——`password` 字段
 //! 语义 = 加密口令、`db_path` = 文件路径、`encryption_mode` =
 //! none/sqlcipher4/sqlcipher3/sqlcipher2/sqlcipher-raw，取消经 progress
 //! handler（引擎侧绑定会话的 cancelled 标志））。
@@ -20,7 +20,6 @@
 
 pub mod engines;
 pub mod explain;
-pub mod obclient;
 /// Oracle 19c 错误消息全量中文译文（构建期嵌入、零堆分配稀疏查找）。
 /// 数据是机器辅助翻译、非官方译文；查不到时调用方回落 engines 里的
 /// `oracle_ora_hint` 精简摘要表。
@@ -551,7 +550,7 @@ fn explain_statements(
         "mysql" | "oceanbase" => {
             if mode == Some("oracle") {
                 return Err(
-                    "OceanBase Oracle 模式的执行计划暂未接入（待 obclient 通道稳定后支持）"
+                    "OceanBase Oracle 模式的执行计划暂未接入（OB 原生 EXPLAIN 对接中）"
                         .to_string(),
                 );
             }
@@ -963,17 +962,6 @@ pub async fn db_use_database(
         DbEngine::Sqlite(_) => {
             // SQLite 无连接级切库：对象树顶层已是 database_list 的附加库，
             // 这里只更新元信息供工具栏展示
-        }
-        DbEngine::ObOracle(_) => {
-            // OB Oracle 同 Oracle 臂：切换 = ALTER SESSION SET CURRENT_SCHEMA
-            //（不重连、不动连接记录）；元信息沿用现状不重写（meta 更新同
-            // Oracle 臂惯例）
-            engine.select_database(&db_name).await?;
-            let meta = session
-                .meta
-                .read()
-                .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
-            return Ok(meta.clone());
         }
         DbEngine::Redis { .. } => {
             // Redis 切换 = SELECT n（连接级状态，不重连）；元信息里 database

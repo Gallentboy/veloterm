@@ -2,8 +2,9 @@
 //!（vendor oracle_async，纯 Rust 原生异步驱动，TNS/TTC 线路协议）/
 //! Redis（redis-rs 多路复用异步连接）/
 //! OceanBase（双模式：MySQL 模式租户说标准 MySQL 线缆协议、复用
-//! mysql_async 臂仅微调；Oracle 模式租户走 vendor obclnt-sys 的 libobclient
-//! 阻塞 C API，安全包装见 db_browser/obclient.rs，经 with_obclient 包裹）/
+//! mysql_async 臂仅微调；Oracle 模式租户同分叉（vendor/mysql-async-ob）
+//! 的 ob_protocol20 路径——纯 Rust，SM3 认证、OB 方言探测与 N 列
+//! 解码内建）/
 //! SQLite（rusqlite，bundled-sqlcipher——支持 PRAGMA key 加密）六引擎的
 //! enum 分发。不用 dyn trait —— async fn in trait 非 dyn-compatible，
 //! 多变体 enum 是最轻的分发形态。
@@ -26,10 +27,9 @@
 //! （前端 Oracle 表单隐藏 SSL 选项，后端对非 disable 直接报错，不做静默
 //! 明文回退）。
 //!
-//! OceanBase 侧说明：Oracle 模式臂（libobclient）TLS P0 仅 disable（非
-//! disable 直接报错，不做静默明文回退）；MySQL 模式臂沿用 mysql_async 的
-//! 四档 TLS。取消粒度两同步臂一致：语句间生效（会话层 AtomicBool），
-//! C 调用/行流中不可打断，超时后会话层置废连接。
+//! OceanBase 侧说明：Oracle 模式走纯 Rust 分叉驱动（同 MySQL 臂四档 TLS
+//! 能力）；取消粒度：语句间生效（会话层 AtomicBool），行流中不可打断，
+//! 超时后会话层置废连接。
 //!
 //! SQLite 侧说明：本地文件库（db_path 空 = :memory:），打开不带 CREATE 标志
 //!（文件不存在即报错，绝不静默建空库）；加密走 SQLCipher 的 PRAGMA key
@@ -37,7 +37,7 @@
 //! 要求 codec 已由 key 附加，反过来会被静默忽略；sqlcipher4 即默认档位，
 //! sqlcipher-raw 直接给 x'<64 位十六进制>' 原始密钥字面量）。rusqlite 的
 //! Connection 是 Send 非 Sync，所有阻塞调用经 with_sqlite 的 spawn_blocking
-//! 包裹（与 with_obclient 同型）；取消经 progress handler——每 1000 条 VDBE
+//! 包裹；取消经 progress handler——每 1000 条 VDBE
 //! 指令轮询会话标志，命中即 SQLITE_INTERRUPT（exec_streaming 映射为
 //! cancelled=true，不是错误）。
 //!
@@ -53,7 +53,6 @@ use futures_util::StreamExt as _;
 use serde::Serialize;
 
 use crate::db::DbConnectionRecord;
-use crate::db_browser::obclient;
 use oracle_async::Queryable as _;
 
 /// Redis 引擎专属实现（拓扑/命令/键检视/分词），从本文件拆出。
@@ -69,7 +68,7 @@ mod oracle_live_test;
 /// Oracle 辅助在 mod.rs 的 match 臂与 db_browser 命令层使用（`pub(crate)` 级，
 /// 不能再经 `pub use` 外露）
 pub(crate) use self::oracle_engine::{
-    ob_cell_string, ob_oracle_usernames, ob_quote_literal, oracle_err, oracle_row_string,
+    ob_quote_literal, oracle_err, oracle_row_string,
     oracle_usernames,
 };
 /// 仅测试模块使用（`use super::*` 引入）
@@ -352,7 +351,7 @@ type SqliteIncomingRow = (
 type MySqlColumnRow = (String, String, String, Option<String>, Option<String>);
 
 /// SQLite 引擎（本地文件库）。rusqlite::Connection 是 Send 非 Sync，
-/// 所有阻塞调用经 spawn_blocking 包裹（与 with_obclient 同型）。
+/// 所有阻塞调用经 spawn_blocking 包裹。
 pub struct SqliteEngine {
     conn: rusqlite::Connection,
     /// 会话取消标志：progress handler 每 1000 条 VDBE 指令轮询一次
@@ -403,9 +402,9 @@ unsafe extern "C" fn sqlite_progress_trampoline(
 }
 
 /// 引擎实例：一会话一连接（单查询工作台模型，不做池）。Closed 为优雅关闭后的占位。
-/// Oracle 走 oracle_async（纯 Rust 异步，各臂直接 await）；ObOracle / SQLite /
-/// 达梦为同步驱动（libobclient / rusqlite / dm-pure 无 async），持有连接分别经
-/// with_obclient / with_sqlite / with_dameng 包裹调用。Redis 用 RedisConn（单机
+/// Oracle 走 oracle_async（纯 Rust 异步，各臂直接 await）；SQLite /
+/// 达梦为同步驱动（rusqlite / dm-pure 无 async），持有连接分别经
+/// with_sqlite / with_dameng 包裹调用。Redis 用 RedisConn（单机
 /// MultiplexedConnection / 集群 ClusterConnection，内部均单任务串行化请求/
 /// 响应，clone 廉价）——与「单连接工作台」模型天然契合，不需要额外池。
 pub enum DbEngine {
@@ -420,8 +419,6 @@ pub enum DbEngine {
         /// sentinel 解析出 master 后按单机连接，该标记恒 false
         cluster: bool,
     },
-    /// OB Oracle 模式（libobclient 阻塞 C API，obclient::ObConn 安全包装）
-    ObOracle(obclient::ObConn),
     Sqlite(SqliteEngine),
     Dameng(dm_pure::DmClient),
     Closed,
@@ -430,13 +427,7 @@ pub enum DbEngine {
 impl DbEngine {
     /// 建连并取服务端版本描述。OceanBase 按 mode 分双模式：MySQL 模式复用
     /// mysql_async 臂（engine 变体仍是 MySql），Oracle 模式固定走纯 Rust
-    /// 分叉驱动（`connect_ob_rust`）。
-    ///
-    /// libobclient FFI 路径（`connect_ob_oracle`）代码完整保留，但不再参与
-    /// 分派——OB Oracle 实际只用纯 Rust 连接。保留原因：一是历史记录
-    /// `extra_options.driver="ffi"` 不该因驱动下线而报错（现在统一按 Rust
-    /// 处理，用户无感）；二是 FFI 实现作为协议对照参考留在树内，真机排查
-    /// 线缆差异时可直接对照。
+    /// 分叉驱动（`connect_ob_rust`，结果同样落在 MySql 变体）。
     pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), String> {
         match (record.engine.as_str(), record.mode.as_deref()) {
             ("mysql", _) => Self::connect_mysql(record).await,
@@ -444,8 +435,6 @@ impl DbEngine {
             ("oracle", _) => Self::connect_oracle(record).await,
             ("redis", _) => Self::connect_redis(record).await,
             ("oceanbase", Some("mysql")) => Self::connect_ob_mysql(record).await,
-            // OB Oracle 固定纯 Rust（connect_ob_rust）；FFI 版 connect_ob_oracle
-            // 保留在树内但不再分派，见 connect 的文档说明
             ("oceanbase", Some("oracle")) => Self::connect_ob_rust(record).await,
             ("oceanbase", _) => Err("OceanBase 需要选择租户模式（MySQL/Oracle）".to_string()),
             ("sqlite", _) => Self::connect_sqlite(record).await,
@@ -455,14 +444,11 @@ impl DbEngine {
     }
 
     /// 优雅关闭（MySQL 发 COM_QUIT；PG 直接断；Redis 的 multiplexed 连接随
-    /// Drop 关闭后台任务无需发命令；OB Oracle 走 mysql_close）——消费自身，
-    /// 置 Closed 占位。
+    /// Drop 关闭后台任务无需发命令）——消费自身，置 Closed 占位。
     pub async fn close(&mut self) {
         let taken = std::mem::replace(self, DbEngine::Closed);
         if let DbEngine::MySql(conn) = taken {
             let _ = conn.disconnect().await;
-        } else if let DbEngine::ObOracle(conn) = taken {
-            conn.close();
         } else if let DbEngine::Dameng(mut client) = taken {
             // dm-pure 的 close 只是丢弃 socket（无网络往返），同步调用即可
             client.close();
@@ -990,9 +976,8 @@ impl DbEngine {
     }
 
     /// 同步 SQLite 连接的阻塞包裹：连接取出 → spawn_blocking 内执行闭包 →
-    /// 连接归还（错误也归还；panic/取消置 Closed 由会话层重建）。与
-    /// with_obclient 同型——rusqlite 的 Connection 是 Send 非 Sync，不能跨
-    /// await 直接持有。
+    /// 连接归还（错误也归还；panic/取消置 Closed 由会话层重建）。
+    /// rusqlite 的 Connection 是 Send 非 Sync，不能跨 await 直接持有。
     async fn with_sqlite<T, F>(&mut self, f: F) -> Result<T, String>
     where
         T: Send + 'static,
@@ -1082,85 +1067,7 @@ impl DbEngine {
         ))
     }
 
-    /// OB Oracle 模式（libobclient FFI）：spawn_blocking 里走 ObConn::connect
-    ///（libobclient 阻塞 C API，同 connect_oracle 先例）。database 字段 =
-    /// 初始 schema 语义（非空则连接后 ALTER SESSION SET CURRENT_SCHEMA，在
-    /// ObConn::connect 内完成）；TLS P0 仅 disable。
-    ///
-    /// **当前不在分派路径上**——OB Oracle 固定走纯 Rust 的 `connect_ob_rust`。
-    /// 此实现与 obclient 模块一并保留：既是历史记录的兼容参考，也是真机排查
-    /// ob20 线缆差异时的对照实现。重新启用只需把 `connect` 里
-    /// `("oceanbase", Some("oracle"))` 那一臂改回本函数。
-    #[allow(dead_code)]
-    async fn connect_ob_oracle(record: &DbConnectionRecord) -> Result<(DbEngine, String), String> {
-        if record.ssl_mode != "disable" {
-            return Err(
-                "OceanBase Oracle 模式当前仅支持禁用 TLS（SSL 模式需为 disable）".to_string(),
-            );
-        }
-        let username = record
-            .username
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| "OceanBase 需要填写用户名".to_string())?
-            .to_string();
-        // 密码可空（obclient 允许空口令登录）；用户名可带 user@tenant#cluster
-        // 形态由服务端/obproxy 解析
-        let password = record.password.clone().unwrap_or_default();
-        let host = record.host.trim().to_string();
-        let port = record.port;
-        let database = record
-            .database
-            .as_deref()
-            .filter(|s| !s.trim().is_empty())
-            .map(str::to_string);
-        let (conn, version) = tokio::task::spawn_blocking(move || {
-            obclient::ObConn::connect(&host, port, &username, &password, database.as_deref(), 12)
-        })
-        .await
-        .map_err(|e| format!("OceanBase 连接任务失败：{e}"))??;
-        let version = if version.is_empty() {
-            "OceanBase".to_string()
-        } else {
-            version
-        };
-        Ok((DbEngine::ObOracle(conn), version))
-    }
-
-    /// 同步 OB Oracle 连接（libobclient 阻塞 C API）的阻塞包裹：连接取出 →
-    /// spawn_blocking 内执行闭包 → 连接归还（错误/取消也归还，避免连接丢失；
-    /// Drop 兜底释放）。闭包内可直接调用同步 API。
-    async fn with_obclient<T, F>(&mut self, f: F) -> Result<T, String>
-    where
-        T: Send + 'static,
-        F: FnOnce(&mut obclient::ObConn) -> Result<T, String> + Send + 'static,
-    {
-        let taken = std::mem::replace(self, DbEngine::Closed);
-        let DbEngine::ObOracle(mut conn) = taken else {
-            *self = taken;
-            return Err("连接已关闭".to_string());
-        };
-        let result = tokio::task::spawn_blocking(move || {
-            let r = f(&mut conn);
-            (r, conn)
-        })
-        .await
-        .map_err(|e| format!("OceanBase 任务失败：{e}"));
-        match result {
-            Ok((r, conn)) => {
-                *self = DbEngine::ObOracle(conn);
-                r
-            }
-            Err(e) => {
-                // JoinError（panic/取消）：连接已无法取回，置 Closed 由会话层
-                //重建（阻塞任务收尾时 Drop 兜底 mysql_close）
-                *self = DbEngine::Closed;
-                Err(e)
-            }
-        }
-    }
-
-    /// 同步达梦连接的阻塞包裹（with_obclient 同型）：连接取出 → spawn_blocking
+    /// 同步达梦连接的阻塞包裹：连接取出 → spawn_blocking
     /// 内执行闭包 → 连接归还（错误/取消也归还，避免连接丢失）。dm-pure 是
     /// 纯同步驱动（std::net），闭包内可直接调用其 API。
     async fn with_dameng<T, F>(&mut self, f: F) -> Result<T, String>
@@ -1315,12 +1222,6 @@ impl DbEngine {
                 // 该选择器，此处仅为命令兼容
                 self.with_sqlite(sqlite_database_names).await
             }
-            DbEngine::ObOracle(_) => {
-                // OB Oracle 同型：无连接级切库，清单 = 可见 schema（系统账号
-                // 黑名单过滤见 ob_oracle_usernames，与 oracle 臂清单同源），
-                // 切换走 select_database 的 CURRENT_SCHEMA
-                self.with_obclient(ob_oracle_usernames).await
-            }
             DbEngine::Dameng(_) => {
                 // 达梦的「库」层即 schema，清单取 SYSOBJECTS 的模式对象
                 //（TYPE$='SCH'，见 DM_SCHEMAS_SQL 注释）。不滤系统 schema——
@@ -1343,13 +1244,6 @@ impl DbEngine {
             }
             DbEngine::Postgres(_) => {
                 Err("PostgreSQL 切换数据库需重连，由会话层处理".to_string())
-            }
-            DbEngine::ObOracle(_) => {
-                // OB Oracle 同 Oracle 臂：CURRENT_SCHEMA 只改名字解析不改权限，
-                // 不重连；标识符转义由 ObConn::select_schema 的双引号翻倍承接
-                let schema = database.to_string();
-                self.with_obclient(move |conn| conn.select_schema(&schema))
-                    .await
             }
             DbEngine::Oracle(conn) => {
                 // CURRENT_SCHEMA 只改名字解析不改权限；拼进 DDL 前必须校验
@@ -2508,10 +2402,6 @@ impl DbEngine {
                 })
                 .await
             }
-            DbEngine::ObOracle(_) => {
-                // P0 不实现（DDL 拉取/索引聚合的目录 SQL 后续版本接入）
-                Err("OceanBase Oracle 模式的对象详情将在后续版本支持".to_string())
-            }
             DbEngine::Dameng(_) => {
                 // 与 Oracle 同型：DBMS_METADATA.GET_DDL 首选（返回 CLOB，驱动可能
                 // 给 Str 或 Bytes），失败降级：视图读 ALL_VIEWS.TEXT、表拼列元数据。
@@ -3653,11 +3543,6 @@ impl DbEngine {
                 // 此处仅防御性拒绝
                 Err(format!("SQLite 不支持 {kind} 对象"))
             }
-            DbEngine::ObOracle(_) => {
-                // P0 不实现（all_source 拼回 / all_arguments 计数的目录 SQL
-                // 后续版本接入）
-                Err("OceanBase Oracle 模式的对象详情将在后续版本支持".to_string())
-            }
             DbEngine::Dameng(_) => {
                 // 达梦数据字典同 Oracle 风格：ALL_SOURCE 按行存源码（每行自带换行），
                 // ALL_ARGUMENTS 的 ARGUMENT_NAME 为 NULL 者是函数返回值，需排除
@@ -4047,22 +3932,6 @@ impl DbEngine {
                 })
                 .await
             }
-            DbEngine::ObOracle(_) => {
-                // 顶层 = schema（用户）：all_users 系统账号黑名单过滤
-                //（ob_oracle_usernames，清单与 oracle 臂同源）
-                self.with_obclient(|conn| {
-                    Ok(ob_oracle_usernames(conn)?
-                        .into_iter()
-                        .map(|name| CatalogNode {
-                            key: name.clone(),
-                            name,
-                            kind: "schema".to_string(),
-                            detail: None,
-                        })
-                        .collect())
-                })
-                .await
-            }
             DbEngine::Dameng(_) => {
                 // 达梦「库」层即 schema（SYSOBJECTS 权威清单，见 dm_schema_names
                 // 注释），kind 与 Oracle 臂一致
@@ -4396,55 +4265,6 @@ impl DbEngine {
                             0,
                             0,
                         ),
-                    ))
-                })
-                .await
-            }
-            DbEngine::ObOracle(_) => {
-                // 五类对象在 all_objects 一表内聚合（与 oracle 臂同源；
-                // BIN$ 回收站不计数）；无绑定参数——字面量内联转义
-                let schema_o = schema.to_string();
-                self.with_obclient(move |conn| {
-                    let sql = format!(
-                        "SELECT object_type, COUNT(*) FROM all_objects \
-                         WHERE owner = {} AND object_name NOT LIKE 'BIN$%' \
-                           AND object_type IN \
-                             ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE','TRIGGER','SYNONYM','PACKAGE') \
-                         GROUP BY object_type",
-                        ob_quote_literal(&schema_o)
-                    );
-                    let rows = conn
-                        .query_rows(&sql)
-                        .map_err(|e| format!("OceanBase 查询对象计数失败：{e}"))?;
-                    let count_of = |kind: &str| {
-                        rows.iter()
-                            .filter_map(|row| {
-                                let k = ob_cell_string(row.first()?);
-                                if k.eq_ignore_ascii_case(kind) {
-                                    ob_cell_string(row.get(1)?)
-                                        .parse::<i64>()
-                                        .ok()
-                                } else {
-                                    None
-                                }
-                            })
-                            .next()
-                            .unwrap_or(0)
-                    };
-                    Ok(group_nodes(
-                        &schema_o,
-                        GroupCounts {
-                            triggers: Some(count_of("TRIGGER")),
-                        synonyms: Some(count_of("SYNONYM")),
-                        packages: Some(count_of("PACKAGE")),
-                            ..GroupCounts::base(
-                                count_of("TABLE"),
-                                count_of("VIEW"),
-                                count_of("FUNCTION"),
-                                count_of("PROCEDURE"),
-                                count_of("SEQUENCE"),
-                            )
-                        },
                     ))
                 })
                 .await
@@ -5046,51 +4866,6 @@ impl DbEngine {
                 })
                 .await
             }
-            DbEngine::ObOracle(_) => {
-                // all_objects 按对象类型列（与 oracle 臂同源查询；无绑定参数，
-                // 字面量内联转义）；BIN$ 回收站滤除
-                let schema_o = schema.to_string();
-                let obj_type = match group {
-                    ObjectGroup::Table => "TABLE",
-                    ObjectGroup::View => "VIEW",
-                    ObjectGroup::MaterializedView => "MATERIALIZED VIEW",
-                    ObjectGroup::Function => "FUNCTION",
-                    ObjectGroup::Procedure => "PROCEDURE",
-                    ObjectGroup::Sequence => "SEQUENCE",
-                    ObjectGroup::Trigger => "TRIGGER",
-                    ObjectGroup::Synonym => "SYNONYM",
-                    ObjectGroup::Package => "PACKAGE",
-                    // Redis/事件/规则不适用 OB（树上不会出现）
-                    _ => "VELOTERM_UNREACHABLE",
-                }
-                .to_string();
-                let kind_o = kind.clone();
-                self.with_obclient(move |conn| {
-                    let sql = format!(
-                        "SELECT object_name FROM all_objects \
-                         WHERE owner = {} AND object_type = {} \
-                           AND object_name NOT LIKE 'BIN$%' ORDER BY object_name",
-                        ob_quote_literal(&schema_o),
-                        ob_quote_literal(&obj_type)
-                    );
-                    let rows = conn
-                        .query_rows(&sql)
-                        .map_err(|e| format!("OceanBase 查询对象清单失败：{e}"))?;
-                    Ok(rows
-                        .into_iter()
-                        .filter_map(|row| {
-                            let name = ob_cell_string(row.first()?);
-                            Some(CatalogNode {
-                                key: format!("{schema_o}.{name}"),
-                                name,
-                                kind: kind_o.clone(),
-                                detail: None,
-                            })
-                        })
-                        .collect())
-                })
-                .await
-            }
             DbEngine::Dameng(_) => {
                 // 各分组对应各自的达梦字典表（序列的 owner 列叫 SEQUENCE_OWNER）；
                 // 表/视图不用 ALL_OBJECTS 而是专用字典，避开回收站对象与同名的
@@ -5408,37 +5183,6 @@ impl DbEngine {
                             name,
                             kind: "column".to_string(),
                             detail: Some(data_type),
-                        })
-                        .collect())
-                })
-                .await
-            }
-            DbEngine::ObOracle(_) => {
-                // all_tab_columns 覆盖表与视图（与 oracle 臂同源查询；无绑定
-                // 参数，字面量内联转义）；data_type 概括为裸类型名
-                let schema_o = schema.to_string();
-                let table_o = table.to_string();
-                self.with_obclient(move |conn| {
-                    let sql = format!(
-                        "SELECT column_name, data_type FROM all_tab_columns \
-                         WHERE owner = {} AND table_name = {} ORDER BY column_id",
-                        ob_quote_literal(&schema_o),
-                        ob_quote_literal(&table_o)
-                    );
-                    let rows = conn
-                        .query_rows(&sql)
-                        .map_err(|e| format!("OceanBase 查询列清单失败：{e}"))?;
-                    Ok(rows
-                        .into_iter()
-                        .filter_map(|row| {
-                            let name = ob_cell_string(row.first()?);
-                            let data_type = ob_cell_string(row.get(1)?);
-                            Some(CatalogNode {
-                                key: format!("{schema_o}.{table_o}.{name}"),
-                                name,
-                                kind: "column".to_string(),
-                                detail: Some(data_type),
-                            })
                         })
                         .collect())
                 })
@@ -5836,88 +5580,6 @@ impl DbEngine {
                 let _ = cancel_notify;
                 result
             }
-            DbEngine::ObOracle(_) => {
-                // 同步引擎（libobclient 阻塞 C API）：整个执行（含行流迭代与
-                // 回调发射）移入 spawn_blocking，对齐 Oracle 同步臂的结构与
-                // 取消边界——取消粒度 = 语句间（会话层 AtomicBool；
-                // exec_streaming 只持有 Notify，阻塞线程内无同步标志可轮询）；
-                // 行流与 C 调用中不可打断，语句卡服务端长执行时由会话层超时
-                // 置废连接（引擎置 Closed，后台阻塞任务收尾时 Drop 兜底关闭）
-                let sql_o = sql.to_string();
-                let result = self
-                    .with_obclient(move |conn| {
-                        let mut summary = ExecSummary::default();
-                        match conn.exec(&sql_o)? {
-                            obclient::ObExecResult::Affected(affected) => {
-                                summary.affected = Some(affected);
-                            }
-                            obclient::ObExecResult::UseResult(res) => {
-                                let columns = conn.fetch_columns(res);
-                                if columns.is_empty() {
-                                    // 防御：field_count>0 但列元数据空——按已执行处理
-                                    conn.free_result(res);
-                                    return Ok(summary);
-                                }
-                                on_columns(&columns);
-                                summary.columns = columns;
-                                // 逐行流式（use 形态逐行从线缆拉）：ROWS_PER_BATCH
-                                // 批量回调、max_rows 截断（再探一行定 truncated）、
-                                // NULL 列置 "NULL"、字节流 lossy 转串
-                                let mut batch: Vec<Vec<String>> =
-                                    Vec::with_capacity(ROWS_PER_BATCH);
-                                let mut maybe_more = false;
-                                while let Some(cells) = conn.fetch_row_cells(res) {
-                                    if summary.rows_read >= max_rows {
-                                        maybe_more = true;
-                                        break;
-                                    }
-                                    batch.push(
-                                        cells
-                                            .into_iter()
-                                            .map(|c| match c {
-                                                None => "NULL".to_string(),
-                                                Some(b) => {
-                                                    String::from_utf8_lossy(&b).into_owned()
-                                                }
-                                            })
-                                            .collect(),
-                                    );
-                                    summary.rows_read += 1;
-                                    if batch.len() >= ROWS_PER_BATCH {
-                                        on_rows(std::mem::take(&mut batch));
-                                    }
-                                }
-                                if !batch.is_empty() {
-                                    on_rows(batch);
-                                }
-                                if maybe_more {
-                                    summary.truncated = true;
-                                }
-                                conn.free_result(res);
-                            }
-                        }
-                        // 多结果集（CALL 多集 / MULTI_STATEMENTS）：工作台单结果
-                        // 集模型，后续集整集排空丢弃——连接状态必须推进到末尾，
-                        // 否则下条语句报「命令不同步」（Oracle 臂同语义：只
-                        // 展示第一组）；后续集的消费错误不推翻首集已发结果
-                        while conn.more_results() {
-                            match conn.next_result() {
-                                Ok(true) => match conn.take_use_result() {
-                                    Ok(res) => conn.drain_result(res),
-                                    Err(_) => break,
-                                },
-                                Ok(false) => break,
-                                Err(_) => break,
-                            }
-                        }
-                        Ok(summary)
-                    })
-                    .await;
-                // 取消信号在语句间由会话层判定（同 Oracle 臂）
-                let _ = cancel_notify;
-                result
-            }
-
             DbEngine::Dameng(_) => {
                 // 同步引擎（同 Oracle 臂）：execute 一次性取全量结果，再在阻塞线程
                 // 内按批回调（Channel 发送是 Send 安全的）。取消粒度 = 语句间
