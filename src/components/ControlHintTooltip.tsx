@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import {
   TOOLTIP_HIDDEN_STYLE,
@@ -16,6 +16,12 @@ interface ControlHintTooltipProps {
   side?: TooltipSide;
   /** 水平对齐：center 居中（默认）；end 与触发器右对齐（靠右边缘的按钮用）。 */
   align?: TooltipAlign;
+  /** 块级包装（树行/列表行等块级触发器）：wrapper span 从 inline-flex 改
+   * block w-full，不破坏父层块级流；默认 inline-flex 适配按钮/图标 */
+  block?: boolean;
+  /** 悬停延迟（ms，默认 0 立即显示）：树/列表等密集行场景传延迟，
+   * 避免指针划过时一路弹 */
+  delayMs?: number;
   className?: string;
   children: ReactNode;
 }
@@ -34,6 +40,8 @@ export function ControlHintTooltip({
   shortcut,
   side = 'top',
   align = 'center',
+  block = false,
+  delayMs = 0,
   className,
   children,
 }: ControlHintTooltipProps) {
@@ -48,6 +56,17 @@ export function ControlHintTooltip({
   const [hovering, setHovering] = useState(false);
   // 点击/键盘触发后立即隐藏 tooltip，指针离开后重新武装（与 Radix 行为一致）
   const [dismissedByInteraction, setDismissedByInteraction] = useState(false);
+  // 延迟显示的定时器（delayMs>0 时）：离开/按下时取消，未到点不弹
+  const enterTimerRef = useRef<number | undefined>(undefined);
+  const armOpen = (open: boolean) => {
+    window.clearTimeout(enterTimerRef.current);
+    if (open && delayMs > 0) {
+      enterTimerRef.current = window.setTimeout(() => setHovering(true), delayMs);
+    } else {
+      setHovering(open);
+    }
+  };
+  useEffect(() => () => window.clearTimeout(enterTimerRef.current), []);
   const open = hovering && !dismissedByInteraction;
 
   const { anchorRef, tooltipRef, style } = useTooltipPlacement<HTMLSpanElement>(
@@ -59,18 +78,21 @@ export function ControlHintTooltip({
   return (
     <span
       ref={anchorRef}
-      className="inline-flex shrink-0"
-      onPointerEnter={() => setHovering(true)}
+      className={block ? 'block w-full' : 'inline-flex shrink-0'}
+      onPointerEnter={() => armOpen(true)}
       onPointerLeave={() => {
-        setHovering(false);
+        armOpen(false);
         setDismissedByInteraction(false);
       }}
-      onFocus={() => setHovering(true)}
+      onFocus={() => armOpen(true)}
       onBlur={() => {
-        setHovering(false);
+        armOpen(false);
         setDismissedByInteraction(false);
       }}
-      onPointerDownCapture={() => setDismissedByInteraction(true)}
+      onPointerDownCapture={() => {
+        armOpen(false);
+        setDismissedByInteraction(true);
+      }}
       onKeyDownCapture={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           setDismissedByInteraction(true);
