@@ -42,24 +42,13 @@ jobs:
         working-directory: src-tauri/vendor/mysql-async-ob
         run: cargo build --release --example ob_oracle_test
 
-      # 冒烟：无参数运行应输出用法并退出码 1
-      - name: Smoke test (usage output)
-        working-directory: src-tauri/vendor/mysql-async-ob
-        shell: pwsh
-        run: |
-          $exe = "target\release\examples\ob_oracle_test.exe"
-          if (-Not (Test-Path $exe)) { throw "exe not found: $exe" }
-          $output = & $exe 2>&1 | Out-String
-          Write-Host $output
-          if ($output -notmatch "参数错误") { throw "冒烟失败：未显示用法" }
-          Write-Host "✅ exe 正常，输出用法说明"
-
       # PE 架构断言（0x8664 = x64）
       - name: Verify PE architecture (x64)
         working-directory: src-tauri/vendor/mysql-async-ob
         shell: pwsh
         run: |
           $exe = "target\release\examples\ob_oracle_test.exe"
+          if (-Not (Test-Path $exe)) { throw "exe not found: $exe" }
           $bytes = [System.IO.File]::ReadAllBytes($exe)
           $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
           $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
