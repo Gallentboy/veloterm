@@ -201,6 +201,8 @@ export default {
     explainNoData: '无计划数据',
     explainLegendHot: '高开销',
     explainLegendWarm: '偏高',
+    explainViewTree: '树形',
+    explainViewGraph: '拓扑图',
     cancel: '取消',
     rowCap: '行数上限',
     executing: '执行中...',

@@ -202,6 +202,8 @@ export default {
     explainNoData: 'No plan data',
     explainLegendHot: 'High cost',
     explainLegendWarm: 'Elevated',
+    explainViewTree: 'Tree',
+    explainViewGraph: 'Graph',
     cancel: 'Cancel',
     rowCap: 'Row limit',
     executing: 'Executing...',
