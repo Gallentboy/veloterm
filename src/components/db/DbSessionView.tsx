@@ -234,7 +234,7 @@ export function DbSessionView({
     name: string;
     kind: 'table' | 'view';
     detail: TableDetail;
-    tab: 'ddl' | 'columns' | 'indexes' | 'constraints';
+    tab: 'ddl' | 'columns' | 'indexes' | 'constraints' | 'references';
   } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [ddlCopied, setDdlCopied] = useState(false);
@@ -1319,9 +1319,13 @@ export function DbSessionView({
                     </span>
                   ) : null}
                   <span className="flex items-center gap-0.5">
-                    {(['ddl', 'columns', 'indexes', 'constraints'] as const)
-                      // 无约束数据（headers 空）不展示约束 Tab
-                      .filter((tab) => tab !== 'constraints' || tableDetail.detail.constraintHeaders.length > 0)
+                    {(['ddl', 'columns', 'indexes', 'constraints', 'references'] as const)
+                      // 无数据（headers 空）不展示约束/引用 Tab
+                      .filter(
+                        (tab) =>
+                          (tab !== 'constraints' || tableDetail.detail.constraintHeaders.length > 0) &&
+                          (tab !== 'references' || tableDetail.detail.referenceHeaders.length > 0),
+                      )
                       .map((tab) => (
                       <button
                         key={tab}
@@ -1390,6 +1394,13 @@ export function DbSessionView({
                     columns={tableDetail.detail.indexHeaders}
                     rows={tableDetail.detail.indexes}
                     emptyLabel={t('db.noIndexes')}
+                  />
+                ) : tableDetail.tab === 'references' ? (
+                  <DataTable
+                    className="flex-1"
+                    columns={tableDetail.detail.referenceHeaders}
+                    rows={tableDetail.detail.references}
+                    emptyLabel={t('db.noReferences')}
                   />
                 ) : (
                   <DataTable
