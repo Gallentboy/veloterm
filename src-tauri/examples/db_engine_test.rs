@@ -428,15 +428,27 @@ async fn main() {
                     let Some(first) = objs.first() else {
                         return Outcome::Fail("清单非空但取首对象失败".into());
                     };
+                    let sample: Vec<&str> = objs
+                        .iter()
+                        .take(3)
+                        .map(|o| o.name.as_str())
+                        .collect();
                     match engine
                         .object_definition(&g_schema, &first.name, group.as_str())
                         .await
                     {
-                        Ok(def) if !def.definition.trim().is_empty() => {
-                            Outcome::Pass(format!("{}（{} 字符）", first.name, def.definition.len()))
-                        }
+                        Ok(def) if !def.definition.trim().is_empty() => Outcome::Pass(format!(
+                            "{}（{} 字符）",
+                            first.name,
+                            def.definition.len()
+                        )),
                         Ok(_) => Outcome::Fail(format!("{}：定义为空", first.name)),
-                        Err(e) => Outcome::Fail(e),
+                        // 带对象名与同组样本，便于直接定位字典口径问题
+                        Err(e) => Outcome::Fail(format!(
+                            "{}：{e}（同组样本：{}）",
+                            first.name,
+                            sample.join(", ")
+                        )),
                     }
                 }
                 // 组为空是常态（如回收站/DB Link 未使用）：警告不失败
@@ -502,7 +514,9 @@ async fn main() {
             return Outcome::Warn("无测试表，跳过".into());
         }
         let sql = format!(
-            "SELECT * FROM \"{explain_schema}\".\"{table_for_explain}\" WHERE ROWNUM <= 10"
+            // COUNT(*) 规避 ROWNUM 依赖（达梦 mysql 兼容模式可能不认
+            // ROWNUM）；EXPLAIN 只做优化不执行，无全表风险
+            "SELECT COUNT(*) FROM \"{explain_schema}\".\"{table_for_explain}\""
         );
         let stmts = sqlsplit::split_statements(&dk, &sql);
         if stmts.is_empty() {

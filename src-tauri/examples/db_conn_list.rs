@@ -55,6 +55,9 @@ fn main() -> Result<(), String> {
                     .or_else(|| c.database.clone())
                     .unwrap_or_else(|| "<必填：服务名缺失>".to_string());
                 let user = c.username.clone().unwrap_or_default();
+                // Oracle 字典里 owner 恒为大写（未加引号创建的用户），
+                // 生成命令直接给大写 schema 免得查空
+                let schema = user.to_uppercase();
                 println!("{head}");
                 println!(
                     "cargo run --example db_engine_test -- oracle \\\n    --host {} --port {} --user {} --pass {} --service {} --schema {}",
@@ -63,7 +66,7 @@ fn main() -> Result<(), String> {
                     shq(&user),
                     shq(c.password.as_deref().unwrap_or("")),
                     shq(&service),
-                    shq(&user),
+                    shq(&schema),
                 );
             }
             "dameng" => {
