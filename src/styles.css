@@ -453,6 +453,21 @@ body {
 }
 
 /*
+ * 小火车容器左右渐隐：车体进出边缘时自然融化（mask 线性渐变，两侧 18%
+ * 由透明过渡到不透明），消除 overflow-hidden 的硬切边界。
+ */
+.welcome-train-mask {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 18%,
+    black 82%,
+    transparent
+  );
+  mask-image: linear-gradient(to right, transparent, black 18%, black 82%, transparent);
+}
+
+/*
  * 关于卡片入场/出场动画（透明窗口形态，Windows 弹层复用同 keyframes 的
  * 浮现位移）：入场 320ms（下移 12px→0 + 淡入 + 0.98→1 缩放），出场 220ms
  * 反向（时长与 AboutWindow 的 ABOUT_EXIT_ANIMATION_MS、主窗遮罩渐变对齐）。
