@@ -15,6 +15,7 @@
 
 import * as monaco from 'monaco-editor';
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { SqlLanguage } from 'sql-formatter';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 
@@ -29,6 +30,21 @@ import { cn } from '@/lib/utils';
 
 // 模块级幂等注册（伞入口内部各 ensure 亦幂等）
 let languagesRegistered = false;
+
+/** 前端回落格式化的方言映射（主路后端拒绝时才触达；回落只发生在
+ * Oracle/达梦的 PL/SQL 块，默认 plsql，其余引擎保守映射） */
+function fallbackLanguage(engine?: string): SqlLanguage {
+  switch (engine) {
+    case 'mysql':
+      return 'mysql';
+    case 'sqlite':
+      return 'sqlite';
+    case 'postgres':
+      return 'postgresql';
+    default:
+      return 'plsql';
+  }
+}
 
 /** SqlEditor 对外暴露的命令句柄（工具栏按钮等调用） */
 export interface SqlEditorHandle {
@@ -86,8 +102,11 @@ export function SqlEditor({
   const completionsSidRef = useRef(completionsSessionId);
   completionsSidRef.current = completionsSessionId;
 
-  // 格式化（后端 db_format_sql，sqlformat 纯空白/缩进规整）：选中非空格式化
-  // 选中，否则整篇；executeEdits 走 undo 栈可撤销。Redis 是逐行命令不适用
+  // 格式化双路：主路后端 db_format_sql（sqlformat，语句级 SQL）；后端拒绝
+  //（Oracle/达梦的 PL/SQL 块——sqlformat 是语句级格式化器，块内 :=/loop/
+  // end if 会打乱）回落前端 sql-formatter 的方言解析（plsql 方言懒加载
+  // 独立 chunk，不走回落零成本）。选中非空格式化选中，否则整篇；
+  // executeEdits 走 undo 栈可撤销。Redis 是逐行命令不适用
   const formatSelection = useCallback(async () => {
     const editor = editorRef.current;
     const model = modelRef.current;
@@ -96,8 +115,18 @@ export function SqlEditor({
     const range = sel && !sel.isEmpty() ? sel : model.getFullModelRange();
     const source = model.getValueInRange(range);
     if (!source.trim()) return;
-    // 后端拒绝（PL/SQL 块等）时向上抛错，由调用方（工具栏按钮）展示
-    const formatted = await dbFormatSql(source, formatEngineRef.current ?? undefined);
+    const engine = formatEngineRef.current ?? undefined;
+    let formatted: string;
+    try {
+      formatted = await dbFormatSql(source, engine);
+    } catch {
+      const { format } = await import('sql-formatter');
+      formatted = format(source, {
+        // 回落只发生在 PL/SQL 块（后端仅对 oracle/dameng 拒绝）
+        language: fallbackLanguage(engine),
+        tabWidth: 2,
+      });
+    }
     if (formatted === source) return;
     editor.executeEdits('sql-format', [
       { range, text: formatted, forceMoveMarkers: false },
