@@ -744,7 +744,8 @@ export function DbSessionView({
   }, [tabKey, onRegisterSessionApi, insertSql, runSql]);
 
   // 查看执行计划：后端 db_explain 返回结构化节点表（方言装配与解析口径
-  // 见 docs/sql-explain-plan-support.md；OB Oracle 后端明确拒绝）；
+  // 见 docs/sql-explain-plan-support.md；Oracle 与 OB Oracle 租户走
+  // PLAN_TABLE 两段式，其余引擎拼 EXPLAIN 前缀）；
   // 多语句选中逐条各一份计划
   const explainSelection = useCallback(
     (text: string) => {
@@ -847,10 +848,15 @@ export function DbSessionView({
         depth === 0 &&
         currentDbName.length > 0 &&
         branch.node.name.toLowerCase() === currentDbName.toLowerCase();
-      // 分组名后端给标准英文大写（TABLE/VIEW/...），前端 i18n 映射显示
+      // 分组名后端给标准英文大写（TABLE/VIEW/MATERIALIZED VIEW/...），前端
+      // i18n 映射显示——多词分组（MATERIALIZED VIEW / FOREIGN TABLE）的键
+      // 是下划线形态，不转换会查不到而回落英文原文
       const displayLabel =
         branch.node.kind === 'group'
-          ? t(`db.group_${branch.node.name.toLowerCase()}`, branch.node.name)
+          ? t(
+              `db.group_${branch.node.name.toLowerCase().replace(/\s+/g, '_')}`,
+              branch.node.name,
+            )
           : branch.node.name;
       out.push(
         <button

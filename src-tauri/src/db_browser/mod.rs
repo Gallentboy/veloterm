@@ -549,8 +549,10 @@ fn explain_statements(
     let prefix: &str = match engine {
         "mysql" | "oceanbase" => {
             if mode == Some("oracle") {
+                // OB Oracle 走 PLAN_TABLE 两段式（explain_core 的 oracle 分支），
+                // 不进前缀式装配；走到这里说明调用方绕过了那条分流
                 return Err(
-                    "OceanBase Oracle 模式的执行计划暂未接入（OB 原生 EXPLAIN 对接中）"
+                    "OceanBase Oracle 模式使用 PLAN_TABLE 两段式，不走前缀式 EXPLAIN"
                         .to_string(),
                 );
             }
@@ -612,8 +614,13 @@ pub async fn db_explain(
     }
     // analyze 会真实执行语句（MySQL 8 EXPLAIN ANALYZE / PG ANALYZE）：
     // 只放行白名单判定为只读的语句（DBeaver 靠事后 rollback 防护，我们无
-    // 事务管理，改为事前拒绝 DML）
-    if analyze && matches!(engine_kind.as_str(), "mysql" | "oceanbase" | "postgres") {
+    // 事务管理，改为事前拒绝 DML）。OB Oracle 走 PLAN_TABLE 两段式、只解析
+    // 不执行，故与原生 Oracle 一样不受此限制（否则会误拦 DML 的执行计划）
+    let plan_only = engine_kind == "oceanbase" && mode.as_deref() == Some("oracle");
+    if analyze
+        && !plan_only
+        && matches!(engine_kind.as_str(), "mysql" | "oceanbase" | "postgres")
+    {
         for stmt in &user_stmts {
             if !sqlsplit::statement_is_readonly(&dialect_key, stmt) {
                 let head: String = stmt.sql.chars().take(60).collect();
@@ -690,7 +697,14 @@ pub async fn explain_core(
     analyze: bool,
 ) -> Result<Vec<explain::ExplainPlan>, String> {
     let mut plans: Vec<explain::ExplainPlan> = Vec::with_capacity(user_stmts.len());
-    if engine_kind == "oracle" {
+    // Oracle 语义（原生 Oracle 与 OB Oracle 租户）走 PLAN_TABLE 两段式：先
+    // `EXPLAIN PLAN SET STATEMENT_ID … INTO`，再读 PLAN_TABLE 原始行。OB
+    // Oracle 租户虽然经 MySQL 线缆连接（mysql-async-ob），但 SQL 方言与数据
+    // 字典都是 Oracle 那套，编排完全一致；差别只有 plan 表可能尚未创建时的
+    // 提示文案（OB 没有 sqlplus 的 @?/rdbms/admin/utlxplan.sql）
+    let oracle_semantics =
+        engine_kind == "oracle" || (engine_kind == "oceanbase" && mode == Some("oracle"));
+    if oracle_semantics {
         // plan 表探测（PLAN_TABLE/TOAD_PLAN_TABLE 候选 + ORA-00942 甄别，
         // 同 DBeaver getPlanTableName）；DBeaver 的防御性 DELETE 略去——
         // statement_id 每次调用唯一无残留可撞
@@ -719,10 +733,19 @@ pub async fn explain_core(
         }
         let Some(plan_table) = plan_table else {
             return Err(if first_err.is_empty() {
-                "未找到执行计划表（PLAN_TABLE / TOAD_PLAN_TABLE 均不可访问）：请以当前用户执行 \
-                 @?/rdbms/admin/utlxplan.sql 建表，或由 DBA 建全局 PLAN_TABLE\
-                 （DBeaver getPlanTableName 同型探测）"
-                    .to_string()
+                if engine_kind == "oracle" {
+                    "未找到执行计划表（PLAN_TABLE / TOAD_PLAN_TABLE 均不可访问）：请以当前用户执行 \
+                     @?/rdbms/admin/utlxplan.sql 建表，或由 DBA 建全局 PLAN_TABLE\
+                     （DBeaver getPlanTableName 同型探测）"
+                        .to_string()
+                } else {
+                    // OB Oracle 租户没有 sqlplus 脚本可执行，只能提示按 Oracle
+                    // PLAN_TABLE 结构自建（列集与原生一致：ID/PARENT_ID/OPERATION/
+                    // OPTIONS/OBJECT_NAME/COST/CARDINALITY/BYTES…）
+                    "OceanBase Oracle 租户未找到执行计划表（PLAN_TABLE / TOAD_PLAN_TABLE 均不可访问）：\
+                     请先按 Oracle utlxplan.sql 的 PLAN_TABLE 结构在目标 schema 建表后重试"
+                        .to_string()
+                }
             } else {
                 first_err
             });
