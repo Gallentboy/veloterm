@@ -333,12 +333,14 @@ function TypewriterBanner() {
     };
   }, [width]);
 
-  const printRow = Math.min(2, 4); // 打印头光标块所在的行（中间行）
+  const printRow = 2; // 打印头光标块所在的行（中间行）
   return (
-    <div className="flex flex-col font-mono text-[10px] leading-[1.4] text-terminal-green sm:text-[11px]">
+    // 宽度恒定：每行用空格垫到完整横幅宽（whitespace-pre 保留），打印
+    // 过程中容器宽度不变——居中容器不逐帧重算、光标列位置稳定不漂移
+    <div className="flex flex-col font-mono text-[11px] leading-[1.45] text-terminal-green sm:text-[13px]">
       {banner.map((line, i) => (
         <span key={i} className="whitespace-pre">
-          {line.slice(0, cols)}
+          {line.slice(0, cols).padEnd(width)}
           {!done && i === printRow && cols < width ? (
             <span className="text-terminal-green">█</span>
           ) : null}
