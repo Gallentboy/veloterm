@@ -21,6 +21,7 @@ import {
   Eye,
   Folder,
   Globe,
+  HardDrive,
   Layers,
   Link,
   ListOrdered,
@@ -34,7 +35,10 @@ import {
   Sigma,
   Square,
   Table2,
+  ShieldCheck,
   Trash2,
+  Type,
+  User,
   Unplug,
   X,
   Zap,
@@ -134,6 +138,10 @@ const OBJECT_KINDS = new Set([
   'extension',
   'dblink',
   'recycle',
+  'datatype',
+  'tablespace',
+  'user',
+  'role',
   'function',
   'procedure',
   'sequence',
@@ -180,6 +188,14 @@ function nodeIcon(kind: CatalogNode['kind'], className?: string) {
       return <Cable className={cn('size-3.5 shrink-0 text-terminal-yellow', className)} />;
     case 'recycle':
       return <Trash2 className={cn('size-3.5 shrink-0 text-foreground-subtlest', className)} />;
+    case 'datatype':
+      return <Type className={cn('size-3.5 shrink-0 text-terminal-magenta', className)} />;
+    case 'tablespace':
+      return <HardDrive className={cn('size-3.5 shrink-0 text-terminal-cyan', className)} />;
+    case 'user':
+      return <User className={cn('size-3.5 shrink-0 text-terminal-green', className)} />;
+    case 'role':
+      return <ShieldCheck className={cn('size-3.5 shrink-0 text-terminal-yellow', className)} />;
     case 'function':
       return <Sigma className={cn('size-3.5 shrink-0 text-terminal-magenta', className)} />;
     case 'procedure':
@@ -250,7 +266,11 @@ export function DbSessionView({
       | 'ftable'
       | 'extension'
       | 'dblink'
-      | 'recycle';
+      | 'recycle'
+      | 'datatype'
+      | 'tablespace'
+      | 'user'
+      | 'role';
     def: ObjectDefinition;
   } | null>(null);
   const [defLoading, setDefLoading] = useState(false);
@@ -556,7 +576,11 @@ export function DbSessionView({
         node.kind === 'ftable' ||
         node.kind === 'extension' ||
         node.kind === 'dblink' ||
-        node.kind === 'recycle'
+        node.kind === 'recycle' ||
+        node.kind === 'datatype' ||
+        node.kind === 'tablespace' ||
+        node.kind === 'user' ||
+        node.kind === 'role'
       ) {
         const sessionId = sessionIdRef.current;
         if (!sessionId || defLoading) return;
@@ -841,6 +865,10 @@ export function DbSessionView({
                 'extension',
                 'dblink',
                 'recycle',
+                'datatype',
+                'tablespace',
+                'user',
+                'role',
                 'function',
                 'procedure',
                 'sequence',
@@ -1475,6 +1503,14 @@ export function DbSessionView({
                     <Cable className="size-3.5 shrink-0 text-terminal-yellow" />
                   ) : objectDef.kind === 'recycle' ? (
                     <Trash2 className="size-3.5 shrink-0 text-foreground-subtlest" />
+                  ) : objectDef.kind === 'datatype' ? (
+                    <Type className="size-3.5 shrink-0 text-terminal-magenta" />
+                  ) : objectDef.kind === 'tablespace' ? (
+                    <HardDrive className="size-3.5 shrink-0 text-terminal-cyan" />
+                  ) : objectDef.kind === 'user' ? (
+                    <User className="size-3.5 shrink-0 text-terminal-green" />
+                  ) : objectDef.kind === 'role' ? (
+                    <ShieldCheck className="size-3.5 shrink-0 text-terminal-yellow" />
                   ) : (
                     <Braces className="size-3.5 shrink-0 text-terminal-magenta" />
                   )}

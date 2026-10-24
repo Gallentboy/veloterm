@@ -150,6 +150,10 @@ export interface CatalogNode {
     | 'extension'
     | 'dblink'
     | 'recycle'
+    | 'datatype'
+    | 'tablespace'
+    | 'user'
+    | 'role'
     | 'function'
     | 'procedure'
     | 'sequence'
@@ -277,7 +281,11 @@ export function dbObjectDefinition(
     | 'ftable'
     | 'extension'
     | 'dblink'
-    | 'recycle',
+    | 'recycle'
+    | 'datatype'
+    | 'tablespace'
+    | 'user'
+    | 'role',
 ): Promise<ObjectDefinition> {
   return invoke('db_object_definition', { sessionId, schema, name, kind });
 }
