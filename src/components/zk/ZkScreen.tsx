@@ -166,7 +166,7 @@ export function ZkScreen({
     <div className="flex h-full flex-col overflow-hidden">
       {/* tab 栏 */}
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/50 px-2">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        <div className="scrollbar-hair flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {tabs.map((tab) => (
             <div
               key={tab.key}

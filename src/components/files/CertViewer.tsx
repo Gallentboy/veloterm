@@ -133,7 +133,7 @@ export const CertViewer = memo(function CertViewer({ content, className }: CertV
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
         {/* 1. 证书链导航 Tabs（如果是多级证书） */}
         {data.certificates.length > 1 ? (
-          <div className="flex items-center gap-1.5 overflow-x-auto rounded-xl border border-border/70 bg-surface/40 p-1 select-none">
+          <div className="scrollbar-hair flex items-center gap-1.5 overflow-x-auto rounded-xl border border-border/70 bg-surface/40 p-1 select-none">
             <div className="flex shrink-0 items-center gap-1 px-2 text-foreground-subtle">
               <Layers className="size-3.5" />
               <span className="font-sans text-ui-xs font-medium">证书链:</span>
