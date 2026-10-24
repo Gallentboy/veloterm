@@ -21,7 +21,7 @@ function DropdownItem({
       className="flex w-full cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-menu-hover"
     >
       {icon}
-      <span className="flex-1 truncate">{children}</span>
+      <div className="min-w-0 flex-1">{children}</div>
     </button>
   );
 }
@@ -79,21 +79,22 @@ export function WorkspaceHelpMenuButton({ onShowAbout, onOpenManual }: Workspace
       {open ? (
         <div className="absolute right-0 top-full z-50 mt-1 rounded-lg border border-border bg-menu p-1 shadow-lg">
           <DropdownItem
-            icon={<BookOpen className="size-4 shrink-0 text-primary" />}
+            icon={<BookOpen className="size-4 shrink-0 text-foreground-subtle" />}
             onSelect={() => {
               setOpen(false);
               onOpenManual();
             }}
           >
-            <div className="flex items-center justify-between w-full">
-              <span>{t('help.manual', '使用说明')}</span>
-              <kbd className="rounded border border-border/60 bg-surface px-1 py-0.2 font-mono text-[10px] text-foreground-subtle">
+            <div className="flex w-full items-center justify-between gap-2">
+              <span className="truncate">{t('help.manual', '使用说明')}</span>
+              {/* leading-none：键帽高度收在文字行高内，两行菜单项行高一致 */}
+              <kbd className="rounded border border-border/60 bg-surface px-1 py-px font-mono text-[10px] leading-none text-foreground-subtle">
                 F1
               </kbd>
             </div>
           </DropdownItem>
           <DropdownItem
-            icon={<Info className="size-4 shrink-0" />}
+            icon={<Info className="size-4 shrink-0 text-foreground-subtle" />}
             onSelect={() => {
               setOpen(false);
               onShowAbout();
