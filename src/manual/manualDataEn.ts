@@ -3,1193 +3,1131 @@ import type { ManualChapter } from './manualTypes';
 export const manualChaptersEn: ManualChapter[] = [
   {
     id: 'terminal',
-    title: 'Terminal & Shell',
+    title: 'Terminal',
     icon: 'Terminal',
     sections: [
       {
         id: 'terminal-pty',
-        title: 'Local Terminal & System PTY',
-        badge: 'PTY',
-        keywords: ['cmd', 'zsh', 'bash', 'cd', 'drive switch', 'local terminal', 'adaptation'],
-        content: `### Overview
-VeloTerm natively integrates system-level pseudoterminals (PTY). On macOS and Linux, it loads the user login shell directly (zsh/bash/fish); on Windows, it boots native \`cmd.exe\` injected with a command adaptation layer, standardizing cross-platform terminal workflows.
+        title: 'Local terminal',
+        badge: 'Local',
+        keywords: ['cmd', 'zsh', 'bash', 'cd', 'local terminal', 'switch drive', 'll'],
+        content: `### What it does
+Opens a command line window on your own computer. On Mac and Linux it uses your usual command line (zsh, bash or fish); on Windows it opens the standard command prompt (cmd).
 
-### Entry & Shortcuts
-- **New Local Terminal**: Click the "+" button in the top header, or press \`⌘N\` (macOS) / \`Ctrl+N\` (Windows).
-- **Welcome Screen**: Click "New Local Terminal" from the welcome screen cards.
+### Where to find it
+- The "+" button at the top of the window, or \`⌘N\` (Mac) / \`Ctrl+N\` (Windows).
+- The "New Local Terminal" card on the welcome screen.
 
-### Core Steps
-1. Press \`⌘N\` / \`Ctrl+N\` to open a terminal; it lands in your current user home directory.
-2. **Windows Smart Drive Switching**: In Windows cmd, type \`cd D:\\folder\` or \`chdir E:\\project\` directly; the underlying doskey macro automatically injects the \`/d\` flag without manual typing.
-3. **Quick Listing**: Native POSIX \`ll\` alias is mapped to \`ls -lh\`.
+### How to use it
+1. Open a terminal — it starts in your home folder.
+2. On Windows, switch to another drive simply by typing the destination, e.g. \`cd D:\\folder\` or \`chdir E:\\project\`.
+3. Type \`ll\` as a shortcut for a detailed file listing (it runs \`ls -lh\`).
 
-### Tips & Notes
-- On Windows, the adaptation layer only applies to interactive command lines without altering registry keys or global environment variables.
-- Local and remote sessions share the same rendering engine, supporting full ANSI colors, 24-bit TrueColor, and Unicode/Emoji glyphs.`,
+### Tips
+- The Windows drive switch needs no extra steps or special typing — just name the folder you want.
+- Colors, symbols and emoji look the same as on Mac and Linux.`,
       },
       {
         id: 'terminal-ssh',
-        title: 'SSH Sessions & Multi-Factor Auth',
+        title: 'Connecting to remote servers (SSH)',
         badge: 'SSH',
-        keywords: ['SSH', 'Private Key', 'Password', 'ProxyJump', 'Agent', 'Passwd', 'ZMODEM', 'rz', 'sz'],
-        content: `### Overview
-A production-grade SSH client powered by an asynchronous Rust stack. Supports multiple authentication mechanisms, multi-hop jump hosts (ProxyJump), automated password-expiry state machine, ZMODEM file transfers, and auto-reconnection.
+        keywords: ['ssh', 'connect', 'password', 'private key', 'jump host', 'proxyjump', 'agent', 'rz', 'sz', 'reconnect'],
+        content: `### What it does
+Connects you to remote servers so you can work on them as if you were sitting at them. Sign in with a password or a private key, pass through gateway (jump) servers, send and receive files right inside the terminal, and reconnect automatically after a network hiccup.
 
-### Entry & Shortcuts
-- **Connect Host**: In the "Hosts" list on the sidebar, double-click any host card or click its "Terminal" icon.
-- **Reconnect Session**: Click the "Reconnect" icon in the top toolbar or press \`⌘R\` (macOS) / \`Ctrl+R\` (Windows).
+### Where to find it
+- Hosts list on the left: double-click a host card, or click its "Terminal" icon.
+- "Reconnect" icon in the top toolbar, or \`⌘R\` (Mac) / \`Ctrl+R\` (Windows).
 
-### Core Steps
-1. **Authentication**: Choose between password, OpenSSH/PEM private keys (with passphrase caching), and system SSH Agent.
-2. **Multi-Hop Proxy**: Configure jump host chains to seamlessly penetrate multi-tier isolated bastions.
-3. **Password Expiry**: If a remote account requires an immediate password change upon login, the state machine captures the remote prompts, securely updates the credentials, and saves them locally.
-4. **ZMODEM Transfers**: Run \`sz <filename>\` to send or \`rz\` to receive files; the client automatically pops up a transfer status overlay.
+### How to use it
+1. Sign in with a password, a private key file (its passphrase is remembered), or your SSH agent.
+2. For hard-to-reach servers, set up a chain of jump hosts in the host settings.
+3. Move files without leaving the terminal: type \`sz <filename>\` to send a file to your computer, or \`rz\` to receive one — a progress panel appears on its own.
 
-### Tips & Notes
-- Reconnecting preserves full scrollback history and clearly stamps a \`-- Reconnected --\` divider line.
-- First-time host connections trigger a Known Hosts fingerprint prompt, safely committing verified keys to the encrypted store.`,
+### Tips
+- If the server forces a password change at login, you are guided through it and the new password is saved.
+- Reconnecting keeps your on-screen history and marks the break with a "-- Reconnected --" line. The first connection to a new server asks you to confirm you trust it.`,
       },
       {
         id: 'terminal-layout',
-        title: 'Tabs & Grid Layouts',
+        title: 'Terminal tabs and grid view',
         badge: 'Layout',
-        keywords: ['Tabs', 'Split', 'Grid', 'Tiling', 'Multi-Session'],
-        content: `### Overview
-Provides both standard horizontal tab switching (Tabs) and adaptive multi-pane grid tiling (Grid), catering to both focused single-host tasks and multi-node inspection.
+        keywords: ['tabs', 'grid', 'split', 'switch tab', 'reorder', 'rename'],
+        content: `### What it does
+Keep several terminals open at once — either switched as tabs, or shown all together side by side in a grid.
 
-### Entry & Shortcuts
-- **New Tab**: Click the "+" button in the tab bar or press \`⌘T\` / \`Ctrl+T\`.
-- **Close Tab**: Click the "×" on the tab or press \`⌘W\` / \`Ctrl+W\`.
-- **Switch Session**: Press \`⌘1\` ~ \`⌘9\` (macOS) / \`Ctrl+1\` ~ \`Ctrl+9\` (Windows) to jump directly to numbered tabs.
-- **Toggle Layout**: Click the Grid/Tabs icon on the right side of the terminal header.
+### Where to find it
+- New tab: the "+" in the tab bar, or \`⌘T\` / \`Ctrl+T\`. Close: the "×" on the tab, or \`⌘W\` / \`Ctrl+W\`.
+- Jump to a tab: \`⌘1\`–\`⌘9\` (Mac) / \`Ctrl+1\`–\`Ctrl+9\` (Windows).
+- Grid/tabs toggle: the grid icon on the right side of the terminal header.
 
-### Core Steps
-1. Open multiple sessions; tab badges display connection states, environment badges (PROD/STAGE), and recording pills.
-2. Drag tab titles to reorder sessions; double-click a tab title to set a temporary alias.
-3. Switch to Grid mode to tile all active sessions in an adaptive matrix with independent outputs and scrolling.
+### How to use it
+1. Open several sessions — tabs show connection status, PROD/STAGE labels and a recording dot.
+2. Drag tabs to reorder them; double-click a tab title to give it a temporary name.
+3. Click the grid icon to show every open session at once, each with its own scrolling.
 
-### Tips & Notes
-- In Grid mode, inputs remain isolated per pane. To type simultaneously across multiple hosts, use the Broadcast Bar.`,
+### Tips
+- In grid view, typing goes only to the pane you click. To type on many servers at once, use Broadcast (next section).`,
       },
       {
         id: 'terminal-broadcast',
-        title: 'Broadcast Console',
+        title: 'Broadcast: typing on many terminals at once',
         badge: 'Sync',
-        keywords: ['Broadcast', 'Multi-Host', 'Sync Input', 'Batch Ops'],
-        content: `### Overview
-Allows grouping multiple active terminals into a broadcast cohort, sending keystrokes and commands to all grouped sessions simultaneously from a single input bar.
+        keywords: ['broadcast', 'multiple servers', 'same command', 'sync input', 'ctrl+c'],
+        content: `### What it does
+Sends what you type to several terminals at the same time, from one input box — handy when many servers need the same command.
 
-### Entry & Shortcuts
-- **Toggle Broadcast Bar**: Click the "Broadcast" icon in the terminal top toolbar.
+### Where to find it
+- The "Broadcast" icon in the terminal toolbar.
 
-### Core Steps
-1. Click the broadcast icon to expand the bottom input bar.
-2. Select which active terminals will join the cohort (support selecting by host or environment).
-3. Type commands in the broadcast bar and press Enter; keystrokes are dispatched concurrently.
-4. **Emergency Interrupt**: Click "Send Ctrl+C" to instantly broadcast an interrupt signal to kill runaway jobs across all sessions.
-5. **Batch Clear**: Click "Clear Screen" to refresh all visible panes simultaneously.
+### How to use it
+1. Click the icon to open the broadcast bar at the bottom.
+2. Tick which open terminals should listen (you can select by server or by environment).
+3. Type a command and press Enter — it goes to every selected terminal at once.
+4. Use "Send Ctrl+C" to stop runaway commands everywhere, or "Clear Screen" to refresh all panes.
 
-### Tips & Notes
-- Verify current working directories and privileges before broadcasting destructive commands, especially in production environments.`,
+### Tips
+- Double-check you are in the right folder with the right permissions before sending a risky command, especially on production servers.`,
       },
       {
         id: 'terminal-monitor',
-        title: 'Remote Host Lightweight Resource Monitor',
+        title: 'Server health at a glance',
         badge: 'Monitor',
-        keywords: ['Resource Monitor', 'CPU', 'Memory', 'Network Rate', 'SWAP', 'Latency', 'Disk'],
-        content: `### Overview
-Renders real-time remote host metrics at the top of active SSH sessions. Uses an isolated exec sidechannel with zero terminal buffer pollution.
+        keywords: ['resource monitor', 'cpu', 'memory', 'disk', 'network', 'swap', 'latency'],
+        content: `### What it does
+Shows live health figures for the server you are connected to — response time, CPU, memory, network speed, disk usage — in a strip above the terminal.
 
-### Entry & Shortcuts
-- **Toggle Monitor**: Click the pulse waveform "Resource Monitor" icon in the terminal toolbar (disabled by default).
+### Where to find it
+- The pulse-wave "Resource Monitor" icon in the terminal toolbar (off by default).
 
-### Core Steps
-1. Click the monitor icon to activate metrics polling for the active SSH session.
-2. Samples every 2 seconds: round-trip latency, CPU usage %, physical memory %, SWAP %, network TX/RX throughput, root disk utilization %, and OS distro label.
-3. **Responsive Folding**: When terminal panels are narrow, secondary metrics automatically fold via CSS container queries, expanding when space permits.
+### How to use it
+1. Click the icon to turn it on for the current SSH session.
+2. Figures refresh every 2 seconds: response time, CPU %, memory %, swap %, network send/receive speed, root disk usage %, and the system name.
+3. In a narrow window, less important figures tuck themselves away until there is room again.
 
-### Tips & Notes
-- Uses precise client-side differential algorithms and only polls the currently active visible tab, suspending in the background to save server resources.`,
+### Tips
+- Only the terminal you are actually looking at is checked, so idle sessions never burden the server.`,
       },
       {
         id: 'terminal-recording',
-        title: 'Session Recording, Playback & Multi-Format Export',
+        title: 'Recording what happens in the terminal',
         badge: 'Record',
-        keywords: ['Record', 'Playback', 'Export', 'cast', 'GIF', 'MP4', 'Video', 'Asciinema'],
-        content: `### Overview
-A clean Asciinema v2 standard sideband recording engine with built-in playback and pure Rust rasterization pipelines, supporting exports to \`.cast\`, \`.log\`, \`.gif\`, and \`.mp4\`.
+        keywords: ['record', 'playback', 'replay', 'gif', 'mp4', 'cast', 'video', 'export'],
+        content: `### What it does
+Records a terminal session so you can replay it later like a video, or save it as a video (.gif, .mp4), a plain text log (.log), or a .cast file for playback websites.
 
-### Entry & Shortcuts
-- **Start Recording**: Right-click inside the terminal and select "Start Recording Session".
-- **Pill Control**: A pulsing red REC pill appears at the top-left; click to preview, pause, or stop.
-- **Playback & Export**: Right-click to choose "Replay Last Recording", or use the stopped pill menu.
+### Where to find it
+- Start: right-click inside the terminal → "Start Recording Session".
+- The pulsing red REC pill at the top-left opens the controls.
+- Replay: right-click → "Replay Last Recording", or use the pill menu after stopping.
 
-### Core Steps
-1. Starting recording tracks only terminal output and resize events; password inputs remain hidden.
-2. Stopping displays a 3-second action panel allowing you to:
-   - **Play Online**: Opens the built-in modal player with 0.5x~4x speed, scrubber seek, and idle skip (>2s).
-   - **Export .cast**: Standard Asciinema JSON Lines file for upload or official CLI play.
-   - **Export .log**: Clean plain text log with ANSI escape codes stripped.
-   - **Export GIF**: Renders with the built-in \`agg\` Rust engine, matching terminal palettes and system CJK fonts.
-   - **Export MP4**: Encodes via built-in FFmpeg \`libgif2mp4\` pipeline into compact H.264 video.
+### How to use it
+1. Start recording and work as usual — only what appears on screen is captured; passwords you type stay hidden.
+2. Stop from the pill; a small panel then offers to play it back (speeds 0.5x–4x, quiet parts skipped automatically) or export it as .cast, .log, GIF or MP4.
 
-### Tips & Notes
-- Fullscreen progress overlays keep you informed during GIF/MP4 encoding before popping the save file dialog.`,
+### Tips
+- GIF and MP4 creation first shows a progress screen, then a save window.
+- .cast files can be uploaded to asciinema.org or played with its tools.`,
       },
       {
         id: 'terminal-safety',
-        title: 'Production Safety Guard & Dangerous Command Interceptor',
+        title: 'Protection against dangerous commands',
         badge: 'Guard',
-        keywords: ['Safety Guard', 'Dangerous Command', 'Production', 'rm -rf', 'AST'],
-        content: `### Overview
-A deep defense mechanism designed to prevent operational disasters. Builds an AST on the backend via \`tree-sitter-bash\` to accurately intercept destructive commands.
+        keywords: ['safety guard', 'dangerous command', 'production', 'rm -rf', 'confirm'],
+        content: `### What it does
+On servers marked as Staging or Production, VeloTerm pauses commands that could destroy the machine and asks you to confirm before they run.
 
-### Entry & Shortcuts
-- **Setup Environment**: In host settings, mark the environment as \`Staging\` or \`Production\`, and check "Enable Safety Guard".
+### Where to find it
+- Set it up in the host settings: choose environment "Staging" or "Production" and tick "Enable Safety Guard".
 
-### Core Steps
-1. Production terminals display clear hazard stripes and a red PROD badge on the tab.
-2. Pressing Enter (\`\\r\`) or pasting multiline commands in protected sessions pauses execution for syntax tree inspection:
-   - Penetrates wrappers such as \`sudo\`, \`nohup\`, \`env\`, and \`bash -c\`.
-   - Distinguishes string literals from actual invocations (e.g., \`echo "rm -rf /"\` will not be blocked).
-3. **Severity Levels**:
-   - \`Critical\` (e.g. \`rm -rf /\`, \`mkfs\`, \`dd\` raw block write, \`chmod 777 /\`): Blocks execution and demands typing a confirmation word (e.g. \`CONFIRM\`).
-   - \`High\` (e.g. reboot/shutdown, \`kill -9 1\`, \`redis flushall\`, \`iptables -F\`): Displays a confirmation dialog.
-4. Clicking "Cancel" injects \`Ctrl+C\` to reset the command line safely.
+### How to use it
+1. Protected terminals show warning stripes, and their tabs carry a red PROD badge.
+2. Pressing Enter or pasting commands checks them first. The check sees through wrappers like \`sudo\` or \`nohup\`, but knows quoted text is harmless — \`echo "rm -rf /"\` is not blocked.
+3. Extremely dangerous commands (e.g. \`rm -rf /\`) require typing a confirmation word; risky ones (e.g. reboot, \`kill -9 1\`) show a confirmation dialog. Clicking Cancel sends Ctrl+C and clears the line safely.
 
-### Tips & Notes
-- Dev and Test environments bypass this interception to ensure development agility.`,
+### Tips
+- Dev and Test servers are not intercepted, so everyday work there stays fast.`,
       },
       {
         id: 'terminal-history',
-        title: 'Passive Command History Logging (OSC 7777)',
+        title: 'Command history',
         badge: 'History',
-        keywords: ['Command History', 'OSC 7777', 'Audit', 'Passive Logging'],
-        content: `### Overview
-A zero-agent passive command logging architecture. Injects a minimal prompt hook into shell profiles to report executed commands and return codes via private OSC 7777 sequences.
+        keywords: ['command history', 'history', 'search', 'failed commands', 'rerun'],
+        content: `### What it does
+Keeps a record of the commands run on your servers — what was typed and whether it worked — so you can search, rerun or copy them later.
 
-### Entry & Shortcuts
-- **View History**: Click the "History" icon on the sidebar.
-- **Install Hook**: Click "Install Guide" in the History screen to copy the snippet for your shell.
+### Where to find it
+- The "History" icon on the left sidebar.
+- The "Install Guide" button inside the History screen.
 
-### Core Steps
-1. Paste the single-line snippet into your remote \`~/.bashrc\`, \`~/.zshrc\`, or fish config (or configure as a Host Ready Hook).
-2. Execute commands normally; when returning to the prompt, the hook automatically reports execution metadata.
-3. The client sideband parser strips the private sequence before rendering and commits it to the local encrypted SQLite database.
-4. Filter by host, search by text, view failed commands, and rerun or copy records.
+### How to use it
+1. Copy the one-time snippet from the Install Guide and paste it into \`~/.bashrc\`, \`~/.zshrc\` or your fish config on the server (or set it as the host's Ready Hook).
+2. Work as usual — each command is recorded when it finishes.
+3. In the History page: filter by server, search by text, show only failed commands, and rerun or copy any entry.
 
-### Tips & Notes
-- The stripping state machine guarantees hidden escape sequences never corrupt visible terminal outputs even when collection is disabled.`,
+### Tips
+- Recording can be turned off; either way, the behind-the-scenes reporting never leaves stray characters on your screen.`,
       },
       {
         id: 'terminal-interaction',
-        title: 'Intelligent Highlighting, URL Links & Drag-and-Drop Escaping',
-        badge: 'UX',
-        keywords: ['Highlight', 'URL', 'IP', 'Drag Drop', 'Paste', 'Escape', 'Search'],
-        content: `### Overview
-Polished interactive details: output regex coloring, hoverable clickable URLs/IPs, automatic path escaping on file drag-and-drop, and native clipboard harmony.
+        title: 'Colors, links and drag-and-drop',
+        badge: 'Basics',
+        keywords: ['highlight', 'link', 'url', 'ip', 'drag and drop', 'paste', 'copy', 'search'],
+        content: `### What it does
+Makes terminal output easier to read: problems get colored automatically, web addresses and IP numbers are clickable, and dropped-in files arrive as ready-to-use paths.
 
-### Entry & Shortcuts
-- **Find in Terminal**: Focus terminal and press \`⌘F\` (macOS) / \`Ctrl+F\` (Windows).
-- **Copy/Paste**: macOS \`⌘C\` / \`⌘V\`; Windows \`Ctrl+Shift+C\` / \`Ctrl+Shift+V\` (with selection, bare \`Ctrl+C\` copies; without selection, bare \`Ctrl+V\` pastes).
+### Where to find it
+- Search in the terminal: \`⌘F\` (Mac) / \`Ctrl+F\` (Windows).
+- Copy/paste: \`⌘C\` / \`⌘V\` on Mac; \`Ctrl+Shift+C\` / \`Ctrl+Shift+V\` on Windows (there, plain \`Ctrl+C\` copies when something is selected, plain \`Ctrl+V\` pastes).
 
-### Core Steps
-1. **Output Coloring**: Automatically highlights \`ERROR\` and \`FAILED\` in red, \`WARN\` in yellow, \`SUCCESS\` in green, and diff markers.
-2. **URL/IP Clicking**: IPv4, IPv6, and HTTP/HTTPS links underline on hover; hold \`⌘\` / \`Ctrl\` and click to open in your default browser.
-3. **Drag & Drop**: Dragging files from your desktop into the terminal auto-escapes special characters for POSIX shells or wraps with quotes for Windows cmd.
+### How to use it
+1. Watch the colors: \`ERROR\` and \`FAILED\` red, \`WARN\` yellow, \`SUCCESS\` green.
+2. Hold \`⌘\` (Mac) / \`Ctrl\` (Windows) and click a web address or IP to open it in your browser.
+3. Drag a file from your desktop into the terminal — its path appears, correctly quoted for the shell you are using.
 
-### Tips & Notes
-- The search bar supports regex, case sensitivity, and whole-word matching with Enter / Shift+Enter navigation.`,
+### Tips
+- Search supports case-sensitive, whole-word and pattern (regex) matching; Enter / Shift+Enter steps through the hits.`,
       },
       {
         id: 'terminal-ai',
-        title: 'AI Terminal Copilot Assistant',
+        title: 'AI helper for the terminal',
         badge: 'AI',
-        keywords: ['AI', 'Copilot', 'DeepSeek', 'Claude', 'OpenAI', 'Gemini', 'Agent'],
-        content: `### Overview
-A workflow-aware AI side panel supporting OpenAI, DeepSeek, Claude, and Gemini. Reads visible terminal contexts and safely assists with troubleshooting commands.
+        keywords: ['ai', 'assistant', 'openai', 'deepseek', 'claude', 'gemini'],
+        content: `### What it does
+A built-in AI assistant that can look at what is on your terminal and suggest how to fix problems. Works with OpenAI, DeepSeek, Claude and Gemini.
 
-### Entry & Shortcuts
-- **Toggle AI Panel**: Click the "AI" button in the terminal header, or press \`⌘I\` (macOS) / \`Ctrl+I\` (Windows).
+### Where to find it
+- The "AI" button in the terminal header, or \`⌘I\` (Mac) / \`Ctrl+I\` (Windows).
 
-### Core Steps
-1. Configure API keys and providers under "Settings" -> "AI Configuration" (supports multi-key rotation and custom Base URLs).
-2. When encountering errors, press \`⌘I\` to toggle the AI panel on the right.
-3. The assistant uses tool loops to inspect visible screens and logs to diagnose root causes.
-4. Suggested commands can be sent to the terminal with a single click or executed under step-by-step supervision.
+### How to use it
+1. Under Settings → "AI Configuration", enter your API key and pick a provider (several keys and custom addresses are supported).
+2. When something goes wrong, open the panel and describe the problem — it can look at the visible screen and logs.
+3. Send a suggested command to the terminal with one click, or step through it under supervision.
 
-### Tips & Notes
-- The panel width is draggable and persisted; it auto-hides when switching away from the terminal page and resumes on return.`,
+### Tips
+- The panel remembers its width, hides when you leave the terminal page and comes back when you return.`,
       },
     ],
   },
   {
     id: 'files',
-    title: 'SFTP & File Manager (Files)',
+    title: 'Files',
     icon: 'FolderSync',
     sections: [
       {
         id: 'files-manager',
-        title: 'Dual-Pane File Manager & Cross-Host Transfers',
-        badge: 'SFTP',
-        keywords: ['SFTP', 'Dual-Pane', 'Cross-Host', 'Transfer', 'File List', 'Owner'],
-        content: `### Overview
-A dual-pane file management architecture. Left and right panels can connect independently to local storage or distinct remote SSH hosts, allowing direct drag-and-drop transfers between two remote servers.
+        title: 'Two-sided file manager',
+        badge: 'Files',
+        keywords: ['files', 'sftp', 'transfer', 'drag', 'two panels', 'between servers'],
+        content: `### What it does
+A file manager with two panels side by side. Each side can show your own computer or a different server, so you can copy files between two servers by simply dragging.
 
-### Entry & Shortcuts
-- **Open Files**: Click "Files" on the sidebar, or right-click any host card and choose "Open SFTP".
+### Where to find it
+- "Files" on the left sidebar, or right-click a host card → "Open SFTP".
 
-### Core Steps
-1. Choose Host A for the left panel and Host B (or Local) for the right panel.
-2. Use path input for direct jumps, breadcrumbs for navigation, and instant refresh.
-3. Automatically resolves remote numeric uid/gid to human-readable usernames and groups (by parsing remote \`/etc/passwd\` and \`/etc/group\`).
-4. **Cross-Host Direct Copy**: Drag files from the left remote panel to the right remote panel; transfers stream point-to-point without saving intermediary copies to your local disk.
+### How to use it
+1. Connect one server on the left and another server (or your computer) on the right.
+2. Use the path box to jump straight to a folder, or click the breadcrumbs to navigate.
+3. Drag files from one side to the other — server-to-server copies travel directly, without detouring through your computer.
 
-### Tips & Notes
-- Navigating away from the "Files" page keeps SFTP sessions, directories, and active queues running in the background.`,
+### Tips
+- File owners and groups are shown as real names, not numbers.
+- Leaving the Files page interrupts nothing: connections and ongoing transfers keep running in the background.`,
       },
       {
         id: 'files-transfer',
-        title: 'Transfer Queue & Rate Limiting',
+        title: 'Transfers: pause, resume and speed limits',
         badge: 'Queue',
-        keywords: ['Transfer Queue', 'Rate Limit', 'Resume', 'Pause', 'Concurrency'],
-        content: `### Overview
-A comprehensive multi-task transfer scheduler with clear status tracking, throttling, and task lifecycle controls.
+        keywords: ['transfer queue', 'pause', 'resume', 'cancel', 'speed limit', 'progress'],
+        content: `### What it does
+One place to watch every copy in progress, with pause, resume, cancel and speed controls.
 
-### Entry & Shortcuts
-- **Open Queue Panel**: Click the "Transfer Queue" pill in the footer of the file manager.
+### Where to find it
+- The "Transfer Queue" pill in the bar at the bottom of the file manager.
 
-### Core Steps
-1. Active transfers display aggregate throughput and progress indicators in the footer.
-2. Open the queue to individually pause, resume, or cancel queued items.
-3. Configure global concurrency limits and upload/download speed caps to prevent bandwidth starvation.
+### How to use it
+1. Glance at the footer for the overall speed and progress of current transfers.
+2. Open the queue to pause, resume or cancel individual items.
+3. Set the limits: how many transfers run at once, and the maximum upload/download speed.
 
-### Tips & Notes
-- Re-initiating interrupted transfers automatically checks target offsets for seamless resumption.`,
+### Tips
+- Restarting an interrupted transfer picks up where it left off instead of starting over.`,
       },
       {
         id: 'files-dirs',
-        title: 'Advanced Directory Operations',
-        badge: 'Ops',
-        keywords: ['Calculate Size', 'Fast Delete', 'Open in Terminal', 'du -sb', 'rm -rf'],
-        content: `### Overview
-Productivity accelerators designed for large-scale server administration: async directory size calculations, dual deletion modes, and one-click terminal jumps.
+        title: 'Folder sizes, fast delete and terminal jumps',
+        badge: 'Folders',
+        keywords: ['calculate size', 'delete folder', 'fast delete', 'open in terminal'],
+        content: `### What it does
+Three time-savers in the right-click menu: measure how big a folder is, delete huge folders quickly, and jump straight into a folder in a terminal.
 
-### Entry & Shortcuts
-- **Action**: Right-click any file or directory in SFTP file lists.
+### Where to find it
+- Right-click any file or folder in the Files list.
 
-### Core Steps
-1. **Calculate Directory Size**: Right-click large folders and choose "Calculate Size"; an async \`du -sb\` computes space and child counts without blocking the UI.
-2. **Fast Directory Deletion**: Choose "Delete" to select between:
-   - *Shell Fast Delete* (Recommended): Dispatches optimized \`rm -rf\` over SSH, deleting tens of thousands of files in seconds.
-   - *SFTP Step-by-Step*: Recursively deletes items via pure SFTP protocol, ideal for restricted environments.
-3. **Open in Terminal**: Instantly creates a new terminal tab and automatically executes \`cd\` to that folder.
+### How to use it
+1. "Calculate Size" totals a folder's space and file count in the background — no waiting around.
+2. "Delete" offers two modes: Shell fast delete (recommended — clears tens of thousands of files in seconds) or step-by-step delete (for servers that restrict shell commands).
+3. "Open in Terminal" opens a new terminal tab already positioned in that folder.
 
-### Tips & Notes
-- Fast shell deletion displays an impact confirmation prompt to protect critical system directories.`,
+### Tips
+- Fast delete asks for one extra confirmation first, which protects important system folders.`,
       },
       {
         id: 'files-perms',
-        title: 'Permissions & Ownership (chmod / chown)',
+        title: 'Permissions and ownership',
         badge: 'Chmod',
-        keywords: ['Permissions', 'chmod', 'chown', 'Grid', 'SUID', 'Directory Protection'],
-        content: `### Overview
-A complete Linux permissions and ownership dialog with read/write/execute grids, special bit flags, octal sync, and smart recursive directory protection.
+        keywords: ['permissions', 'chmod', 'chown', 'owner', 'read write execute', '755'],
+        content: `### What it does
+Change who may read, change or run a file — and who owns it — by ticking boxes instead of memorizing numbers like 755.
 
-### Entry & Shortcuts
-- **Action**: Right-click a file or folder and choose "Properties / Permissions".
+### Where to find it
+- Right-click a file or folder → "Properties / Permissions".
 
-### Core Steps
-1. Toggle permissions across Owner, Group, and Others in an intuitive 3x3 grid.
-2. Set special flags including SUID, SGID, and Sticky Bit.
-3. Interactive octal input (e.g. typing \`755\` or \`644\`) stays synchronized with the checkboxes.
-4. Modify owner and group bindings (chown).
-5. **Smart Directory Protection**: When applying recursively, choose "Smart Protection" to append execute flags (\`+X\`) only to directories, preventing locked-out subfolders.
+### How to use it
+1. Tick the Owner, Group and Others boxes in the 3×3 grid; the number (e.g. \`755\`, \`644\`) updates alongside — or just type the number and the boxes follow.
+2. Change the owner and group, if you have the rights.
+3. Special flags (SUID, SGID, Sticky Bit) are available too.
+4. When applying to a folder and everything inside it, choose "Smart Protection" to keep subfolders usable.
 
-### Tips & Notes
-- The dialog header displays inode numbers, hard link counts, modification timestamps, and absolute paths.`,
+### Tips
+- The dialog header shows handy file facts such as the last-modified time and the full path.`,
       },
       {
         id: 'files-sudo',
-        title: 'Sudo Escalation for Read & Write',
+        title: 'Editing protected files with sudo',
         badge: 'Sudo',
-        keywords: ['Sudo', 'Escalation', 'Permission denied', 'root editing'],
-        content: `### Overview
-Solves the pain point of regular SSH accounts failing to edit protected configuration files under \`/etc/\` via SFTP.
+        keywords: ['sudo', 'permission denied', 'protected file', 'root'],
+        content: `### What it does
+When a file answers "Permission denied" as you open or save it, VeloTerm can use your sudo password to read and write it anyway.
 
-### Entry & Shortcuts
-- **Trigger**: Automatically prompts when encountering \`Permission denied\` while reading or writing files.
+### Where to find it
+- The prompt appears on its own when access is denied during reading or writing.
 
-### Core Steps
-1. When access is denied, a "Sudo Elevation" prompt requests your sudo password.
-2. Enter your password (with an option to remember for the session).
-3. The client leverages sudo pipes in the background to read the file and writes back via atomic temp-file swaps.
+### How to use it
+1. When denied, enter your sudo password (you can let VeloTerm remember it for the session).
+2. The file opens for viewing, and saving writes it back safely.
 
-### Tips & Notes
-- The entire process complies with standard Linux audit logs for traceability and compliance.`,
+### Tips
+- This follows the server's normal sudo rules, so you can only do what your account is already allowed to do — and the server keeps its usual sudo records.`,
       },
       {
         id: 'files-diff',
-        title: 'Dual-File Monaco Diff Editor',
+        title: 'Comparing two files',
         badge: 'Diff',
-        keywords: ['Diff', 'Comparison', 'Monaco Diff', 'Side by Side', 'File Compare'],
-        content: `### Overview
-Embedded Monaco Diff Editor providing text comparison, real-time addition/deletion counters, and side-by-side or inline view switching.
+        keywords: ['compare', 'diff', 'two files', 'side by side'],
+        content: `### What it does
+Shows exactly what differs between two files — side by side or as one continuous text — with live counts of added and removed lines.
 
-### Entry & Shortcuts
-- **Method 1**: Hold \`⌘\` (macOS) / \`Ctrl\` (Windows), select two files in the file list, and click "Compare Files".
-- **Method 2**: Right-click the first file, choose "Select for Compare", then right-click the second file and choose "Compare with...".
+### Where to find it
+- Hold \`⌘\` (Mac) / \`Ctrl\` (Windows), click two files, then choose "Compare Files".
+- Or right-click the first file → "Select for Compare", then right-click the second → "Compare with...".
 
-### Core Steps
-1. An inspection dialog opens with the base file on the left and target on the right.
-2. **View Modes**: Switch between "Side-by-Side" and "Inline" mode from the toolbar.
-3. **Swap Sides**: Click "Swap Sides" to reverse comparison direction.
-4. Real-time statistics display added, deleted, and identical lines.
+### How to use it
+1. The comparison window opens with one file on each side.
+2. Switch between "Side-by-Side" and "Inline" views, or click "Swap Sides" to flip them.
+3. Watch the live counters for added, deleted and identical lines.
 
-### Tips & Notes
-- Supports comparing files across different remote hosts directly.`,
+### Tips
+- The two files can live on different servers.`,
       },
     ],
   },
   {
     id: 'preview',
-    title: 'Universal Preview Matrix',
+    title: 'Previewing files',
     icon: 'Eye',
     sections: [
       {
         id: 'preview-markdown',
-        title: 'Markdown Rich Preview',
+        title: 'Markdown documents',
         badge: 'Markdown',
-        keywords: ['Markdown', 'MD', 'GFM', 'Tables', 'Task List', 'Render'],
-        content: `### Overview
-GFM-compliant rich text previewer supporting task lists, tables, syntax-highlighted code blocks with copy buttons, and three-state switching.
+        keywords: ['markdown', 'md', 'readme', 'notes', 'checklist', 'table'],
+        content: `### What it does
+Shows .md files (like READMEs and notes) as tidy formatted pages — with headings, tables, checklists and colored code blocks.
 
-### Entry & Shortcuts
-- **Trigger**: Double-click or right-click any \`.md\` file in SFTP file lists.
+### Where to find it
+- Double-click or right-click any .md file in the Files list.
 
-### Core Steps
-1. Files render by default with styled headings, tables, strikethrough, and blockquotes.
-2. Code blocks include language badges and a one-click copy button.
-3. **Three-State View**: Toggle freely between "Rendered View", "Monaco Source", and "Hex View".
+### How to use it
+1. The file opens as a formatted page.
+2. Code blocks carry a one-click copy button.
+3. Switch freely between the formatted view, the plain source text, and a hex view.
 
-### Tips & Notes
-- Designed for fast read-only viewing; switch to Source mode or open in the full editor when modifications are needed.`,
+### Tips
+- Built for quick reading; to make changes, switch to the source view or open the file in the editor.`,
       },
       {
         id: 'preview-csv',
-        title: 'CSV / TSV Virtualized Grid',
+        title: 'CSV and TSV tables',
         badge: 'CSV',
-        keywords: ['CSV', 'TSV', 'Grid', 'Virtual Scroll', 'Sort', 'Search'],
-        content: `### Overview
-Built-in RFC 4180 compliant delimiter engine featuring frozen headers, type-aware column sorting, real-time filtering, and viewport virtualization.
+        keywords: ['csv', 'tsv', 'table', 'sort', 'filter', 'excel', 'spreadsheet'],
+        content: `### What it does
+Opens .csv and .tsv files as a table you can sort, search and copy from — smoothly, even with tens of thousands of rows.
 
-### Entry & Shortcuts
-- **Trigger**: Double-click or right-click any \`.csv\` or \`.tsv\` file.
+### Where to find it
+- Double-click or right-click any .csv or .tsv file.
 
-### Core Steps
-1. Opens as an interactive data grid with frozen top headers and row counters.
-2. **Sort Columns**: Click header cells to sort ascending/descending with automatic numeric vs text detection.
-3. **Search**: Type in the top filter bar to instantly highlight and filter matching rows.
-4. Viewport virtualization renders tens of thousands of rows smoothly with minimal memory.
+### How to use it
+1. Click a column header to sort — numbers and text each sort correctly.
+2. Type in the search box to narrow the table down to matching rows.
+3. Select cells and copy; they paste cleanly into Excel or other spreadsheet apps.
 
-### Tips & Notes
-- Selected cells copy as TSV format for direct pasting into spreadsheet applications.`,
+### Tips
+- The header row stays frozen at the top while you scroll.`,
       },
       {
         id: 'preview-json',
-        title: 'JSON Tree View & Built-in jq Filter',
+        title: 'JSON files',
         badge: 'JSON',
-        keywords: ['JSON', 'JSONL', 'jq', 'Tree View', 'Collapse', 'JSONPath'],
-        content: `### Overview
-Supports standard JSON and JSON Lines (\`.jsonl\`). Features an interactive collapsible tree and an integrated native jq filtering engine.
+        keywords: ['json', 'jsonl', 'jq', 'tree', 'collapse', 'filter'],
+        content: `### What it does
+Shows .json and .jsonl files as a foldable, color-coded tree, with a built-in jq box for pulling out just the pieces you want.
 
-### Entry & Shortcuts
-- **Trigger**: Double-click or right-click any \`.json\` or \`.jsonl\` file.
+### Where to find it
+- Double-click or right-click any .json or .jsonl file.
 
-### Core Steps
-1. Parses into a colored tree distinguishing Keys, Strings, Numbers, Booleans, and Nulls.
-2. Click fold arrows or use "Expand All" / "Collapse All" in the toolbar.
-3. Hover over properties to copy their JSONPath, Key name, or Value.
-4. **Built-in jq**: Enter jq expressions (e.g. \`.data[] | {id, name}\`) in the query bar and press Enter to filter dynamically.
+### How to use it
+1. Click the arrows to fold and unfold; the toolbar offers "Expand All" / "Collapse All".
+2. Hover over any item for one-click copying of its path, name or value.
+3. Type a jq filter such as \`.data[] | {id, name}\` in the top box and press Enter — the tree rebuilds showing only the matches.
 
-### Tips & Notes
-- Backend jq executions are guarded with a 3-second timeout and 5MB memory threshold against runaway recursions.`,
+### Tips
+- jq filters run with a short safety timeout, so a mistaken filter can't freeze the view.`,
       },
       {
         id: 'preview-log',
-        title: 'Large Log Smart Tail Mode',
+        title: 'Big log files',
         badge: 'Log',
-        keywords: ['Log', 'Tail', 'Tail -f', 'Large Files', '256KB', 'Fast Open'],
-        content: `### Overview
-A dedicated rapid triage mode for multi-gigabyte server logs, loading the latest 256KB backward from the end of the file instantly.
+        keywords: ['log', 'tail', 'follow', 'large file', 'error log'],
+        content: `### What it does
+Opens even multi-gigabyte log files instantly by loading the newest part first — and can follow along as new lines arrive.
 
-### Entry & Shortcuts
-- **Trigger**: Double-click or preview any \`.log\`, \`.out\`, or \`.err\` file.
+### Where to find it
+- Double-click or preview any .log, .out or .err file.
 
-### Core Steps
-1. Instant inspection by reading the last 256KB of the file (aligning line cuts automatically).
-2. **Follow Mode (Tail -f)**: Toggle live following to auto-scroll with a green pulsing heartbeat indicator.
-3. **Level Filtering**: Filter quickly by ALL / ERROR / WARN / INFO.
-4. **Historical Paging**: Click "Load Earlier Logs" to fetch the preceding block.
+### How to use it
+1. The end of the file opens immediately.
+2. Switch on live following (like \`tail -f\`) to watch new lines appear automatically.
+3. Filter by level (ALL / ERROR / WARN / INFO); "Load Earlier Logs" pages back through older lines.
 
-### Tips & Notes
-- Bypasses traditional 5MB file transfer caps, allowing instant troubleshooting of massive production logs.`,
+### Tips
+- This skips the usual size limit for file previews, so you can check huge production logs right away.`,
       },
       {
         id: 'preview-hex',
-        title: 'Hex Viewer',
+        title: 'Hex view for other files',
         badge: 'Hex',
-        keywords: ['Hex', 'Binary', 'Disassembly', 'xxd', 'Byte Inspector'],
-        content: `### Overview
-A low-level diagnostic tool for binaries and unformatted files. Features a classic 16-byte three-column layout with chunked seek support.
+        keywords: ['hex', 'binary', 'bytes', 'xxd'],
+        content: `### What it does
+Shows a file's raw contents as rows of hexadecimal numbers — for files that aren't plain text, like programs, libraries and data files.
 
-### Entry & Shortcuts
-- **Trigger**: Double-click binary files (\`.so\`, \`.bin\`, \`.exe\`, \`.db\`, etc.) or switch to Hex view in text previews.
+### Where to find it
+- Double-click binary files (.so, .bin, .exe, .db and the like), or switch to the Hex view inside other previews.
 
-### Core Steps
-1. Left column shows byte offsets, center shows hexadecimal bytes, and right displays printable ASCII characters.
-2. **Synchronized Selection**: Selecting a byte in the Hex view automatically highlights the corresponding character in the ASCII column.
-3. **Byte Inspector**: The bottom bar decomposes the focused byte into Offset, Hex, Dec, Bin, and Char representations.
-4. Export clean \`xxd\` style hexadecimal dumps with one click.
+### How to use it
+1. Read the three columns: position, hex values, and printable characters.
+2. Click a byte — the bottom bar shows its value as Hex, Dec, Bin and Char, and the matching character lights up on the right.
+3. One click exports a standard xxd-style text dump.
 
-### Tips & Notes
-- Streams data in 64KB seek chunks on demand, scrolling seamlessly through arbitrarily large files without high memory usage.`,
+### Tips
+- Files of any size open comfortably; only the visible part is ever loaded.`,
       },
       {
         id: 'preview-excel',
-        title: 'Excel Multi-Sheet Workbook Preview',
+        title: 'Excel spreadsheets',
         badge: 'Excel',
-        keywords: ['Excel', 'xlsx', 'xls', 'Sheet', 'calamine', 'Spreadsheet'],
-        content: `### Overview
-A pure offline Excel workbook parser powered by the Rust \`calamine\` engine, previewing spreadsheets without requiring Microsoft Office.
+        keywords: ['excel', 'xlsx', 'xls', 'xlsb', 'ods', 'sheet'],
+        content: `### What it does
+Opens Excel files (.xlsx, .xls, .xlsb, .ods) as tables — without Microsoft Office and without internet.
 
-### Entry & Shortcuts
-- **Trigger**: Double-click or preview \`.xlsx\`, \`.xls\`, \`.xlsb\`, or \`.ods\` files.
+### Where to find it
+- Double-click or preview any of those files in the Files list.
 
-### Core Steps
-1. Opens workbook files with frozen top header rows.
-2. Bottom tabs allow fast switching between multiple sheets with in-memory caching.
-3. Supports column sorting, keyword search filtering, and cell range copying.
+### How to use it
+1. Sheets appear as tabs along the bottom; click to switch between them.
+2. Sort columns, search to filter rows, and copy cells out.
 
-### Tips & Notes
-- SFTP previews use managed temporary files that are safely purged when the preview window closes.`,
+### Tips
+- Great for a quick look at a spreadsheet that lives on a server — it opens right in place.`,
       },
       {
         id: 'preview-sqlite',
-        title: 'SQLite Read-Only Browser & SQL Runner',
+        title: 'SQLite database files',
         badge: 'SQLite',
-        keywords: ['SQLite', 'db', 'sqlite3', 'SQL', 'SELECT', 'Read-Only'],
-        content: `### Overview
-Safely inspects \`.db\`, \`.sqlite\`, and \`.sqlite3\` files in enforced read-only mode (\`SQLITE_OPEN_READ_ONLY\`), combining schema introspection with an SQL query console.
+        keywords: ['sqlite', 'db', 'database file', 'sql', 'select'],
+        content: `### What it does
+Opens .db, .sqlite and .sqlite3 files so you can browse their tables and run look-up queries — strictly read-only, so the file can't be damaged.
 
-### Entry & Shortcuts
-- **Trigger**: Double-click or preview any SQLite database file.
+### Where to find it
+- Double-click or preview any SQLite database file.
 
-### Core Steps
-1. Left panel enumerates all tables, views, and row counts.
-2. Click any table to stream its columns and data into the virtualized grid.
-3. **Execute SQL**: Run custom read-only statements (\`SELECT\`, \`PRAGMA table_info\`, \`EXPLAIN\`) in the top query bar.
+### How to use it
+1. Tables and views are listed on the left, each with its row count.
+2. Click a table to browse its contents.
+3. Type a query (SELECT, PRAGMA, EXPLAIN) in the top box and run it.
 
-### Tips & Notes
-- The backend parser rejects modifying or destructive queries (\`INSERT\`, \`UPDATE\`, \`DROP\`) at the AST level to protect live databases.`,
+### Tips
+- Changing commands (INSERT, UPDATE, DROP and friends) are refused before they ever reach the file.`,
       },
       {
         id: 'preview-cert',
-        title: 'X.509 SSL Certificate & Key Inspector',
+        title: 'Certificates',
         badge: 'Cert',
-        keywords: ['Certificate', 'SSL', 'TLS', 'x509', 'Expiry', 'SANs', 'Fingerprint'],
-        content: `### Overview
-Parses X.509 certificates using pure Rust cryptography libraries. Computes remaining validity days, displays chain hierarchies, SANs domains, and public key fingerprints.
+        keywords: ['certificate', 'ssl', 'https', 'expiry', 'domain', 'pem'],
+        content: `### What it does
+Opens certificate files (.crt, .cer, .pem, .ca-bundle) and tells you at a glance whether they are still valid, who issued them, and which domains they cover.
 
-### Entry & Shortcuts
-- **Trigger**: Double-click or preview \`.crt\`, \`.cer\`, \`.pem\`, or \`.ca-bundle\` files.
+### Where to find it
+- Double-click or preview any of those files.
 
-### Core Steps
-1. Validity status badge shows green (valid), yellow (expiring within 30 days), or red (expired) with remaining day counts.
-2. **Chain Navigation**: Inspect root and intermediate certificate tiers within bundle files.
-3. View Subject, Issuer, Serial Number, Not Before/After dates, Signature Algorithms, and Key Specs.
-4. **Copy SANs**: View all Subject Alternative Names and copy domain lists with a single click.
-5. Displays SHA-256 and SHA-1 fingerprints.
+### How to use it
+1. A colored badge shows the state — green valid, yellow expiring within 30 days, red expired — along with the days remaining.
+2. Look up subject, issuer, validity dates, serial number, signature and key details; bundle files let you step through the whole chain.
+3. Copy the full list of covered domains with one click; SHA-256 and SHA-1 fingerprints are shown too.
 
-### Tips & Notes
-- Handles multi-cert bundle files effortlessly for complete SSL trust path verification.`,
+### Tips
+- Handy for catching a certificate that is about to expire before it causes an outage.`,
       },
       {
         id: 'preview-media',
-        title: 'Images (including JXL) & Vector PDF Preview',
+        title: 'Pictures and PDFs',
         badge: 'Media',
-        keywords: ['Image', 'PNG', 'JPG', 'JXL', 'PDF', 'PDFium', 'JPEG XL'],
-        content: `### Overview
-A cross-platform viewer for visual and document assets. In addition to standard PNG, JPG, SVG, and WebP, it natively supports next-generation \`.jxl\` (JPEG XL) and vector PDF rendering.
+        keywords: ['image', 'picture', 'png', 'jpg', 'svg', 'webp', 'jxl', 'pdf'],
+        content: `### What it does
+View pictures — PNG, JPG, SVG, WebP and the newer space-saving .jxl — and PDF documents right inside VeloTerm.
 
-### Entry & Shortcuts
-- **Trigger**: Double-click any supported image or \`.pdf\` document.
+### Where to find it
+- Double-click any supported picture or .pdf file.
 
-### Core Steps
-1. **Images**: Zoom, pan, inspect dimensions (width × height), and view color profiles.
-2. **JPEG XL**: Uses built-in \`libjxl\` runtime bindings to decode ultra-compressed \`.jxl\` images.
-3. **PDF**: Powered by Chromium's Google PDFium engine for crisp vector typography, paging, and scaling.
+### How to use it
+1. Pictures: zoom and pan freely; dimensions are displayed.
+2. PDFs: page through and zoom; text stays crisp at any size.
 
-### Tips & Notes
-- Native decoding libraries load dynamically, ensuring that missing optional libraries will never block core application boot.`,
+### Tips
+- Everything needed is built in — nothing to install, and it works offline.`,
       },
     ],
   },
   {
     id: 'editor',
-    title: 'Code & Config Editor (Monaco Editor)',
+    title: 'Editor',
     icon: 'FileCode2',
     sections: [
       {
         id: 'editor-core',
-        title: '81 Offline Languages & Editor Core',
+        title: 'The built-in editor',
         badge: 'Core',
-        keywords: ['Monaco', 'Editor', 'Offline Highlighting', 'Multi-Language', 'Save', 'Draft'],
-        content: `### Overview
-Bundles Microsoft's Monaco Editor core, providing offline syntax coloring for 81 programming and markup languages without external downloads.
+        keywords: ['editor', 'edit', 'save', 'colors', 'offline', 'vs code'],
+        content: `### What it does
+A comfortable text editor for code and settings files — the same editor used by VS Code — with coloring for 81 languages, working fully offline.
 
-### Entry & Shortcuts
-- **Open File**: Right-click in SFTP and select "Open in Editor", or switch from the "Editor" sidebar icon.
-- **Save**: Press \`⌘S\` (macOS) / \`Ctrl+S\` (Windows).
+### Where to find it
+- Right-click a file → "Open in Editor", or the "Editor" icon on the sidebar.
+- Save: \`⌘S\` (Mac) / \`Ctrl+S\` (Windows).
 
-### Core Steps
-1. Manage multiple open files in top tab cards.
-2. Features code folding, bracket colorization, indent guides, multi-cursor editing (Alt+Click), and smart indentation.
-3. Press \`⌘S\` / \`Ctrl+S\` to write modifications back to the remote server with toast confirmations.
+### How to use it
+1. Open files; each gets its own tab.
+2. Enjoy the helpers: collapsible sections, matching brackets shown in color, indent guides, and Alt+Click to place several cursors at once.
+3. Press \`⌘S\` / \`Ctrl+S\` to save back to the server — a message confirms it worked.
 
-### Tips & Notes
-- Monarch tokenizer definitions are fully packaged for seamless offline productivity in restricted private networks.`,
+### Tips
+- Everything is built in, so it also works on networks with no internet access.`,
       },
       {
         id: 'editor-nginx',
-        title: 'Nginx Syntax & Context-Aware Completion',
+        title: 'Nginx configuration files',
         badge: 'Nginx',
-        keywords: ['Nginx', 'conf', 'Context-Aware', 'http', 'server', 'location', 'Variables'],
-        content: `### Overview
-A custom Nginx language service offering multi-tier file detection, block-aware directive completion, variable completions, and official hover documentation.
+        keywords: ['nginx', 'conf', 'server', 'location', 'variables', 'suggestions'],
+        content: `### What it does
+When you edit an nginx configuration, the editor suggests entries that are valid exactly where you are typing, explains them on hover, and completes variable names.
 
-### Entry & Shortcuts
-- **Trigger**: Open any Nginx config file, files named \`.conf\`, or files under \`/nginx/\` directories.
+### Where to find it
+- Just open an nginx file — \`nginx.conf\`, \`.conf\` files under \`/nginx/\`, or similar configs.
 
-### Core Steps
-1. **Smart Detection**: Detects \`nginx.conf\`, paths containing \`/nginx/\`, or content containing blocks like \`events\`, \`http\`, \`server\`.
-2. **Block-Aware Completion**: Recommends directives valid only within the current block (e.g. \`proxy_pass\` inside \`location\`).
-3. **Variable Completion**: Type \`$\` to trigger auto-suggestions for built-in Nginx variables (e.g. \`$host\`, \`$remote_addr\`).
-4. **Hover Docs**: Hover over directives to read official syntax explanations, contexts, and default values.
+### How to use it
+1. Start typing to get suggestions that fit the current section (e.g. \`proxy_pass\` inside \`location\`).
+2. Type \`$\` to list built-in variables like \`$host\` and \`$remote_addr\`.
+3. Rest the mouse on an entry to see its meaning and default value.
 
-### Tips & Notes
-- Files like \`fastcgi_params\` or \`mime.types\` without top-level blocks are correctly recognized via content heuristics.`,
+### Tips
+- Files without the usual big blocks — like \`mime.types\` or \`fastcgi_params\` — are recognized too.`,
       },
       {
         id: 'editor-docker',
-        title: 'Dockerfile & Docker Compose Intelligence',
+        title: 'Dockerfile and Compose files',
         badge: 'Docker',
-        keywords: ['Docker', 'Dockerfile', 'docker-compose', 'Compose', 'BuildKit', 'Schema'],
-        content: `### Overview
-Deep language intelligence for container configs. Supports all 18 official Dockerfile instructions, BuildKit flags, and Compose service dependency completions.
+        keywords: ['docker', 'dockerfile', 'compose', 'yaml', 'buildkit'],
+        content: `### What it does
+While you edit Dockerfile or Docker Compose files, the editor suggests the right instructions and names, so you don't have to remember them.
 
-### Entry & Shortcuts
-- **Trigger**: Open files named \`Dockerfile\`, \`docker-compose.yml\`, or \`compose.yaml\`.
+### Where to find it
+- Open a file named \`Dockerfile\`, \`docker-compose.yml\` or \`compose.yaml\`.
 
-### Core Steps
-1. **Dockerfile Directives**: Autocompletes official instructions, BuildKit flags, and predefined ARG variables.
-2. **Multi-Stage Suggestions**: Typing \`COPY --from=\` parses and suggests prior \`AS <stage>\` aliases.
-3. **Environment Expansion**: Typing \`$\` or \`\${\` prompts declared \`ENV\` and \`ARG\` identifiers.
-4. **Compose Schema Validation**: Provides indent-aware key completions and suggests service names under \`depends_on\` and \`networks\`.
+### How to use it
+1. Dockerfile: suggestions cover all official instructions and options; \`COPY --from=\` even offers the names of earlier build stages.
+2. Type \`$\` or \`\${\` to get the ARG/ENV variables you defined earlier.
+3. Compose files: keys are suggested as you indent, and service names appear under \`depends_on\`, \`networks\` and friends.
 
-### Tips & Notes
-- Compose completions run only on confirmed Docker Compose YAML files without interfering with generic CI or Kubernetes manifests.`,
+### Tips
+- Ordinary YAML files (like CI configs) are left alone.`,
       },
       {
         id: 'editor-bash',
-        title: 'Bash/Shell Completion & Remote Environment Integration',
+        title: 'Shell scripts',
         badge: 'Shell',
-        keywords: ['Bash', 'Shell', 'compgen', 'Functions', 'Variables', 'tree-sitter'],
-        content: `### Overview
-A hybrid client-server Shell editor combining Rust AST parsing with remote SSH \`compgen\` queries for real-world autocomplete.
+        keywords: ['bash', 'shell', 'sh', 'zsh', 'script', 'variables', 'functions'],
+        content: `### What it does
+Editing help for shell scripts: suggests keywords, the functions and variables your script defines — and, for files on a server, the commands that server actually has.
 
-### Entry & Shortcuts
-- **Trigger**: Open any \`.sh\`, \`.bash\`, or \`.zsh\` script.
+### Where to find it
+- Open any \`.sh\`, \`.bash\` or \`.zsh\` file.
 
-### Core Steps
-1. **Keywords & Builtins**: Autocompletes standard control structures, reserved words, and common built-in commands.
-2. **Document AST Symbols**: The backend parses scripts via \`tree-sitter-bash\` to suggest document-defined functions and variables.
-3. **Remote Command Completion**: For remote SFTP files, the client queries available system binaries via \`compgen -c\` over SSH and merges them into suggestion lists.
+### How to use it
+1. Type to get standard keywords and common built-in commands.
+2. Suggestions include the functions and variables defined in your script.
+3. For files on a server, that server's own command list joins the suggestions automatically.
 
-### Tips & Notes
-- Remote tool suggestions feature TTL caching and silent fallbacks so offline editing remains instantly responsive.`,
+### Tips
+- If the server can't be asked, editing continues normally — you simply see fewer suggestions.`,
       },
       {
         id: 'editor-batch',
-        title: 'Windows Batch Highlighting & Label Jumps',
+        title: 'Windows batch files',
         badge: 'Batch',
-        keywords: ['Batch', 'bat', 'cmd', 'goto', 'call', 'Label Jump'],
-        content: `### Overview
-Dedicated language tooling for Windows batch scripts covering 316 commands, environment variable tokenization, and Goto label jumps.
+        keywords: ['batch', 'bat', 'cmd', 'goto', 'call', 'label'],
+        content: `### What it does
+Editing help for Windows .bat and .cmd scripts: clear colors, command suggestions, and jumps to \`goto\` labels.
 
-### Entry & Shortcuts
-- **Trigger**: Open \`.bat\` or \`.cmd\` files.
+### Where to find it
+- Open any \`.bat\` or \`.cmd\` file.
 
-### Core Steps
-1. Full syntax highlighting for \`::\` / \`REM\` comments, \`:label\` targets, \`%var%\`, \`!var!\`, and \`%%i\` loop variables.
-2. Suggests Windows commands and standard execution snippets.
-3. **Label Jump**: Right-click \`goto label\` or \`call :label\` references and choose "Go to Definition" (or press \`F12\`) to jump directly to the target.
+### How to use it
+1. Comments, labels and variables like \`%var%\` and \`%%i\` each get their own color.
+2. Get suggestions for Windows commands and ready-made snippets.
+3. Right-click a \`goto label\` or \`call :label\` → "Go to Definition" (\`F12\`) jumps to the label; labels can also be renamed everywhere at once.
 
-### Tips & Notes
-- Supports label renaming, propagating changes across all call references across the document.`,
+### Tips
+- Works fully offline.`,
       },
       {
         id: 'editor-sql',
-        title: 'SQL Keywords, Dialects & Functions',
+        title: 'SQL files',
         badge: 'SQL',
-        keywords: ['SQL', 'MySQL', 'PostgreSQL', 'SQLite', 'Functions', 'Keywords'],
-        content: `### Overview
-Integrates 349 ANSI SQL keywords and popular database dialect extensions with nearly 500 built-in functions and context pruning.
+        keywords: ['sql', 'mysql', 'postgresql', 'sqlite', 'keywords', 'functions'],
+        content: `### What it does
+SQL files get keyword and function suggestions — standard SQL plus extras for MySQL 8, PostgreSQL 13 and SQLite 3.
 
-### Entry & Shortcuts
-- **Trigger**: Open any \`.sql\` script.
+### Where to find it
+- Open any \`.sql\` file.
 
-### Core Steps
-1. Type to trigger uppercase SQL keyword suggestions (e.g. \`SELECT\`, \`UPDATE\`, \`WHERE\`, \`GROUP BY\`).
-2. Provides dialect keywords for MySQL 8, PostgreSQL 13, and SQLite 3.
-3. **Context Pruning**: Detects clauses to suppress arithmetic function suggestions in table-reference contexts (e.g. following \`FROM\`, \`JOIN\`, \`INTO\`).
+### How to use it
+1. Type to get keywords in capitals (\`SELECT\`, \`WHERE\`, \`GROUP BY\`...).
+2. Nearly 500 function names are included, alongside dialect keywords.
+3. Snippets like \`create_table\` expand into a ready-made skeleton.
 
-### Tips & Notes
-- Includes DDL and DML scaffolding snippets; type \`create_table\` to expand clean boilerplate tables.`,
+### Tips
+- Suggestions stay sensible — function names don't pop up right after FROM or JOIN, where a table belongs.`,
       },
       {
         id: 'editor-systemd',
-        title: 'Systemd Unit Highlighting & Directive Enum Suggestions',
+        title: 'Linux service files',
         badge: 'Systemd',
-        keywords: ['Systemd', 'service', 'unit', 'Restart', 'ExecStart', 'Enums'],
-        content: `### Overview
-Language support for Linux system service configs (\`.service\`, \`.unit\`, \`.target\`). Features section-aware directive autocompletion and enum value suggestions.
+        keywords: ['systemd', 'service', 'socket', 'timer', 'execstart', 'restart'],
+        content: `### What it does
+Editing help for Linux service configurations (\`.service\`, \`.socket\`, \`.timer\`, \`.target\` and more): suggests valid settings for each section, and the allowed values.
 
-### Entry & Shortcuts
-- **Trigger**: Open files ending with \`.service\`, \`.socket\`, \`.target\`, or \`.timer\`.
+### Where to find it
+- Open one of those files in the editor.
 
-### Core Steps
-1. Section headers (e.g. \`[Unit]\`, \`[Service]\`, \`[Install]\`) and specifiers like \`%i\` and \`%h\` receive distinct theme colors.
-2. **Section-Awareness**: Inside \`[Service]\`, suggestions only include valid service directives (such as \`ExecStart\`, \`Restart\`, \`User\`).
-3. **Enum Values**: Typing \`=\` after directives prompts valid options (e.g. \`Restart=\` prompts \`always\`, \`on-failure\`, \`no\`).
+### How to use it
+1. Section headers like \`[Unit]\` and \`[Service]\` get their own colors.
+2. Inside a section, only settings that make sense there are suggested — \`ExecStart\`, \`Restart\`, \`User\` in \`[Service]\`, for example.
+3. After typing \`=\` you are offered the valid choices (\`Restart=\` suggests \`always\`, \`on-failure\`, \`no\`...).
 
-### Tips & Notes
-- Hovering over directives reveals descriptions and section classifications from official systemd documentation.`,
+### Tips
+- Rest the mouse on a setting for a one-line explanation from the official documentation.`,
       },
       {
         id: 'editor-crontab',
-        title: 'Crontab Expression Validation & Hover Next-Run Previews',
+        title: 'Scheduled tasks (crontab)',
         badge: 'Cron',
-        keywords: ['Crontab', 'Cron', 'Schedule', 'Hover Preview', 'Next Run', 'Validation'],
-        content: `### Overview
-An intelligent parser for Linux scheduled tasks adhering to standard Vixie Cron specifications, complete with error squiggles and next execution previews.
+        keywords: ['crontab', 'cron', 'schedule', 'next run', 'validation'],
+        content: `### What it does
+Checks scheduled-task timing lines as you type, and shows when the task will next run — no online cron calculator needed.
 
-### Entry & Shortcuts
-- **Trigger**: Open crontab config files or files named \`crontab\`.
+### Where to find it
+- Open a file named \`crontab\` (or with the .crontab ending).
 
-### Core Steps
-1. Supports 5-field schedules, step intervals (\`/2\`), numeric ranges, month/day names, and \`@reboot\`/\`@daily\` macros.
-2. **Error Squiggles**: Invalid fields (such as minute values exceeding 59) are marked with red squiggly underlines.
-3. **Hover Next-Run Preview**: Hovering over valid cron expressions dynamically calculates and displays the **next 3 runtimes in your local timezone**.
+### How to use it
+1. Mistakes — like a minute value above 59 — are underlined in red on the spot.
+2. Hover over a valid timing line to see the next 3 run times, in your local time.
+3. All the usual forms work: ranges, steps, month/day names, and shortcuts like \`@daily\` and \`@reboot\`.
 
-### Tips & Notes
-- Insert standard schedule templates instantly without needing external online cron testers.`,
+### Tips
+- Ready-made schedule templates are offered as snippets.`,
       },
       {
         id: 'editor-html',
-        title: 'HTML / CSS Smart Tag Auto-Closing & Quote Pairing',
+        title: 'HTML and CSS files',
         badge: 'HTML',
-        keywords: ['HTML', 'CSS', 'Auto Close', 'Tag Pairing', 'Emmet', 'Attributes'],
-        content: `### Overview
-Integrates VS Code language service workers for complete HTML5, CSS3, SCSS, and LESS tag intelligence and typing assistance.
+        keywords: ['html', 'css', 'tags', 'auto close', 'quotes', 'scss'],
+        content: `### What it does
+Help while writing web pages: tags close themselves, quotes appear in pairs, and full suggestions for tags and attributes are built in.
 
-### Entry & Shortcuts
-- **Trigger**: Open \`.html\`, \`.htm\`, or \`.css\` files.
+### Where to find it
+- Open \`.html\`, \`.htm\` or \`.css\` files (SCSS and LESS too).
 
-### Core Steps
-1. **Auto-Close Tag**: Typing \`>\` after \`<div>\` automatically inserts the closing \`</div>\` and centers your cursor.
-2. **Close Unfinished Tag**: Typing \`</\` looks back to find and complete the nearest open tag name.
-3. **Attribute Quote Pairing**: Typing \`=\` after attributes automatically inserts matching quotes \`""\` and positions the cursor inside.
+### How to use it
+1. Typing \`>\` after \`<div>\` adds the closing \`</div>\` for you.
+2. Typing \`</\` completes the nearest open tag.
+3. Typing \`=\` after an attribute inserts the quotes and places the cursor between them.
 
-### Tips & Notes
-- Language workers load asynchronously as standalone chunks, consuming zero memory when HTML/CSS files are not open.`,
+### Tips
+- The suggestions match what VS Code would offer — and they work offline.`,
       },
       {
         id: 'editor-draft',
-        title: 'Debounced Drafts & Remote Conflict Resolution',
+        title: 'Drafts and conflict protection',
         badge: 'Safety',
-        keywords: ['Drafts', 'Conflict Resolution', 'Concurrency', 'SQLCipher', 'Hash Diff'],
-        content: `### Overview
-Safety mechanisms that debounce edits into local encrypted storage while using remote content hashes to negotiate concurrent multi-user conflicts.
+        keywords: ['draft', 'unsaved', 'recovery', 'conflict', 'overwrite', 'crash'],
+        content: `### What it does
+Your typing is saved as you go, so a crash or an accidental close loses nothing. And if someone else changed the file on the server in the meantime, you are asked before your version overwrites theirs.
 
-### Entry & Shortcuts
-- **Trigger**: Runs continuously in the background during editing.
+### Where to find it
+- Nothing to open — it watches quietly while you edit.
 
-### Core Steps
-1. Keystrokes are debounced and committed to the encrypted \`editor_drafts\` SQLite table.
-2. In the event of a power outage or accidental closure, re-opening the file restores your unsaved draft.
-3. **Conflict Arbitration**: Before saving, the client compares current remote hashes. If modified upstream, a conflict dialog prompts you to:
-   - *Overwrite Remote*: Force-write local edits over the remote copy.
-   - *Discard Draft*: Discard local edits and pull the latest remote version.
+### How to use it
+1. Reopen a file after a crash or accidental close; your unsaved changes are offered back to you.
+2. On save, if the server's copy has changed, choose "Overwrite Remote" (keep yours) or "Discard Draft" (take theirs).
 
-### Tips & Notes
-- You can review side-by-side differences in the Monaco Diff Editor before confirming an overwrite.`,
+### Tips
+- Before deciding, you can view the two versions side by side.`,
       },
     ],
   },
   {
     id: 'network',
-    title: 'Remote Network & Topology (Relay, ZK, gRPC, Port Forward)',
+    title: 'Connections & network tools',
     icon: 'Network',
     sections: [
       {
         id: 'network-relay',
-        title: 'VLR2 Self-Hosted SSH Relay Management & Latency Ping',
+        title: 'Relay servers',
         badge: 'Relay',
-        keywords: ['Relay', 'VLR2', 'Tunnel', 'TCP', 'WebSocket', 'QUIC', 'Bastion'],
-        content: `### Overview
-Self-hosted high-performance SSH relay system powered by the proprietary VLR2 protocol. Uses dual-nonce challenge-response and HMAC signing over TCP, WebSocket, or QUIC to traverse restricted enterprise networks.
+        keywords: ['relay', 'tunnel', 'bastion', 'gateway'],
+        content: `### What it does
+When servers are only reachable through a special gateway machine, a relay connection lets VeloTerm reach them — terminals, file transfers and port forwarding all work as usual through it.
 
-### Entry & Shortcuts
-- **Manage Relays**: Click "Relays" on the sidebar.
-- **Bind to Host**: In host settings, check "Connect via Relay" and pick an active node.
+### Where to find it
+- "Relays" on the left sidebar, to manage them.
+- Per server: in host settings, tick "Connect via Relay" and pick one.
 
-### Core Steps
-1. In the Relays screen, click "New Relay" to set server address, port, transport mode (TCP / WS / QUIC), and credentials (Key ID + Secret).
-2. Click "Test Connection" on any node to initiate an instant handshake and measure round-trip latency in milliseconds.
-3. Link the relay to any host; all terminal sessions, SFTP operations, and port forwards to that host will tunnel through the relay.
+### How to use it
+1. Click "New Relay" and fill in the address, port, connection type (TCP / WS / QUIC) and the access credentials (Key ID + Secret).
+2. Click "Test Connection" — it checks the relay and shows the response time in milliseconds.
+3. Assign the relay to a server; its connections then travel through it.
 
-### Tips & Notes
-- The 32-byte shared secret is never transmitted over the wire, protecting against eavesdropping and replay exploits.`,
+### Tips
+- Your secret is never sent over the connection, so it can't be overheard.`,
       },
       {
         id: 'network-topology',
-        title: 'Single-Host & Global Network Topology Visualizer',
+        title: 'Connection map (topology)',
         badge: 'Topology',
-        keywords: ['Topology', 'Chains', 'Multi-Hop', 'Visualizer', 'Network Overview'],
-        content: `### Overview
-Visualizes complex proxy topographies and connection paths: Local -> Relay Node -> Multi-hop Jump Hosts -> Target Host -> Port Forwards.
+        keywords: ['topology', 'map', 'overview', 'chain', 'status'],
+        content: `### What it does
+Draws a picture of how you are connected: your computer → relay → jump hosts → target server → port forwards, with live status for each step.
 
-### Entry & Shortcuts
-- **Single-Host Topology**: Click the "Topology" network icon on any host card.
-- **Global Overview**: Click "Global Topology" in the top toolbar of the Hosts screen.
+### Where to find it
+- Single server: the "Topology" network icon on its host card.
+- Everything at once: "Global Topology" in the toolbar of the Hosts page.
 
-### Core Steps
-1. **Single-Host View**: Displays all proxy tiers and attached port forwards with live status indicators (Idle, Connecting, Active, Error).
-2. **Global Topology Canvas**: Aggregates all configured hosts in a unified graph, pinning active sessions to the top.
-3. Click any node card in the canvas to inspect its status or initiate a session directly.
+### How to use it
+1. The single-server view shows every step in the chain and its state (Idle, Connecting, Active, Error).
+2. The global view puts all your servers on one canvas, with the active ones pinned at the top.
+3. Click any node to see its status or start a session from there.
 
-### Tips & Notes
-- Toggle attached port forwarding rules directly inside the topology dialog without switching screens.`,
+### Tips
+- Port forwarding rules can be switched on and off right inside the map.`,
       },
       {
         id: 'network-forward',
-        title: 'Local & Remote SSH Port Forwarding',
+        title: 'Port forwarding',
         badge: 'Port',
-        keywords: ['Port Forwarding', 'SSH Tunnel', 'Local Forward', 'Tunnel Mapping'],
-        content: `### Overview
-Manages secure SSH port forwarding tunnels, allowing you to expose local dev ports into remote bastions or map private remote endpoints back to localhost.
+        keywords: ['port forwarding', 'tunnel', 'localhost', 'remote service'],
+        content: `### What it does
+Lets you use a service that runs on a server (or behind it) as if it were running on your own computer — for example, opening a server's admin page in your browser at \`localhost\`.
 
-### Entry & Shortcuts
-- **Action**: Click the "Port Forward" icon on any host card or configure within host topology views.
+### Where to find it
+- The "Port Forward" icon on a host card, or inside the topology view.
 
-### Core Steps
-1. Click "Add Rule" and define the local listening port (e.g. \`8080\`) and destination target (e.g. \`10.0.0.5:80\`).
-2. Configure rules to start automatically with sessions or toggle them manually on demand.
-3. Review uptime metrics and port conflict warnings in the rule list.
+### How to use it
+1. Click "Add Rule": pick a local port (e.g. \`8080\`) and the destination (e.g. \`10.0.0.5:80\`).
+2. Let rules start automatically with the session, or switch them on only when needed.
+3. The rule list shows running time and warns you about port conflicts.
 
-### Tips & Notes
-- Port forwarding stacks seamlessly with multi-hop jump hosts and relays, reaching deep into isolated multi-tier networks.`,
+### Tips
+- Combines with jump hosts and relays, so even deeply buried servers are reachable.`,
       },
       {
         id: 'network-zk',
-        title: 'ZooKeeper Distributed Node Browser',
+        title: 'ZooKeeper browser',
         badge: 'ZK',
-        keywords: ['ZooKeeper', 'ZK', 'znode', 'Dubbo', 'ACL', 'Watcher', 'Stat'],
-        content: `### Overview
-A centralized management console for ZooKeeper clusters featuring lazy-loaded znode trees, data editing, Stat metrics inspection, ACLs, and live watchers.
+        keywords: ['zookeeper', 'zk', 'znode', 'dubbo', 'acl'],
+        content: `### What it does
+Browse and edit a ZooKeeper cluster's data tree: inspect nodes, change their data, manage access rights, and create or delete nodes.
 
-### Entry & Shortcuts
-- **Enter ZK**: Click "ZK Hosts" to manage cluster endpoints, then click "ZooKeeper" to explore trees.
+### Where to find it
+- "ZK Hosts" on the sidebar to save cluster addresses; the "ZooKeeper" page to browse them.
 
-### Core Steps
-1. **Tree Exploration**: Lazy-loads znodes with hierarchy expansion and keyword search.
-2. **Data Inspection**: View and edit payload data in UTF-8 text or raw Hex modes.
-3. **Stat Metadata**: Inspect 11 core attributes including \`czxid\`, \`mzxid\`, \`ctime\`, \`mtime\`, \`version\`, and \`ephemeralOwner\`.
-4. **ACL Controls**: Configure CDRWA permissions (Create, Delete, Read, Write, Admin) visually.
-5. **Create & Delete**: Create persistent, ephemeral, and sequential znodes; delete nodes individually or cascade recursively.
-6. **Dubbo Integration**: Recognizes Dubbo registry URLs and provides an "Open in gRPC" shortcut.
+### How to use it
+1. Expand the tree, or search by keyword.
+2. Click a node to view and edit its data (as text or hex) and check its details — creation and modification times, version and more.
+3. Create nodes (normal, temporary, numbered) or delete a single node or a whole branch; access rights can be edited too.
+4. Login credentials for protected clusters can be saved in the credentials manager.
 
-### Tips & Notes
-- Save digest authentication credentials in the credentials manager to automate authentication on protected clusters.`,
+### Tips
+- Nodes holding Dubbo addresses offer an "Open in gRPC" shortcut.`,
       },
       {
         id: 'network-grpc',
-        title: 'gRPC Server Reflection Debugger',
+        title: 'gRPC testing',
         badge: 'gRPC',
-        keywords: ['gRPC', 'Server Reflection', 'Proto', 'mTLS', 'API Testing', 'Reflection'],
-        content: `### Overview
-A lightweight gRPC interactive test bench supporting official Server Reflection, automated Protobuf payload scaffolding, and mTLS certificate management.
+        keywords: ['grpc', 'api', 'test', 'tls', 'reflection'],
+        content: `### What it does
+Try out a gRPC service without writing a program: see what it offers, fill in a prepared request, and read the answer.
 
-### Entry & Shortcuts
-- **Open Debugger**: Click "gRPC" on the sidebar or click "Open in gRPC" from ZooKeeper Dubbo nodes.
+### Where to find it
+- "gRPC" on the sidebar, or "Open in gRPC" from a ZooKeeper Dubbo node.
 
-### Core Steps
-1. Enter the target gRPC endpoint (e.g. \`127.0.0.1:50051\`).
-2. Click "Fetch Services"; the client introspects all available services and methods via Server Reflection.
-3. Pick a method; the client generates a boilerplate JSON request payload with schema field comments.
-4. **Security**: Toggle TLS, supply custom Server Names, and attach CA certs, client certs, and private keys for mTLS.
-5. Click "Invoke" to review execution latency, status codes, and formatted response JSON.
+### How to use it
+1. Enter the service address (e.g. \`127.0.0.1:50051\`) and click "Fetch Services" to list what is available.
+2. Pick a method — a sample request appears, ready for you to edit.
+3. Click "Invoke" to see the response, the timing and the status.
 
-### Tips & Notes
-- Form inputs and certificate assignments persist across page navigation.`,
+### Tips
+- Secure connections are supported, including client certificates; your entries are remembered when you leave the page.`,
       },
     ],
   },
   {
     id: 'dbworkbench',
-    title: 'Database Workbench (Database)',
+    title: 'Database',
     icon: 'Database',
     sections: [
       {
         id: 'db-connections',
-        title: 'Connection Library & Testing',
-        badge: 'MySQL/PG/DM',
-        keywords: ['Database', 'MySQL', 'PostgreSQL', 'Oracle', 'Dameng', 'DM8', 'Compatibility', 'Connection', 'SSL', 'TLS', 'Read-only'],
-        content: `### Overview
-Built-in connectivity for MySQL, PostgreSQL, Oracle and Dameng DM8 (MySQL/PG use pure-Rust async drivers, Oracle loads ODPI-C at runtime, Dameng uses the vendored pure-Rust DM8 protocol driver). Passwords live in the SQLCipher-encrypted store, with environment tiers and a read-only guard toggle.
+        title: 'Saving database connections',
+        badge: 'DB',
+        keywords: ['database', 'mysql', 'postgresql', 'oracle', 'dameng', 'dm8', 'connection', 'ssl', 'read-only', 'compatibility mode'],
+        content: `### What it does
+Save connections to MySQL, PostgreSQL, Oracle and Dameng DM8 databases, with passwords stored encrypted, a protective read-only mode, and a one-click connection test.
 
-### Entry & Shortcuts
-- **Entry**: Create or edit connections on the "DB Hosts" page in the sidebar.
+### Where to find it
+- The "DB Hosts" page on the sidebar.
 
-### Core Steps
-1. Click "New Connection" and pick an engine (MySQL 3306 / PostgreSQL 5432 / Oracle 1521 / Dameng 5236; the default port is auto-filled).
-2. Fill in host, port, database, username and password; choose an SSL mode:
-   - **Disable**: plaintext;
-   - **Prefer/Require TLS**: encrypted without certificate verification (self-signed intranet certs);
-   - **Verify Full**: validation against system root certificates (managed cloud databases).
-   - **Dameng does not support TLS** (the driver only encrypts login); this selector is disabled for it.
-3. Set the environment tier (dev/test/staging/prod) and the "Read-only session" toggle (on by default: writes are rejected by a backend AST whitelist).
-4. "Test" before saving: connect, fetch the server version, disconnect, and report the round-trip in milliseconds.
+### How to use it
+1. Click "New Connection" and pick the database type — the usual port is filled in for you (MySQL 3306, PostgreSQL 5432, Oracle 1521, Dameng 5236).
+2. Enter the address, database, user name and password; pick an SSL option if the server supports encrypted connections (Dameng doesn't offer one, so the choice is hidden there).
+3. Optionally set the environment (dev/test/staging/prod) and keep "Read-only session" switched on — changes are then refused.
+4. Click "Test" before saving: it connects, reports the server version and the round-trip time in milliseconds.
 
-### Dameng DM8 Notes
-- **Compatibility mode**: whether a Dameng instance is MySQL- or Oracle-compatible is decided server-side by \`COMPATIBLE_MODE\` in \`dm.ini\`; clients cannot switch it. The form's "Compatibility" option only affects the **client-side SQL dialect** (statement splitting, read-only checks, ROWNUM vs LIMIT, FROM DUAL in the starter query). A wrong choice never breaks the connection.
-- **Initial schema**: the "database" field means the default schema after login (Oracle's CURRENT_SCHEMA); it may be left empty.
-- **Catalog tree**: the schema list comes from Dameng's metadata base table \`SYSOBJECTS\` (\`TYPE$ = 'SCH'\`) — users and schemas are separable in Dameng (a schema may be named differently from its owner), so \`ALL_USERS\` would miss independently named business schemas. Tables/views/functions/procedures/sequences use \`ALL_TABLES\` / \`ALL_VIEWS\` / \`ALL_OBJECTS\` / \`ALL_SEQUENCES\`. Compatibility mode only adds to these views.
-- **Zero external dependencies**: the driver is a pure-Rust protocol implementation; no Dameng Instant Client or libdmdpi needed.
-
-### Tips & Notes
-- On edit, an empty password field keeps the stored one (passwords are never echoed back).
-- The read-only guard runs on the backend: writes are rejected even if the frontend is bypassed.`,
+### Tips
+- Editing a saved connection with the password box left empty keeps the old password.
+- Dameng specifics: the MySQL/Oracle "Compatibility" choice only changes how VeloTerm handles its SQL — it never affects whether you can connect; the database box may be left empty; and no extra driver software is needed.`,
       },
       {
         id: 'db-workbench',
-        title: 'SQL Workbench & Catalog Tree',
+        title: 'Writing and running SQL',
         badge: 'SQL',
-        keywords: ['SQL Workbench', 'Query', 'Catalog', 'Schema', 'Cancel', 'Result Sets'],
-        content: `### Overview
-A multi-session tab workbench: a lazily loaded catalog tree on the left (database/schema → object groups: tables / views / materialized views / functions / procedures / triggers / sequences / synonyms / packages / events / rules, with counts and empty groups hidden → columns of tables/views; resizable), a Monaco SQL editor (static completion) and streaming result grids (per-statement tabs, sorting, filtering, TSV copy) on the right.
+        keywords: ['sql', 'query', 'tables', 'run', 'cancel', 'results', 'workbench'],
+        content: `### What it does
+A workspace for SQL: browse the database's tables and objects on the left, write queries on the right, and read results in tidy grids.
 
-Groups follow each engine's capabilities (same sources as the open-source DBeaver implementation): MySQL reads \`information_schema\` TABLES / ROUTINES / TRIGGERS; PostgreSQL uses \`pg_catalog\` (pg_class by relkind for tables/views/materialized views/sequences, pg_proc by prokind for functions/procedures, pg_trigger excluding internal triggers); Oracle and Dameng use \`all_objects\` / the \`SYSOBJECTS\` base table. Double-clicking a function/procedure/sequence/trigger fetches its full definition (\`SHOW CREATE TRIGGER\`, \`pg_get_triggerdef\`, \`all_source\`, and \`DBMS_METADATA.GET_DDL\` respectively).
+### Where to find it
+- Press ▶ on a connection in "DB Hosts", or click + in the workspace and pick a saved connection.
+- Run: \`⌘/Ctrl + Enter\`; the cancel button and the row limit (1,000–50,000) sit on the toolbar.
 
-### Entry & Shortcuts
-- **Entry**: Press ▶ on a connection in "DB Hosts", or click + in the workbench and pick a saved connection.
-- **Run**: ⌘/Ctrl + Enter; cancel and row limit (1,000–50,000) live on the toolbar.
+### How to use it
+1. Expand a database to find its tables, views, functions and more; click a table to see its columns, or double-click it to get a ready-made \`SELECT\` in the editor.
+2. Write one or more statements (separate them with semicolons) and run with \`⌘/Ctrl + Enter\`.
+3. Each statement gets its own result tab — sortable, filterable, copyable. Long queries can be stopped at any moment.
 
-### Core Steps
-1. Connecting loads the catalog tree; expand a database/schema → table/view/function/procedure/sequence groups, then a table to inspect columns and types.
-2. **Double-click a table** to draft a \`SELECT * ... LIMIT 200\` into the editor.
-3. Write SQL (multiple statements split on semicolons; semicolons inside strings/comments are ignored) and run with ⌘/Ctrl+Enter.
-4. The result panel tabs per statement: result grid (sortable/filterable/copyable), DML affected-row counts, and error details; large results stream in 300-row batches.
-5. Cancel long-running queries at any time (the backend streaming loop aborts immediately).
-
-### Tips & Notes
-- Page/tab switches preserve all session state (the workbench stays mounted); closing a tab disconnects.
-- In read-only sessions, writes are intercepted before execution with the reason shown.`,
+### Tips
+- Switching pages keeps everything as it was; closing a tab disconnects. In read-only connections, changes are stopped with a clear explanation.`,
       },
     ],
   },
   {
     id: 'hosts',
-    title: 'Hosts & Asset Management (Hosts & Groups)',
+    title: 'Hosts & groups',
     icon: 'Server',
     sections: [
       {
         id: 'hosts-manage',
-        title: 'Multi-Tier Host Groups & Environments',
+        title: 'Organizing your servers',
         badge: 'Asset',
-        keywords: ['Hosts', 'Assets', 'Groups', 'Environments', 'PROD', 'Labels', 'Config'],
-        content: `### Overview
-A structured server asset management hierarchy supporting unlimited nested groups, fuzzy searching, and environment classifications.
+        keywords: ['hosts', 'servers', 'groups', 'folders', 'prod', 'environment', 'tags'],
+        content: `### What it does
+Keeps all your servers in one tidy list — folders, tags, colors — and lets you mark which ones are production so they get extra protection.
 
-### Entry & Shortcuts
-- **Manage Assets**: Click "Hosts" or "Groups" on the sidebar.
-- **Fast Search**: Use the search bar in the Hosts list to filter by name, IP, tag, or username.
+### Where to find it
+- "Hosts" and "Groups" on the sidebar; the search box filters by name, IP, tag or user name.
 
-### Core Steps
-1. Build hierarchical folder trees in "Groups" (e.g. by region, project, or department).
-2. Add servers in "Hosts": configure label, IP/hostname, SSH port, username, and credentials.
-3. **Environment Tiers**: Tag machines as Dev, Test, Staging, or Prod; tagging as Prod enables safety guard stripes and confirmation barriers.
-4. Right-click host cards to copy connection strings or generate quick launch shortcuts.
+### How to use it
+1. Build a folder tree in "Groups" — by project, region, or however you like.
+2. Add servers in "Hosts": name, address, port, user name and sign-in.
+3. Tag each server's environment as Dev, Test, Staging or Prod — Prod turns on warning stripes and extra confirmations.
+4. Right-click a host to copy its connection details or create a quick-launch shortcut.
 
-### Tips & Notes
-- Assign custom color themes per host so multiple concurrent sessions stand out visually.`,
+### Tips
+- Give hosts their own colors so several open terminals are easy to tell apart.`,
       },
       {
         id: 'hosts-password-history',
-        title: 'Host Password History Vault',
+        title: 'Password history',
         badge: 'Backup',
-        keywords: ['Password History', 'Recover Password', 'Backup', 'Vault'],
-        content: `### Overview
-An automated credential history vault. Every time host passwords are changed manually or through SSH password updates, previous credentials are encrypted and preserved (retaining up to 20 revisions).
+        keywords: ['password', 'history', 'old password', 'restore', 'forgot'],
+        content: `### What it does
+Every time a server's password changes, the previous one is kept (up to 20 of them), so an old password is never lost for good.
 
-### Entry & Shortcuts
-- **View History**: In the host edit form, click the clock icon beside the password field.
+### Where to find it
+- The clock icon next to the password box in the host edit form.
 
-### Core Steps
-1. Click the clock icon next to the password input to expand the history drawer.
-2. The drawer lists past password timestamps and masked values.
-3. Copy historic passwords to your clipboard or click "Restore This Password" to roll back instantly.
+### How to use it
+1. Click the clock icon to open the history list — past dates with masked passwords.
+2. Copy one to the clipboard, or click "Restore This Password" to bring it back.
 
-### Tips & Notes
-- History records remain strictly inside the local encrypted SQLCipher database and are never transmitted to external services.`,
+### Tips
+- The list stays on your own computer, stored encrypted.`,
       },
       {
         id: 'hosts-ready-hook',
-        title: 'SSH Terminal Ready Hook',
+        title: 'Running a command right after connecting',
         badge: 'Hook',
-        keywords: ['Ready Hook', 'Auto Command', 'Init', 'Delay Injection'],
-        content: `### Overview
-Automatically dispatches designated commands to the remote session once the SSH handshake completes and initial screen output settles.
+        keywords: ['ready hook', 'auto command', 'after connect', 'startup'],
+        content: `### What it does
+VeloTerm can type a command for you automatically each time a connection becomes ready — for example jumping into the project folder or checking a service's status.
 
-### Entry & Shortcuts
-- **Setup**: In host configuration, expand "Advanced Options" -> "Ready Hook".
+### Where to find it
+- Host settings → "Advanced Options" → "Ready Hook".
 
-### Core Steps
-1. Select a saved command from your "Commands Library" (e.g. loading environment modules, navigating to project folders, checking status).
-2. Save the host and connect.
-3. The client waits for the connection to establish and injects the command after 500ms of initial output silence.
+### How to use it
+1. Pick one of the commands from your Command Library.
+2. Save the host and connect — the command runs by itself once the welcome text has settled.
 
-### Tips & Notes
-- The 500ms quiet window prevents race conditions that could swallow commands during MOTD printing or cause duplicate echoes.`,
+### Tips
+- It waits for the screen to go quiet first, so the command isn't swallowed by the server's welcome banner.`,
       },
     ],
   },
   {
     id: 'commands',
-    title: 'Commands Library & Global Palette',
+    title: 'Command library',
     icon: 'TerminalSquare',
     sections: [
       {
         id: 'commands-library',
-        title: 'Command Library & Parameterized Templates',
+        title: 'Built-in command library',
         badge: 'Library',
-        keywords: ['Command Library', 'Templates', 'Placeholders', 'Prebuilt Commands', 'Snippets'],
-        content: `### Overview
-A centralized command knowledge base containing 192 pre-verified commands from official GNU and Microsoft manuals, with dynamic parameter templates via \`{{param}}\`.
+        keywords: ['commands', 'library', 'templates', 'snippets', 'run', 'placeholders'],
+        content: `### What it does
+A searchable collection of 192 ready-made commands — Linux and Windows — each explained in plain words. You can add your own, with fill-in-the-blank spots.
 
-### Entry & Shortcuts
-- **Open Library**: Click "Commands" on the sidebar.
+### Where to find it
+- "Commands" on the sidebar.
 
-### Core Steps
-1. Explore 192 built-in commands covering Linux files, text, system, networking, and Windows cmd operations.
-2. **Create Templates**: Use double curly braces to declare input placeholders (e.g. \`docker logs -n {{lines}} {{container}}\`).
-3. **Execute**: Click "Run" on any card to open a parameter popup, then send to the active terminal or execute in the background.
-4. Export your command library as JSON or batch import curated command sets.
+### How to use it
+1. Browse or search, then click "Run" on a card.
+2. A small form asks for the blanks — e.g. \`docker logs -n {{lines}} {{container}}\` — fill them in.
+3. Send the command to the terminal, or run it in the background. Your collection can be exported to a file and re-imported elsewhere.
 
-### Tips & Notes
-- Built-in commands feature verified citations and safety flags, warning you before running destructive commands.`,
+### Tips
+- Built-in entries carry verified sources and safety flags, warning you before a destructive command runs.`,
       },
       {
         id: 'commands-palette',
-        title: 'Global Command Palette',
+        title: 'Quick command search',
         badge: 'Palette',
-        keywords: ['Command Palette', 'Quick Search', 'Shortcut', 'Launcher'],
-        content: `### Overview
-A modern global launcher modal inspired by VS Code. Press a shortcut from anywhere in the app to search and execute commands instantly.
+        keywords: ['command palette', 'quick search', 'launcher', '⌘k'],
+        content: `### What it does
+A search box that finds and runs any command from anywhere in the app — no clicking through pages needed.
 
-### Entry & Shortcuts
-- **Open Shortcut**: Press \`⌘K\` (macOS) / \`Ctrl+K\` (Windows) globally.
+### Where to find it
+- \`⌘K\` (Mac) / \`Ctrl+K\` (Windows), anywhere in the app.
 
-### Core Steps
-1. Press \`⌘K\` / \`Ctrl+K\` anywhere in the application to summon the centered search palette.
-2. Type keywords to match against command titles and syntax.
-3. Use Arrow keys to navigate results, press Enter to dispatch to the active terminal, and press Esc to dismiss.
+### How to use it
+1. Press the shortcut and type a few words — titles and command text are searched.
+2. Move with the arrow keys, press Enter to send to the terminal, Esc to close.
 
-### Tips & Notes
-- Supports in-place parameter filling without closing the palette window.`,
+### Tips
+- Fill-in blanks can be completed right inside the search window.`,
       },
     ],
   },
   {
     id: 'tools',
-    title: 'Windows Embedded Toolchain (Windows BusyBox)',
+    title: 'Built-in tools (Windows only)',
     icon: 'Wrench',
     sections: [
       {
         id: 'tools-coreutils',
-        title: '131 Built-in Commands via Single Binary',
+        title: 'Linux commands built into Windows',
         badge: 'Coreutils',
-        keywords: ['BusyBox', 'Coreutils', 'Windows', 'ls', 'grep', 'sed', 'awk', 'Single Binary'],
-        content: `### Overview
-> **Note: This module is active only on Windows.**
-Brings a comprehensive Unix toolkit to Windows by compiling mainstream POSIX utilities into a single, self-contained \`coreutils.exe\`.
+        keywords: ['windows', 'linux commands', 'ls', 'grep', 'sed', 'awk', 'curl'],
+        content: `### What it does
+> Windows only.
+On Windows, VeloTerm brings 130+ familiar Linux commands along — \`ls\`, \`cat\`, \`grep\`, \`sed\`, \`find\`, \`tar\`, \`curl\`, \`tree\`, \`ps\`, \`top\` and many more — with nothing to install.
 
-### Entry & Shortcuts
-- **Usage**: Type command names directly into VeloTerm's local Windows terminal.
+### Where to find it
+- Just open a local terminal and type them.
 
-### Core Steps
-1. Open a local terminal and run standard Unix commands:
-   - Basics: \`ls\`, \`cat\`, \`grep\`, \`sed\`, \`find\`, \`tar\`, \`curl\`, \`wget\`, \`tree\`...
-   - Text Processing: \`head\`, \`tail\`, \`cut\`, \`sort\`, \`uniq\`, \`wc\`, \`tr\`, \`split\`...
-   - System Monitoring: \`ps\`, \`top\`, \`df\`, \`du\`, \`free\`, \`uptime\`, \`which\`...
-2. Ready out of the box without requiring Git Bash, Cygwin, or MSYS2.
+### How to use it
+1. Open a local terminal (the "+" button or the new-terminal shortcut).
+2. Type any of the built-in commands exactly as you would on a Linux server — for listing, searching, packing, downloading and more.
 
-### Tips & Notes
-- The BusyBox architecture maintains a tiny footprint, instant startup, and strict GNU command-line compatibility.`,
+### Tips
+- No Git Bash, Cygwin or anything else is needed — it all works out of the box.`,
       },
       {
         id: 'tools-enhanced',
-        title: 'Enhanced Utilities (rg / fzf / jq / yq / nmap / vim)',
-        badge: 'Heavy',
-        keywords: ['ripgrep', 'fzf', 'jq', 'yq', 'nmap', 'vim', 'bc', 'qalc', 'openssl'],
-        content: `### Overview
-Includes 20+ heavyweight tools compiled directly as native DLLs and statically linked binaries alongside standard coreutils.
+        title: 'Extra tools: search, JSON, vim and more',
+        badge: 'Pro',
+        keywords: ['ripgrep', 'rg', 'fzf', 'jq', 'yq', 'nmap', 'vim', 'bc', 'qalc', 'openssl', 'zoxide'],
+        content: `### What it does
+> Windows only.
+Beyond the basics, favorite power tools are included: \`rg\` for lightning-fast content search, \`fzf\` as an interactive finder, \`jq\` and \`yq\` for JSON and YAML, \`nmap\`/\`ncat\`/\`nping\` for network checks, the complete \`openssl\` toolkit, \`vim\`, the calculators \`bc\` and \`qalc\`, and \`zoxide\` for jumping to folders you visit often.
 
-### Entry & Shortcuts
-- **Usage**: Run directly from the local cmd prompt.
+### Where to find it
+- Run them by name in a local terminal.
 
-### Core Steps
-1. **Search & Fuzzy Find**: Built-in \`rg\` (ripgrep) and interactive terminal fuzzy-finder \`fzf\`.
-2. **Data Parsing**: C-native \`jq\` 1.8.2 and Go-built \`yq\` v4.54.1.
-3. **Network Scanning**: Official MSVC builds of \`nmap\` 7.992 (with delay-load fallback to connect scanning if Npcap is absent), \`ncat\`, \`nping\`, and complete \`openssl\` CLI.
-4. **Console Editing**: Built-in official VIMDLL MSVC build of \`vim\` 9.2 with stripped runtime files; run \`vim <file>\` to edit right inside the terminal.
-5. **Calculators & Navigation**: High-precision \`bc\`, symbolic calculator \`qalc\`, and \`zoxide\` smart directory jumper.
+### How to use it
+1. Open a local terminal.
+2. Run any tool by name — for example \`vim <file>\` edits a file right inside the terminal.
 
-### Tips & Notes
-- All enhanced binaries are patched for clean UTF-8 console output, avoiding garbled characters.`,
+### Tips
+- All of them are tuned to display text cleanly, without garbled characters.`,
       },
       {
         id: 'tools-hardlinks',
-        title: 'NTFS Hardlinks & Automatic PATH Injection',
-        badge: 'NTFS',
-        keywords: ['Hardlinks', 'Short Names', 'PATH', 'tools', 'Automatic'],
-        content: `### Overview
-Automatically provisions NTFS hardlinks for all built-in commands inside the application's \`tools/\` directory and prepends it to the terminal PATH.
+        title: 'Automatic setup of the built-in commands',
+        badge: 'Auto',
+        keywords: ['automatic', 'tools folder', 'setup', 'short names'],
+        content: `### What it does
+> Windows only.
+VeloTerm prepares every built-in command by itself when it starts, so they are all ready to use by their short names — zero setup for you.
 
-### Entry & Shortcuts
-- **Operation**: Runs automatically during VeloTerm startup.
+### Where to find it
+- Nothing to find — it happens automatically at startup.
 
-### Core Steps
-1. On boot, the app checks file identity and links over 130 command short names (e.g. \`ls.exe\`, \`grep.exe\` pointing to \`coreutils.exe\`).
-2. Prepends the \`tools/\` directory to the terminal child process \`PATH\`.
-3. Use short command names seamlessly in cmd without referencing host binaries.
+### How to use it
+1. Open a local terminal and type any command name (\`ls\`, \`grep\`, ...) — it simply works.
+2. After a VeloTerm upgrade, the command set refreshes itself.
 
-### Tips & Notes
-- Link reconciliation is idempotent, updating only after application version upgrades.`,
+### Tips
+- The commands live in the app's \`tools\` folder; you never need to touch it.`,
       },
     ],
   },
   {
     id: 'settings',
-    title: 'System Settings & Security (Settings & Safety)',
+    title: 'Settings & security',
     icon: 'ShieldCheck',
     sections: [
       {
         id: 'settings-theme',
-        title: 'Theme Appearances & Design Tokens',
+        title: 'Appearance',
         badge: 'Theme',
-        keywords: ['Theme', 'Dark', 'Light', 'Font Size', 'UI Scaling'],
-        content: `### Overview
-A unified interface design token system supporting Dark, Light, and System modes, with coordinated terminal and editor palettes.
+        keywords: ['theme', 'dark', 'light', 'font size', 'colors', 'terminal colors'],
+        content: `### What it does
+Switch between dark and light looks, and adjust how large text is across the whole app.
 
-### Entry & Shortcuts
-- **Open Settings**: Click the gear icon at the bottom-left of the sidebar, or press \`⌘,\` (macOS) / \`Ctrl+,\` (Windows).
+### Where to find it
+- The gear icon at the bottom-left, or \`⌘,\` (Mac) / \`Ctrl+,\` (Windows), then "Appearance".
 
-### Core Steps
-1. Open "Settings" -> "Appearance": choose Dark, Light, or System.
-2. **UI Scaling**: Adjust the global font scale; all cards, sidebars, and forms scale proportionally.
-3. **Terminal Palettes**: Customize ANSI 16-color schemes per host, accurately reflected in recording and playback.
+### How to use it
+1. Choose Dark, Light, or follow the System setting.
+2. Adjust the font size — menus, cards and forms all scale with it.
+3. Terminal colors can be customized per server, and recordings replay with those same colors.
 
-### Tips & Notes
-- Monaco Editor, xterm instances, and code previewers update theme styles simultaneously in the same frame without reloading.`,
+### Tips
+- Everything changes instantly — no restart needed.`,
       },
       {
         id: 'settings-sidebar',
-        title: 'Sidebar Navigation Visibility & Reordering',
+        title: 'Customizing the sidebar',
         badge: 'Sidebar',
-        keywords: ['Sidebar', 'Menu Customization', 'Drag Reorder', 'Collapse'],
-        content: `### Overview
-Customizable navigation sidebar allowing you to hide rarely used screens and drag to reorder navigation icons.
+        keywords: ['sidebar', 'menu', 'reorder', 'hide', 'collapse', 'width'],
+        content: `### What it does
+Hide the icons you never use, put the rest in your favorite order, and resize the sidebar to taste.
 
-### Entry & Shortcuts
-- **Collapse/Expand Sidebar**: Click the top-left toggle or press \`⌘B\` (macOS) / \`Ctrl+B\` (Windows).
-- **Customize**: Open "Settings" -> "Sidebar Visibility".
+### Where to find it
+- Collapse/expand: the toggle at the top-left, or \`⌘B\` (Mac) / \`Ctrl+B\` (Windows).
+- Customize: Settings → "Sidebar Visibility".
 
-### Core Steps
-1. In the sidebar visibility table, toggle checkboxes to show or hide modules (e.g. gRPC, ZooKeeper, Relays).
-2. Drag row handles up and down to reorder icons; the sidebar updates and persists changes immediately.
-3. **Resize Width**: Hover over the right edge of the sidebar and drag horizontally to adjust width.
+### How to use it
+1. Tick or untick pages (gRPC, ZooKeeper, Relays, ...) to show or hide them.
+2. Drag rows up and down to reorder — changes are saved immediately.
+3. Drag the sidebar's right edge to change its width.
 
-### Tips & Notes
-- The "Settings" icon remains permanently pinned at the bottom to guarantee access to preferences.`,
+### Tips
+- The Settings icon always stays pinned at the bottom, so you can't lock yourself out.`,
       },
       {
         id: 'settings-logging',
-        title: 'Runtime Log Levels & Physical Log Inspection',
+        title: 'Logs for troubleshooting',
         badge: 'Log',
-        keywords: ['Log Level', 'Troubleshooting', 'Debug', 'Trace', 'Log Path'],
-        content: `### Overview
-Change log verbosity dynamically at runtime and locate on-disk diagnostic log files with a single click.
+        keywords: ['log', 'log level', 'debug', 'troubleshooting', 'log file'],
+        content: `### What it does
+For troubleshooting, VeloTerm can write more detailed log files and show you exactly where they are on your computer.
 
-### Entry & Shortcuts
-- **Action**: Open "Settings" -> "Diagnostics & Logs".
+### Where to find it
+- Settings → "Diagnostics & Logs".
 
-### Core Steps
-1. Switch between \`Trace\`, \`Debug\`, \`Info\`, \`Warn\`, and \`Error\` from the dropdown without restarting.
-2. View the absolute filesystem path of the current log file (e.g. \`~/Library/Logs/veloterm/\` on macOS).
-3. Click "Reveal in File Manager" to open the log directory directly.
+### How to use it
+1. Pick a detail level from the dropdown — Info for everyday, Debug or Trace when hunting a problem.
+2. Read the log file's location, or click "Reveal in File Manager" to jump straight to the folder.
+3. Level changes take effect immediately; no restart.
 
-### Tips & Notes
-- Log entries follow standardized ISO timestamps, level markers, and module tags for easy support sharing.`,
+### Tips
+- Log lines carry timestamps and topic labels, which makes them easy to share with support.`,
       },
       {
         id: 'settings-known-hosts',
-        title: 'Known Hosts Key Fingerprint Management',
+        title: 'Trusted servers',
         badge: 'Security',
-        keywords: ['Known Hosts', 'Fingerprint', 'SSH Security', 'Man-in-the-Middle', 'Reset Keys'],
-        content: `### Overview
-Manage trusted host public key fingerprints and key types to protect against MITM attacks or handle host re-installations.
+        keywords: ['known hosts', 'fingerprint', 'security', 'revoke', 'first connection'],
+        content: `### What it does
+The list of servers you have told VeloTerm to trust. It protects you if a server's identity suddenly changes, and lets you tidy up after a server has been rebuilt.
 
-### Entry & Shortcuts
-- **Action**: Open "Settings" -> "Security & Trust".
+### Where to find it
+- Settings → "Security & Trust".
 
-### Core Steps
-1. Inspect saved host IP, port, key algorithm (e.g. \`ssh-ed25519\`), and full SHA-256 fingerprints.
-2. If a server is re-installed, locate its entry and click "Revoke" to clear stale fingerprints cleanly.
-3. Click "Clear All Fingerprints" during network troubleshooting if needed.
+### How to use it
+1. Review the saved servers: address, key type (e.g. \`ssh-ed25519\`) and SHA-256 fingerprint.
+2. After a server is reinstalled, find its entry and click "Revoke" to clear the outdated fingerprint.
+3. "Clear All Fingerprints" empties the whole list if you are troubleshooting connections.
 
-### Tips & Notes
-- Connecting to unknown fingerprints always triggers an interactive confirmation prompt.`,
+### Tips
+- Connecting to a server that isn't on the list yet always asks you to confirm first.`,
       },
       {
         id: 'settings-encryption',
-        title: 'SQLCipher 256-Bit Encrypted Storage Architecture',
-        badge: 'Cipher',
-        keywords: ['SQLCipher', 'Encryption', 'AES-256', 'Credential Security', 'Window Restore'],
-        content: `### Overview
-Hardened data security. All credentials, private keys, session drafts, command histories, and window positions are stored in a local AES-256 encrypted SQLite database.
+        title: 'Your data is stored encrypted',
+        badge: 'Safe',
+        keywords: ['encryption', 'security', 'passwords', 'data protection', 'window layout'],
+        content: `### What it does
+Passwords, private keys, drafts, history and even your window size and position are saved on your computer in strongly encrypted form — readable only by VeloTerm.
 
-### Entry & Shortcuts
-- **Operation**: Transparent automated background encryption.
+### Where to find it
+- Always on — there is nothing to set up.
 
-### Core Steps
-1. Unlocks \`veloterm.db\` in the application data directory on startup.
-2. Sensitive fields (passwords, private keys, relay secrets, drafts) are encrypted before hitting disk, protecting against cold-disk extraction.
-3. **Window Geometry Restoration**: Window position and size changes are debounced and committed to SQLite, restoring your exact layout upon reopening.
+### How to use it
+1. Everything sensitive is scrambled (AES-256) before it is written to disk.
+2. Quit and reopen VeloTerm: your window reappears exactly where and how you left it.
 
-### Tips & Notes
-- Table creations and migrations are strictly idempotent, guaranteeing safe and lossless upgrades across versions.`,
+### Tips
+- Even someone who copied the app's data files couldn't read your passwords from them.`,
       },
     ],
   },
