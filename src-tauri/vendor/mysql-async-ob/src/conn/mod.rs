@@ -1083,6 +1083,8 @@ impl Conn {
     ///
     /// * It reads and stores `wait_timeout` in the connection unless it's already in [`Opts`]
     ///
+    /// * OB Oracle mode skips the MySQL-dialect probe query entirely (see below)
+    ///
     async fn read_settings(&mut self) -> Result<()> {
         enum Action {
             Load(Cfg),
@@ -1149,20 +1151,30 @@ impl Conn {
             }
         }
 
+        // OB Oracle 模式下不发这条 MySQL 方言探测查询（ORA-00900，实测
+        // `SELECT @@max_allowed_packet,@@wait_timeout` 被拒「near
+        // '@wait_timeout'」）——直接用默认值，与 NLS 分支同一段 Oracle
+        // 专属逻辑遥相呼应；MySQL 模式行为不变。
+        let oracle_mode = self.inner.ob_is_oracle_mode;
+
         let mut actions = vec![
             if let Some(x) = self.opts().max_allowed_packet() {
                 Action::Apply(CfgData::MaxAllowedPacket(x))
+            } else if oracle_mode {
+                Action::Apply(CfgData::MaxAllowedPacket(DEFAULT_MAX_ALLOWED_PACKET))
             } else {
                 Action::Load(Cfg::MaxAllowedPacket)
             },
             if let Some(x) = self.opts().wait_timeout() {
                 Action::Apply(CfgData::WaitTimeout(x))
+            } else if oracle_mode {
+                Action::Apply(CfgData::WaitTimeout(DEFAULT_WAIT_TIMEOUT))
             } else {
                 Action::Load(Cfg::WaitTimeout)
             },
         ];
 
-        if self.inner.opts.prefer_socket() && self.inner.socket.is_none() {
+        if self.inner.opts.prefer_socket() && self.inner.socket.is_none() && !oracle_mode {
             actions.push(Action::Load(Cfg::Socket))
         }
 
