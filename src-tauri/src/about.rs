@@ -22,8 +22,9 @@ use tauri::{
 };
 
 pub const ABOUT_WINDOW_LABEL: &str = "about";
-/// 窗口 = 256×340 卡片 + 四周 22px 出血边距（透明区）：给卡片的 CSS 投影
-/// 留出绘制空间（阴影画在窗口内不会被裁），立体感不依赖系统阴影
+/// 窗口初始尺寸 = 256×卡片内容高 + 四周 22px 出血边距（透明区）。仅是建窗
+/// 初始值——卡片高度是内容驱动的，前端 AboutWindow mount 后实测卡片尺寸
+/// setSize 自适应并重新居中（webview 透明区多余部分不可见，无闪烁）
 const ABOUT_WINDOW_WIDTH: f64 = 300.0;
 const ABOUT_WINDOW_HEIGHT: f64 = 384.0;
 /// 主窗淡化/关闭联动事件（payload: bool = 关于窗是否可见）

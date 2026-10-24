@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow, Window } from '@tauri-apps/api/window';
+import { LogicalSize, PhysicalPosition } from '@tauri-apps/api/dpi';
 import { emit } from '@tauri-apps/api/event';
 import { AboutCard } from '@/components/about/AboutCard';
 
 /** 出场动画时长（与 styles.css 的 .about-card-out 保持一致，关窗延时对齐） */
 const ABOUT_EXIT_ANIMATION_MS = 220;
+
+/** 卡片四周的透明出血边距（与容器 p-[22px] 一致）：窗口 = 卡片 + 2×出血 */
+const ABOUT_BLEED_PX = 22;
 
 /**
  * 「关于」独立窗口内容（macOS 路径；对齐 ZCode aboutWindow.ts 的自绘卡片）。
@@ -22,7 +26,41 @@ const ABOUT_EXIT_ANIMATION_MS = 220;
  */
 export function AboutWindow() {
   const okButtonRef = useRef<HTMLButtonElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const [isExiting, setIsExiting] = useState(false);
+
+  // 窗口尺寸随卡片内容自适应（卡片高度是内容驱动的）：mount 后实测卡片
+  // 尺寸，窗口 = 卡片 + 2×出血；字体就绪后再校一遍（webfont 换行高度会变）。
+  // 改完尺寸重新居中到主窗（与 Rust 建窗同一算式）——窗口居中锚点变了。
+  // Rust 建窗的 300×384 只是初始值，webview 透明区多余部分不可见、无闪烁
+  useEffect(() => {
+    const card = cardRef.current;
+    const win = getCurrentWindow();
+    if (!card) return;
+    let cancelled = false;
+    const fit = async () => {
+      const rect = card.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0 || cancelled) return;
+      const w = Math.ceil(rect.width) + ABOUT_BLEED_PX * 2;
+      const h = Math.ceil(rect.height) + ABOUT_BLEED_PX * 2;
+      await win.setSize(new LogicalSize(w, h));
+      const main = await Window.getByLabel('main');
+      if (!main || cancelled) return;
+      const factor = await win.scaleFactor();
+      const pos = await main.outerPosition();
+      const size = await main.outerSize();
+      const x = pos.x + (size.width - w * factor) / 2;
+      const y = pos.y + (size.height - h * factor) / 2;
+      await win.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
+    };
+    void fit();
+    document.fonts?.ready.then(() => {
+      void fit();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 关闭编排（对齐 ZCode Dialog 的同步退场）：卡片滑退与主窗遮罩淡出**同帧**
   // 开始（先广播 about-visibility=false 再播退场动画，动画结束后才真正关窗）。
@@ -58,12 +96,12 @@ export function AboutWindow() {
 
   return (
     // 透明出血容器：窗口比卡片大 22px×2，给卡片投影留绘制空间（窗口内不会被裁），
-    // 整个出血区也允许拖动窗口
+    // 整个出血区也允许拖动窗口；尺寸由上方 fit 逻辑随卡片内容自适应
     <div
       data-tauri-drag-region
       className="flex h-full w-full items-center justify-center p-[22px]"
     >
-      <div data-tauri-drag-region>
+      <div data-tauri-drag-region ref={cardRef}>
         <AboutCard
           isExiting={isExiting}
           onClose={closeWithAnimation}
