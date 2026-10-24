@@ -27,7 +27,7 @@ pub mod oracle_messages;
 pub mod sqlsplit;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -71,6 +71,16 @@ pub struct DbSessionMeta {
     pub env_level: String,
 }
 
+/// 事务状态快照（前端工具栏展示待提交修改数与影响行数）。
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TxStatus {
+    pub auto_commit: bool,
+    pub in_transaction: bool,
+    pub statement_count: usize,
+    pub affected_rows: u64,
+}
+
 /// 一个 DB 会话 = 引擎连接（执行互斥）+ 取消信号组合 + 元信息（切库时更新）。
 pub struct DbSession {
     /// RwLock：读多写少，切换数据库（db_use_database）时写更新
@@ -85,6 +95,29 @@ pub struct DbSession {
     /// Oracle 执行后追加 commit、PG/SQLite 检查事务状态决定是否 BEGIN），
     /// 状态位在这里统一管理，前端可见
     pub auto_commit: Arc<AtomicBool>,
+    /// 当前是否处于未提交的事务中
+    pub in_transaction: Arc<AtomicBool>,
+    /// 当前事务内累计执行的修改语句数（DML/DDL）
+    pub pending_tx_statements: Arc<AtomicUsize>,
+    /// 当前事务内累计影响的行数
+    pub pending_tx_rows: Arc<AtomicU64>,
+}
+
+impl DbSession {
+    pub fn get_tx_status(&self) -> TxStatus {
+        TxStatus {
+            auto_commit: self.auto_commit.load(Ordering::Relaxed),
+            in_transaction: self.in_transaction.load(Ordering::Relaxed),
+            statement_count: self.pending_tx_statements.load(Ordering::Relaxed),
+            affected_rows: self.pending_tx_rows.load(Ordering::Relaxed),
+        }
+    }
+
+    pub fn reset_tx_status(&self) {
+        self.in_transaction.store(false, Ordering::Relaxed);
+        self.pending_tx_statements.store(0, Ordering::Relaxed);
+        self.pending_tx_rows.store(0, Ordering::Relaxed);
+    }
 }
 
 /// DB 会话表（tauri manage 注入）。
@@ -257,6 +290,9 @@ pub async fn db_connect(
         cancel: Arc::new(tokio::sync::Notify::new()),
         cancelled,
         auto_commit: Arc::new(AtomicBool::new(true)),
+        in_transaction: Arc::new(AtomicBool::new(false)),
+        pending_tx_statements: Arc::new(AtomicUsize::new(0)),
+        pending_tx_rows: Arc::new(AtomicU64::new(0)),
     });
     state
         .sessions
@@ -329,7 +365,12 @@ pub enum QueryEvent {
         elapsed_ms: u64,
     },
     StatementError { index: usize, message: String },
-    Done { elapsed_ms: u64, cancelled: bool },
+    Done {
+        elapsed_ms: u64,
+        cancelled: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tx_status: Option<TxStatus>,
+    },
 }
 
 /// 执行 SQL（可多语句；sqlparser 分割，失败降级分号分割）。
@@ -390,6 +431,33 @@ pub async fn db_query(
         .map(|s| (s.sql, true))
         .collect();
     run_statements_streaming(&session, &on_event, &statements, row_cap, total_budget).await
+}
+
+fn is_commit_sql(sql: &str) -> bool {
+    let s = sql.trim_start().to_ascii_uppercase();
+    s == "COMMIT"
+        || s.starts_with("COMMIT ")
+        || s.starts_with("COMMIT;")
+        || s.starts_with("COMMIT\n")
+        || s.starts_with("COMMIT WORK")
+}
+
+fn is_rollback_sql(sql: &str) -> bool {
+    let s = sql.trim_start().to_ascii_uppercase();
+    s == "ROLLBACK"
+        || s.starts_with("ROLLBACK ")
+        || s.starts_with("ROLLBACK;")
+        || s.starts_with("ROLLBACK\n")
+        || s.starts_with("ROLLBACK WORK")
+}
+
+fn is_begin_sql(sql: &str) -> bool {
+    let s = sql.trim_start().to_ascii_uppercase();
+    s == "BEGIN"
+        || s.starts_with("BEGIN ")
+        || s.starts_with("BEGIN;")
+        || s.starts_with("BEGIN\n")
+        || s.starts_with("START TRANSACTION")
 }
 
 /// db_query / db_explain 共用的流式执行循环：逐条执行 + Channel 事件 +
@@ -479,20 +547,40 @@ async fn run_statements_streaming(
 
         match tokio::time::timeout(remaining, exec).await {
             Ok(Ok(summary)) => {
-                // Oracle 自动提交：DML/DDL 语句成功后（有 affected 或无结果集）
-                // 且 auto_commit=true 时追加协议级 commit。Oracle 默认不自动
-                // 提交（DML 开事务但不 COMMIT），不补的话数据一直挂着——
-                // 用户看到"执行成功"但其他会话看不到数据
-                if auto_commit
-                    && summary.affected.is_some()
-                    && matches!(&*engine, DbEngine::Oracle(_))
-                    && let DbEngine::Oracle(conn) = &mut *engine
-                {
-                    if let Err(e) = conn.commit().await {
-                        let _ = on_event.send(QueryEvent::StatementError {
-                            index,
-                            message: format!("自动提交失败：{e}（事务保持打开）"),
-                        });
+                let is_commit = is_commit_sql(sql);
+                let is_rollback = is_rollback_sql(sql);
+                let is_begin = is_begin_sql(sql);
+
+                if is_commit || is_rollback {
+                    session.reset_tx_status();
+                } else if is_begin {
+                    session.in_transaction.store(true, Ordering::Relaxed);
+                } else if auto_commit {
+                    // Oracle 自动提交：DML/DDL 语句成功后（有 affected 或无结果集）
+                    // 且 auto_commit=true 时追加协议级 commit。Oracle 默认不自动
+                    // 提交（DML 开事务但不 COMMIT），不补的话数据一直挂着——
+                    // 用户看到"执行成功"但其他会话看不到数据
+                    if summary.affected.is_some()
+                        && matches!(&*engine, DbEngine::Oracle(_))
+                        && let DbEngine::Oracle(conn) = &mut *engine
+                    {
+                        if let Err(e) = conn.commit().await {
+                            let _ = on_event.send(QueryEvent::StatementError {
+                                index,
+                                message: format!("自动提交失败：{e}（事务保持打开）"),
+                            });
+                        }
+                    }
+                    session.reset_tx_status();
+                } else {
+                    // 非自动提交模式：如果执行了数据修改语句（有 affected 统计，或无返回列的 DDL/DML）
+                    let is_modifying = summary.affected.is_some() || summary.columns.is_empty();
+                    if is_modifying {
+                        session.in_transaction.store(true, Ordering::Relaxed);
+                        session.pending_tx_statements.fetch_add(1, Ordering::Relaxed);
+                        if let Some(aff) = summary.affected {
+                            session.pending_tx_rows.fetch_add(aff, Ordering::Relaxed);
+                        }
                     }
                 }
                 if summary.cancelled {
@@ -547,9 +635,16 @@ async fn run_statements_streaming(
         }
     }
 
+    let tx_status = if matches!(&*engine, DbEngine::Redis { .. }) {
+        None
+    } else {
+        Some(session.get_tx_status())
+    };
+
     let _ = on_event.send(QueryEvent::Done {
         elapsed_ms: started.elapsed().as_millis() as u64,
         cancelled: any_cancelled,
+        tx_status,
     });
     Ok(())
 }
@@ -959,15 +1054,30 @@ pub async fn db_set_auto_commit(
     state: State<'_, DbState>,
     session_id: String,
     auto_commit: bool,
-) -> Result<bool, String> {
+) -> Result<TxStatus, String> {
     let session = state.get(&session_id)?;
     let mut engine = session.engine.lock().await;
+    // 从显式事务切回自动提交时，若当前有未提交事务，先提交并复位
+    if auto_commit && session.in_transaction.load(Ordering::Relaxed) {
+        let _ = engine.commit().await;
+        session.reset_tx_status();
+    }
     engine.set_auto_commit(auto_commit).await?;
     session.auto_commit.store(auto_commit, Ordering::Relaxed);
-    Ok(auto_commit)
+    Ok(session.get_tx_status())
 }
 
-/// 查询会话当前的自动提交状态。
+/// 查询会话当前的事务状态与未提交修改统计。
+#[tauri::command]
+pub async fn db_get_tx_status(
+    state: State<'_, DbState>,
+    session_id: String,
+) -> Result<TxStatus, String> {
+    let session = state.get(&session_id)?;
+    Ok(session.get_tx_status())
+}
+
+/// 查询会话当前的自动提交状态（兼容老接口）。
 #[tauri::command]
 pub async fn db_get_auto_commit(
     state: State<'_, DbState>,
@@ -982,10 +1092,12 @@ pub async fn db_get_auto_commit(
 pub async fn db_commit(
     state: State<'_, DbState>,
     session_id: String,
-) -> Result<(), String> {
+) -> Result<TxStatus, String> {
     let session = state.get(&session_id)?;
     let mut engine = session.engine.lock().await;
-    engine.commit().await
+    engine.commit().await?;
+    session.reset_tx_status();
+    Ok(session.get_tx_status())
 }
 
 /// 回滚当前事务。
@@ -993,10 +1105,12 @@ pub async fn db_commit(
 pub async fn db_rollback(
     state: State<'_, DbState>,
     session_id: String,
-) -> Result<(), String> {
+) -> Result<TxStatus, String> {
     let session = state.get(&session_id)?;
     let mut engine = session.engine.lock().await;
-    engine.rollback().await
+    engine.rollback().await?;
+    session.reset_tx_status();
+    Ok(session.get_tx_status())
 }
 
 /// 用表单草稿参数（编辑态密码留空自动从库补）临时建连拉取可选数据库清单，

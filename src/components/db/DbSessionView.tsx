@@ -68,7 +68,7 @@ import {
   dbConnect,
   dbDisconnect,
   dbExplain,
-  dbGetAutoCommit,
+  dbGetTxStatus,
   dbListDatabases,
   dbQuery,
   dbQueryCancel,
@@ -81,6 +81,7 @@ import {
   type DbExplainPlan,
   type DbQueryEvent,
   type DbSessionMeta,
+  type DbTxStatus,
 } from '@/services/dbConnectionsService';
 import { DbObjectTab, type OpenObjectTabRequest } from '@/components/db/DbObjectTab';
 import { cn } from '@/lib/utils';
@@ -317,9 +318,15 @@ export function DbSessionView({
   const [results, setResults] = useState<StatementResult[]>([]);
   const [activeResult, setActiveResult] = useState(0);
   const [rowCap, setRowCap] = useState(5000);
-  // 自动提交（默认 true）：true 每语句自动落库、false 显式事务。
-  // 连接建立时从后端读初始值（后端也默认 true）
-  const [autoCommit, setAutoCommit] = useState(true);
+  // 事务状态（自动提交开关、未提交修改数、累计影响行数）。
+  // 连接建立时从后端读初始值（后端默认 true）
+  const [txStatus, setTxStatus] = useState<DbTxStatus>({
+    autoCommit: true,
+    inTransaction: false,
+    statementCount: 0,
+    affectedRows: 0,
+  });
+  const autoCommit = txStatus.autoCommit;
 
   // 当前数据库下拉（可切换的库清单 + 切换中状态）
   const [databases, setDatabases] = useState<string[]>([]);
@@ -638,9 +645,9 @@ export function DbSessionView({
           setSql((prev) => (prev === 'SELECT 1;' ? 'PING' : prev));
         }
         onBaseTitle(`${sessionMeta.name} · ${connection.host}`);
-        // 连接建立时同步自动提交初始值（后端默认 true，切换库后保持）
-        void dbGetAutoCommit(sessionMeta.sessionId)
-          .then(setAutoCommit)
+        // 连接建立时同步事务状态初始值（后端默认 true，切换库后保持）
+        void dbGetTxStatus(sessionMeta.sessionId)
+          .then(setTxStatus)
           .catch(() => undefined);
         // 可切换库清单与对象树并行拉取
         void dbListDatabases(sessionMeta.sessionId)
@@ -925,6 +932,12 @@ export function DbSessionView({
               elapsedMs: 0,
               error: event.message,
             });
+          }
+          break;
+        }
+        case 'done': {
+          if (event.txStatus) {
+            setTxStatus(event.txStatus);
           }
           break;
         }
@@ -1334,7 +1347,7 @@ export function DbSessionView({
                 const sid = sessionIdRef.current;
                 if (!sid) return;
                 void dbSetAutoCommit(sid, !autoCommit)
-                  .then((v) => setAutoCommit(v))
+                  .then((status) => setTxStatus(status))
                   .catch((e) => setConnectError(String(e)));
               }}
               className={cn(
@@ -1364,26 +1377,59 @@ export function DbSessionView({
               <>
                 <button
                   type="button"
-                  disabled={running}
+                  disabled={running || !txStatus.inTransaction || txStatus.statementCount === 0}
                   onClick={() => {
                     const sid = sessionIdRef.current;
                     if (!sid) return;
-                    void dbCommit(sid).catch((e) => setConnectError(String(e)));
+                    void dbCommit(sid)
+                      .then((status) => setTxStatus(status))
+                      .catch((e) => setConnectError(String(e)));
                   }}
-                  className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-terminal-green hover:bg-hover disabled:opacity-40"
+                  title={
+                    txStatus.inTransaction && txStatus.statementCount > 0
+                      ? t('db.txPendingHint', {
+                          count: txStatus.statementCount,
+                          rows: txStatus.affectedRows,
+                        })
+                      : t('db.txNoPendingHint')
+                  }
+                  className={cn(
+                    'flex items-center gap-1 rounded-md px-2 py-0.5 text-ui-xs font-medium transition-colors select-none',
+                    txStatus.inTransaction && txStatus.statementCount > 0
+                      ? 'bg-terminal-green/15 text-terminal-green hover:bg-terminal-green/25 font-semibold'
+                      : 'bg-surface text-foreground-subtle opacity-40 cursor-not-allowed',
+                  )}
                 >
                   <CheckCircle2 className="size-3" />
-                  {t('db.commitTx')}
+                  <span>
+                    {t('db.commitTx')}
+                    {txStatus.statementCount > 0 ? ` (${txStatus.statementCount})` : ''}
+                  </span>
                 </button>
                 <button
                   type="button"
-                  disabled={running}
+                  disabled={running || !txStatus.inTransaction}
                   onClick={() => {
                     const sid = sessionIdRef.current;
                     if (!sid) return;
-                    void dbRollback(sid).catch((e) => setConnectError(String(e)));
+                    void dbRollback(sid)
+                      .then((status) => setTxStatus(status))
+                      .catch((e) => setConnectError(String(e)));
                   }}
-                  className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-destructive hover:bg-hover disabled:opacity-40"
+                  title={
+                    txStatus.inTransaction && txStatus.statementCount > 0
+                      ? t('db.txPendingHint', {
+                          count: txStatus.statementCount,
+                          rows: txStatus.affectedRows,
+                        })
+                      : t('db.txNoPendingHint')
+                  }
+                  className={cn(
+                    'flex items-center gap-1 rounded-md px-2 py-0.5 text-ui-xs font-medium transition-colors select-none',
+                    txStatus.inTransaction && txStatus.statementCount > 0
+                      ? 'bg-destructive/15 text-destructive hover:bg-destructive/25 font-semibold'
+                      : 'bg-surface text-foreground-subtle opacity-40 cursor-not-allowed',
+                  )}
                 >
                   <Undo2 className="size-3" />
                   {t('db.rollbackTx')}
