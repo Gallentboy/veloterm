@@ -5599,71 +5599,67 @@ impl DbEngine {
                     .map(|c| c.name.clone())
                     .collect();
 
-                if columns.is_empty() {
-                    // DML / DDL / PLSQL 无结果集：affected 走 rows_affected。
-                    // go-ora Connection.ExecContext 的 stmt.Close() 收尾同型：
-                    // 无结果集也要关游标（PLSQL 隐式结果集由 close 逐个处理）
-                    let affected = rs.rows_affected();
-                    let _ = rs.close().await;
-                    return Ok(ExecSummary {
-                        affected: Some(affected),
-                        ..Default::default()
-                    });
-                }
-
                 on_columns(&columns);
                 let mut summary = ExecSummary {
                     columns,
                     ..Default::default()
                 };
 
-                let mut batch: Vec<Vec<String>> = Vec::with_capacity(ROWS_PER_BATCH);
-                let mut maybe_more = false;
-
-                loop {
-                    if summary.rows_read >= max_rows {
-                        maybe_more = true;
-                        break;
+                // 取行段包进 async 块：块内随便 return/break/上抛，块外统一收尾
+                // 关游标（Rust 的 Drop 不能 await，故用「块 + 收尾」代替 defer；
+                // async_scoped/scopeguard 类工具解决的是结构化并发或同步 Drop，
+                // 都不适用于 async 清理）。与 go-ora Connection.QueryContext 的
+                // stmt.Close() 收尾语义一致：成功、截断、取消、出错全关
+                let read_outcome: Result<(), String> = async {
+                    if summary.columns.is_empty() {
+                        // DML / DDL / PLSQL 无结果集：affected 走 rows_affected
+                        summary.affected = Some(rs.rows_affected());
+                        return Ok(());
                     }
-
-                    tokio::select! {
-                        _ = cancel_notify.notified() => {
-                            let _ = rs.break_connection().await;
-                            summary.cancelled = true;
+                    let mut batch: Vec<Vec<String>> = Vec::with_capacity(ROWS_PER_BATCH);
+                    loop {
+                        if summary.rows_read >= max_rows {
+                            summary.truncated = true;
                             break;
                         }
-                        row_res = rs.next_row() => {
-                            match row_res {
-                                Ok(Some(row)) => {
-                                    let cells: Vec<String> =
-                                        row.values().iter().map(|v| v.to_string()).collect();
-                                    batch.push(cells);
-                                    summary.rows_read += 1;
-                                    if batch.len() >= ROWS_PER_BATCH {
-                                        on_rows(std::mem::take(&mut batch));
+                        tokio::select! {
+                            _ = cancel_notify.notified() => {
+                                let _ = rs.break_connection().await;
+                                summary.cancelled = true;
+                                break;
+                            }
+                            row_res = rs.next_row() => {
+                                match row_res {
+                                    Ok(Some(row)) => {
+                                        let cells: Vec<String> =
+                                            row.values().iter().map(|v| v.to_string()).collect();
+                                        batch.push(cells);
+                                        summary.rows_read += 1;
+                                        if batch.len() >= ROWS_PER_BATCH {
+                                            on_rows(std::mem::take(&mut batch));
+                                        }
                                     }
-                                }
-                                Ok(None) => break,
-                                Err(e) => {
-                                    // 出错也先关游标再上抛（go-ora 的 defer
-                                    // stmt.Close() 语义）：否则服务端游标泄漏
-                                    let _ = rs.close().await;
-                                    return Err(format!("Oracle 行读取错误：{}", oracle_err(e)));
+                                    Ok(None) => break,
+                                    Err(e) => {
+                                        return Err(format!(
+                                            "Oracle 行读取错误：{}",
+                                            oracle_err(e)
+                                        ));
+                                    }
                                 }
                             }
                         }
                     }
+                    if !batch.is_empty() {
+                        on_rows(batch);
+                    }
+                    Ok(())
                 }
+                .await;
 
-                if !batch.is_empty() {
-                    on_rows(batch);
-                }
-                if maybe_more {
-                    summary.truncated = true;
-                }
-                // 行数上限截断 / 正常取尽 / 取消 —— 统一关游标（go-ora
-                // stmt.Close 收尾语义：判 cursorID != 0 才发包，幂等）
+                // 统一收尾：无论上面走哪条路径（含 ? 早退）都关游标
                 let _ = rs.close().await;
+                read_outcome?;
                 Ok(summary)
             }
             DbEngine::Redis { conn, db, .. } => {
