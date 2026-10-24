@@ -501,6 +501,14 @@ impl Conn {
         self.inner.version
     }
 
+    /// 服务端是否为 MariaDB（握手版本串是 `5.5.5-…-MariaDB` 形态，解析时置位）。
+    /// 目录/元数据查询据此避开 MySQL 专有或 MariaDB 缺失的字典表——
+    /// 例如 `information_schema.statistics.EXPRESSION` 只有 MySQL 8.0.13+ 有，
+    /// `information_schema.sequences` 只有 MariaDB 有。
+    pub fn is_mariadb(&self) -> bool {
+        self.inner.is_mariadb
+    }
+
     /// Returns connection options.
     pub fn opts(&self) -> &Opts {
         &self.inner.opts

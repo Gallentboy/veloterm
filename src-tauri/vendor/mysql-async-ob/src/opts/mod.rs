@@ -1122,13 +1122,22 @@ impl Opts {
             | CapabilityFlags::CLIENT_DEPRECATE_EOF
             | CapabilityFlags::CLIENT_PLUGIN_AUTH;
 
-        // OB Oracle：告知服务端客户端认识 Oracle 模式（Java JDBC 的
-        // initializeClientCapabilities 基础值含 1<<27 常开）。用 from_bits_retain
-        // 构造——mysql_common 的 CapabilityFlags 未定义此位，直接插会 panic。
-        // OB 能力位（不在 MySQL 标准表中）：
-        //   1<<27 = CLIENT_SUPPORT_ORACLE（Java JDBC 常开上报）
-        //   1<<29 = CLIENT_SUPPORT_LOB_LOCATOR（Java 有 supportLobLocator 选项）
-        out |= CapabilityFlags::from_bits_retain(1 << 27);
+        // OB 能力位（不在 MySQL 标准表中）：1<<27 = CLIENT_SUPPORT_ORACLE
+        //（Java JDBC 的 initializeClientCapabilities 基础值常开）。用
+        // from_bits_retain 构造——mysql_common 未定义此位，直接插会 panic。
+        //
+        // **只对 OB 连接声明**：同一个位在标准 MySQL 8.0.23+ 里是
+        // CLIENT_QUERY_ATTRIBUTES（mysql_common 常量即 0x0800_0000）。两边都
+        // 声明时协商成功，服务端此后要求每条 COM_QUERY 前面带 query-attributes
+        // 段（parameter_count / parameter_set_count / 参数值）；我们发的是裸
+        // SQL，服务端会把 SQL 首字节当参数个数解析，直接返回
+        // ER_MALFORMED_PACKET(1835)「Malformed communication packet」——原生
+        // MySQL 8.0.23+ 上稳定复现（MariaDB 与 5.7 不声明该位故不受影响）。
+        // OB Oracle 侧在 handle_handshake 里还有一次受控 OR，保证这一位被
+        // `server_caps & client_caps` 掩掉后仍能补回。
+        if self.inner.mysql_opts.ob_protocol20 {
+            out |= CapabilityFlags::from_bits_retain(1 << 27);
+        }
 
         if self.inner.mysql_opts.db_name.is_some() {
             out |= CapabilityFlags::CLIENT_CONNECT_WITH_DB;
@@ -1988,7 +1997,7 @@ impl TryFrom<&str> for Opts {
 #[cfg(test)]
 mod test {
     use super::{HostPortOrUrl, MysqlOpts, Opts, Url};
-    use crate::{error::UrlError::InvalidParamValue, SslOpts};
+    use crate::{consts::CapabilityFlags, error::UrlError::InvalidParamValue, OptsBuilder, SslOpts};
 
     use std::{net::IpAddr, net::Ipv4Addr, net::Ipv6Addr, str::FromStr};
 
@@ -2212,6 +2221,38 @@ mod test {
                 port: 55223,
                 resolved_ips: Some(resolved),
             }
+        );
+    }
+
+    /// 非 OB 连接绝不能声明 bit 27：它在 MySQL 8.0.23+ 里是
+    /// CLIENT_QUERY_ATTRIBUTES（mysql_common 常量 0x0800_0000）。一旦协商成功，
+    /// 服务端要求每条 COM_QUERY 前带 query-attributes 段；我们发裸 SQL，SQL
+    /// 首字节会被当成参数个数解析 → ER_MALFORMED_PACKET(1835)。
+    /// 回归：曾经这行是无条件 OR，把原生 MySQL 8 全部打挂。
+    #[test]
+    fn plain_connection_does_not_advertise_bit_27() {
+        let opts = Opts::from(OptsBuilder::default().ip_or_hostname("127.0.0.1"));
+        assert!(
+            !opts
+                .get_capabilities()
+                .contains(CapabilityFlags::from_bits_retain(1 << 27)),
+            "标准 MySQL 连接不应声明 bit 27（CLIENT_QUERY_ATTRIBUTES）"
+        );
+    }
+
+    /// OB 连接（ob_protocol20）仍要上报同一个位，OB 理解为
+    /// CLIENT_SUPPORT_ORACLE——Oracle 租户据此前置判断
+    #[test]
+    fn ob_connection_advertises_bit_27() {
+        let opts = Opts::from(
+            OptsBuilder::default()
+                .ip_or_hostname("127.0.0.1")
+                .ob_protocol20(true),
+        );
+        assert!(
+            opts.get_capabilities()
+                .contains(CapabilityFlags::from_bits_retain(1 << 27)),
+            "OB 连接应声明 bit 27（CLIENT_SUPPORT_ORACLE）"
         );
     }
 }

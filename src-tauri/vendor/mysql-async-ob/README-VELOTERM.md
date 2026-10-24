@@ -38,6 +38,17 @@ libobclient（`src-tauri/vendor/obconnector-c`，LGPL-2.1 C 库）的**纯 Rust 
   与帧 seq 同源（libobclient 的 `compress_pkt_nr`）。
 - **SM3 认证**：`d1 = SM3(pw)`；`d2 = SM3(d1)`；`r = SM3(d2 ‖ salt)`；
   应答 `d1 ⊕ r`（32 字节）；插件名 `ob_sm3_password`。
+- **能力位 bit 27 有个语义冲突（踩过）**：OB 用它表示
+  `CLIENT_SUPPORT_ORACLE`（Java JDBC 常开上报），但标准 MySQL **8.0.23+** 用它
+  表示 `CLIENT_QUERY_ATTRIBUTES`（mysql_common 常量 `0x0800_0000`）。两边都
+  声明时协商成功，服务端此后要求每条 `COM_QUERY` 前带 query-attributes 段
+  （`parameter_count` / `parameter_set_count` / 参数值）；客户端发裸 SQL 时
+  服务端把 SQL 首字节当参数个数解析，直接返回
+  `ER_MALFORMED_PACKET(1835)「Malformed communication packet」`——原生
+  MySQL 8.0.23+ 上稳定复现（MariaDB / 5.7 不声明该位，故不受影响）。
+  因此这一位**只在 `ob_protocol20` 时声明**（`Opts::get_capabilities`），
+  OB Oracle 另有 `handle_handshake` 的受控 OR 兜底；两条单测锁定
+  「原生连接不声明 / OB 连接声明」。
 
 ## 测试
 
