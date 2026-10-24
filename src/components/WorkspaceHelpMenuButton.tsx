@@ -18,7 +18,10 @@ function DropdownItem({
       type="button"
       onClick={onSelect}
       // 条目 hover 圆角与 ZCode 下拉菜单一致（rounded-md）；容器为 rounded-lg
-      className="flex w-full cursor-default items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-menu-hover"
+      // 条目 hover 圆角与 ZCode 下拉菜单一致（rounded-md）；容器为 rounded-lg。
+      // whitespace-nowrap 必须有：下拉是绝对定位收缩容器（可用宽按小按钮算），
+      // 没有 nowrap 时菜单项会折行
+      className="flex w-full cursor-default items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-menu-hover"
     >
       {icon}
       <div className="min-w-0 flex-1">{children}</div>
