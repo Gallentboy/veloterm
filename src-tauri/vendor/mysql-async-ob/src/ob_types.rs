@@ -111,36 +111,39 @@ impl ObInterval {
 }
 
 /// OB 在**文本协议**里对 INTERVAL 回传的其实是结构化二进制（真机 hex
-/// 实证）：
-/// - YEAR TO MONTH（7B）：`[符号1B][years LE u32][months u8][年精度 u8]`
-///   例 `00 01 00 00 00 02 03` = +001-02（YEAR(3)）
-/// - DAY TO SECOND（14B）：`[符号1B][days LE u32][时][分][秒]
-///   [小数秒 LE u32 纳秒][日精度 u8][秒精度 u8]`
+/// 实证，编码对齐 Java `DataTypeUtilities.intervalYmToBytes/
+/// intervalDsToBytes/intervalDsToString`）：
+/// - YEAR TO MONTH（7B）：`[is_negative 0/1][years LE u32][months u8]
+///   [yearStr.length u8]`——例 `00 01 00 00 00 02 03` = +001-02（YEAR(3)）
+/// - DAY TO SECOND（14B）：`[is_negative][days LE u32][时][分][秒]
+///   [fraction LE u32（9 位定点）][dayStr.length][scale]`
 ///   例 `00 02 00 00 00 03 04 05 70 17 00 00 03 06` = +002 03:04:05.000006
-///   （0x1770=6000ns=6µs，尾 03 06 = DAY(3) SECOND(6)）
-/// 符号字节：0 = 正；非 0 按负处理（负值真机待验证，断言失败会常 hex）
+///   （fraction=6000、scale=6：真实小数 = 6000/10^3 = 6µs；JDBC 原文
+///   fractional_second / 10^(9-scale)——不是纳秒，scale≠6 时直接除 1000
+///   会错）
 pub fn parse_ob_interval_binary(bytes: &[u8]) -> Option<ObInterval> {
-    if bytes.len() < 6 {
-        return None;
-    }
     let le32 = |o: usize| -> Option<u32> {
         let b = bytes.get(o..o + 4)?;
         Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     };
     let negative = bytes.first().is_some_and(|b| *b != 0);
     let mut out = ObInterval::zero(negative);
-    if bytes.len() >= 7 && bytes.len() <= 8 {
-        // YEAR TO MONTH：尾字节是年精度元数据，忽略
+    if bytes.len() == 7 {
+        // YEAR TO MONTH（JDBC INTERVALYM_BYTE_SIZE = 7，严格长度）；
+        // 尾字节是 yearStr.length 元数据，忽略
         out.years = le32(1)? as i64;
         out.months = *bytes.get(5)? as i64;
         Some(out)
-    } else if bytes.len() >= 12 {
-        // DAY TO SECOND：尾字节是日/秒精度元数据，忽略；小数秒纳秒→微秒
+    } else if bytes.len() == 14 {
+        // DAY TO SECOND（JDBC intervalDsToString 强制 14）；scale 取尾字节，
+        // 真实小数秒（微秒）= fraction / 10^(9-scale)
         out.days = le32(1)? as i64;
         out.hours = *bytes.get(5)? as i64;
         out.minutes = *bytes.get(6)? as i64;
         out.seconds = *bytes.get(7)? as i64;
-        out.micros = (le32(8)? as i64) / 1000;
+        let fraction = le32(8)? as i64;
+        let scale = (*bytes.get(13)? as i32).clamp(0, 9);
+        out.micros = fraction / 10_i64.pow((9 - scale) as u32);
         Some(out)
     } else {
         None
@@ -326,9 +329,16 @@ mod tests {
             (ds.negative, ds.days, ds.hours, ds.minutes, ds.seconds, ds.micros),
             (false, 2, 3, 4, 5, 6)
         );
-        // 负值（符号字节非 0）与 wire 总入口的字节/文本分派
+        // 负值（is_negative 0/1，JDBC 同款）与 scale≠6 的换算（9 位定点）
         let neg = parse_ob_interval_binary(&[0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x03]).unwrap();
         assert!(neg.negative && neg.years == 1 && neg.months == 2);
+        // SECOND(3)：0.006 秒 → fraction = 6_000_000（9 位定点，0x5B8D80），scale=3
+        let ds3 = parse_ob_interval_binary(&[
+            0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x04, 0x05, 0x80, 0x8d, 0x5b, 0x00, 0x03, 0x03,
+        ])
+        .unwrap();
+        assert_eq!(ds3.micros, 6, "scale=3 时按 fraction/10^6 换算，不能固定除 1000");
+        // wire 总入口的字节/文本分派
         assert_eq!(
             parse_ob_interval_wire(&[0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x03])
                 .map(|v| (v.years, v.months)),
