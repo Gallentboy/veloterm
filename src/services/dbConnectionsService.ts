@@ -230,10 +230,14 @@ export function dbSqlCompletionsInvalidate(sessionId: string): Promise<void> {
 }
 
 /**
- * 格式化 SQL（后端 sqlformat：纯空白/缩进/折行规整，关键字大小写保留）。
- * dialect 传引擎名（postgres 启用数组语法，其余通用）。
+ * 格式化路由结果：标准 SQL 后端已格式化；PL/SQL 块（函数/过程/触发器
+ * 体等）后端明确让位，前端按引擎方言接管。
  */
-export function dbFormatSql(sql: string, dialect?: string): Promise<string> {
+export type DbFormatSqlOutcome =
+  | { type: 'formatted'; text: string }
+  | { type: 'frontend'; reason: string };
+
+export function dbFormatSql(sql: string, dialect?: string): Promise<DbFormatSqlOutcome> {
   return invoke('db_format_sql', { sql, dialect });
 }
 

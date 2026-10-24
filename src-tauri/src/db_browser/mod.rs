@@ -378,23 +378,39 @@ pub async fn db_sql_completions_invalidate(
     Ok(())
 }
 
-/// 格式化 SQL（sqlformat 0.5：纯空白/缩进/折行规整，参数占位符不替换，
-/// 关键字大小写不强制改写）。无会话依赖的纯函数；dialect 传引擎名
-///（postgres → 数组语法 Dialect::PostgreSql，其余走 Generic）。
-/// PL/SQL 块（Oracle/达梦引擎，词界 BEGIN/DECLARE，含存储过程/函数体）
-/// 拒绝格式化：sqlformat 是语句级 SQL 格式化器，块内的 := 赋值、loop、
-/// end if 等 PL 语法会被彻底打乱——整段保持原文并报错说明
+/// 格式化路由判定结果：标准 SQL 由后端 sqlformat 完成；PL/SQL 块（函数/
+/// 过程/触发器体、匿名块——词界 BEGIN/DECLARE）后端明确让位，前端方言接管
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum FormatSqlOutcome {
+    /// 标准 SQL：已格式化好的文本
+    Formatted { text: String },
+    /// PL/SQL 块：后端不做（sqlformat 是语句级格式化器，块内 := / loop /
+    /// end if 会打乱），前端 sql-formatter 按引擎方言格式化
+    Frontend { reason: String },
+}
+
+/// 格式化 SQL（sqlformat 0.5：纯空白/缩进/折行，参数占位符不替换，关键字
+/// 大小写不强制改写）。**整体路由在前端**（sqlFormat.ts）：≤200 行直接前端
+/// sql-formatter；>200 行先走本命令（native 快），若内容含 PL/SQL 块
+///（词界 BEGIN/DECLARE：存储函数/过程/触发器体、匿名块——内容判定不按
+/// 引擎门控，MySQL 过程体同样命中）返回 Frontend 让位前端（语句级格式化
+/// 器会打乱块内 := / loop / end if）。dialect 传引擎名
+///（postgres → 数组语法 Dialect::PostgreSql）。
 #[tauri::command]
-pub fn db_format_sql(sql: String, dialect: Option<String>) -> Result<String, String> {
-    let engine = dialect.as_deref().unwrap_or("");
-    if sqlsplit::is_plsql_engine(engine) && sqlsplit::contains_plsql_block(&sql) {
-        return Err("检测到 PL/SQL 块（BEGIN/DECLARE）：暂不支持格式化，已保持原文".to_string());
+pub fn db_format_sql(sql: String, dialect: Option<String>) -> FormatSqlOutcome {
+    if sqlsplit::contains_plsql_block(&sql) {
+        return FormatSqlOutcome::Frontend {
+            reason: "检测到 PL/SQL 块（BEGIN/DECLARE：函数/过程/触发器体）".to_string(),
+        };
     }
     let mut options = sqlformat::FormatOptions::default(); // 2 空格缩进
-    if engine == "postgres" {
+    if dialect.as_deref() == Some("postgres") {
         options.dialect = sqlformat::Dialect::PostgreSql;
     }
-    Ok(sqlformat::format(&sql, &sqlformat::QueryParams::None, &options))
+    FormatSqlOutcome::Formatted {
+        text: sqlformat::format(&sql, &sqlformat::QueryParams::None, &options),
+    }
 }
 
 /// 目录父层（前端参数形态；None = 根层）。
@@ -1284,18 +1300,35 @@ mod tests {
 
     #[test]
     fn format_sql_basics() {
-        // PL/SQL 块拒格式化（sqlformat 是语句级格式化器，块内 :=/loop/end if
-        // 会被彻底打乱）——用户实测反馈的回归向量
+        use super::FormatSqlOutcome;
+        // PL/SQL 块路由前端（内容判定，与引擎无关）——用户实测反馈的回归向量：
+        // create function 体含 for loop / end if
         let plsql = "create or replace function f(vStr varchar2) return number is\nm number;\nbegin\nm := 0;\nfor cur in (select * from table(split(vStr, ','))) loop\nif instr(vStr, cur.column_value) > 0 then m := 1;\nreturn m;\nend if;\nend loop;\nreturn m;\nend;";
         let out = db_format_sql(plsql.to_string(), Some("oracle".into()));
-        assert!(out.is_err(), "PL/SQL 块应拒格式化");
-        assert_eq!(out.unwrap_err().contains("PL/SQL"), true);
+        assert!(matches!(out, FormatSqlOutcome::Frontend { .. }), "PL/SQL 块应路由前端");
+
+        // MySQL 存储过程体同样命中（内容判定不按引擎门控——此前引擎门控
+        // 会漏掉它、被语句级格式化器打乱）
+        let mysql_proc = "create procedure p() begin select 1; end";
+        assert!(matches!(
+            db_format_sql(mysql_proc.into(), Some("mysql".into())),
+            FormatSqlOutcome::Frontend { .. }
+        ));
+
+        // PG 的 BEGIN 事务脚本因内容判定走前端（无损：sql-formatter 同样
+        // 格式化标准 SQL）——路由口径锁定
+        assert!(matches!(
+            db_format_sql("begin; select 1; commit;".into(), Some("postgres".into())),
+            FormatSqlOutcome::Frontend { .. }
+        ));
 
         let out = db_format_sql(
             "SELECT id, NAME from t_user WHERE id=1 and name like 'a%'".into(),
             None,
-        )
-        .expect("普通 SQL 应可格式化");
+        );
+        let FormatSqlOutcome::Formatted { text: out } = out else {
+            unreachable!("普通 SQL 应由后端格式化");
+        };
         // 折行 + 缩进生效，token 无丢失，字符串字面量原样
         assert!(out.contains('\n'), "应折行：{out}");
         assert!(out.contains("t_user") && out.contains("'a%'"), "{out}");
@@ -1304,7 +1337,10 @@ mod tests {
         assert!(out.contains("from"), "保留用户小写关键字：{out}");
 
         // 多语句与分号保留
-        let out2 = db_format_sql("select 1; select 2".into(), None).expect("多语句应可格式化");
+        let out2 = db_format_sql("select 1; select 2".into(), None);
+        let FormatSqlOutcome::Formatted { text: out2 } = out2 else {
+            unreachable!("多语句应由后端格式化");
+        };
         assert!(out2.contains(';'), "{out2}");
     }
 
