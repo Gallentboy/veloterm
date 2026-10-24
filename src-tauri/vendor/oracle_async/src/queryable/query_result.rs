@@ -57,6 +57,25 @@ impl<'a> QueryResult<'a> {
         self.conn.break_connection().await
     }
 
+    /// 关闭服务端游标（go-ora v2 `defaultStmt.Close()` 的 1:1 对应：判
+    /// cursorID != 0 即发关游标包；0x11/0x69 头 + 4 字节 cursorID +
+    /// simpleObject 0x93）。幂等——关完把 cursor_id 置 0。
+    /// 工作台每语句用完即调（含提前放弃：行数上限/取消/出错），
+    /// 否则服务端游标泄漏累积到 open_cursors 上限即 ORA-01000。
+    pub async fn close(&mut self) -> Result<()> {
+        // 隐式结果集同样要关（go-ora 在主游标 Close 时逐个处理）
+        while let Some((_, cid)) = self.implicit.pop_front() {
+            let _ = self.conn.close_cursor(cid).await;
+        }
+        if self.cursor_id != 0 {
+            let cid = self.cursor_id;
+            self.cursor_id = 0;
+            self.has_more_rows = false;
+            self.conn.close_cursor(cid).await?;
+        }
+        Ok(())
+    }
+
     /// Fetch next row asynchronously. Automatically executes a fetch routine if the buffer is empty
     /// and the server cursor has more rows; 主游标取尽后自动链入下一个隐式结果集（Msg 27）。
     pub async fn next_row(&mut self) -> Result<Option<Row>> {
@@ -97,12 +116,19 @@ impl<'a> QueryResult<'a> {
         }
     }
 
-    /// Collect all remaining rows into a vector.
+    /// Collect all remaining rows into a vector（取尽后按 go-ora 语义关游标）
     pub async fn collect(mut self) -> Result<Vec<Row>> {
         let mut rows = Vec::new();
-        while let Some(row) = self.next_row().await? {
-            rows.push(row);
+        let result = async {
+            while let Some(row) = self.next_row().await? {
+                rows.push(row);
+            }
+            Ok(rows)
         }
-        Ok(rows)
+        .await;
+        // 成功与失败都关（go-ora Connection.QueryContext/ExecContext 的
+        // `stmt.Close()` 收尾语义）；关闭失败不覆盖取行错误
+        let _ = self.close().await;
+        result
     }
 }
