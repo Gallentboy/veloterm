@@ -142,10 +142,14 @@ export function DbObjectTab({
   // 本地刷新计数（头部刷新按钮）：与外部 refreshToken（重复打开）叠加触发重取
   const [localRefresh, setLocalRefresh] = useState(0);
 
-  // 自取数：首次挂载与 refreshToken 变化（重复打开同一对象）都重新拉取
+  // 自取数：首次挂载与 refreshToken 变化（重复打开同一对象）都重新拉取。
+  // 刷新（已有数据）不整页闪 loading——旧内容保持显示，数据到了原位换上
+  //（stale-while-revalidate）；subTab 不重置，仅当前 Tab 的段在新数据里
+  // 消失（如引用被删）才退回 DDL
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    const isFirstLoad = definition == null && detail == null;
+    if (isFirstLoad) setLoading(true);
     setError(null);
     setNotice(null);
     if (payload.variant === 'definition') {
@@ -158,8 +162,12 @@ export function DbObjectTab({
         .then((def) => {
           if (!cancelled) setDefinition(def);
         })
-        .catch((e) => {
-          if (!cancelled) setError(String(e));
+        .catch((e: unknown) => {
+          if (!cancelled) {
+            // 刷新失败且已有旧数据：不整页换错误面板，内容保留、提示条告知
+            if (definition == null && detail == null) setError(String(e));
+            else setNotice(`${t('dbHosts.refresh', '刷新')}失败：${String(e)}`);
+          }
         })
         .finally(() => {
           if (!cancelled) setLoading(false);
@@ -174,11 +182,22 @@ export function DbObjectTab({
         .then((d) => {
           if (!cancelled) {
             setDetail(d);
-            setSubTab('ddl');
+            setSubTab((cur) => {
+              if (
+                (cur === 'constraints' && d.constraintHeaders.length === 0) ||
+                (cur === 'references' && d.referenceHeaders.length === 0)
+              ) {
+                return 'ddl';
+              }
+              return cur;
+            });
           }
         })
-        .catch((e) => {
-          if (!cancelled) setError(String(e));
+        .catch((e: unknown) => {
+          if (!cancelled) {
+            if (definition == null && detail == null) setError(String(e));
+            else setNotice(`${t('dbHosts.refresh', '刷新')}失败：${String(e)}`);
+          }
         })
         .finally(() => {
           if (!cancelled) setLoading(false);
@@ -199,7 +218,9 @@ export function DbObjectTab({
       .catch(() => undefined);
   };
 
-  if (loading) {
+  // 首次加载才整页 loading；刷新时旧内容保持显示（stale-while-revalidate），
+  // 数据到达原位换上，UI 不闪
+  if (loading && definition == null && detail == null) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
         <Spinner className="size-4" />
@@ -316,6 +337,11 @@ export function DbObjectTab({
             ✕
           </button>
         </div>
+        {notice ? (
+          <div className="shrink-0 border-b border-border/40 bg-surface/20 px-3 py-1 text-ui-xs text-foreground-subtle select-none">
+            {notice}
+          </div>
+        ) : null}
         {subTab === 'ddl' ? (
           // DDL 用 Monaco 只读渲染（SQL 高亮 + 折行）；独立实例，
           // 刷新走 setValue 不重建
