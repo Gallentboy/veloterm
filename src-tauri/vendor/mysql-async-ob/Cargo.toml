@@ -23,7 +23,6 @@ categories = ["asynchronous", "database"]
 
 [dependencies]
 bytes = "1.4"
-crc32fast = "1"
 crossbeam = "0.8.1"
 flate2 = { version = "1.0", default-features = false }
 futures-core = "0.3"

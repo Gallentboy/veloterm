@@ -253,9 +253,29 @@ pub fn wrap_packet(ctx: &Ob20Ctx, mysql_payload: &[u8], complen_for_checksum: u3
     debug_assert_eq!(out.len(), OB20_HEADER_SIZE);
 
     out.extend_from_slice(mysql_payload);
-    let crc = crc32fast::hash(&out[OB20_HEADER_SIZE..]);
+    // 尾包校验：CRC32C（Castagnoli 多项式 0x82F63B78）——Java JDBC 的
+    // OceanBaseCRC32C 用的是 CRC32C 而非标准 CRC32（IEEE 0xEDB88320），
+    // 两者对同一输入产生完全不同的值。crc32fast 是 IEEE，不能用。
+    let crc = crc32c(&out[OB20_HEADER_SIZE..]);
     out.extend_from_slice(&crc.to_le_bytes());
     out
+}
+
+/// CRC32C（Castagnoli）——逐位实现，poly 反射形态 0x82F63B78、初值
+/// 0xFFFFFFFF、先异或 0xFFFFFFFF 输出。对齐 Java `OceanBaseCRC32C`。
+pub fn crc32c(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &byte in data {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0x82F6_3B78
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
 }
 
 /// 在已组装好的 ob20 包上就地设置 IS_LAST_PACKET 标志（flag 字段的 bit 1）
@@ -390,7 +410,7 @@ pub fn unwrap_packet<'a>(
             actual: bytes.len() - OB20_HEADER_SIZE,
         });
     }
-    let crc = crc32fast::hash(&bytes[OB20_HEADER_SIZE..tailer_at]);
+    let crc = crc32c(&bytes[OB20_HEADER_SIZE..tailer_at]);
     let expected = le32(tailer_at);
     if crc != expected {
         return Err(Ob20Error::TailerMismatch {
@@ -641,6 +661,15 @@ pub mod sm3 {
 mod tests {
     use super::*;
 
+    /// CRC32C 标准校验值（Castagnoli，poly 0x82F63B78，"123456789" →
+    /// 0xE3069283）——锁定与 Java OceanBaseCRC32C 的算法等价性
+    #[test]
+    fn crc32c_check_value() {
+        assert_eq!(crc32c(b"123456789"), 0xE306_9283);
+        // 空输入 = !(init 0xFFFFFFFF) = 0（CRC32C 规范）
+        assert_eq!(crc32c(b""), 0);
+    }
+
     /// CRC-16/ARC 标准校验值（poly 0x8005、init 0、"123456789" → 0xBB3D），
     /// 锁定与 libobclient 表实现的等价性
     #[test]
@@ -730,7 +759,7 @@ mod tests {
         out.extend_from_slice(&(extra_body.len() as u32).to_le_bytes());
         out.extend_from_slice(&extra_body);
         out.extend_from_slice(&mysql_packet);
-        let crc = crc32fast::hash(&out[OB20_HEADER_SIZE..]);
+        let crc = crc32c(&out[OB20_HEADER_SIZE..]);
         out.extend_from_slice(&crc.to_le_bytes());
 
         let (header, payload) = unwrap_packet(&prefix7, &out).expect("unwrap with extra");

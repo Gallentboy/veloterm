@@ -529,6 +529,13 @@ impl Conn {
         };
 
         self.inner.capabilities = handshake.capabilities() & self.inner.opts.get_capabilities();
+        // OB Oracle：Java JDBC 不做整体 AND——CLIENT_SUPPORT_ORACLE(1<<27)
+        // 无论服务端握手包是否设置都上报（initializeClientCapabilities 常开）。
+        // mysql_async 上游的 AND 会把服务端未声明的位滤掉，导致 Oracle 租户
+        // 拒绝连接（"Oracle tenant for current client driver is not supported"）
+        if self.inner.opts.ob_protocol20() {
+            self.inner.capabilities |= CapabilityFlags::from_bits_retain(1 << 27);
+        }
         self.inner.version = handshake
             .maria_db_server_version_parsed()
             .inspect(|_| self.inner.is_mariadb = true)
