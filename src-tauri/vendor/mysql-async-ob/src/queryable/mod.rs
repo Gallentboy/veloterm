@@ -129,6 +129,23 @@ impl Conn {
         }
         .boxed()
     }
+
+    /// query_internal 的多行变体（read_settings 的 SHOW VARIABLES 降级用，
+    /// 语义对齐 Java JDBC 的 requestSessionDataWithShow——按名取值需遍历
+    /// 多行）。veloterm 分叉新增。
+    pub(crate) fn query_all_internal<'a, T, Q>(&'a mut self, query: Q) -> BoxFuture<'a, Vec<T>>
+    where
+        Q: AsQuery + 'a,
+        T: FromRow + Send + 'static,
+    {
+        async move {
+            self.raw_query::<'_, _, LevelTrace>(query).await?;
+            Ok(QueryResult::<'_, '_, TextProtocol>::new(self)
+                .collect_and_drop::<T>()
+                .await?)
+        }
+        .boxed()
+    }
 }
 
 /// Methods of this trait are used to execute database queries.

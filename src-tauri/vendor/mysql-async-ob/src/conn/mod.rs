@@ -1330,41 +1330,34 @@ impl Conn {
             }
         }
 
-        // OB 场景下不发这条 MySQL 方言探测查询（真机实测 Oracle 租户拒收
-        // `SELECT @@max_allowed_packet,@@wait_timeout`，ORA-00900）。判据取
-        // 两者之一即跳过：oracle 模式位（OK 包 status bit 2——真机实测部分
-        // obproxy/observer 组合不置位，不能作唯一依据）或 opts.ob_protocol20
-        // （客户端显式声明对方是 OB——app/CLI 只有 OB 连接才开）。OB MySQL
-        // 模式损失一次探测精度（改用默认值：max_allowed_packet 缺省、
-        // wait_timeout 28800s 同 MySQL 缺省），无协议影响。纯 MySQL 连接
-        // （ob_protocol20 恒 false 且无 oracle 位）行为不变。
-        let skip_mysql_probe =
-            self.inner.ob_is_oracle_mode || self.inner.opts.ob_protocol20();
-        crate::obdbg!(
-            "read_settings: skip_probe={}（oracle={} ob20_opt={}）",
-            skip_mysql_probe,
-            self.inner.ob_is_oracle_mode,
-            self.inner.opts.ob_protocol20()
-        );
+        // OB 连接（ob_protocol20 开启）的会话探测严格对齐 Java JDBC
+        //（oceanbase-client 2.4.19 AbstractConnectProtocol）：
+        // - Oracle 模式走 SESSION_QUERY_ORACLE 同型（尾部 from dual——真机
+        //   实测 OB Oracle 接受 @@var + FROM DUAL，裸形态 ORA-00900）；
+        // - 查询失败/空结果降级 SHOW VARIABLES 按名取值
+        //   （requestSessionDataWithShow 同型）；
+        // - 再失败回落默认值不杀连接——对 JDBC 唯一的有意偏离（JDBC 在
+        //   SHOW 也拿不到变量时抛 08000 终止连接，会话探测的管家信息
+        //   不值得连带杀掉连接，缺省 4MB/28800s 只是精度损失）。
+        // 纯 MySQL 连接（ob_protocol20 恒 false）保持上游单查询行为。
+        let ob_conn = self.inner.opts.ob_protocol20();
+        let oracle_mode = self.inner.ob_is_oracle_mode;
 
         let mut actions = vec![
             if let Some(x) = self.opts().max_allowed_packet() {
                 Action::Apply(CfgData::MaxAllowedPacket(x))
-            } else if skip_mysql_probe {
-                Action::Apply(CfgData::MaxAllowedPacket(DEFAULT_MAX_ALLOWED_PACKET))
             } else {
                 Action::Load(Cfg::MaxAllowedPacket)
             },
             if let Some(x) = self.opts().wait_timeout() {
                 Action::Apply(CfgData::WaitTimeout(x))
-            } else if skip_mysql_probe {
-                Action::Apply(CfgData::WaitTimeout(DEFAULT_WAIT_TIMEOUT))
             } else {
                 Action::Load(Cfg::WaitTimeout)
             },
         ];
 
-        if self.inner.opts.prefer_socket() && self.inner.socket.is_none() && !skip_mysql_probe {
+        // OB 恒 TCP：unix socket 探测只在纯 MySQL 连接做
+        if self.inner.opts.prefer_socket() && self.inner.socket.is_none() && !ob_conn {
             actions.push(Action::Load(Cfg::Socket))
         }
 
@@ -1386,10 +1379,40 @@ impl Conn {
                     acc
                 });
 
-            self.query_internal::<Row, String>(query)
-                .await?
-                .map(|row| row.unwrap())
-                .unwrap_or_else(|| vec![crate::Value::NULL; loads.len()])
+            if ob_conn {
+                // JDBC sendRequestSessionVariables 的方言分派：Oracle 模式
+                // 追加 from dual（SESSION_QUERY_ORACLE）
+                let primary = if oracle_mode {
+                    format!("{query} FROM DUAL")
+                } else {
+                    query
+                };
+                crate::obdbg!("read_settings: 会话探测 {primary:?}");
+                match self.query_internal::<Row, String>(primary).await {
+                    Ok(Some(row)) => row.unwrap(),
+                    Ok(None) => {
+                        crate::obdbg!("read_settings: 会话探测空结果，降级 SHOW");
+                        let names: Vec<&str> = loads
+                            .iter()
+                            .map(|c| c.name().trim_start_matches("@@"))
+                            .collect();
+                        self.read_settings_show_fallback(&names).await
+                    }
+                    Err(e) => {
+                        crate::obdbg!("read_settings: 会话探测失败（{e}），降级 SHOW");
+                        let names: Vec<&str> = loads
+                            .iter()
+                            .map(|c| c.name().trim_start_matches("@@"))
+                            .collect();
+                        self.read_settings_show_fallback(&names).await
+                    }
+                }
+            } else {
+                self.query_internal::<Row, String>(query)
+                    .await?
+                    .map(|row| row.unwrap())
+                    .unwrap_or_else(|| vec![crate::Value::NULL; loads.len()])
+            }
         } else {
             vec![]
         };
@@ -1438,6 +1461,47 @@ impl Conn {
         }
 
         Ok(())
+    }
+
+    /// JDBC `requestSessionDataWithShow` 同型降级（read_settings 的 OB 路径）：
+    /// 主会话探测失败后用 `SHOW VARIABLES WHERE Variable_name in (...)` 按名
+    /// 取值回填 loads 顺序；缺失/失败保持 NULL——Cfg::apply 的 unwrap_or
+    /// 会回落默认值，任何一步都不杀连接（对 JDBC 的唯一有意偏离，见
+    /// read_settings 头注释）。veloterm 分叉新增。
+    async fn read_settings_show_fallback(&mut self, names: &[&str]) -> Vec<crate::Value> {
+        let quoted = names
+            .iter()
+            .map(|n| format!("'{n}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("SHOW VARIABLES WHERE Variable_name in ({quoted})");
+        let mut out = vec![crate::Value::NULL; names.len()];
+        match self.query_all_internal::<Row, String>(sql).await {
+            Ok(rows) => {
+                let mut hit = 0usize;
+                for row in rows {
+                    let vals = row.unwrap();
+                    let name = match vals.first() {
+                        Some(crate::Value::Bytes(b)) => String::from_utf8_lossy(b).to_string(),
+                        _ => continue,
+                    };
+                    if let Some(slot) = names
+                        .iter()
+                        .position(|n| n.eq_ignore_ascii_case(&name))
+                    {
+                        if let Some(v) = vals.get(1) {
+                            out[slot] = v.clone();
+                            hit += 1;
+                        }
+                    }
+                }
+                crate::obdbg!("read_settings: SHOW 降级命中 {hit}/{} 项", names.len());
+            }
+            Err(e) => {
+                crate::obdbg!("read_settings: SHOW 降级也失败（{e}）——回落默认值");
+            }
+        }
+        out
     }
 
     /// Returns true if time since last IO exceeds `wait_timeout`
@@ -1615,8 +1679,7 @@ impl Conn {
 
 /// 裸 OK 包的 status 提取（纯函数）：跳过 header(0x00) + affected_rows/
 /// insert_id 两个 lenenc 后取小端 u16。真机 fixture 单测锁定。
-fn bare_ok_status(packet: &[u8]) -> Option<u16> {
-    if packet.first() != Some(&0x00) {
+fn bare_ok_status(packet: &[u8]) -> Option<u16> {    if packet.first() != Some(&0x00) {
         return None;
     }
     let mut i = 1usize;
