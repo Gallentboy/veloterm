@@ -58,31 +58,41 @@ pub mod caps {
         | OBCLIENT_CAP_OCJ_ENABLE_EXTRA_OK_PACKET
         | OBCLIENT_CAP_OB_PROTOCOL_V2;
 
-    /// connect attrs 的键（握手包 `client_connect_attrs` 段）
+    /// connect attrs 的键（握手包 `client_connect_attrs` 段）——键名与
+    /// Java JDBC `SendHandshakeResponsePacket` 完全一致
     pub const ATTR_CAPABILITY_FLAG: &str = "__proxy_capability_flag";
     pub const ATTR_CLIENT_MODE: &str = "__mysql_client_type";
+    /// Java JDBC 的 `CLIENT_TYPE` 常量——obproxy/observer 按此字段判定驱动
+    /// 能力，`__ob_libobclient` 会被拒「Oracle tenant for current client
+    /// driver is not supported」（实测，错误码 1235）
+    pub const ATTR_CLIENT_MODE_VALUE: &str = "__ob_jdbc_client";
     pub const ATTR_CLIENT_OBPROXY_MODE: &str = "__ob_proxy";
     pub const ATTR_CONNECTION_ID: &str = "__connection_id";
     pub const ATTR_CLIENT_NAME_KEY: &str = "__ob_client_name";
-    /// veloterm 分叉的名字（libobclient 上报 "OceanBase Connector/C"）
-    pub const ATTR_CLIENT_NAME_VALUE: &str = "veloterm oceanbase_async";
+    /// Java JDBC 的 `JDBC4DatabaseMetaData.DRIVER_NAME`
+    pub const ATTR_CLIENT_NAME_VALUE: &str = "OceanBase Connector/J";
     pub const ATTR_CLIENT_VERSION_KEY: &str = "__ob_client_version";
     pub const ATTR_PROXY_CONNECTION_ID: &str = "__proxy_connection_id";
     pub const ATTR_GLOBAL_VARS_VERSION: &str = "__global_vars_version";
+    pub const ATTR_SERVER_HOST: &str = "__server_host";
+    pub const ATTR_OS: &str = "__os";
+    pub const ATTR_PID: &str = "__pid";
     /// LOB 扩展能力（`__ob_client_attribute_capability_flag`）的键与位
     pub const ATTR_CLIENT_ATTRIBUTE_CAPABILITY_FLAG: &str = "__ob_client_attribute_capability_flag";
     pub const OBCLIENT_CAP_SUPPORT_JDBC_BINARY_DOUBLE: u64 = 1 << 0;
     pub const OBCLIENT_CAP_OB_LOB_LOCATOR_V2: u64 = 1 << 1;
 
-    /// 组装本驱动应上报的 connect attrs（对齐 libobclient 的
-    /// `ma_ob_client_set_connect_attrs`：ob20/extra-info 位 + 自报家门；
-    /// 全链路追踪不实现，相关位不上报）
+    /// 组装本驱动应上报的 connect attrs——键名与核心值对齐
+    /// Java JDBC `writeConnectAttributes`，只保留服务端可能依赖的项：
+    /// 驱动名/客户端类型/版本/能力位。Java 专属的环境属性
+    /// （__server_host/__os/__pid/__thread/__java_vendor 等）不发——
+    /// 这些是诊断信息，不影响连接路由与协议协商。
     pub fn driver_connect_attrs(client_version: &str) -> Vec<(&'static str, String)> {
         vec![
-            (ATTR_CAPABILITY_FLAG, OBPROXY_DEFAULT_CAPABILITY_FLAG.to_string()),
-            (ATTR_CLIENT_MODE, "__ob_libobclient".to_string()),
             (ATTR_CLIENT_NAME_KEY, ATTR_CLIENT_NAME_VALUE.to_string()),
+            (ATTR_CLIENT_MODE, ATTR_CLIENT_MODE_VALUE.to_string()),
             (ATTR_CLIENT_VERSION_KEY, client_version.to_string()),
+            (ATTR_CAPABILITY_FLAG, OBPROXY_DEFAULT_CAPABILITY_FLAG.to_string()),
             (
                 ATTR_CLIENT_ATTRIBUTE_CAPABILITY_FLAG,
                 OBCLIENT_CAP_SUPPORT_JDBC_BINARY_DOUBLE.to_string(),
