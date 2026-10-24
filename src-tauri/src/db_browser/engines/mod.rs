@@ -1774,12 +1774,26 @@ impl DbEngine {
 
                 // 约束（DBeaver OracleSchema.ConstraintCache 同源）：
                 // all_constraints + all_cons_columns；外键经 r_constraint_name
-                // 反查目标表。CHHECK 条件截断到 120 字符防止超长
+                // 反查目标表。聚列方式按服务器版本智能分流（DBeaver 同型）：
+                // - 11g+（LISTAGG 可用，Oracle 11.1 引入）
+                // - 10g 及以下：SYS_CONNECT_BY_PATH 层次查询聚列
+                //   （DBeaver OracleSchema:956-977 的 10g 分支同源实现）
+                let cols_agg = if conn.db_version_major() >= 11 {
+                    "(SELECT LISTAGG(cc.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY cc.POSITION) \
+                      FROM all_cons_columns cc \
+                      WHERE cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME)"
+                } else {
+                    "(SELECT MAX(SUBSTR(SYS_CONNECT_BY_PATH(cc.COLUMN_NAME, ','), 2)) \
+                      FROM (SELECT cc.COLUMN_NAME, cc.POSITION, \
+                                   ROW_NUMBER() OVER (ORDER BY cc.POSITION) AS RN \
+                            FROM all_cons_columns cc \
+                            WHERE cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME) cc \
+                      START WITH cc.RN = 1 \
+                      CONNECT BY PRIOR cc.RN = cc.RN - 1)"
+                };
                 let cons_sql = format!(
                     "SELECT c.CONSTRAINT_NAME, c.CONSTRAINT_TYPE, c.R_OWNER, c.R_CONSTRAINT_NAME, \
-                       (SELECT LISTAGG(cc.COLUMN_NAME, ',') WITHIN GROUP (ORDER BY cc.POSITION) \
-                        FROM all_cons_columns cc \
-                        WHERE cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME) AS COLS \
+                       {cols_agg} AS COLS \
                      FROM all_constraints c \
                      WHERE c.OWNER = {} AND c.TABLE_NAME = {} \
                      ORDER BY c.CONSTRAINT_NAME",
