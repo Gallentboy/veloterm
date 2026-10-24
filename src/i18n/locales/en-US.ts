@@ -173,8 +173,7 @@ export default {
     group_event: 'Events',
     group_rule: 'Rules',
     objectDefinition: 'Definition',
-    /** Object tab badge (DbScreen tab bar) and refresh button */
-    tableDetailShort: 'Detail',
+    /** Object page refresh button (inline in result panel) */
     refreshObject: 'Refresh',
     viewData: 'View data',
     tableDetail: 'Table detail (DDL / columns / indexes)',

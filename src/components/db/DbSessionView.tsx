@@ -76,7 +76,7 @@ import {
   type DbQueryEvent,
   type DbSessionMeta,
 } from '@/services/dbConnectionsService';
-import type { DbSessionApi, OpenObjectTabRequest } from '@/components/db/DbObjectTab';
+import { DbObjectTab, type OpenObjectTabRequest } from '@/components/db/DbObjectTab';
 import { cn } from '@/lib/utils';
 
 /** 树栏宽度（同 ZK 树的可拖语义）：默认 280、最小 200、最大 480 */
@@ -102,6 +102,21 @@ interface StatementResult {
   truncated: boolean;
   elapsedMs: number;
   error: string | null;
+}
+
+/** 结果面板里的对象页（查看定义 / 表详情），与多结果集 tab 同排 */
+interface ObjectPage {
+  /** 面板内唯一 key（关闭/激活用） */
+  key: string;
+  /** 去重复用键：variant + schema.name */
+  dedupeKey: string;
+  sessionId: string;
+  schema: string;
+  name: string;
+  kind: string;
+  variant: 'definition' | 'tableDetail';
+  /** 递增触发重取（重复打开同一对象时刷新内容） */
+  refreshToken: number;
 }
 
 const ROW_CAP_OPTIONS = [1000, 5000, 20000, 50000];
@@ -222,20 +237,11 @@ export function nodeIcon(kind: CatalogNode['kind'], className?: string) {
 
 export function DbSessionView({
   pendingConnection,
-  tabKey,
   onBaseTitle,
-  onOpenObjectTab,
-  onRegisterSessionApi,
 }: {
   /** 建 tab 时携带的待连连接（数据库主机页「连接」入口）；挂载时消费一次 */
   pendingConnection: DbConnectionRecord | null;
-  /** 本会话在 DbScreen tab 栏的 key（sessionApi 注册与对象 tab 归属） */
-  tabKey: number;
   onBaseTitle: (title: string | null) => void;
-  /** 打开对象 tab（查看定义/表详情；终端 tab 同款：去重复用+刷新） */
-  onOpenObjectTab: (req: OpenObjectTabRequest) => void;
-  /** 会话 api 注册（对象 tab 回写本会话编辑器）；卸载时以 null 摘除 */
-  onRegisterSessionApi: (key: number, api: DbSessionApi | null) => void;
 }) {
   const { t } = useTranslation();
   const [meta, setMeta] = useState<DbSessionMeta | null>(null);
@@ -269,8 +275,57 @@ export function DbSessionView({
   // searchCollapsed 记录搜索态下用户手动收起的分支（仅展示层，清空搜索即复位）
   const [treeSearch, setTreeSearch] = useState('');
   const [searchCollapsed, setSearchCollapsed] = useState<Set<string>>(new Set());
-  // 定义/表详情已升格为 DbScreen 层的独立对象 tab（onOpenObjectTab），
-  // 本组件不再持有其状态
+
+  // 对象页（查看定义 / 表详情）：与会话的多结果集 tab 同排展示（结果面板
+  // 位置，不占最外层会话 tab 栏）。同一对象（同变体同 schema.name）重复
+  // 打开时激活既有页并递增 refreshToken 触发重取——终端 tab 同款语义。
+  const [objectPages, setObjectPages] = useState<ObjectPage[]>([]);
+  // 激活项：null = 结果集视图；否则为对象页 key
+  const [activeObjectKey, setActiveObjectKey] = useState<string | null>(null);
+  const objectPageSeq = useRef(0);
+  const openObjectPage = useCallback((req: OpenObjectTabRequest) => {
+    const dedupeKey = `${req.variant}:${req.schema}.${req.name}`;
+    setObjectPages((current) => {
+      const existing = current.find((p) => p.dedupeKey === dedupeKey);
+      if (existing) {
+        setActiveObjectKey(existing.key);
+        // 激活同时刷新内容（对象可能已变更）
+        return current.map((p) =>
+          p.key === existing.key ? { ...p, refreshToken: p.refreshToken + 1 } : p,
+        );
+      }
+      objectPageSeq.current += 1;
+      const key = `obj-${objectPageSeq.current}`;
+      setActiveObjectKey(key);
+      return [
+        ...current,
+        {
+          key,
+          dedupeKey,
+          sessionId: req.sessionId,
+          schema: req.schema,
+          name: req.name,
+          kind: req.kind,
+          variant: req.variant,
+          refreshToken: 0,
+        },
+      ];
+    });
+  }, []);
+  const closeObjectPage = useCallback((key: string) => {
+    setObjectPages((current) => {
+      const idx = current.findIndex((p) => p.key === key);
+      const next = current.filter((p) => p.key !== key);
+      setActiveObjectKey((active) => {
+        if (active !== key) return active;
+        // 关掉当前页：退到相邻对象页，没有则回结果集视图
+        const neighbor = next[Math.min(idx, next.length - 1)];
+        return neighbor ? neighbor.key : null;
+      });
+      return next;
+    });
+  }, []);
+  // 对象页（查看定义/表详情）内嵌在结果面板，与会话同生命周期
 
   // 执行计划视图（右键「查看执行计划」）：后端解析的节点表 + 加载态；
   // 新查询时让位（runQuery 开头清空）
@@ -579,10 +634,10 @@ export function DbSessionView({
         const kind = node.kind;
         const name = node.name;
         // 定义视图升格为独立 tab（DbScreen 层，自取数）；此处只发起打开
-        onOpenObjectTab({ sessionId, schema, name, kind, variant: 'definition' });
+        openObjectPage({ sessionId, schema, name, kind, variant: 'definition' });
       }
     },
-    [meta, onOpenObjectTab],
+    [meta, openObjectPage],
   );
 
   /** 右键菜单：表详情（DDL/列/索引 Tab）——升格为独立对象 tab */
@@ -594,9 +649,9 @@ export function DbSessionView({
       const schema = node.key.split('.')[0] ?? '';
       const kind = node.kind;
       const name = node.name;
-      onOpenObjectTab({ sessionId, schema, name, kind, variant: 'tableDetail' });
+      openObjectPage({ sessionId, schema, name, kind, variant: 'tableDetail' });
     },
-    [onOpenObjectTab],
+    [openObjectPage],
   );
 
   /**
@@ -727,8 +782,7 @@ export function DbSessionView({
     }
   }, [running, rowCap, sql, handleQueryEvent]);
 
-  // 会话 api：对象 tab（查看定义）的「插入模板/运行」回写本会话编辑器；
-  // runQuery 经 ref 间接调用，避免注册项随每次输入变化重注册
+  // 对象页的「插入模板/运行」回写本会话编辑器（内嵌组件直接调用）
   const runQueryRef = useRef(runQuery);
   useEffect(() => {
     runQueryRef.current = runQuery;
@@ -738,10 +792,6 @@ export function DbSessionView({
     setSql(s);
     void runQueryRef.current(s);
   }, []);
-  useEffect(() => {
-    onRegisterSessionApi(tabKey, { insertSql, runSql });
-    return () => onRegisterSessionApi(tabKey, null);
-  }, [tabKey, onRegisterSessionApi, insertSql, runSql]);
 
   // 查看执行计划：后端 db_explain 返回结构化节点表（方言装配与解析口径
   // 见 docs/sql-explain-plan-support.md；Oracle 与 OB Oracle 租户走
@@ -1383,7 +1433,7 @@ export function DbSessionView({
             ) : null}
           </div>
 
-          {/* 结果面板：执行计划 > 多结果集 Tab（定义/表详情已升格为 DbScreen 层的独立对象 tab） */}
+          {/* 结果面板：对象页（查看定义/表详情）与多结果集 tab 同排；执行计划独立占满 */}
           <div className="flex min-h-0 flex-1 flex-col">
             {explainLoading ? (
               <div className="flex flex-1 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
@@ -1395,7 +1445,7 @@ export function DbSessionView({
                 plans={explainPlans}
                 onClose={() => setExplainPlans(null)}
               />
-            ) : results.length === 0 ? (
+            ) : objectPages.length === 0 && results.length === 0 ? (
               <div className="flex flex-1 items-center justify-center text-ui-sm text-foreground-subtlest select-none">
                 {t('db.noResults')}
               </div>
@@ -1406,10 +1456,13 @@ export function DbSessionView({
                     <button
                       key={result.index}
                       type="button"
-                      onClick={() => setActiveResult(i)}
+                      onClick={() => {
+                        setActiveResult(i);
+                        setActiveObjectKey(null);
+                      }}
                       className={cn(
                         'flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-ui-xs transition-colors',
-                        i === activeResult
+                        activeObjectKey === null && i === activeResult
                           ? 'border-border bg-surface font-semibold text-foreground'
                           : 'border-transparent text-foreground-subtle hover:bg-hover hover:text-foreground',
                       )}
@@ -1424,8 +1477,60 @@ export function DbSessionView({
                       #{result.index + 1}
                     </button>
                   ))}
+                  {objectPages.map((page) => (
+                    <div
+                      key={page.key}
+                      className={cn(
+                        'group/objtab flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-ui-xs transition-colors',
+                        activeObjectKey === page.key
+                          ? 'border-border bg-surface font-semibold text-foreground'
+                          : 'border-transparent text-foreground-subtle hover:bg-hover hover:text-foreground',
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setActiveObjectKey(page.key)}
+                        className="flex items-center gap-1"
+                      >
+                        {page.variant === 'tableDetail' ? (
+                          <Table2 className="size-3 text-terminal-blue" />
+                        ) : (
+                          <Braces className="size-3 text-terminal-magenta" />
+                        )}
+                        <span className="max-w-32 truncate">{page.name}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => closeObjectPage(page.key)}
+                        className="shrink-0 rounded p-0.5 text-foreground-subtlest opacity-0 transition-opacity group-hover/objtab:opacity-100 hover:text-foreground"
+                        aria-label={t('common.close', '关闭')}
+                      >
+                        <X className="size-2.5" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                {currentResult ? (
+                {activeObjectKey ? (
+                  (() => {
+                    const page = objectPages.find((p) => p.key === activeObjectKey);
+                    return page ? (
+                      <DbObjectTab
+                        key={page.key}
+                        payload={{
+                          sessionId: page.sessionId,
+                          schema: page.schema,
+                          name: page.name,
+                          kind: page.kind,
+                          variant: page.variant,
+                          refreshToken: page.refreshToken,
+                        }}
+                        onInsertSql={insertSql}
+                        onRunSql={runSql}
+                        onClose={() => closeObjectPage(page.key)}
+                      />
+                    ) : null;
+                  })()
+                ) : currentResult ? (
                   currentResult.error ? (
                     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto p-3 select-text">
                       <div className="flex items-center gap-1.5 text-ui-sm text-destructive">

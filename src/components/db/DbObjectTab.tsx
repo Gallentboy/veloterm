@@ -3,8 +3,8 @@
  * 同款交互）：从对象树右键/单击打开，独立 Tab 不覆盖会话的编辑器与结果
  * 面板；重复打开同一对象复用既有 Tab 并刷新内容。自取数——sessionId 由
  * 所属会话持有，会话 tab 关闭后已取到的内容仍在（快照）、刷新才报错。
- * 「插入调用模板 / 运行」经 sessionApi 回写所属会话的 SQL 编辑器并切换
- * 到会话 tab（编辑器在会话里，跨 tab 操作必须带跳转）。
+ * 「插入调用模板 / 运行」经 onInsertSql/onRunSql 回写所属会话的 SQL
+ * 编辑器（组件内嵌在会话结果面板，无需跳转）。
  */
 
 import { useEffect, useState } from 'react';
@@ -42,7 +42,7 @@ import {
 } from '@/services/dbConnectionsService';
 import { cn } from '@/lib/utils';
 
-/** 会话 api（DbScreen 的注册表派发）：回写所属会话的 SQL 编辑器 */
+/** 会话编辑器回写入口（内嵌在会话结果面板，直接调用） */
 export interface DbSessionApi {
   /** 模板写入编辑器（不执行） */
   insertSql: (sql: string) => void;
@@ -109,14 +109,15 @@ function definitionIcon(kind: string) {
 
 export function DbObjectTab({
   payload,
-  sessionApi,
-  onGoToSession,
+  onInsertSql,
+  onRunSql,
   onClose,
 }: {
   payload: DbObjectTabPayload;
-  /** 所属会话的编辑器回写入口（会话已关时 undefined，按钮降级禁用） */
-  sessionApi: DbSessionApi | undefined;
-  onGoToSession: () => void;
+  /** 模板写入所属会话的 SQL 编辑器（不执行） */
+  onInsertSql: (sql: string) => void;
+  /** 写入所属会话编辑器并立即执行 */
+  onRunSql: (sql: string) => void;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -371,12 +372,9 @@ export function DbObjectTab({
         </button>
         <button
           type="button"
-          disabled={!sessionApi}
           onClick={() => {
-            if (!sessionApi) return;
-            sessionApi.insertSql(definition.callTemplate);
+            onInsertSql(definition.callTemplate);
             setNotice(t('db.templateInserted'));
-            onGoToSession();
           }}
           className="rounded-md px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-hover hover:text-foreground disabled:opacity-40"
         >
@@ -384,18 +382,15 @@ export function DbObjectTab({
         </button>
         <button
           type="button"
-          disabled={!sessionApi}
           onClick={() => {
-            if (!sessionApi) return;
             const { callTemplate, argCount } = definition;
             if (argCount > 0) {
               // 有参数：模板进编辑器引导补参，不直接执行（空参会报错）
-              sessionApi.insertSql(callTemplate);
+              onInsertSql(callTemplate);
               setNotice(t('db.needsArgs', { count: argCount }));
             } else {
-              sessionApi.runSql(callTemplate);
+              onRunSql(callTemplate);
             }
-            onGoToSession();
           }}
           className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground hover:bg-hover disabled:opacity-40"
         >
