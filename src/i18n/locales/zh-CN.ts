@@ -172,6 +172,9 @@ export default {
     group_event: '事件',
     group_rule: '规则',
     objectDefinition: '定义',
+    /** 对象 tab 徽标（DbScreen tab 栏）与刷新按钮 */
+    tableDetailShort: '表详情',
+    refreshObject: '刷新',
     viewData: '查看数据',
     tableDetail: '表详情（DDL / 列 / 索引）',
     createIndex: '创建索引',

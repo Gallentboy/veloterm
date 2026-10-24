@@ -16,7 +16,6 @@ import {
   Cable,
   ChevronRight,
   Clock,
-  Copy,
   Database,
   Eye,
   Folder,
@@ -67,10 +66,8 @@ import {
   dbDisconnect,
   dbExplain,
   dbListDatabases,
-  dbObjectDefinition,
   dbQuery,
   dbQueryCancel,
-  dbTableDetail,
   dbUseDatabase,
   type CatalogNode,
   type CatalogParentArg,
@@ -78,9 +75,8 @@ import {
   type DbExplainPlan,
   type DbQueryEvent,
   type DbSessionMeta,
-  type ObjectDefinition,
-  type TableDetail,
 } from '@/services/dbConnectionsService';
+import type { DbSessionApi, OpenObjectTabRequest } from '@/components/db/DbObjectTab';
 import { cn } from '@/lib/utils';
 
 /** 树栏宽度（同 ZK 树的可拖语义）：默认 280、最小 200、最大 480 */
@@ -172,7 +168,8 @@ function isOracleDialect(
   );
 }
 
-function nodeIcon(kind: CatalogNode['kind'], className?: string) {
+/** 对象树/表详情共用的种类图标（DbObjectTab 表详情头也用） */
+export function nodeIcon(kind: CatalogNode['kind'], className?: string) {
   switch (kind) {
     case 'database':
       return <Database className={cn('size-3.5 shrink-0 text-terminal-cyan', className)} />;
@@ -225,11 +222,20 @@ function nodeIcon(kind: CatalogNode['kind'], className?: string) {
 
 export function DbSessionView({
   pendingConnection,
+  tabKey,
   onBaseTitle,
+  onOpenObjectTab,
+  onRegisterSessionApi,
 }: {
   /** 建 tab 时携带的待连连接（数据库主机页「连接」入口）；挂载时消费一次 */
   pendingConnection: DbConnectionRecord | null;
+  /** 本会话在 DbScreen tab 栏的 key（sessionApi 注册与对象 tab 归属） */
+  tabKey: number;
   onBaseTitle: (title: string | null) => void;
+  /** 打开对象 tab（查看定义/表详情；终端 tab 同款：去重复用+刷新） */
+  onOpenObjectTab: (req: OpenObjectTabRequest) => void;
+  /** 会话 api 注册（对象 tab 回写本会话编辑器）；卸载时以 null 摘除 */
+  onRegisterSessionApi: (key: number, api: DbSessionApi | null) => void;
 }) {
   const { t } = useTranslation();
   const [meta, setMeta] = useState<DbSessionMeta | null>(null);
@@ -263,42 +269,8 @@ export function DbSessionView({
   // searchCollapsed 记录搜索态下用户手动收起的分支（仅展示层，清空搜索即复位）
   const [treeSearch, setTreeSearch] = useState('');
   const [searchCollapsed, setSearchCollapsed] = useState<Set<string>>(new Set());
-
-  // 函数/过程定义视图（对象树双击拉取；新查询执行时让位给结果面板）
-  const [objectDef, setObjectDef] = useState<{
-    name: string;
-    kind:
-      | 'function'
-      | 'procedure'
-      | 'sequence'
-      | 'trigger'
-      | 'synonym'
-      | 'package'
-      | 'event'
-      | 'rule'
-      | 'ftable'
-      | 'extension'
-      | 'dblink'
-      | 'recycle'
-      | 'datatype'
-      | 'tablespace'
-      | 'user'
-      | 'role';
-    def: ObjectDefinition;
-  } | null>(null);
-  const [defLoading, setDefLoading] = useState(false);
-  const [defCopied, setDefCopied] = useState(false);
-  const [defNotice, setDefNotice] = useState<string | null>(null);
-
-  // 表/视图详情视图（DDL / 列 / 索引三 Tab；树右键打开）
-  const [tableDetail, setTableDetail] = useState<{
-    name: string;
-    kind: 'table' | 'view';
-    detail: TableDetail;
-    tab: 'ddl' | 'columns' | 'indexes' | 'constraints' | 'references';
-  } | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [ddlCopied, setDdlCopied] = useState(false);
+  // 定义/表详情已升格为 DbScreen 层的独立对象 tab（onOpenObjectTab），
+  // 本组件不再持有其状态
 
   // 执行计划视图（右键「查看执行计划」）：后端解析的节点表 + 加载态；
   // 新查询时让位（runQuery 开头清空）
@@ -601,41 +573,30 @@ export function DbSessionView({
         node.kind === 'role'
       ) {
         const sessionId = sessionIdRef.current;
-        if (!sessionId || defLoading) return;
+        if (!sessionId) return;
         const schema = node.key.split('.')[0] ?? '';
         // const 快照：闭包内保持类型收窄（参数 narrowing 不进闭包）
         const kind = node.kind;
         const name = node.name;
-        setDefLoading(true);
-        setObjectDef(null);
-        dbObjectDefinition(sessionId, schema, name, kind)
-          .then((def) => setObjectDef({ name, kind, def }))
-          .catch((e) => setConnectError(String(e)))
-          .finally(() => setDefLoading(false));
+        // 定义视图升格为独立 tab（DbScreen 层，自取数）；此处只发起打开
+        onOpenObjectTab({ sessionId, schema, name, kind, variant: 'definition' });
       }
     },
-    [defLoading, meta],
+    [meta, onOpenObjectTab],
   );
 
-  /** 右键菜单：表详情（DDL/列/索引三 Tab） */
+  /** 右键菜单：表详情（DDL/列/索引 Tab）——升格为独立对象 tab */
   const openTableDetail = useCallback(
     (node: CatalogNode) => {
       const sessionId = sessionIdRef.current;
-      if (!sessionId || detailLoading) return;
+      if (!sessionId) return;
       if (node.kind !== 'table' && node.kind !== 'view') return;
       const schema = node.key.split('.')[0] ?? '';
-      // const 快照：闭包内保持类型收窄（参数 narrowing 不进闭包）
       const kind = node.kind;
       const name = node.name;
-      setDetailLoading(true);
-      setTableDetail(null);
-      setObjectDef(null);
-      dbTableDetail(sessionId, schema, name, kind)
-        .then((detail) => setTableDetail({ name, kind, detail, tab: 'ddl' }))
-        .catch((e) => setConnectError(String(e)))
-        .finally(() => setDetailLoading(false));
+      onOpenObjectTab({ sessionId, schema, name, kind, variant: 'tableDetail' });
     },
-    [detailLoading],
+    [onOpenObjectTab],
   );
 
   /**
@@ -742,8 +703,6 @@ export function DbSessionView({
       setRunning(true);
       setResults([]);
       setActiveResult(0);
-      setObjectDef(null); // 新查询让位：定义/表详情视图隐藏
-      setTableDetail(null);
       setExplainPlans(null); // 普通查询让位：计划视图隐藏
       try {
         await dbQuery(sessionId, text, handleQueryEvent, {
@@ -768,6 +727,22 @@ export function DbSessionView({
     }
   }, [running, rowCap, sql, handleQueryEvent]);
 
+  // 会话 api：对象 tab（查看定义）的「插入模板/运行」回写本会话编辑器；
+  // runQuery 经 ref 间接调用，避免注册项随每次输入变化重注册
+  const runQueryRef = useRef(runQuery);
+  useEffect(() => {
+    runQueryRef.current = runQuery;
+  }, [runQuery]);
+  const insertSql = useCallback((s: string) => setSql(s), []);
+  const runSql = useCallback((s: string) => {
+    setSql(s);
+    void runQueryRef.current(s);
+  }, []);
+  useEffect(() => {
+    onRegisterSessionApi(tabKey, { insertSql, runSql });
+    return () => onRegisterSessionApi(tabKey, null);
+  }, [tabKey, onRegisterSessionApi, insertSql, runSql]);
+
   // 查看执行计划：后端 db_explain 返回结构化节点表（方言装配与解析口径
   // 见 docs/sql-explain-plan-support.md；OB Oracle 后端明确拒绝）；
   // 多语句选中逐条各一份计划
@@ -781,8 +756,6 @@ export function DbSessionView({
       setExplainPlans(null);
       setResults([]);
       setActiveResult(0);
-      setObjectDef(null);
-      setTableDetail(null);
       dbExplain(sessionId, stmt, false)
         .then(setExplainPlans)
         .catch((e) => setConnectError(String(e)))
@@ -1404,257 +1377,9 @@ export function DbSessionView({
             ) : null}
           </div>
 
-          {/* 结果面板：表详情 > 定义视图 > 多结果集 Tab */}
+          {/* 结果面板：执行计划 > 多结果集 Tab（定义/表详情已升格为 DbScreen 层的独立对象 tab） */}
           <div className="flex min-h-0 flex-1 flex-col">
-            {detailLoading ? (
-              <div className="flex flex-1 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
-                <Loader2 className="size-4 animate-spin" />
-                {t('db.loadingDefinition')}
-              </div>
-            ) : tableDetail ? (
-              <>
-                <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border/50 bg-surface/30 px-2 select-none">
-                  {nodeIcon(tableDetail.kind)}
-                  <span className="max-w-44 truncate font-mono text-ui-xs font-semibold text-foreground">
-                    {tableDetail.name}
-                  </span>
-                  {/* 表统计徽标：注释截断展示在 title 悬停；大小/行数即时可见 */}
-                  {tableDetail.detail.comment ? (
-                    <span
-                      className="hidden max-w-52 truncate rounded bg-surface px-1.5 py-px text-ui-xs text-foreground-subtle lg:inline-block"
-                      title={tableDetail.detail.comment}
-                    >
-                      {tableDetail.detail.comment}
-                    </span>
-                  ) : null}
-                  {tableDetail.detail.size ? (
-                    <span className="shrink-0 rounded bg-primary/10 px-1.5 py-px font-mono text-[9px] font-semibold text-primary">
-                      {tableDetail.detail.size}
-                    </span>
-                  ) : null}
-                  {tableDetail.detail.rowCount ? (
-                    <span className="shrink-0 rounded bg-surface px-1.5 py-px font-mono text-[9px] text-foreground-subtle">
-                      {tableDetail.detail.rowCount} rows
-                    </span>
-                  ) : null}
-                  <span className="flex items-center gap-0.5">
-                    {(['ddl', 'columns', 'indexes', 'constraints', 'references'] as const)
-                      // 无数据（headers 空）不展示约束/引用 Tab
-                      .filter(
-                        (tab) =>
-                          (tab !== 'constraints' || tableDetail.detail.constraintHeaders.length > 0) &&
-                          (tab !== 'references' || tableDetail.detail.referenceHeaders.length > 0),
-                      )
-                      .map((tab) => (
-                      <button
-                        key={tab}
-                        type="button"
-                        onClick={() => setTableDetail((cur) => (cur ? { ...cur, tab } : cur))}
-                        className={cn(
-                          'rounded-md border px-2 py-0.5 text-ui-xs transition-colors',
-                          tableDetail.tab === tab
-                            ? 'border-border bg-surface font-semibold text-foreground'
-                            : 'border-transparent text-foreground-subtle hover:bg-hover hover:text-foreground',
-                        )}
-                      >
-                        {t(`db.tab_${tab}`)}
-                      </button>
-                    ))}
-                  </span>
-                  <div className="flex-1" />
-                  {tableDetail.tab === 'ddl' ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void navigator.clipboard
-                          .writeText(tableDetail.detail.ddl)
-                          .then(() => {
-                            setDdlCopied(true);
-                            setTimeout(() => setDdlCopied(false), 2000);
-                          })
-                          .catch(() => undefined);
-                      }}
-                      className="flex items-center gap-1 rounded-md px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-hover hover:text-foreground"
-                    >
-                      {ddlCopied ? (
-                        <span className="text-terminal-green">{t('files.copied', '已复制')}</span>
-                      ) : (
-                        <>
-                          <Copy className="size-3" />
-                          <span>{t('db.copyDefinition')}</span>
-                        </>
-                      )}
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => setTableDetail(null)}
-                    className="rounded p-1 text-foreground-subtlest hover:text-foreground"
-                    aria-label={t('common.close', '关闭')}
-                  >
-                    ✕
-                  </button>
-                </div>
-                {tableDetail.tab === 'ddl' ? (
-                  <div className="scrollbar-slim min-h-0 flex-1 overflow-auto p-3">
-                    <pre className="whitespace-pre-wrap break-all font-mono text-ui-xs leading-relaxed text-foreground select-text">
-                      {tableDetail.detail.ddl}
-                    </pre>
-                  </div>
-                ) : tableDetail.tab === 'columns' ? (
-                  <DataTable
-                    className="flex-1"
-                    columns={tableDetail.detail.columnHeaders}
-                    rows={tableDetail.detail.columns}
-                  />
-                ) : tableDetail.tab === 'indexes' ? (
-                  <DataTable
-                    className="flex-1"
-                    columns={tableDetail.detail.indexHeaders}
-                    rows={tableDetail.detail.indexes}
-                    emptyLabel={t('db.noIndexes')}
-                  />
-                ) : tableDetail.tab === 'references' ? (
-                  <DataTable
-                    className="flex-1"
-                    columns={tableDetail.detail.referenceHeaders}
-                    rows={tableDetail.detail.references}
-                    emptyLabel={t('db.noReferences')}
-                  />
-                ) : (
-                  <DataTable
-                    className="flex-1"
-                    columns={tableDetail.detail.constraintHeaders}
-                    rows={tableDetail.detail.constraints}
-                    emptyLabel={t('db.noConstraints')}
-                  />
-                )}
-              </>
-            ) : defLoading ? (
-              <div className="flex flex-1 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
-                <Loader2 className="size-4 animate-spin" />
-                {t('db.loadingDefinition')}
-              </div>
-            ) : objectDef ? (
-              <>
-                <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border/50 bg-surface/30 px-2 select-none">
-                  {objectDef.kind === 'function' ? (
-                    <Sigma className="size-3.5 shrink-0 text-terminal-magenta" />
-                  ) : objectDef.kind === 'trigger' ? (
-                    <Zap className="size-3.5 shrink-0 text-terminal-red" />
-                  ) : objectDef.kind === 'synonym' ? (
-                    <Link className="size-3.5 shrink-0 text-terminal-cyan" />
-                  ) : objectDef.kind === 'package' ? (
-                    <Package className="size-3.5 shrink-0 text-terminal-yellow" />
-                  ) : objectDef.kind === 'event' ? (
-                    <Clock className="size-3.5 shrink-0 text-terminal-blue" />
-                  ) : objectDef.kind === 'rule' ? (
-                    <ScrollText className="size-3.5 shrink-0 text-terminal-magenta" />
-                  ) : objectDef.kind === 'ftable' ? (
-                    <Globe className="size-3.5 shrink-0 text-terminal-blue" />
-                  ) : objectDef.kind === 'extension' ? (
-                    <Puzzle className="size-3.5 shrink-0 text-terminal-cyan" />
-                  ) : objectDef.kind === 'dblink' ? (
-                    <Cable className="size-3.5 shrink-0 text-terminal-yellow" />
-                  ) : objectDef.kind === 'recycle' ? (
-                    <Trash2 className="size-3.5 shrink-0 text-foreground-subtlest" />
-                  ) : objectDef.kind === 'datatype' ? (
-                    <Type className="size-3.5 shrink-0 text-terminal-magenta" />
-                  ) : objectDef.kind === 'tablespace' ? (
-                    <HardDrive className="size-3.5 shrink-0 text-terminal-cyan" />
-                  ) : objectDef.kind === 'user' ? (
-                    <User className="size-3.5 shrink-0 text-terminal-green" />
-                  ) : objectDef.kind === 'role' ? (
-                    <ShieldCheck className="size-3.5 shrink-0 text-terminal-yellow" />
-                  ) : (
-                    <Braces className="size-3.5 shrink-0 text-terminal-magenta" />
-                  )}
-                  <span className="max-w-44 truncate font-mono text-ui-xs font-semibold text-foreground">
-                    {objectDef.name}
-                  </span>
-                  <span className="text-ui-xs text-foreground-subtle">{t('db.objectDefinition')}</span>
-                  {objectDef.def.argCount > 0 ? (
-                    <span className="rounded bg-surface px-1.5 py-px font-mono text-[9px] text-foreground-subtle">
-                      {t('db.argCount', { count: objectDef.def.argCount })}
-                    </span>
-                  ) : null}
-                  <div className="flex-1" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void navigator.clipboard
-                        .writeText(objectDef.def.definition)
-                        .then(() => {
-                          setDefCopied(true);
-                          setTimeout(() => setDefCopied(false), 2000);
-                        })
-                        .catch(() => undefined);
-                    }}
-                    className="flex items-center gap-1 rounded-md px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-hover hover:text-foreground"
-                    title={t('files.copyCode', '复制')}
-                  >
-                    {defCopied ? (
-                      <span className="text-terminal-green">{t('files.copied', '已复制')}</span>
-                    ) : (
-                      <>
-                        <Copy className="size-3" />
-                        <span>{t('db.copyDefinition')}</span>
-                      </>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSql(objectDef.def.callTemplate);
-                      setDefNotice(t('db.templateInserted'));
-                    }}
-                    className="rounded-md px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-hover hover:text-foreground"
-                  >
-                    {t('db.insertCallTemplate')}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={running}
-                    onClick={() => {
-                      const { callTemplate, argCount } = objectDef.def;
-                      setSql(callTemplate);
-                      if (argCount > 0) {
-                        // 有参数：先插入编辑器引导补参，不首接执行（空参会直接报错）
-                        setDefNotice(t('db.needsArgs', { count: argCount }));
-                        return;
-                      }
-                      setDefNotice(null);
-                      void runQuery(callTemplate);
-                    }}
-                    className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground hover:bg-hover disabled:opacity-40"
-                  >
-                    <Play className="size-3 text-terminal-green fill-terminal-green" />
-                    {objectDef.def.argCount > 0 ? t('db.fillArgsAndRun') : t('db.runCall')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setObjectDef(null);
-                      setDefNotice(null);
-                    }}
-                    className="rounded p-1 text-foreground-subtlest hover:text-foreground"
-                    aria-label={t('common.close', '关闭')}
-                  >
-                    ✕
-                  </button>
-                </div>
-                {defNotice ? (
-                  <div className="shrink-0 border-b border-border/40 bg-surface/20 px-3 py-1 text-ui-xs text-foreground-subtle select-none">
-                    {defNotice}
-                  </div>
-                ) : null}
-                <div className="scrollbar-slim min-h-0 flex-1 overflow-auto p-3">
-                  <pre className="whitespace-pre-wrap break-all font-mono text-ui-xs leading-relaxed text-foreground select-text">
-                    {objectDef.def.definition}
-                  </pre>
-                </div>
-              </>
-            ) : explainLoading ? (
+            {explainLoading ? (
               <div className="flex flex-1 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
                 <Loader2 className="size-4 animate-spin" />
                 {t('db.explainLoading')}
