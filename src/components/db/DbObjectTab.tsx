@@ -296,10 +296,9 @@ export function DbObjectTab({
         </div>
         {subTab === 'ddl' ? (
           // DDL 用 Monaco 只读渲染（SQL 高亮 + 折行）；共享单实例，
-          // modelKey 同页刷新复用同键（content 变化走 setValue 不重建）
+          // 刷新走 setValue 不重建
           <ReadOnlySqlView
             active={active}
-            modelKey={`${payload.variant}:${payload.schema}.${payload.name}:ddl`}
             content={detail.ddl}
             className="scrollbar-slim min-h-0 flex-1"
           />
@@ -419,7 +418,6 @@ export function DbObjectTab({
       ) : null}
       <ReadOnlySqlView
         active={active}
-        modelKey={`${payload.variant}:${payload.schema}.${payload.name}:def`}
         content={definition.definition}
         className="min-h-0 flex-1"
       />
