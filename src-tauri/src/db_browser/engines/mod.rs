@@ -163,6 +163,14 @@ pub enum ObjectGroup {
     DbLink,
     /// 回收站（Oracle/达梦 dba_recyclebin/user_recyclebin，BIN$ 闪回对象）
     RecycleBin,
+    /// 用户自定义类型（Oracle all_objects OBJECT_TYPE='TYPE'）
+    DataType,
+    /// 表空间（达梦 V$TABLESPACE；实例级对象，挂在 SYS schema 下）
+    Tablespace,
+    /// 用户（达梦 SYSOBJECTS SUBTYPE$='USER'；实例级，挂 SYS schema）
+    DmUser,
+    /// 角色（达梦 SYSOBJECTS TYPE$='UR' AND SUBTYPE$='ROLE'；实例级，挂 SYS）
+    DmRole,
     /// 同义词（Oracle 系特有：Oracle ALL_SYNONYMS / 达梦 SYSOBJECTS）
     Synonym,
     /// 包（Oracle 系特有：PACKAGE / PACKAGE BODY）
@@ -193,6 +201,10 @@ impl ObjectGroup {
             ObjectGroup::Extension => "extension",
             ObjectGroup::DbLink => "dblink",
             ObjectGroup::RecycleBin => "recycle",
+            ObjectGroup::DataType => "datatype",
+            ObjectGroup::Tablespace => "tablespace",
+            ObjectGroup::DmUser => "user",
+            ObjectGroup::DmRole => "role",
             ObjectGroup::Synonym => "synonym",
             ObjectGroup::Package => "package",
             ObjectGroup::Event => "event",
@@ -219,6 +231,10 @@ impl ObjectGroup {
             "extension" => Some(ObjectGroup::Extension),
             "dblink" | "db link" => Some(ObjectGroup::DbLink),
             "recycle" | "recyclebin" => Some(ObjectGroup::RecycleBin),
+            "datatype" | "type" => Some(ObjectGroup::DataType),
+            "tablespace" => Some(ObjectGroup::Tablespace),
+            "user" => Some(ObjectGroup::DmUser),
+            "role" => Some(ObjectGroup::DmRole),
             "synonym" => Some(ObjectGroup::Synonym),
             "package" => Some(ObjectGroup::Package),
             "event" => Some(ObjectGroup::Event),
@@ -3280,6 +3296,59 @@ impl DbEngine {
                 // 是函数返回值，排除）
                 // DB Link：all_db_links 无源码，重建 CREATE DATABASE LINK 语句
                 //（字典里本就无口令列，不回显）
+                // 用户自定义类型：GET_DDL 出完整 CREATE OR REPLACE TYPE 语句
+                //（含 spec 与 body 合并形态）；失败降级 ALL_TYPE_ATTRS 属性清单
+                if kind == "datatype" {
+                    let ddl_sql = format!(
+                        "SELECT DBMS_METADATA.GET_DDL('TYPE', {}, {}) FROM dual",
+                        ob_quote_literal(name),
+                        ob_quote_literal(schema)
+                    );
+                    let mut ddl = String::new();
+                    if let Ok(mut rs) = conn.query(&ddl_sql).await
+                        && let Ok(Some(row)) = rs.next_row().await
+                    {
+                        ddl = oracle_row_string(&row, 0);
+                    }
+                    if !ddl.trim().is_empty() {
+                        return Ok(ObjectDefinition {
+                            definition: ddl,
+                            call_template: String::new(),
+                            arg_count: 0,
+                        });
+                    }
+                    let attr_sql = format!(
+                        "SELECT ATTR_NAME, ATTR_TYPE_NAME FROM all_type_attrs \
+                         WHERE OWNER = {} AND TYPE_NAME = {} ORDER BY ATTR_NO",
+                        ob_quote_literal(schema),
+                        ob_quote_literal(name)
+                    );
+                    let mut attrs: Vec<(String, String)> = Vec::new();
+                    if let Ok(mut rs) = conn.query(&attr_sql).await {
+                        while let Ok(Some(row)) = rs.next_row().await {
+                            attrs.push((
+                                oracle_row_string(&row, 0),
+                                oracle_row_string(&row, 1),
+                            ));
+                        }
+                    }
+                    if attrs.is_empty() {
+                        return Err("未找到该类型（可能已被删除）".to_string());
+                    }
+                    let lines: Vec<String> = attrs
+                        .iter()
+                        .map(|(attr, ty)| format!("  {attr} {ty}"))
+                        .collect();
+                    let definition = format!(
+                        "CREATE OR REPLACE TYPE \"{schema}\".\"{name}\" AS OBJECT (\n{}\n);",
+                        lines.join(",\n")
+                    );
+                    return Ok(ObjectDefinition {
+                        definition,
+                        call_template: String::new(),
+                        arg_count: 0,
+                    });
+                }
                 if kind == "dblink" {
                     let sql = format!(
                         "SELECT username, host, DECODE(owner, 'PUBLIC', 'PUBLIC', 'USER') \
@@ -3611,6 +3680,116 @@ impl DbEngine {
                             call_template: format!(
                                 "SELECT \"{schema_o}\".\"{name_o}\".NEXTVAL FROM DUAL;"
                             ),
+                            arg_count: 0,
+                        });
+                    }
+                    // 表空间/用户/角色：实例级管理对象无 DDL，定义视图给属性
+                    // 块（Redis 键检视块同型的只读文本形态）
+                    if kind_o == "tablespace" {
+                        let ts = dm_query_rows(
+                            client,
+                            "SELECT NAME FROM V$TABLESPACE WHERE NAME = ?",
+                            &[dm_pure::Param::Str(name_o.clone())],
+                        )
+                        .unwrap_or_default();
+                        if ts.is_empty() {
+                            return Err("未找到该表空间（可能已被删除）".to_string());
+                        }
+                        // 数据文件：V$DATAFILE.GROUP_ID = 表空间 id
+                        //（DBeaver DamengTablespace.FileCache 同源）
+                        let files = dm_query_rows(
+                            client,
+                            "SELECT PATH FROM V$DATAFILE \
+                             WHERE GROUP_ID = (SELECT ID FROM V$TABLESPACE WHERE NAME = ?) \
+                             ORDER BY PATH",
+                            &[dm_pure::Param::Str(name_o.clone())],
+                        )
+                        .unwrap_or_default();
+                        let mut lines = vec![
+                            format!("表空间：{name_o}"),
+                            String::new(),
+                            format!("数据文件（{} 个）：", files.len()),
+                        ];
+                        for row in &files {
+                            let path = dm_row_string(row, 0);
+                            if path != "NULL" {
+                                lines.push(format!("  {path}"));
+                            }
+                        }
+                        return Ok(ObjectDefinition {
+                            definition: lines.join("\n"),
+                            call_template: String::new(),
+                            arg_count: 0,
+                        });
+                    }
+                    if kind_o == "user" {
+                        // 默认表空间：INFO3 低 16 位是默认表空间 id
+                        //（DBeaver DamengUser 同源的 INFO3 & 0xFFFF 位掩码）
+                        let rows = dm_query_rows(
+                            client,
+                            "SELECT USER_OBJ.NAME, TS.NAME \
+                             FROM SYSOBJECTS USER_OBJ \
+                             LEFT JOIN SYS.V$TABLESPACE TS \
+                               ON USER_OBJ.INFO3 & 0x000000000000FFFF = TS.ID \
+                             WHERE USER_OBJ.SUBTYPE$ = 'USER' AND USER_OBJ.NAME = ?",
+                            &[dm_pure::Param::Str(name_o.clone())],
+                        )
+                        .unwrap_or_default();
+                        let Some(row) = rows.into_iter().next() else {
+                            return Err("未找到该用户（可能已被删除）".to_string());
+                        };
+                        let ts = {
+                            let raw = dm_row_string(&row, 1);
+                            if raw == "NULL" {
+                                "（未设置）".to_string()
+                            } else {
+                                raw
+                            }
+                        };
+                        return Ok(ObjectDefinition {
+                            definition: format!("用户：{name_o}\n默认表空间：{ts}"),
+                            call_template: String::new(),
+                            arg_count: 0,
+                        });
+                    }
+                    if kind_o == "role" {
+                        let role = dm_query_rows(
+                            client,
+                            "SELECT ID FROM SYSOBJECTS \
+                             WHERE TYPE$ = 'UR' AND SUBTYPE$ = 'ROLE' AND NAME = ?",
+                            &[dm_pure::Param::Str(name_o.clone())],
+                        )
+                        .unwrap_or_default();
+                        if role.is_empty() {
+                            return Err("未找到该角色（可能已被删除）".to_string());
+                        }
+                        // 成员用户（DBeaver DamengRole.PrivUserCache 同源：
+                        // SYSGRANTS.PRIVID = -1 即角色授予，OBJID = 角色 id）
+                        let members = dm_query_rows(
+                            client,
+                            "SELECT OBJ.NAME FROM SYSOBJECTS OBJ, SYSGRANTS GRANTS \
+                             WHERE GRANTS.PRIVID = -1 AND OBJ.TYPE$ = 'UR' \
+                               AND OBJ.ID = GRANTS.URID \
+                               AND GRANTS.OBJID = (SELECT ID FROM SYSOBJECTS \
+                                                   WHERE TYPE$ = 'UR' AND SUBTYPE$ = 'ROLE' AND NAME = ?) \
+                             ORDER BY OBJ.NAME",
+                            &[dm_pure::Param::Str(name_o.clone())],
+                        )
+                        .unwrap_or_default();
+                        let mut lines = vec![
+                            format!("角色：{name_o}"),
+                            String::new(),
+                            format!("成员用户（{} 个）：", members.len()),
+                        ];
+                        for row in &members {
+                            let m = dm_row_string(row, 0);
+                            if m != "NULL" {
+                                lines.push(format!("  {m}"));
+                            }
+                        }
+                        return Ok(ObjectDefinition {
+                            definition: lines.join("\n"),
+                            call_template: String::new(),
                             arg_count: 0,
                         });
                     }
@@ -4098,7 +4277,7 @@ impl DbEngine {
                     "SELECT object_type, COUNT(*) FROM all_objects \
                      WHERE owner = {} AND object_name NOT LIKE 'BIN$%' \
                        AND object_type IN \
-                         ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE','TRIGGER','SYNONYM','PACKAGE') \
+                         ('TABLE','VIEW','FUNCTION','PROCEDURE','SEQUENCE','TRIGGER','SYNONYM','PACKAGE','TYPE') \
                      GROUP BY object_type",
                     ob_quote_literal(schema)
                 );
@@ -4157,6 +4336,7 @@ impl DbEngine {
                         packages: Some(count_of("PACKAGE")),
                         db_links: Some(db_links),
                         recyclebin: Some(recyclebin),
+                        datatypes: Some(count_of("TYPE")),
                         ..GroupCounts::base(
                             count_of("TABLE"),
                             count_of("VIEW"),
@@ -4375,11 +4555,47 @@ impl DbEngine {
                     .ok()
                     .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
                     .unwrap_or(0);
+                    // 实例级管理对象（表空间/用户/角色，DBeaver 挂数据源节点
+                    //——我们的树只有 schema 层，约定挂 SYS schema 下）；
+                    // V$TABLESPACE 无权限/视图缺失时容错为 0（组自动隐藏）。
+                    // 用户/角色清单同源 DBeaver DamengDataSource 的 UserCache/
+                    // RoleCache 实证 SQL
+                    let (dm_tablespaces, dm_users, dm_roles) = if schema_o == "SYS" {
+                        (
+                            dm_query_rows(client, "SELECT COUNT(*) FROM V$TABLESPACE", &[])
+                                .ok()
+                                .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                                .unwrap_or(0),
+                            dm_query_rows(
+                                client,
+                                "SELECT COUNT(*) FROM SYSOBJECTS WHERE SUBTYPE$ = 'USER'",
+                                &[],
+                            )
+                            .ok()
+                            .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                            .unwrap_or(0),
+                            dm_query_rows(
+                                client,
+                                "SELECT COUNT(*) FROM SYSOBJECTS \
+                                 WHERE TYPE$ = 'UR' AND SUBTYPE$ = 'ROLE' \
+                                   AND (INFO2 IS NULL OR INFO2 != 1) AND INFO1 = 0",
+                                &[],
+                            )
+                            .ok()
+                            .and_then(|rows| rows.first().map(|row| dm_row_i64(row, 0)))
+                            .unwrap_or(0),
+                        )
+                    } else {
+                        (0, 0, 0)
+                    };
                     Ok(group_nodes(
                         &schema_o,
                         GroupCounts {
                             triggers: Some(triggers),
                             recyclebin: Some(dm_recyclebin),
+                            tablespaces: Some(dm_tablespaces),
+                            dm_users: Some(dm_users),
+                            dm_roles: Some(dm_roles),
                             // 同义词（SUBTYPE$='SYN'）与包（SUBTYPE$='PKGS'）
                             synonyms: Some(
                                 dm_query_rows(
@@ -4517,15 +4733,19 @@ impl DbEngine {
                 "event_name",
             ),
             // 同义词 / 包 / 规则：不适用 MySQL/PG 通用模板（Oracle 系/PG 专属），
-            // 各引擎臂单独处理；这里给空集占位（外部表/扩展/DB Link/回收站
-            // 同理，均由对应引擎臂单独拼 SQL）
+            // 各引擎臂单独处理；这里给空集占位（外部表/扩展/DB Link/回收站/
+            // 类型/达梦实例级分组同理，均由对应引擎臂单独拼 SQL）
             ObjectGroup::Synonym
             | ObjectGroup::Package
             | ObjectGroup::Rule
             | ObjectGroup::ForeignTable
             | ObjectGroup::Extension
             | ObjectGroup::DbLink
-            | ObjectGroup::RecycleBin => {
+            | ObjectGroup::RecycleBin
+            | ObjectGroup::DataType
+            | ObjectGroup::Tablespace
+            | ObjectGroup::DmUser
+            | ObjectGroup::DmRole => {
                 (
                     "SELECT NULL AS name FROM DUAL WHERE 1 = 0",
                     "SELECT NULL AS name WHERE 1 = 0",
@@ -4706,8 +4926,9 @@ impl DbEngine {
                     ObjectGroup::Trigger => "TRIGGER",
                     ObjectGroup::Synonym => "SYNONYM",
                     ObjectGroup::Package => "PACKAGE",
-                    // Redis/事件/规则/扩展分组不适用 Oracle（树上不会出现）；
-                    // 给个不存在的类型名让服务端返回空集
+                    ObjectGroup::DataType => "TYPE",
+                    // Redis/事件/规则/扩展/达梦实例级分组不适用 Oracle（树上不会
+                    // 出现）；给个不存在的类型名让服务端返回空集
                     _ => "VELOTERM_UNREACHABLE",
                 };
                 let sql = format!(
@@ -4758,6 +4979,10 @@ impl DbEngine {
                     | ObjectGroup::Extension
                     | ObjectGroup::DbLink
                     | ObjectGroup::RecycleBin
+                    | ObjectGroup::DataType
+                    | ObjectGroup::Tablespace
+                    | ObjectGroup::DmUser
+                    | ObjectGroup::DmRole
                     | ObjectGroup::Synonym
                     | ObjectGroup::Package
                     | ObjectGroup::Event
@@ -4949,11 +5174,28 @@ impl DbEngine {
                          WHERE t.SCHID = s.ID AND s.NAME = ? \
                            AND t.TYPE$ = 'SCHOBJ' AND t.SUBTYPE$ = 'PKGS' ORDER BY NAME"
                     }
+                    // 表空间/用户/角色（实例级，DBeaver DamengDataSource 三缓存
+                    // 同源实证 SQL；不按 schema 过滤，无绑定参数）
+                    ObjectGroup::Tablespace => {
+                        "SELECT NAME FROM V$TABLESPACE ORDER BY NAME"
+                    }
+                    ObjectGroup::DmUser => {
+                        "SELECT NAME FROM SYSOBJECTS WHERE SUBTYPE$ = 'USER' ORDER BY NAME"
+                    }
+                    ObjectGroup::DmRole => {
+                        "SELECT NAME FROM SYSOBJECTS \
+                         WHERE TYPE$ = 'UR' AND SUBTYPE$ = 'ROLE' \
+                           AND (INFO2 IS NULL OR INFO2 != 1) AND INFO1 = 0 \
+                         ORDER BY NAME"
+                    }
                     ObjectGroup::MaterializedView
                     | ObjectGroup::ForeignTable
                     | ObjectGroup::Extension
                     | ObjectGroup::DbLink
-                    // 回收站已在函数入口单独处理，此处不可达
+                    // 回收站已在函数入口单独处理，此处不可达；类型组不适用达梦
+                    //（DBeaver 达梦的"数据类型"是 JDBC getTypeInfo 协议层的内建
+                    // 类型表，raw SQL 侧无对应字典）
+                    | ObjectGroup::DataType
                     | ObjectGroup::RecycleBin
                     | ObjectGroup::Event
                     | ObjectGroup::Rule
@@ -4968,14 +5210,21 @@ impl DbEngine {
                         "SELECT NULL AS name FROM DUAL WHERE 1 = 0"
                     }
                 };
+                // 实例级分组（表空间/用户/角色）的清单 SQL 无绑定参数：
+                // dm 的协议层按占位符计数绑参，多余参数会报错
+                let instance_level = matches!(
+                    group,
+                    ObjectGroup::Tablespace | ObjectGroup::DmUser | ObjectGroup::DmRole
+                );
                 let schema_o = schema.to_string();
                 let kind_o = kind.clone();
                 self.with_dameng(move |client| {
-                    let names = dm_query_strings(
-                        client,
-                        sql,
-                        &[dm_pure::Param::Str(schema_o.clone())],
-                    )?;
+                    let params: Vec<dm_pure::Param> = if instance_level {
+                        Vec::new()
+                    } else {
+                        vec![dm_pure::Param::Str(schema_o.clone())]
+                    };
+                    let names = dm_query_strings(client, sql, &params)?;
                     Ok(names
                         .into_iter()
                         .map(|name| CatalogNode {
@@ -5789,6 +6038,14 @@ struct GroupCounts {
     db_links: Option<i64>,
     /// None = 引擎无回收站（Oracle/达梦 BIN$ 闪回对象）
     recyclebin: Option<i64>,
+    /// None = 引擎无用户自定义类型（Oracle all_objects TYPE）
+    datatypes: Option<i64>,
+    /// None = 引擎无表空间组（达梦 V$TABLESPACE，挂 SYS schema）
+    tablespaces: Option<i64>,
+    /// None = 引擎无用户组（达梦实例级，挂 SYS schema）
+    dm_users: Option<i64>,
+    /// None = 引擎无角色组（达梦实例级，挂 SYS schema）
+    dm_roles: Option<i64>,
     /// None = 引擎无同义词（Oracle 系特有）
     synonyms: Option<i64>,
     /// None = 引擎无包（Oracle 系特有）
@@ -5814,6 +6071,10 @@ impl GroupCounts {
             extensions: None,
             db_links: None,
             recyclebin: None,
+            datatypes: None,
+            tablespaces: None,
+            dm_users: None,
+            dm_roles: None,
             synonyms: None,
             packages: None,
             events: None,
@@ -5861,6 +6122,18 @@ fn group_nodes(schema: &str, counts: GroupCounts) -> Vec<CatalogNode> {
     }
     if let Some(r) = counts.recyclebin {
         groups.push((ObjectGroup::RecycleBin, "RECYCLE BIN", r));
+    }
+    if let Some(d) = counts.datatypes {
+        groups.push((ObjectGroup::DataType, "TYPE", d));
+    }
+    if let Some(t) = counts.tablespaces {
+        groups.push((ObjectGroup::Tablespace, "TABLESPACE", t));
+    }
+    if let Some(u) = counts.dm_users {
+        groups.push((ObjectGroup::DmUser, "USER", u));
+    }
+    if let Some(r) = counts.dm_roles {
+        groups.push((ObjectGroup::DmRole, "ROLE", r));
     }
     groups
         .into_iter()
