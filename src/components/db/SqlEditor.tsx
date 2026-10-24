@@ -14,7 +14,7 @@
  */
 
 import * as monaco from 'monaco-editor';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { createPortal } from 'react-dom';
 
@@ -22,13 +22,19 @@ import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { ensureExtendedLanguages } from '@/editor/languages';
 import { REDIS_COMMAND_SUGGESTIONS } from '@/components/db/redisCommands';
-import { dbSqlCompletions } from '@/services/dbConnectionsService';
+import { dbFormatSql, dbSqlCompletions } from '@/services/dbConnectionsService';
 import { readClipboardText, writeClipboardText } from '@/lib/clipboard';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { cn } from '@/lib/utils';
 
 // 模块级幂等注册（伞入口内部各 ensure 亦幂等）
 let languagesRegistered = false;
+
+/** SqlEditor 对外暴露的命令句柄（工具栏按钮等调用） */
+export interface SqlEditorHandle {
+  /** 格式化选中 SQL；无选中时格式化整篇（executeEdits 走 undo 栈） */
+  format: () => Promise<void>;
+}
 
 export interface SqlEditorProps {
   value: string;
@@ -46,6 +52,10 @@ export interface SqlEditorProps {
   /** schema 感知补全（表/列/别名）的会话 id；后端 db_sql_completions
    * 解析 cursor 上下文与目录（带缓存），null/不传 = 不启用（Redis 不传） */
   completionsSessionId?: string | null;
+  /** 格式化方言（引擎名；后端 db_format_sql 据此选 Dialect，null = Generic） */
+  formatEngine?: string | null;
+  /** 命令句柄（React 19 ref 即 prop） */
+  ref?: React.Ref<SqlEditorHandle>;
 }
 
 export function SqlEditor({
@@ -58,6 +68,8 @@ export function SqlEditor({
   className,
   redisMode = false,
   completionsSessionId = null,
+  formatEngine = null,
+  ref,
 }: SqlEditorProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -73,6 +85,31 @@ export function SqlEditor({
   explainRef.current = onExplain;
   const completionsSidRef = useRef(completionsSessionId);
   completionsSidRef.current = completionsSessionId;
+
+  // 格式化（后端 db_format_sql，sqlformat 纯空白/缩进规整）：选中非空格式化
+  // 选中，否则整篇；executeEdits 走 undo 栈可撤销。Redis 是逐行命令不适用
+  const formatSelection = useCallback(async () => {
+    const editor = editorRef.current;
+    const model = modelRef.current;
+    if (!editor || !model || redisMode) return;
+    const sel = editor.getSelection();
+    const range = sel && !sel.isEmpty() ? sel : model.getFullModelRange();
+    const source = model.getValueInRange(range);
+    if (!source.trim()) return;
+    const formatted = await dbFormatSql(source, formatEngineRef.current ?? undefined).catch(
+      () => null,
+    );
+    if (formatted == null || formatted === source) return;
+    editor.executeEdits('sql-format', [
+      { range, text: formatted, forceMoveMarkers: false },
+    ]);
+    editor.focus();
+  }, [redisMode]);
+  const formatRef = useRef(formatSelection);
+  formatRef.current = formatSelection;
+  const formatEngineRef = useRef(formatEngine);
+  formatEngineRef.current = formatEngine;
+  useImperativeHandle(ref, () => ({ format: () => formatRef.current() }), []);
 
   // 右键菜单（portal 到 body + fixed 定位，项目弹层规范；与对象树右键菜单
   // 同型样式）。selected 为开菜单瞬间的选区快照
@@ -324,13 +361,18 @@ export function SqlEditor({
                   },
                 ];
                 if (!redisMode) {
-                  items.push({
-                    key: 'explain',
-                    label: t('db.ctxExplain'),
-                    disabled: !hasSel,
-                    action: () => explainRef.current?.(menu.selected),
-                  });
-                }
+                items.push({
+                  key: 'explain',
+                  label: t('db.ctxExplain'),
+                  disabled: !hasSel,
+                  action: () => explainRef.current?.(menu.selected),
+                });
+                items.push({
+                  key: 'format',
+                  label: hasSel ? t('db.formatSelection') : t('db.formatSql'),
+                  action: () => void formatRef.current(),
+                });
+              }
                 return items.map((item) => (
                   <button
                     key={item.key}
