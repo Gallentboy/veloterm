@@ -1072,9 +1072,8 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 .await;
                 redis_select(conn, *db).await.ok();
                 let (role, rows) = entries?;
-                // 成员节点 key 用 `{schema}.{table}#{field}` 编码：`#` 分隔成员名，
-                // 前端据此能反推出父 key（key 名本身可能含 `.`，用点分无法可靠
-                // 还原）——单击成员节点时据此生成精确取值命令（HGET/LINDEX/...）
+                // 注：前端树不再展开 Redis key（key 到顶，点击直接在结果面板
+                // 出内容），本臂保留为通用能力（CLI/后续行级操作可用）。
                 Ok(rows
                     .into_iter()
                     .map(|row| {
