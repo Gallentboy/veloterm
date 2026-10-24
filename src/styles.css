@@ -389,7 +389,33 @@ body {
 }
 
 /*
- * 「关于」卡片动效（对齐 ZCode Dialog 的 fade+zoom 手感，叠加自上而下的
+ * 主页佛祖字符画（佛祖保佑 · 永无 BUG）：逐行呼吸浮动，行间 stagger 相位差
+ * （110ms/行）让波纹从头罩扫到莲花座；眼睛行的眨眼由 React 状态换行实现。
+ * prefers-reduced-motion 下静止。
+ */
+.welcome-ascii-line {
+  display: block;
+  animation: welcome-ascii-float 3.2s ease-in-out infinite;
+}
+
+@keyframes welcome-ascii-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-ascii-line {
+    animation: none;
+  }
+}
+
+/*
+ * 关于卡片入场/出场动画（透明窗口形态，Windows 弹层复用同 keyframes 的
  * 浮现位移）：入场 320ms（下移 12px→0 + 淡入 + 0.98→1 缩放），出场 220ms
  * 反向（时长与 AboutWindow 的 ABOUT_EXIT_ANIMATION_MS、主窗遮罩渐变对齐）。
  * 入场/出场的起始帧由 AboutWindow 与主窗遮罩（about-visibility 事件）
