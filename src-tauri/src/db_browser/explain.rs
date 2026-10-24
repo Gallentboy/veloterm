@@ -259,8 +259,19 @@ fn parse_mysql(columns: &[String], rows: &[Vec<String>]) -> Vec<PlanNode> {
 
 /// PG / 达梦的文本行形态（单列，行内缩进表达层级；PG 的 "-> " 前缀与
 /// "(cost=a..b rows=n width=w…)" 括号段解析出数值）。缩进深度按行首空格数，
-/// 与上一浅层行比较建树
+/// 与上一浅层行比较建树。
+/// 达梦原生 EXPLAIN 形态（cmd=149 帧的计划文本，每行形如
+/// `4         #CSCN2: [1, 1, 0]; INDEX33555437(T); btr_scan(1)`）——
+/// 层级的判定不用空格（列对齐）而用行号前缀 + 操作符列起始位置：
+/// 操作符 `#XXX:` 在行内的列位置越小层级越浅，同位置即同层
 fn parse_text_lines(rows: &[Vec<String>]) -> Vec<PlanNode> {
+    let dm = rows.iter().any(|r| {
+        r.first()
+            .is_some_and(|l| l.contains('#') && l.contains(": ["))
+    });
+    if dm {
+        return parse_dm_lines(rows);
+    }
     let mut stack: Vec<(usize, i64)> = Vec::new();
     let mut out = Vec::new();
     for (i, r) in rows.iter().enumerate() {
@@ -289,6 +300,52 @@ fn parse_text_lines(rows: &[Vec<String>]) -> Vec<PlanNode> {
             cost,
             rows: rows_n,
             bytes: None,
+        });
+    }
+    out
+}
+
+/// 达梦原生计划行：`<行号>  <缩进>#<操作符>: [cost, rows, bytes]; <参数>`
+/// - 行号前缀（首个空格前）丢弃，层级由 `#` 的列位置决定（列对齐树形）
+/// - 方括号三元组按达梦语义映射 cost / rows / bytes
+/// - 分号后的操作符参数（表名、btr_scan 等）进 detail
+fn parse_dm_lines(rows: &[Vec<String>]) -> Vec<PlanNode> {
+    let mut stack: Vec<(usize, i64)> = Vec::new();
+    let mut out = Vec::new();
+    for (i, r) in rows.iter().enumerate() {
+        let raw = r.first().map(String::as_str).unwrap_or("");
+        // 去行号前缀（数字 + 空白）
+        let line = raw.trim_start_matches(|c: char| c.is_ascii_digit()).trim_start();
+        let Some(hash_pos) = line.find('#') else {
+            continue;
+        };
+        // 层级 = 操作符在行内的列位置（含行号前缀的原始位置）
+        let indent = raw.find('#').unwrap_or(hash_pos);
+        let rest = &line[hash_pos..];
+        let (head, tail) = rest.split_once(';').unwrap_or((rest, ""));
+        // head: "#CSCN2: [1, 1, 0]"；操作符名与三元组分开
+        let (op_part, tri) = head.split_once(": ").unwrap_or((head, ""));
+        let title = op_part.trim_start_matches('#').trim().to_string();
+        let nums: Vec<f64> = tri
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .split(',')
+            .filter_map(|s| num(s))
+            .collect();
+        while stack.last().is_some_and(|(ind, _)| *ind >= indent) {
+            stack.pop();
+        }
+        let parent = stack.last().map(|(_, id)| *id);
+        stack.push((indent, i as i64));
+        out.push(PlanNode {
+            id: i as i64,
+            parent_id: parent,
+            title,
+            detail: tail.trim().to_string(),
+            cost: nums.first().copied(),
+            rows: nums.get(1).copied(),
+            bytes: nums.get(2).copied(),
         });
     }
     out
@@ -460,6 +517,35 @@ mod tests {
         assert_eq!(n1.title, "PRIMARY · t2");
         assert!(n1.detail.contains("idx_a"));
         assert_eq!(n1.rows, Some(10.0));
+    }
+
+    /// 达梦原生 EXPLAIN 文本（cmd=149 帧）：行号前缀 + #操作符列对齐建树 +
+    /// 方括号三元组 cost/rows/bytes（真机 hex 实证的原始文本）
+    #[test]
+    fn parse_dm_text_plan() {
+        let cols: Vec<String> = vec!["EXPLAIN_PLAN".to_string()];
+        let rows: Vec<Vec<String>> = vec![
+            "1   #NSET2: [1, 1, 0] ",
+            "2     #PRJT2: [1, 1, 0]; exp_num(1), is_atom(FALSE) ",
+            "3       #AAGR2: [1, 1, 0]; grp_num(0), sfun_num(1), distinct_flag[0]; slave_empty(0)",
+            "4         #CSCN2: [1, 1, 0]; INDEX33555437(##HISTOGRAMS_TABLE); btr_scan(1)",
+        ]
+        .into_iter()
+        .map(|l| vec![l.to_string()])
+        .collect();
+        let plan = parse_plan(&cols, &rows, "SELECT COUNT(*) FROM T");
+        assert_eq!(plan.nodes.len(), 4);
+        let [n0, n1, n2, n3] = plan.nodes.as_slice() else {
+            unreachable!()
+        };
+        assert_eq!(n0.title, "NSET2");
+        assert_eq!(n0.parent_id, None);
+        assert_eq!(n0.cost, Some(1.0));
+        assert_eq!(n1.parent_id, Some(0));
+        assert_eq!(n2.parent_id, Some(1));
+        assert_eq!(n3.parent_id, Some(2));
+        assert_eq!(n3.title, "CSCN2");
+        assert!(n3.detail.contains("HISTOGRAMS_TABLE"));
     }
 
     /// PG 文本行：缩进建树 + cost/rows 解析 + "-> " 前缀剥离

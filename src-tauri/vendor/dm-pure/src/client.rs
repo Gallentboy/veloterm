@@ -655,6 +655,44 @@ impl DmClient {
                         }
                     }
                 }
+            } else if f.cmd == 149 {
+                // EXPLAIN 计划帧（严格对照 JDBC 反编译）：DmdbStatement 的
+                // lookupswitch 149 → `explain = buffer.readStringWithLength(serverEncoding)`，
+                // 而 readStringWithLength = readBytesWithLength = readInt() 长度 +
+                // readBytes(len)，即帧体 [int32 LE 字节长][计划文本]。JDBC 把文本
+                // 塞进 ExecuteRetInfo.explain 字段由 getExplain() 取，不是结果集——
+                // 这里按同一口径包成单列结果集（列名 EXPLAIN_PLAN），使工作台的
+                // 表格/解析通道无需特判
+                let mut pos = 0usize;
+                if f.body.len() >= 4 {
+                    let text_len = le_i32(&f.body, 0).max(0) as usize;
+                    pos = 4;
+                    let avail = f.body.len().saturating_sub(pos);
+                    let take = text_len.min(avail);
+                    let text = self
+                        .svr_encoding
+                        .decode(&f.body[pos..pos + take])
+                        .0
+                        .into_owned();
+                    let cols = vec![Column {
+                        col_type: 1,
+                        prec: 0,
+                        scale: 0,
+                        nullable: true,
+                        name: "EXPLAIN_PLAN".to_string(),
+                        type_name: "VARCHAR".to_string(),
+                        table_name: String::new(),
+                        schema_name: String::new(),
+                        lob: false,
+                    }];
+                    let rows_raw: Vec<Row> = text
+                        .lines()
+                        .map(|line| vec![Some(line.as_bytes().to_vec())])
+                        .collect();
+                    let rows = self.decode_rows(&cols, &rows_raw, stmt)?;
+                    result = Some(ExecuteResult::Query { columns: cols, rows });
+                    break 'outer;
+                }
             } else if f.cmd == 187 {
                 // DML 结果：影响行数在帧头参数区偏移 24（int64，Go zq.go Dm_build_354）
                 let affected = le_i64(&f.opts, 4) as u64;
