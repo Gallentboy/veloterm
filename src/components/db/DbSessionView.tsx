@@ -37,6 +37,8 @@ import {
   ShieldCheck,
   Trash2,
   Type,
+  CheckCircle2,
+  Undo2,
   User,
   Unplug,
   X,
@@ -62,12 +64,16 @@ import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { createPortal } from 'react-dom';
 import {
   dbCatalog,
+  dbCommit,
   dbConnect,
   dbDisconnect,
   dbExplain,
+  dbGetAutoCommit,
   dbListDatabases,
   dbQuery,
   dbQueryCancel,
+  dbRollback,
+  dbSetAutoCommit,
   dbUseDatabase,
   type CatalogNode,
   type CatalogParentArg,
@@ -311,6 +317,9 @@ export function DbSessionView({
   const [results, setResults] = useState<StatementResult[]>([]);
   const [activeResult, setActiveResult] = useState(0);
   const [rowCap, setRowCap] = useState(5000);
+  // 自动提交（默认 true）：true 每语句自动落库、false 显式事务。
+  // 连接建立时从后端读初始值（后端也默认 true）
+  const [autoCommit, setAutoCommit] = useState(true);
 
   // 当前数据库下拉（可切换的库清单 + 切换中状态）
   const [databases, setDatabases] = useState<string[]>([]);
@@ -629,6 +638,10 @@ export function DbSessionView({
           setSql((prev) => (prev === 'SELECT 1;' ? 'PING' : prev));
         }
         onBaseTitle(`${sessionMeta.name} · ${connection.host}`);
+        // 连接建立时同步自动提交初始值（后端默认 true，切换库后保持）
+        void dbGetAutoCommit(sessionMeta.sessionId)
+          .then(setAutoCommit)
+          .catch(() => undefined);
         // 可切换库清单与对象树并行拉取
         void dbListDatabases(sessionMeta.sessionId)
           .then(setDatabases)
@@ -1672,6 +1685,78 @@ export function DbSessionView({
               </button>
             ) : null}
             <span className="mx-1 h-4 w-px bg-border/60" />
+            {/* 自动提交开关 + 提交/回滚按钮（Redis 无事务概念不显示）。
+                开关切换调后端 SET autocommit / 本地标志；提交/回滚只在
+                开关关（显式事务模式）时可用——自动提交模式下事务已随每条
+                语句落库，按钮没有意义 */}
+            {meta.engine !== 'redis' ? (
+              <>
+                <button
+                  type="button"
+                  disabled={running}
+                  onClick={() => {
+                    const sid = sessionIdRef.current;
+                    if (!sid) return;
+                    void dbSetAutoCommit(sid, !autoCommit)
+                      .then((v) => setAutoCommit(v))
+                      .catch((e) => setConnectError(String(e)));
+                  }}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-md px-2 py-0.5 text-ui-xs transition-colors select-none',
+                    autoCommit
+                      ? 'text-foreground-subtle hover:text-foreground'
+                      : 'bg-primary/15 font-medium text-primary',
+                  )}
+                  title={t('db.autoCommitHint')}
+                >
+                  <span
+                    className={cn(
+                      'relative h-3.5 w-6 rounded-full transition-colors',
+                      autoCommit ? 'bg-border' : 'bg-primary',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'absolute top-0.5 size-2.5 rounded-full bg-background transition-all',
+                        autoCommit ? 'left-0.5' : 'left-3',
+                      )}
+                    />
+                  </span>
+                  {t('db.autoCommit')}
+                </button>
+                {!autoCommit ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={running}
+                      onClick={() => {
+                        const sid = sessionIdRef.current;
+                        if (!sid) return;
+                        void dbCommit(sid).catch((e) => setConnectError(String(e)));
+                      }}
+                      className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-terminal-green hover:bg-hover disabled:opacity-40"
+                    >
+                      <CheckCircle2 className="size-3" />
+                      {t('db.commitTx')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={running}
+                      onClick={() => {
+                        const sid = sessionIdRef.current;
+                        if (!sid) return;
+                        void dbRollback(sid).catch((e) => setConnectError(String(e)));
+                      }}
+                      className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-destructive hover:bg-hover disabled:opacity-40"
+                    >
+                      <Undo2 className="size-3" />
+                      {t('db.rollbackTx')}
+                    </button>
+                  </>
+                ) : null}
+                <span className="mx-1 h-4 w-px bg-border/60" />
+              </>
+            ) : null}
             <span className="text-ui-xs text-foreground-subtle">{t('db.rowCap')}</span>
             <SelectMenu
               value={String(rowCap)}

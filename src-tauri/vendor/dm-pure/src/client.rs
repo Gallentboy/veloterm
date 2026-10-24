@@ -1299,6 +1299,19 @@ impl DmClient {
 
     // ---------- 事务 ----------
 
+    /// 设置自动提交标志（不下发命令，只改本地标志——opts[0] 在每次 execute
+    /// 时读取该值决定服务端行为：1=每语句自动提交、0=需显式 commit）。
+    /// 与 `begin()` 的分工：begin 做协议握手 + 标记事务开始，适用于显式
+    /// BEGIN 语句；本方法只切标志位，适用于会话级 autocommit 开关。
+    pub fn set_auto_commit(&mut self, val: bool) {
+        self.auto_commit = val;
+    }
+
+    /// 是否在事务中（begin 后 commit/rollback 前）
+    pub fn in_transaction(&self) -> bool {
+        self.in_transaction
+    }
+
     /// 开始事务：设置隔离级别（cmd=52）+ 关闭自动提交（Go 实测顺序）
     pub fn begin(&mut self) -> Result<()> {
         self.send(52, &1i32.to_le_bytes(), &[], 0)?;

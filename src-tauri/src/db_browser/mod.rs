@@ -79,6 +79,12 @@ pub struct DbSession {
     pub engine: tokio::sync::Mutex<DbEngine>,
     pub cancel: Arc<tokio::sync::Notify>,
     pub cancelled: Arc<AtomicBool>,
+    /// 自动提交（默认 true）：true 时 DML/DDL 每语句自动落库；
+    /// false 时开启显式事务（用户通过 提交/回滚 按钮控制事务边界）。
+    /// 各引擎实现方式不同（MySQL SET autocommit、达梦 set_auto_commit、
+    /// Oracle 执行后追加 commit、PG/SQLite 检查事务状态决定是否 BEGIN），
+    /// 状态位在这里统一管理，前端可见
+    pub auto_commit: Arc<AtomicBool>,
 }
 
 /// DB 会话表（tauri manage 注入）。
@@ -250,6 +256,7 @@ pub async fn db_connect(
         engine: tokio::sync::Mutex::new(engine),
         cancel: Arc::new(tokio::sync::Notify::new()),
         cancelled,
+        auto_commit: Arc::new(AtomicBool::new(true)),
     });
     state
         .sessions
@@ -399,6 +406,7 @@ async fn run_statements_streaming(
     total_budget: Duration,
 ) -> Result<(), String> {
     let emit_count = statements.iter().filter(|(_, emit)| *emit).count();
+    let auto_commit = session.auto_commit.load(Ordering::Relaxed);
     let started = Instant::now();
 
     let _ = on_event.send(QueryEvent::Started {
@@ -471,6 +479,22 @@ async fn run_statements_streaming(
 
         match tokio::time::timeout(remaining, exec).await {
             Ok(Ok(summary)) => {
+                // Oracle 自动提交：DML/DDL 语句成功后（有 affected 或无结果集）
+                // 且 auto_commit=true 时追加协议级 commit。Oracle 默认不自动
+                // 提交（DML 开事务但不 COMMIT），不补的话数据一直挂着——
+                // 用户看到"执行成功"但其他会话看不到数据
+                if auto_commit
+                    && summary.affected.is_some()
+                    && matches!(&*engine, DbEngine::Oracle(_))
+                    && let DbEngine::Oracle(conn) = &mut *engine
+                {
+                    if let Err(e) = conn.commit().await {
+                        let _ = on_event.send(QueryEvent::StatementError {
+                            index,
+                            message: format!("自动提交失败：{e}（事务保持打开）"),
+                        });
+                    }
+                }
                 if summary.cancelled {
                     any_cancelled = true;
                 }
@@ -925,6 +949,54 @@ pub async fn db_list_databases(
     let session = state.get(&session_id)?;
     let mut engine = session.engine.lock().await;
     engine.list_databases().await
+}
+
+/// 切换会话级自动提交。true = 每语句自动落库（默认），false = 显式事务
+/// （用户通过提交/回滚按钮控制事务边界）。各引擎实现方式见
+/// [`DbEngine::set_auto_commit`] 的文档注释。
+#[tauri::command]
+pub async fn db_set_auto_commit(
+    state: State<'_, DbState>,
+    session_id: String,
+    auto_commit: bool,
+) -> Result<bool, String> {
+    let session = state.get(&session_id)?;
+    let mut engine = session.engine.lock().await;
+    engine.set_auto_commit(auto_commit).await?;
+    session.auto_commit.store(auto_commit, Ordering::Relaxed);
+    Ok(auto_commit)
+}
+
+/// 查询会话当前的自动提交状态。
+#[tauri::command]
+pub async fn db_get_auto_commit(
+    state: State<'_, DbState>,
+    session_id: String,
+) -> Result<bool, String> {
+    let session = state.get(&session_id)?;
+    Ok(session.auto_commit.load(Ordering::Relaxed))
+}
+
+/// 提交当前事务（显式事务模式下由工具栏按钮触发）。
+#[tauri::command]
+pub async fn db_commit(
+    state: State<'_, DbState>,
+    session_id: String,
+) -> Result<(), String> {
+    let session = state.get(&session_id)?;
+    let mut engine = session.engine.lock().await;
+    engine.commit().await
+}
+
+/// 回滚当前事务。
+#[tauri::command]
+pub async fn db_rollback(
+    state: State<'_, DbState>,
+    session_id: String,
+) -> Result<(), String> {
+    let session = state.get(&session_id)?;
+    let mut engine = session.engine.lock().await;
+    engine.rollback().await
 }
 
 /// 用表单草稿参数（编辑态密码留空自动从库补）临时建连拉取可选数据库清单，
