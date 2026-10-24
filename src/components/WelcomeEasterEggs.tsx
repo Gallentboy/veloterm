@@ -172,7 +172,8 @@ const TRAIN_LINES = [
 
 function TrainArt() {
   return (
-    <div className="w-full max-w-2xl overflow-hidden">
+    // 左右渐隐遮罩：进出场的车体在容器边缘融化而非硬切边
+    <div className="welcome-train-mask w-full max-w-2xl overflow-hidden">
       <div className="welcome-train-track flex flex-col font-mono text-[9px] leading-[1.3] whitespace-pre text-foreground-subtle sm:text-[10px]">
         {TRAIN_LINES.map((line, i) => (
           <span key={i}>{line}</span>
@@ -182,7 +183,7 @@ function TrainArt() {
   );
 }
 
-// ── 4. Matrix 代码雨（canvas，透明底；激活时挂载、卸载即停） ─────────────────
+// ── 4. Matrix 代码雨（经典算法：黑底面板 + 半透明覆盖衰减） ─────────────────
 
 function MatrixRain() {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -191,51 +192,69 @@ function MatrixRain() {
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
     const W = (canvas.width = 520);
-    const H = (canvas.height = 170);
-    const fontSize = 12;
+    const H = (canvas.height = 190);
+    const fontSize = 13;
     const cols = Math.floor(W / fontSize);
     const chars = '01<>{}/$#;=+*'.split('');
-    const heads = Array.from({ length: cols }, () => Math.random() * (H / fontSize));
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // 每列独立的下落头部（行号）与推进概率（速度差异是真实感的关键：
+    // 真雨不是齐刷刷的）
+    const heads = Array.from({ length: cols }, () => Math.floor(Math.random() * -40));
+    const speeds = Array.from({ length: cols }, () => 0.35 + Math.random() * 0.65);
+    const BG = '#04120a';
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, H);
+    ctx.font = `${fontSize}px ui-monospace, monospace`;
+    ctx.textBaseline = 'top';
     let raf = 0;
     let last = 0;
-    const draw = (ts: number) => {
-      if (ts - last > 80) {
-        // ~12fps：终端质感的断续感
-        last = ts;
-        ctx.clearRect(0, 0, W, H);
-        ctx.font = `${fontSize}px ui-monospace, monospace`;
-        heads.forEach((y, c) => {
-          for (let tail = 0; tail < 6; tail += 1) {
-            const ty = y - tail;
-            if (ty < 0) continue;
-            const alpha = tail === 0 ? 0.95 : 0.55 - tail * 0.08;
-            ctx.fillStyle = `rgba(70, 191, 114, ${alpha})`;
+    const tick = () => {
+      // 半透明覆盖：旧字符留在原地慢慢变暗——拖尾是「记住的字符」而非闪烁
+      ctx.fillStyle = 'rgba(4, 18, 10, 0.16)';
+      ctx.fillRect(0, 0, W, H);
+      heads.forEach((head, c) => {
+        if (Math.random() > (speeds[c] ?? 0.5)) return; // 本帧该列不推进
+        const x = c * fontSize;
+        const y = head * fontSize;
+        if (y >= 0 && y < H) {
+          // 亮头部（近白绿），上一格补回普通绿——头部走过后留下绿尾巴
+          ctx.fillStyle = 'rgba(120, 255, 160, 0.9)';
+          ctx.fillText(chars[Math.floor(Math.random() * chars.length)] ?? '0', x, y);
+          const py = y - fontSize;
+          if (py >= 0) {
+            ctx.fillStyle = 'rgba(60, 200, 110, 0.75)';
             ctx.fillText(
               chars[Math.floor(Math.random() * chars.length)] ?? '0',
-              c * fontSize,
-              ty * fontSize,
+              x,
+              py,
             );
           }
-          heads[c] = (heads[c] ?? 0) + 1;
-          if ((heads[c] ?? 0) * fontSize > H + 6 && Math.random() > 0.975) {
-            heads[c] = 0;
-          }
-        });
+        }
+        heads[c] = (heads[c] ?? 0) + 1;
+        if (y > H + fontSize * 4 && Math.random() > 0.9) {
+          heads[c] = Math.floor(Math.random() * -30); // 出屏后随机延迟再落
+        }
+      });
+    };
+    const draw = (ts: number) => {
+      if (ts - last > 45) {
+        last = ts;
+        tick();
       }
       raf = requestAnimationFrame(draw);
     };
-    if (reduced) {
-      // 降级：画一帧静帧（无 rAF 循环）
-      last = -1000;
-      draw(0);
-      cancelAnimationFrame(raf);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      tick(); // 降级：一帧静帧
     } else {
       raf = requestAnimationFrame(draw);
     }
     return () => cancelAnimationFrame(raf);
   }, []);
-  return <canvas ref={ref} className="max-w-full" aria-hidden="true" />;
+  return (
+    // 黑底小屏幕面板：经典代码雨的舞台就是纯黑，透明底上做不出覆盖衰减
+    <div className="overflow-hidden rounded-lg border border-border">
+      <canvas ref={ref} className="block max-w-full" aria-hidden="true" />
+    </div>
+  );
 }
 
 // ── 轮播容器 ───────────────────────────────────────────────────────────────
