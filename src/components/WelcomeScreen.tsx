@@ -1,15 +1,34 @@
-import {
-  ChevronRight,
-  Database,
-  FileSearch,
-  Package,
-  ShieldCheck,
-  ArrowLeftRight,
-  SquareTerminal,
-} from 'lucide-react';
+import { ChevronRight, SquareTerminal } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PRIMARY_MODIFIER_LABEL } from '@/lib/keyboard';
 import { cn } from '@/lib/utils';
+
+/** 佛祖保佑字符画（程序员的经典护身符，形态对齐社区流传原版；
+ * 转义校准经 node 打印逐行核对） */
+const BUDDHA_LINES = [
+  '                   _ooOoo_',
+  '                  o8888888o',
+  '                  88" . "88',
+  '                  (| -_- |)',
+  '                  O\\  =  /O',
+  "               ____/`---'\\____",
+  "             .'  \\\\|     |//  `.",
+  '            /  \\\\|||  :  |||//  \\',
+  '           /  _||||| -:- |||||-  \\',
+  '           |   | \\\\\\  -  /// |   |',
+  '           | \\_|  \'\'\\---/\'\'  |   |',
+  '           \\  .-\\__  `-`  ___/-. /',
+  '         ___`. .\'  /--.--\\  `. . __',
+  '      ."" \'<  `.___\\_<|>_/___.\'  >\'"".',
+  '     | | :  `- \\`.;\\ _ /`;.`/ - ` : | |',
+  '     \\  \\ `-.   \\_ __\\ /__ _/   .-` /  /',
+  '======`-.____`-.___\\_____/___.-`____.-\'======',
+  '                   `=---=\'',
+];
+/** 眼睛所在行（88" . "88）与眨眼形态 */
+const BUDDHA_EYES_LINE = 2;
+const BUDDHA_BLINK_LINE = '                  88" - "88';
 
 function ShortcutHint({
   keys,
@@ -47,27 +66,6 @@ function ShortcutHint({
   );
 }
 
-/** 功能矩阵卡片（纯展示：图标 + 标题 + 一行要点） */
-function FeatureCard({
-  icon,
-  title,
-  desc,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  desc: string;
-}) {
-  return (
-    <div className="flex items-start gap-2.5 rounded-lg border border-border bg-surface/40 p-3">
-      <span className="mt-0.5 shrink-0 text-foreground-subtle">{icon}</span>
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-ui-sm font-medium text-foreground">{title}</span>
-        <span className="text-ui-xs leading-relaxed text-foreground-subtle">{desc}</span>
-      </span>
-    </div>
-  );
-}
-
 /** 主页欢迎内容（空状态样式参考 ZCode ChatEmptyState / WelcomeScreen）。 */
 export function WelcomeScreen({
   onNewTerminal,
@@ -85,6 +83,20 @@ export function WelcomeScreen({
   onOpenManual?: () => void;
 }) {
   const { t } = useTranslation();
+
+  // 佛祖眨眼：约 4s 一次，每次 160ms（眼睛行的两个 . 短暂变 -）
+  const [blink, setBlink] = useState(false);
+  useEffect(() => {
+    let closeTimer = 0;
+    const id = window.setInterval(() => {
+      setBlink(true);
+      closeTimer = window.setTimeout(() => setBlink(false), 160);
+    }, 4200);
+    return () => {
+      window.clearInterval(id);
+      window.clearTimeout(closeTimer);
+    };
+  }, []);
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-7 overflow-y-auto px-8 py-10 scrollbar-slim select-none">
@@ -124,40 +136,23 @@ export function WelcomeScreen({
         </div>
       </div>
 
-      <div className="flex w-full max-w-2xl flex-col gap-2.5">
-        <div className="px-1 text-ui-sm text-foreground-subtlest">{t('welcome.featuresTitle')}</div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <FeatureCard
-            icon={<SquareTerminal className="size-4" />}
-            title={t('welcome.featTerminal')}
-            desc={t('welcome.featTerminalDesc')}
-          />
-          <FeatureCard
-            icon={<ArrowLeftRight className="size-4" />}
-            title={t('welcome.featSftp')}
-            desc={t('welcome.featSftpDesc')}
-          />
-          <FeatureCard
-            icon={<Database className="size-4" />}
-            title={t('welcome.featDb')}
-            desc={t('welcome.featDbDesc')}
-          />
-          <FeatureCard
-            icon={<FileSearch className="size-4" />}
-            title={t('welcome.featPreview')}
-            desc={t('welcome.featPreviewDesc')}
-          />
-          <FeatureCard
-            icon={<ShieldCheck className="size-4" />}
-            title={t('welcome.featSafety')}
-            desc={t('welcome.featSafetyDesc')}
-          />
-          <FeatureCard
-            icon={<Package className="size-4" />}
-            title={t('welcome.featTools')}
-            desc={t('welcome.featToolsDesc')}
-          />
+      {/* 佛祖保佑 · 永无 BUG：逐行呼吸浮动（stagger 相位差形成波纹）+ 眨眼，
+          动效类与 prefers-reduced-motion 降级见 styles.css */}
+      <div className="flex w-full flex-col items-center gap-3" aria-hidden="true">
+        <div className="flex flex-col font-mono text-[10px] leading-[1.35] text-foreground-subtle sm:text-[11px]">
+          {BUDDHA_LINES.map((line, i) => (
+            <span
+              key={i}
+              className="welcome-ascii-line whitespace-pre"
+              style={{ animationDelay: `${i * 110}ms` }}
+            >
+              {i === BUDDHA_EYES_LINE && blink ? BUDDHA_BLINK_LINE : line}
+            </span>
+          ))}
         </div>
+        <p className="text-ui-xs tracking-[0.35em] text-foreground-subtlest">
+          {t('welcome.buddha')}
+        </p>
       </div>
     </div>
   );
