@@ -138,13 +138,17 @@ export function SettingsScreen() {
 
   return (
     <div
-      className="flex h-full justify-center overflow-y-auto px-5 py-8 select-none"
+      // @container：双列切换按主内容区实际宽度判定（左侧栏可折叠/拖宽，
+      // 媒体查询跟窗口宽度走、感知不到真实可用宽度，终端资源条同先例）
+      className="@container flex h-full justify-center overflow-y-auto px-5 py-8 select-none"
       onClick={() => {
         setPendingRemoveHost(null);
         setConfirmClearAllOpen(false);
       }}
     >
-      <div className="flex h-fit w-full max-w-xl flex-col gap-6">
+      {/* 响应式网格：窄时单列（封顶 max-w-2xl 居中），≥820px 双列（封顶
+          max-w-5xl，超宽屏两侧留白不摊薄）；高内容分组跨双列 */}
+      <div className="grid h-fit w-full max-w-2xl grid-cols-1 gap-6 @[820px]:max-w-5xl @[820px]:grid-cols-2">
         <SettingsSection>
           <SettingRow title={t('theme.label')} desc={t('settings.appearanceDesc')}>
             <SettingOptionGroup
@@ -177,6 +181,58 @@ export function SettingsScreen() {
               />
             </div>
           </SettingRow>
+        </SettingsSection>
+
+        <SettingsSection>
+          <SettingRow title={t('ai.provider.title')} desc={t('settings.aiDesc')}>
+            <div className="flex items-center gap-1.5">
+              {aiProviders.length > 0 && (
+                <span className="text-ui-xs text-foreground-subtlest select-none">
+                  {aiProviders.map((p) => p.name).slice(0, 2).join(' · ')}
+                  {aiProviders.length > 2 ? ` +${aiProviders.length - 2}` : ''}
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setAiDialog({ mode: 'create' })}
+              >
+                {t('ai.provider.add')}
+              </Button>
+            </div>
+          </SettingRow>
+          {aiProviders.map((p) => (
+            <SettingRow
+              key={p.id}
+              title={`${p.name}${p.isDefault ? ' · 默认' : ''}`}
+              desc={`${p.providerType} · ${p.model} · ${t('ai.provider.keysCount', { count: p.apiKeys.length })}`}
+            >
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setAiDialog({ mode: 'edit', node: p })}
+                >
+                  {t('common.edit')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    void deleteAiProvider(p.id).then(() =>
+                      listAiProviders().then(setAiProviders).catch(() => {}),
+                    );
+                  }}
+                >
+                  <Trash2 className="size-3.5 text-destructive" />
+                </Button>
+              </div>
+            </SettingRow>
+          ))}
+        </SettingsSection>
+
+        {/* 菜单展示：独立分组（宫格需要横向空间，跨双列；列数按列宽分级） */}
+        <SettingsSection className="@[820px]:col-span-2">
           <div className="flex flex-col gap-3 px-4 py-3">
             <div className="flex flex-col gap-1">
               <span className="text-ui-base text-foreground select-none">{t('settings.menuVisibility')}</span>
@@ -197,7 +253,7 @@ export function SettingsScreen() {
           </div>
         </SettingsSection>
 
-        <SettingsSection>
+        <SettingsSection className="@[820px]:col-span-2">
           <SettingRow title={t('settings.knownHosts')} desc={t('settings.knownHostsDesc')}>
             {knownHosts.length > 0 ? (
               <Button
@@ -262,55 +318,7 @@ export function SettingsScreen() {
           )}
         </SettingsSection>
 
-        <SettingsSection>
-          <SettingRow title={t('ai.provider.title')} desc={t('settings.aiDesc')}>
-            <div className="flex items-center gap-1.5">
-              {aiProviders.length > 0 && (
-                <span className="text-ui-xs text-foreground-subtlest select-none">
-                  {aiProviders.map((p) => p.name).slice(0, 2).join(' · ')}
-                  {aiProviders.length > 2 ? ` +${aiProviders.length - 2}` : ''}
-                </span>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setAiDialog({ mode: 'create' })}
-              >
-                {t('ai.provider.add')}
-              </Button>
-            </div>
-          </SettingRow>
-          {aiProviders.map((p) => (
-            <SettingRow
-              key={p.id}
-              title={`${p.name}${p.isDefault ? ' · 默认' : ''}`}
-              desc={`${p.providerType} · ${p.model} · ${t('ai.provider.keysCount', { count: p.apiKeys.length })}`}
-            >
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setAiDialog({ mode: 'edit', node: p })}
-                >
-                  {t('common.edit')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    void deleteAiProvider(p.id).then(() =>
-                      listAiProviders().then(setAiProviders).catch(() => {}),
-                    );
-                  }}
-                >
-                  <Trash2 className="size-3.5 text-destructive" />
-                </Button>
-              </div>
-            </SettingRow>
-          ))}
-        </SettingsSection>
-
-        <SettingsSection>
+        <SettingsSection className="@[820px]:col-span-2">
           <SettingRow title={t('settings.about')} desc="VeloTerm">
             <span className="shrink-0 font-mono text-ui-base text-foreground-subtle">{version}</span>
           </SettingRow>
@@ -442,7 +450,7 @@ function MenuGrid({
   return (
     <div
       ref={containerRef}
-      className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
+      className="grid grid-cols-2 gap-2 @[480px]:grid-cols-3 @[760px]:grid-cols-4"
     >
       {items.map(({ page, icon: Icon, label }) => {
         const visible = !hidden.includes(page);
