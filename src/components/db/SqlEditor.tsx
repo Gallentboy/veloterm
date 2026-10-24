@@ -209,6 +209,10 @@ export function SqlEditor({
               insertText: d.insertText,
               range,
               sortText: d.sort,
+              // schema 建议预选：建议列表初始高亮项直接落在本组
+              //（sortText 已压过静态关键字，preselect 再兜一层——多 provider
+              // 合并时 Monaco 对 preselect 项优先作为初始选中）
+              preselect: true,
             })),
           };
         },
