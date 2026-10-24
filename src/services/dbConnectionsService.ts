@@ -146,6 +146,7 @@ export interface CatalogNode {
     | 'table'
     | 'view'
     | 'mview'
+    | 'ftable'
     | 'function'
     | 'procedure'
     | 'sequence'
@@ -261,7 +262,16 @@ export function dbObjectDefinition(
   sessionId: string,
   schema: string,
   name: string,
-  kind: 'function' | 'procedure' | 'sequence' | 'trigger' | 'synonym' | 'package' | 'event' | 'rule',
+  kind:
+    | 'function'
+    | 'procedure'
+    | 'sequence'
+    | 'trigger'
+    | 'synonym'
+    | 'package'
+    | 'event'
+    | 'rule'
+    | 'ftable',
 ): Promise<ObjectDefinition> {
   return invoke('db_object_definition', { sessionId, schema, name, kind });
 }

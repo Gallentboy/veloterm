@@ -19,6 +19,7 @@ import {
   Database,
   Eye,
   Folder,
+  Globe,
   Layers,
   Link,
   ListOrdered,
@@ -126,6 +127,7 @@ const OBJECT_KINDS = new Set([
   'table',
   'view',
   'mview',
+  'ftable',
   'function',
   'procedure',
   'sequence',
@@ -164,6 +166,8 @@ function nodeIcon(kind: CatalogNode['kind'], className?: string) {
       return <Eye className={cn('size-3.5 shrink-0 text-terminal-blue', className)} />;
     case 'mview':
       return <Layers className={cn('size-3.5 shrink-0 text-terminal-blue', className)} />;
+    case 'ftable':
+      return <Globe className={cn('size-3.5 shrink-0 text-terminal-blue', className)} />;
     case 'function':
       return <Sigma className={cn('size-3.5 shrink-0 text-terminal-magenta', className)} />;
     case 'procedure':
@@ -222,7 +226,16 @@ export function DbSessionView({
   // 函数/过程定义视图（对象树双击拉取；新查询执行时让位给结果面板）
   const [objectDef, setObjectDef] = useState<{
     name: string;
-    kind: 'function' | 'procedure' | 'sequence' | 'trigger' | 'synonym' | 'package' | 'event' | 'rule';
+    kind:
+      | 'function'
+      | 'procedure'
+      | 'sequence'
+      | 'trigger'
+      | 'synonym'
+      | 'package'
+      | 'event'
+      | 'rule'
+      | 'ftable';
     def: ObjectDefinition;
   } | null>(null);
   const [defLoading, setDefLoading] = useState(false);
@@ -524,7 +537,8 @@ export function DbSessionView({
         node.kind === 'synonym' ||
         node.kind === 'package' ||
         node.kind === 'event' ||
-        node.kind === 'rule'
+        node.kind === 'rule' ||
+        node.kind === 'ftable'
       ) {
         const sessionId = sessionIdRef.current;
         if (!sessionId || defLoading) return;
@@ -805,6 +819,7 @@ export function DbSessionView({
                 'table',
                 'view',
                 'mview',
+                'ftable',
                 'function',
                 'procedure',
                 'sequence',
@@ -1431,6 +1446,8 @@ export function DbSessionView({
                     <Clock className="size-3.5 shrink-0 text-terminal-blue" />
                   ) : objectDef.kind === 'rule' ? (
                     <ScrollText className="size-3.5 shrink-0 text-terminal-magenta" />
+                  ) : objectDef.kind === 'ftable' ? (
+                    <Globe className="size-3.5 shrink-0 text-terminal-blue" />
                   ) : (
                     <Braces className="size-3.5 shrink-0 text-terminal-magenta" />
                   )}
