@@ -266,9 +266,15 @@ export function dbObjectDefinition(
   return invoke('db_object_definition', { sessionId, schema, name, kind });
 }
 
-/** 表/视图详情：DDL + 列结构 + 索引清单 + 约束清单（树右键「表详情」）。 */
+/** 表/视图详情：DDL + 列结构 + 索引清单 + 约束清单 + 表统计（树右键「表详情」）。 */
 export interface TableDetail {
   ddl: string;
+  /** 表注释（无注释为空串） */
+  comment: string;
+  /** 表大小（人类可读，如 "12.5 MB"；拿不到为空串） */
+  size: string;
+  /** 行数（统计近似值；拿不到为空串） */
+  rowCount: string;
   columnHeaders: string[];
   columns: string[][];
   indexHeaders: string[];

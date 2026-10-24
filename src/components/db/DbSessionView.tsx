@@ -1299,6 +1299,25 @@ export function DbSessionView({
                   <span className="max-w-44 truncate font-mono text-ui-xs font-semibold text-foreground">
                     {tableDetail.name}
                   </span>
+                  {/* 表统计徽标：注释截断展示在 title 悬停；大小/行数即时可见 */}
+                  {tableDetail.detail.comment ? (
+                    <span
+                      className="hidden max-w-52 truncate rounded bg-surface px-1.5 py-px text-ui-xs text-foreground-subtle lg:inline-block"
+                      title={tableDetail.detail.comment}
+                    >
+                      {tableDetail.detail.comment}
+                    </span>
+                  ) : null}
+                  {tableDetail.detail.size ? (
+                    <span className="shrink-0 rounded bg-primary/10 px-1.5 py-px font-mono text-[9px] font-semibold text-primary">
+                      {tableDetail.detail.size}
+                    </span>
+                  ) : null}
+                  {tableDetail.detail.rowCount ? (
+                    <span className="shrink-0 rounded bg-surface px-1.5 py-px font-mono text-[9px] text-foreground-subtle">
+                      {tableDetail.detail.rowCount} rows
+                    </span>
+                  ) : null}
                   <span className="flex items-center gap-0.5">
                     {(['ddl', 'columns', 'indexes', 'constraints'] as const)
                       // 无约束数据（headers 空）不展示约束 Tab

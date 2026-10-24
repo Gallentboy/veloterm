@@ -273,6 +273,19 @@ pub struct ObjectDefinition {
 #[serde(rename_all = "camelCase")]
 pub struct TableDetail {
     pub ddl: String,
+    /// 表注释（DBeaver ALL_TAB_COMMENTS / TABLE_COMMENT / obj_description 同源；
+    /// 无注释为空串）
+    #[serde(default)]
+    pub comment: String,
+    /// 表大小（人类可读，如 "12.5 MB"；PG 走 pg_total_relation_size、MySQL 走
+    /// DATA_LENGTH+INDEX_LENGTH、Oracle 走段统计、达梦走 TABLE_USED_PAGES*PAGE；
+    /// 拿不到为空串——各引擎的统计口径略有差异，仅做展示参考）
+    #[serde(default)]
+    pub size: String,
+    /// 行数（近似值：Oracle/达梦取统计信息 NUM_ROWS，MySQL 取 TABLE_ROWS，
+    /// PG 用精确 COUNT 仅当表小时——统一取统计信息，大表不做 COUNT）
+    #[serde(default)]
+    pub row_count: String,
     pub column_headers: Vec<String>,
     pub columns: Vec<Vec<String>>,
     pub index_headers: Vec<String>,
@@ -1477,8 +1490,32 @@ impl DbEngine {
                     })
                     .collect();
 
+                // 表注释 + 表大小 + 行数（DBeaver MySQLCatalog 同源）：
+                // information_schema.TABLES 一条查询带全（TABLE_COMMENT /
+                // DATA_LENGTH+INDEX_LENGTH / TABLE_ROWS——行数是统计近似值）
+                let stat_row: Option<(Option<String>, i64, i64)> = conn
+                    .exec_first(
+                        "SELECT TABLE_COMMENT, (DATA_LENGTH + INDEX_LENGTH), TABLE_ROWS \
+                         FROM information_schema.TABLES \
+                         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE'",
+                        (schema, table),
+                    )
+                    .await
+                    .unwrap_or(None);
+                let (comment, size, row_count) = match stat_row {
+                    Some((c, bytes, rows)) => (
+                        c.unwrap_or_default(),
+                        format_bytes(bytes),
+                        if rows >= 0 { rows.to_string() } else { String::new() },
+                    ),
+                    None => (String::new(), String::new(), String::new()),
+                };
+
                 Ok(TableDetail {
                     ddl,
+                    comment,
+                    size,
+                    row_count,
                     column_headers: vec![
                         "Column".into(),
                         "Type".into(),
@@ -1636,8 +1673,42 @@ impl DbEngine {
                     })
                     .collect();
 
+                // 表注释 + 大小 + 行数（DBeaver PostgreTableReal 同源）：
+                // obj_description 取表注释；pg_total_relation_size 取总占用（含
+                // 索引与 TOAST）；行数取 pg_class.reltuples（统计近似，VACUUM
+                // 后更新——避免对大表做 COUNT）
+                let stat_row = client
+                    .query_opt(
+                        "SELECT obj_description(c.oid, 'pg_class'), \
+                                pg_catalog.pg_total_relation_size(c.oid), c.reltuples::bigint \
+                         FROM pg_catalog.pg_class c \
+                         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+                         WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r','p')",
+                        &[&schema, &table],
+                    )
+                    .await;
+                let (comment, size, row_count) = match stat_row {
+                    Ok(Some(row)) => (
+                        row.try_get::<_, Option<String>>(0)
+                            .ok()
+                            .flatten()
+                            .unwrap_or_default(),
+                        format_bytes(
+                            row.try_get::<_, i64>(1).unwrap_or(0),
+                        ),
+                        {
+                            let rows = row.try_get::<_, i64>(2).unwrap_or(-1);
+                            if rows >= 0 { rows.to_string() } else { String::new() }
+                        },
+                    ),
+                    _ => (String::new(), String::new(), String::new()),
+                };
+
                 Ok(TableDetail {
                     ddl,
+                    comment,
+                    size,
+                    row_count,
                     column_headers: vec![
                         "Column".into(),
                         "Type".into(),
@@ -1855,8 +1926,50 @@ impl DbEngine {
                     }
                 }
 
+                // 表注释 + 行数（DBeaver OracleTableBase 同源）：
+                // all_tab_comments 取注释；all_tables.NUM_ROWS 是统计近似
+                // （ANALYZE 后更新）。Oracle 表大小走 dba_segments 但需要权限，
+                // 取 all_tables.BLOCKS * 块大小(8KB) 近似——不做，取 NUM_ROWS 即可
+                let stat_sql = format!(
+                    "SELECT (SELECT COMMENTS FROM all_tab_comments \
+                       WHERE owner = {} AND table_name = {} AND table_type = 'TABLE'), \
+                       (SELECT NUM_ROWS FROM all_tables \
+                       WHERE owner = {} AND table_name = {}) \
+                     FROM dual",
+                    ob_quote_literal(schema),
+                    ob_quote_literal(table),
+                    ob_quote_literal(schema),
+                    ob_quote_literal(table)
+                );
+                let mut stat_rs = conn
+                    .query(&stat_sql)
+                    .await
+                    .map_err(|e| format!("Oracle 查询表统计失败：{}", oracle_err(e)))?;
+                let (comment, row_count) = if let Some(row) = stat_rs
+                    .next_row()
+                    .await
+                    .map_err(|e| format!("Oracle 读取表统计失败：{}", oracle_err(e)))?
+                {
+                    (
+                        oracle_row_string(&row, 0),
+                        {
+                            let raw = oracle_row_string(&row, 1);
+                            if raw.is_empty() || raw == "NULL" {
+                                String::new()
+                            } else {
+                                raw
+                            }
+                        },
+                    )
+                } else {
+                    (String::new(), String::new())
+                };
+
                 Ok(TableDetail {
                     ddl,
+                    comment,
+                    size: String::new(),
+                    row_count,
                     column_headers: vec![
                         "Column".into(),
                         "Type".into(),
@@ -1890,6 +2003,9 @@ impl DbEngine {
                 let (ddl, rows) = inspected?;
                 Ok(TableDetail {
                     ddl,
+                    comment: String::new(),
+                    size: String::new(),
+                    row_count: String::new(),
                     column_headers: vec!["field".into(), "value".into()],
                     columns: rows,
                     // 无索引概念：空 headers + 空 rows，前端空表自然不渲染
@@ -2049,6 +2165,9 @@ impl DbEngine {
 
                     Ok(TableDetail {
                         ddl,
+                        comment: String::new(),
+                        size: String::new(),
+                        row_count: String::new(),
                         column_headers: vec![
                             "Column".into(),
                             "Type".into(),
@@ -2282,8 +2401,52 @@ impl DbEngine {
                         })
                         .collect();
 
+                    // 表注释 + 表大小 + 行数（DBeaver DamengSchema 同源）：
+                    // ALL_TAB_COMMENTS 取注释；TABLE_USED_PAGES(OWNER,TABLE_NAME)*PAGE
+                    // 取磁盘占用（达梦专有函数）；ALL_TABLES.NUM_ROWS 统计近似
+                    let stat = dm_query_rows(
+                        client,
+                        "SELECT (SELECT COMMENTS FROM ALL_TAB_COMMENTS \
+                           WHERE OWNER = ?1 AND TABLE_NAME = ?2 AND TABLE_TYPE = 'TABLE'), \
+                           (SELECT TABLE_USED_PAGES(?1, ?2) * PAGE FROM DUAL), \
+                           (SELECT NUM_ROWS FROM ALL_TABLES WHERE OWNER = ?1 AND TABLE_NAME = ?2) \
+                         FROM DUAL",
+                        &[
+                            dm_pure::Param::Str(schema_o.clone()),
+                            dm_pure::Param::Str(table_o.clone()),
+                        ],
+                    );
+                    let (dm_comment, dm_size, dm_rows) = match stat {
+                        Ok(rows) if !rows.is_empty() => {
+                            let row = &rows[0];
+                            (
+                                dm_row_string(row, 0),
+                                {
+                                    let raw = dm_row_string(row, 1);
+                                    if raw.is_empty() || raw == "NULL" {
+                                        String::new()
+                                    } else {
+                                        format_bytes(raw.parse::<i64>().unwrap_or(0))
+                                    }
+                                },
+                                {
+                                    let raw = dm_row_string(row, 2);
+                                    if raw.is_empty() || raw == "NULL" {
+                                        String::new()
+                                    } else {
+                                        raw
+                                    }
+                                },
+                            )
+                        }
+                        _ => (String::new(), String::new(), String::new()),
+                    };
+
                     Ok(TableDetail {
                         ddl,
+                        comment: dm_comment,
+                        size: dm_size,
+                        row_count: dm_rows,
                         column_headers: vec![
                             "Column".into(),
                             "Type".into(),
@@ -4865,6 +5028,26 @@ fn format_float(v: f64) -> String {
         format!("{}", v as i64)
     } else {
         format!("{v}")
+    }
+}
+
+/// 字节数 → 人类可读（B / KB / MB / GB / TB，一位小数）。表大小展示用。
+#[inline]
+fn format_bytes(bytes: i64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    if bytes < 0 {
+        return String::new();
+    }
+    let mut val = bytes as f64;
+    let mut unit = 0;
+    while val >= 1024.0 && unit < UNITS.len() - 1 {
+        val /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{val:.1} {}", UNITS[unit])
     }
 }
 
