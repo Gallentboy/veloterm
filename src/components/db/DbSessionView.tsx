@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Boxes,
   Braces,
+  Cable,
   ChevronRight,
   Clock,
   Copy,
@@ -26,12 +27,14 @@ import {
   Loader2,
   Package,
   Play,
+  Puzzle,
   RefreshCw,
   ScrollText,
   Search,
   Sigma,
   Square,
   Table2,
+  Trash2,
   Unplug,
   X,
   Zap,
@@ -128,6 +131,9 @@ const OBJECT_KINDS = new Set([
   'view',
   'mview',
   'ftable',
+  'extension',
+  'dblink',
+  'recycle',
   'function',
   'procedure',
   'sequence',
@@ -168,6 +174,12 @@ function nodeIcon(kind: CatalogNode['kind'], className?: string) {
       return <Layers className={cn('size-3.5 shrink-0 text-terminal-blue', className)} />;
     case 'ftable':
       return <Globe className={cn('size-3.5 shrink-0 text-terminal-blue', className)} />;
+    case 'extension':
+      return <Puzzle className={cn('size-3.5 shrink-0 text-terminal-cyan', className)} />;
+    case 'dblink':
+      return <Cable className={cn('size-3.5 shrink-0 text-terminal-yellow', className)} />;
+    case 'recycle':
+      return <Trash2 className={cn('size-3.5 shrink-0 text-foreground-subtlest', className)} />;
     case 'function':
       return <Sigma className={cn('size-3.5 shrink-0 text-terminal-magenta', className)} />;
     case 'procedure':
@@ -235,7 +247,10 @@ export function DbSessionView({
       | 'package'
       | 'event'
       | 'rule'
-      | 'ftable';
+      | 'ftable'
+      | 'extension'
+      | 'dblink'
+      | 'recycle';
     def: ObjectDefinition;
   } | null>(null);
   const [defLoading, setDefLoading] = useState(false);
@@ -538,7 +553,10 @@ export function DbSessionView({
         node.kind === 'package' ||
         node.kind === 'event' ||
         node.kind === 'rule' ||
-        node.kind === 'ftable'
+        node.kind === 'ftable' ||
+        node.kind === 'extension' ||
+        node.kind === 'dblink' ||
+        node.kind === 'recycle'
       ) {
         const sessionId = sessionIdRef.current;
         if (!sessionId || defLoading) return;
@@ -820,6 +838,9 @@ export function DbSessionView({
                 'view',
                 'mview',
                 'ftable',
+                'extension',
+                'dblink',
+                'recycle',
                 'function',
                 'procedure',
                 'sequence',
@@ -1448,6 +1469,12 @@ export function DbSessionView({
                     <ScrollText className="size-3.5 shrink-0 text-terminal-magenta" />
                   ) : objectDef.kind === 'ftable' ? (
                     <Globe className="size-3.5 shrink-0 text-terminal-blue" />
+                  ) : objectDef.kind === 'extension' ? (
+                    <Puzzle className="size-3.5 shrink-0 text-terminal-cyan" />
+                  ) : objectDef.kind === 'dblink' ? (
+                    <Cable className="size-3.5 shrink-0 text-terminal-yellow" />
+                  ) : objectDef.kind === 'recycle' ? (
+                    <Trash2 className="size-3.5 shrink-0 text-foreground-subtlest" />
                   ) : (
                     <Braces className="size-3.5 shrink-0 text-terminal-magenta" />
                   )}
