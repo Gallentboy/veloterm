@@ -184,7 +184,10 @@ export const DataTable = memo(function DataTable({
   }, [columns, processedRows]);
 
   return (
-    <div className={cn('flex h-full min-h-0 w-full flex-col bg-popover font-mono text-ui-xs', className)}>
+    // bg-transparent：随宿主背景走——工作台结果面板/对象页与主背景一致
+    //（此前刷 bg-popover，亮色 #ffffff 对 #f8f8f8、暗色 #2b2b2b 对 #161616，
+    // 表格自垫一层色形成可见色块）；弹窗内随面板色，两种宿主都正确
+    <div className={cn('flex h-full min-h-0 w-full flex-col bg-transparent font-mono text-ui-xs', className)}>
       {showToolbar ? (
         <div className="flex shrink-0 items-center justify-end gap-2 border-b border-border/60 bg-surface/40 px-2 py-1 select-none">
           <div className="relative flex items-center">
