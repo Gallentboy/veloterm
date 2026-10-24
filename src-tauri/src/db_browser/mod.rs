@@ -991,7 +991,10 @@ pub async fn db_object_definition(
 ) -> Result<engines::ObjectDefinition, String> {
     let session = state.get(&session_id)?;
     let mut engine = session.engine.lock().await;
-    engine.object_definition(&schema, &name, &kind).await
+    let mut def = engine.object_definition(&schema, &name, &kind).await?;
+    // 源头常带首尾空行（Oracle DBMS_METADATA 输出尤甚）：展示与复制统一去掉
+    def.definition = def.definition.trim().to_string();
+    Ok(def)
 }
 
 /// 表/视图详情（DDL + 列结构 + 索引，树右键「表详情」；kind: table|view）。
@@ -1005,7 +1008,10 @@ pub async fn db_table_detail(
 ) -> Result<engines::TableDetail, String> {
     let session = state.get(&session_id)?;
     let mut engine = session.engine.lock().await;
-    engine.table_detail(&schema, &table, &kind).await
+    let mut detail = engine.table_detail(&schema, &table, &kind).await?;
+    // 同对象定义：去 DDL 首尾空行，展示与复制一致
+    detail.ddl = detail.ddl.trim().to_string();
+    Ok(detail)
 }
 
 // ── Redis 键管理与诊断 ─────────────────────────────────────────────────
