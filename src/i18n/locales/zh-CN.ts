@@ -209,6 +209,7 @@ export default {
     txNoPendingHint: '当前无未提交修改',
     txPendingBadge: '待提交:{{count}}',
     txNoPendingBadge: '无未提交',
+    sqlEditorResize: '拖动调整 SQL 编辑器高度',
     needsArgs: '该对象有 {{count}} 个参数：调用语句已插入编辑器，补参后 ⌘↵ 执行',
     runAll: '全部执行 (⌘↵)',
     runSelected: '执行选中 (⌘⇧↵)',

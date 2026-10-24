@@ -211,6 +211,7 @@ export default {
     txNoPendingHint: 'No uncommitted changes in current transaction',
     txPendingBadge: 'Pending: {{count}}',
     txNoPendingBadge: 'No pending changes',
+    sqlEditorResize: 'Drag to resize the SQL editor height',
     runAll: 'Execute all (⌘↵)',
     runSelected: 'Run selection (⌘⇧↵)',
     ctxCopy: 'Copy',
