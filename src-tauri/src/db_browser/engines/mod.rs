@@ -2960,7 +2960,9 @@ pub(crate) struct GroupCounts {
 }
 
 impl GroupCounts {
-    /// 基础五组（触发器与物化视图不展示）——绝大多数引擎的起步形态
+    /// 基础五组（触发器与物化视图不展示）——绝大多数引擎的起步形态。
+    /// `#[inline]`：结构体字面量构造，七引擎各自调用一次，跨 crate 内联省调用开销
+    #[inline]
     pub(crate) fn base(tables: i64, views: i64, functions: i64, procedures: i64, sequences: i64) -> Self {
         Self {
             tables,
@@ -3398,7 +3400,9 @@ pub(crate) async fn oracle_scalar_string(conn: &mut oracle_async::Conn, sql: &st
 }
 
 /// 回收站行 → CatalogNode（OBJECT_NAME/ORIGINAL_NAME/TYPE 三列形态；
-/// key 用 BIN$ 实名防同名多版本冲突，显示名用 ORIGINAL_NAME）
+/// key 用 BIN$ 实名防同名多版本冲突，显示名用 ORIGINAL_NAME）。
+/// `#[inline]`：回收站逐行调用，函数体只有三次列取值 + 一次结构构造
+#[inline]
 fn recycle_node(row: &oracle_async::Row, schema: &str, kind: &str) -> Option<CatalogNode> {
     let obj = oracle_row_string(row, 0);
     if obj == "NULL" {
@@ -3416,7 +3420,10 @@ fn recycle_node(row: &oracle_async::Row, schema: &str, kind: &str) -> Option<Cat
 
 /// 索引聚列的表达式回填：主查询 GROUP_CONCAT/LISTAGG 按序号聚出的列串，
 /// 用（索引名, 序号）→ 表达式 的 overlay 按位置替换（表达式/函数索引部件的
-/// 列名是系统占位名，真实定义在 overlay）；序号从 1 起与部件序一致
+/// 列名是系统占位名，真实定义在 overlay）；序号从 1 起与部件序一致。
+/// `#[inline]`：MySQL/Oracle 两臂每次表详情各调一次，空 overlay 时是纯
+/// 早退（最常见的路径），内联后连函数调用都省掉
+#[inline]
 pub(crate) fn apply_index_expr_overlay(
     cols: &str,
     index_name: &str,
