@@ -183,7 +183,7 @@ function TrainArt() {
   );
 }
 
-// ── 4. Matrix 代码雨（经典算法：黑底面板 + 半透明覆盖衰减） ─────────────────
+// ── 4. Matrix 代码雨（透明画布直叠页面背景：无面板、无边框、无底色） ─────
 
 function MatrixRain() {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -195,67 +195,78 @@ function MatrixRain() {
     const H = (canvas.height = 190);
     const fontSize = 13;
     const cols = Math.floor(W / fontSize);
+    const rows = Math.floor(H / fontSize);
     const chars = '01<>{}/$#;=+*'.split('');
-    // 每列独立的下落头部（行号）与推进概率（速度差异是真实感的关键：
-    // 真雨不是齐刷刷的）
+    const randChar = () => chars[Math.floor(Math.random() * chars.length)] ?? '0';
+    // 透明底做不了覆盖淡出，改为逐格管理生命期：每个格子记住字符与透明度，
+    // 头格亮、身后格子原地渐隐（字符不换——真雨的拖尾是被记住的字符）
+    type Cell = { ch: string; alpha: number; head: boolean };
+    const grid: (Cell | null)[][] = Array.from({ length: cols }, () =>
+      Array<Cell | null>(rows).fill(null),
+    );
     const heads = Array.from({ length: cols }, () => Math.floor(Math.random() * -40));
-    const speeds = Array.from({ length: cols }, () => 0.35 + Math.random() * 0.65);
-    const BG = '#04120a';
-    ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, W, H);
-    ctx.font = `${fontSize}px ui-monospace, monospace`;
-    ctx.textBaseline = 'top';
-    let raf = 0;
-    let last = 0;
+    const speeds = Array.from({ length: cols }, () => 0.3 + Math.random() * 0.7);
     const tick = () => {
-      // 半透明覆盖：旧字符留在原地慢慢变暗——拖尾是「记住的字符」而非闪烁
-      ctx.fillStyle = 'rgba(4, 18, 10, 0.16)';
-      ctx.fillRect(0, 0, W, H);
-      heads.forEach((head, c) => {
-        if (Math.random() > (speeds[c] ?? 0.5)) return; // 本帧该列不推进
-        const x = c * fontSize;
-        const y = head * fontSize;
-        if (y >= 0 && y < H) {
-          // 亮头部（近白绿），上一格补回普通绿——头部走过后留下绿尾巴
-          ctx.fillStyle = 'rgba(120, 255, 160, 0.9)';
-          ctx.fillText(chars[Math.floor(Math.random() * chars.length)] ?? '0', x, y);
-          const py = y - fontSize;
-          if (py >= 0) {
-            ctx.fillStyle = 'rgba(60, 200, 110, 0.75)';
-            ctx.fillText(
-              chars[Math.floor(Math.random() * chars.length)] ?? '0',
-              x,
-              py,
-            );
-          }
+      for (const col of grid) {
+        for (let r = 0; r < rows; r += 1) {
+          const cell = col[r];
+          if (!cell) continue;
+          cell.alpha -= 0.013;
+          if (cell.alpha <= 0.02) col[r] = null;
         }
-        heads[c] = (heads[c] ?? 0) + 1;
-        if (y > H + fontSize * 4 && Math.random() > 0.9) {
+      }
+      heads.forEach((h, c) => {
+        if (Math.random() > (speeds[c] ?? 0.5)) return; // 本帧该列不推进（速度差异）
+        const nh = h + 1;
+        if (nh >= 0 && nh < rows) {
+          const prev = grid[c]?.[h];
+          if (prev) prev.head = false; // 头走过后降级为普通拖尾格
+          grid[c]![nh] = { ch: randChar(), alpha: 0.95, head: true };
+        }
+        heads[c] = nh;
+        if (nh > rows + 10 && Math.random() > 0.9) {
           heads[c] = Math.floor(Math.random() * -30); // 出屏后随机延迟再落
         }
       });
     };
-    const draw = (ts: number) => {
+    const draw = () => {
+      ctx.clearRect(0, 0, W, H);
+      ctx.font = `${fontSize}px ui-monospace, monospace`;
+      ctx.textBaseline = 'top';
+      for (let c = 0; c < cols; c += 1) {
+        for (let r = 0; r < rows; r += 1) {
+          const cell = grid[c]?.[r];
+          if (!cell) continue;
+          ctx.fillStyle = cell.head
+            ? 'rgba(170, 255, 205, 0.95)'
+            : `rgba(70, 191, 114, ${Math.max(cell.alpha, 0).toFixed(3)})`;
+          ctx.fillText(cell.ch, c * fontSize, r * fontSize);
+        }
+      }
+    };
+    let raf = 0;
+    let last = 0;
+    const loop = (ts: number) => {
       if (ts - last > 45) {
         last = ts;
         tick();
+        draw();
       }
-      raf = requestAnimationFrame(draw);
+      raf = requestAnimationFrame(loop);
     };
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      tick(); // 降级：一帧静帧
+      // 降级：随机铺一屏静帧拖尾，不动画
+      tick();
+      tick();
+      tick();
+      draw();
     } else {
-      raf = requestAnimationFrame(draw);
+      raf = requestAnimationFrame(loop);
     }
     return () => cancelAnimationFrame(raf);
   }, []);
-  return (
-    // 黑底小屏幕：无边框（border 太显性、暴露容器存在），仅圆角柔化四角；
-    // 黑色画布本身就是内容
-    <div className="overflow-hidden rounded-lg">
-      <canvas ref={ref} className="block max-w-full" aria-hidden="true" />
-    </div>
-  );
+  // 透明画布直出：无底色、无边框、无圆角——雨直接落在页面背景上
+  return <canvas ref={ref} className="max-w-full" aria-hidden="true" />;
 }
 
 // ── 5. VeloTerm 打字机（程序内建 5 行像素字体拼横幅，逐列打印） ────────
