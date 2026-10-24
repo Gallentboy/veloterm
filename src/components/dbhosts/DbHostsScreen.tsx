@@ -1174,11 +1174,15 @@ function DbConnectionFormDialog({
         )}
 
         <div className="flex gap-3">
-          <div className="w-36 shrink-0">
+          {/* 环境下拉按内容宽度收缩：选项是短的固定词（开发/测试/预发/生产），
+              原固定 w-36 会留一大截空白。触发器 w-auto + min-w 兜底（太窄
+              时箭头挤着文字），父层 shrink-0 不参与剩余空间分配 */}
+          <div className="shrink-0">
             <FormField label={t('dbHosts.envLabel')}>
               <SelectMenu
                 value={envLevel}
                 onChange={setEnvLevel}
+                triggerClassName="w-auto min-w-24"
                 options={ENV_LEVELS.map((level) => ({
                   value: level,
                   label: t(`dbHosts.env_${level}`),
