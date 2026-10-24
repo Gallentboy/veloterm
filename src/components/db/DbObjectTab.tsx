@@ -110,15 +110,11 @@ function definitionIcon(kind: string) {
 
 export function DbObjectTab({
   payload,
-  active = true,
   onInsertSql,
   onRunSql,
   onClose,
 }: {
   payload: DbObjectTabPayload;
-  /** 是否激活（keep-alive 非激活页 hidden）：透传给 ReadOnlySqlView，
-   * 共享 Monaco 实例由激活者独占（搬 DOM + setModel） */
-  active?: boolean;
   /** 模板写入所属会话的 SQL 编辑器（不执行） */
   onInsertSql: (sql: string) => void;
   /** 写入所属会话编辑器并立即执行 */
@@ -295,10 +291,9 @@ export function DbObjectTab({
           </button>
         </div>
         {subTab === 'ddl' ? (
-          // DDL 用 Monaco 只读渲染（SQL 高亮 + 折行）；共享单实例，
+          // DDL 用 Monaco 只读渲染（SQL 高亮 + 折行）；独立实例，
           // 刷新走 setValue 不重建
           <ReadOnlySqlView
-            active={active}
             content={detail.ddl}
             className="scrollbar-slim min-h-0 flex-1"
           />
@@ -417,7 +412,6 @@ export function DbObjectTab({
         </div>
       ) : null}
       <ReadOnlySqlView
-        active={active}
         content={definition.definition}
         className="min-h-0 flex-1"
       />

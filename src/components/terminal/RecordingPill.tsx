@@ -215,7 +215,7 @@ export function RecordingPill({
               ref={panelRef}
               role="menu"
               style={{ position: 'fixed', top: position.top, left: position.left }}
-              className="z-50 min-w-44 overflow-hidden rounded-lg border border-border bg-menu p-1 text-ui-sm text-foreground shadow-lg"
+              className="z-50 overflow-hidden rounded-lg border border-border bg-menu p-1 text-ui-sm text-foreground shadow-lg"
             >
               {items.map((item) => (
                 <button
