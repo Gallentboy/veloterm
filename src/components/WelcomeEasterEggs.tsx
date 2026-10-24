@@ -341,14 +341,18 @@ function TypewriterBanner() {
     // 宽度恒定：每行用空格垫到完整横幅宽（whitespace-pre 保留），打印
     // 过程中容器宽度不变——居中容器不逐帧重算、光标列位置稳定不漂移
     <div className="flex flex-col font-mono text-[11px] leading-[1.45] text-terminal-green sm:text-[13px]">
-      {banner.map((line, i) => (
-        <span key={i} className="whitespace-pre">
-          {line.slice(0, cols).padEnd(width)}
-          {!done && i === printRow && cols < width ? (
-            <span className="text-terminal-green">█</span>
-          ) : null}
-        </span>
-      ))}
+      {banner.map((line, i) => {
+        const typingHead = i === printRow && !done && cols < width;
+        return (
+          <span key={i} className="whitespace-pre">
+            {typingHead
+              ? // 打印头行：光标块嵌在当前打印列上（其后垫空格保持整行恒宽），
+                // 而非追加在行尾——否则它会悬在最右边缘（曾出现的「污染点」）
+                `${line.slice(0, cols)}█${' '.repeat(Math.max(0, width - cols - 1))}`
+              : line.slice(0, cols).padEnd(width)}
+          </span>
+        );
+      })}
       {/* 写完：终端提示符 + 闪烁光标 */}
       {done ? (
         <span className="mt-1 whitespace-pre text-foreground-subtle">
