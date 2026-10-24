@@ -35,6 +35,7 @@ import {
   Sigma,
   Square,
   Table2,
+  TextSelect,
   ShieldCheck,
   Trash2,
   Type,
@@ -238,6 +239,15 @@ export function DbSessionView({
 
   const [sql, setSql] = useState('SELECT 1;');
   const [running, setRunning] = useState(false);
+
+  // 编辑器选中文本（空串 = 无选中）：驱动「执行选中」按钮态；
+  // ref 供快捷键/点击时取最新值（state 在闭包里可能滞后一帧）
+  const selectionRef = useRef('');
+  const [selectionSql, setSelectionSql] = useState('');
+  const handleSelectionChange = useCallback((text: string) => {
+    selectionRef.current = text;
+    setSelectionSql(text);
+  }, []);
   const [results, setResults] = useState<StatementResult[]>([]);
   const [activeResult, setActiveResult] = useState(0);
   const [rowCap, setRowCap] = useState(5000);
@@ -1283,6 +1293,8 @@ export function DbSessionView({
               value={sql}
               onChange={setSql}
               onRun={() => void runQuery()}
+              onRunSelection={() => void runQuery(selectionRef.current)}
+              onSelectionChange={handleSelectionChange}
               redisMode={meta.engine === 'redis'}
             />
           </div>
@@ -1296,7 +1308,16 @@ export function DbSessionView({
               className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground hover:bg-hover disabled:opacity-40"
             >
               <Play className="size-3 text-terminal-green fill-terminal-green" />
-              {t('db.run')}
+              {t('db.runAll')}
+            </button>
+            <button
+              type="button"
+              disabled={running || !selectionSql.trim()}
+              onClick={() => void runQuery(selectionRef.current)}
+              className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground hover:bg-hover disabled:opacity-40"
+            >
+              <TextSelect className="size-3 text-terminal-green" />
+              {t('db.runSelected')}
             </button>
             {running ? (
               <button
