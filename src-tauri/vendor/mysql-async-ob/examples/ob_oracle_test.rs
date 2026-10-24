@@ -80,6 +80,66 @@ struct Args {
     ob20: bool,
 }
 
+fn value_render(v: &oceanbase_async::Value) -> String {
+    use oceanbase_async::Value;
+    match v {
+        Value::NULL => "NULL".to_string(),
+        Value::Bytes(b) => format!("{}", String::from_utf8_lossy(b)),
+        Value::Int(i) => i.to_string(),
+        Value::UInt(u) => u.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Double(d) => d.to_string(),
+        Value::Date(y, m, d, h, mi, s, us) => {
+            format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{s:02}.{us:06}")
+        }
+        Value::Time(neg, d, h, m, s, us) => {
+            format!("{}{d}d {h:02}:{m:02}:{s:02}.{us:06}", if *neg { "-" } else { "" })
+        }
+    }
+}
+
+/// 25 项探针的三态结果（start_transaction 语法错属环境事实记 WARN 不算 FAIL）
+enum ApiTxOutcome {
+    Pass(String),
+    Fail(String),
+    Warn(String),
+}
+
+/// 驱动 API 事务探针：独立函数体强制终结 Transaction 对 conn 的借用
+///（Transaction 带 Drop，借用区域保守，内联代码怎么排都冲突——函数返回
+/// 即释放）。事务内插行→事务内可见性校验→API rollback。
+async fn probe_api_transaction(
+    conn: &mut oceanbase_async::Conn,
+    table: &str,
+) -> ApiTxOutcome {
+    let mut tx = match conn.start_transaction(Default::default()).await {
+        Ok(tx) => tx,
+        Err(e) => {
+            return ApiTxOutcome::Warn(format!("start_transaction 报错（预期 MySQL 方言）: {e}"))
+        }
+    };
+    if let Err(e) = tx
+        .query_drop(format!("INSERT INTO {table} (id, name) VALUES (9, 'API事务行')"))
+        .await
+    {
+        return ApiTxOutcome::Fail(format!("事务内 INSERT 失败: {e}"));
+    }
+    let in_tx: Result<Vec<(i64,)>, _> = tx.query(format!("SELECT id FROM {table}")).await;
+    if let Err(e) = in_tx {
+        return ApiTxOutcome::Fail(format!("事务内校验查询失败: {e}"));
+    }
+    if let Err(e) = tx.rollback().await {
+        return ApiTxOutcome::Fail(format!("rollback 失败: {e}"));
+    }
+    match in_tx {
+        Ok(rows) if rows.len() == 1 => ApiTxOutcome::Pass(
+            "START TRANSACTION + 事务内可见 + API rollback 生效".to_string(),
+        ),
+        Ok(rows) => ApiTxOutcome::Fail(format!("事务内应见 1 行，实际 {} 行", rows.len())),
+        Err(_) => unreachable!("上方已拦截"),
+    }
+}
+
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         host: String::new(),
@@ -498,15 +558,88 @@ async fn main() {
         Err(e) => rep.report(22, "INSERT+ROLLBACK", Outcome::Fail(format!("{e}")), t.elapsed().as_millis()),
     }
 
-    // ── 23 清理 ──
+    // ── 23 UPDATE + 读回 ──
+    let t = Instant::now();
+    let upd: Result<(), _> = conn
+        .query_drop(format!("UPDATE {test_table} SET name = '更新后的值' WHERE id = 1"))
+        .await;
+    match upd {
+        Ok(()) => {
+            let _: Result<(), _> = conn.query_drop("COMMIT").await;
+            let check: Result<Option<String>, _> = conn
+                .query_first(format!("SELECT name FROM {test_table} WHERE id = 1"))
+                .await;
+            match check {
+                Ok(Some(name)) if name.contains("更新后的值") => rep.report(
+                    23,
+                    "UPDATE",
+                    Outcome::Pass(format!("读回: {name}")),
+                    t.elapsed().as_millis(),
+                ),
+                Ok(other) => rep.report(
+                    23,
+                    "UPDATE",
+                    Outcome::Fail(format!("读回不符: {other:?}")),
+                    t.elapsed().as_millis(),
+                ),
+                Err(e) => rep.report(23, "UPDATE", Outcome::Fail(format!("{e}")), t.elapsed().as_millis()),
+            }
+        }
+        Err(e) => rep.report(23, "UPDATE", Outcome::Fail(format!("{e}")), t.elapsed().as_millis()),
+    }
+
+    // ── 24 DELETE + 计数 ──
+    let t = Instant::now();
+    let del: Result<(), _> = conn
+        .query_drop(format!("DELETE FROM {test_table} WHERE id = 1"))
+        .await;
+    match del {
+        Ok(()) => {
+            let _: Result<(), _> = conn.query_drop("COMMIT").await;
+            let check: Result<Vec<(i64,)>, _> =
+                conn.query(format!("SELECT id FROM {test_table}")).await;
+            match check {
+                Ok(rows) if rows.is_empty() => rep.report(
+                    24,
+                    "DELETE",
+                    Outcome::Pass("删后 0 行".to_string()),
+                    t.elapsed().as_millis(),
+                ),
+                Ok(rows) => rep.report(
+                    24,
+                    "DELETE",
+                    Outcome::Fail(format!("删后仍有 {} 行", rows.len())),
+                    t.elapsed().as_millis(),
+                ),
+                Err(e) => rep.report(24, "DELETE", Outcome::Fail(format!("{e}")), t.elapsed().as_millis()),
+            }
+        }
+        Err(e) => rep.report(24, "DELETE", Outcome::Fail(format!("{e}")), t.elapsed().as_millis()),
+    }
+
+    // ── 25 驱动 API 事务 ──
+    // mysql_async 的 start_transaction 发 MySQL 方言（START TRANSACTION），
+    // OB Oracle 上大概率语法错——探针性质：可用为 PASS（API rollback 验证
+    // 生效），语法错为 WARN（事实记录：app 侧规避 Transaction API、
+    // 用文本 COMMIT/ROLLBACK）
+    let t = Instant::now();
+    let outcome = probe_api_transaction(&mut conn, &test_table).await;
+    let outcome = match outcome {
+        ApiTxOutcome::Pass(msg) => Outcome::Pass(msg),
+        ApiTxOutcome::Fail(msg) => Outcome::Fail(msg),
+        ApiTxOutcome::Warn(msg) => Outcome::Warn(msg),
+    };
+    rep.report(25, "驱动 API 事务", outcome, t.elapsed().as_millis());
+
+    // ── 26 清理 ──
     let t = Instant::now();
     let drop: Result<(), _> = conn.query_drop(format!("DROP TABLE {test_table}")).await;
     match drop {
-        Ok(()) => rep.report(23, "DROP TABLE 清理", Outcome::Pass("OK".to_string()), t.elapsed().as_millis()),
-        Err(e) => rep.report(23, "DROP TABLE 清理", Outcome::Fail(format!("{e}")), t.elapsed().as_millis()),
+        Ok(()) => rep.report(26, "DROP TABLE 清理", Outcome::Pass("OK".to_string()), t.elapsed().as_millis()),
+        Err(e) => rep.report(26, "DROP TABLE 清理", Outcome::Fail(format!("{e}")), t.elapsed().as_millis()),
     }
 
-    // ── 24 错误处理：ORA-00942 ──
+    // ── 27 错误处理：ORA-00942 ──
     let t = Instant::now();
     let err: Result<Vec<oceanbase_async::Row>, _> = conn
         .query("SELECT * FROM THIS_TABLE_DOES_NOT_EXIST")
@@ -515,28 +648,80 @@ async fn main() {
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("ORA-") || msg.contains("942") {
-                rep.report(24, "ORA-00942 错误", Outcome::Pass(format!("{msg}")), t.elapsed().as_millis());
+                rep.report(27, "ORA-00942 错误", Outcome::Pass(format!("{msg}")), t.elapsed().as_millis());
             } else {
-                rep.report(24, "ORA-00942 错误", Outcome::Warn(msg), t.elapsed().as_millis());
+                rep.report(27, "ORA-00942 错误", Outcome::Warn(msg), t.elapsed().as_millis());
             }
         }
-        Ok(_) => rep.report(24, "ORA-00942 错误", Outcome::Fail("不存在的表居然没报错".to_string()), t.elapsed().as_millis()),
+        Ok(_) => rep.report(27, "ORA-00942 错误", Outcome::Fail("不存在的表居然没报错".to_string()), t.elapsed().as_millis()),
     }
 
-    // ── 25 错误处理：ORA-00904 ──
+    // ── 28 错误处理：ORA-00904 ──
     let t = Instant::now();
     let err: Result<Vec<oceanbase_async::Row>, _> = conn
         .query("SELECT nonexistent_column FROM DUAL")
         .await;
     match err {
-        Err(e) => rep.report(25, "ORA-00904 错误", Outcome::Pass(format!("{e}")), t.elapsed().as_millis()),
-        Ok(_) => rep.report(25, "ORA-00904 错误", Outcome::Fail("无效列没报错".to_string()), t.elapsed().as_millis()),
+        Err(e) => rep.report(28, "ORA-00904 错误", Outcome::Pass(format!("{e}")), t.elapsed().as_millis()),
+        Ok(_) => rep.report(28, "ORA-00904 错误", Outcome::Fail("无效列没报错".to_string()), t.elapsed().as_millis()),
     }
 
-    // ── 26 断开 ──
+    // ── 29 类型解码（NUMBER/INTEGER/DATE/TIMESTAMP/NVARCHAR2/CLOB）──
+    // 独立建表插一行读回，Value 逐列 to_string 渲染——看 OB 经文本协议
+    // 回传的真实字节形态（NLS 初始化生效与否在此暴露：NVARCHAR2 乱码即 NLS 未生效）
+    let types_table = "VELOTERM_TYPES_TEST";
+    let t = Instant::now();
+    let created: Result<(), _> = conn
+        .query_drop(format!(
+            "CREATE TABLE {types_table} (\
+             c_number NUMBER(12,3), c_int INTEGER, c_date DATE, c_ts TIMESTAMP, \
+             c_varchar VARCHAR2(64), c_nvarchar NVARCHAR2(64), c_clob CLOB)"
+        ))
+        .await;
+    match created {
+        Ok(()) => {
+            let ins: Result<(), _> = conn
+                .query_drop(format!(
+                    "INSERT INTO {types_table} VALUES (\
+                     12345.678, 42, \
+                     TO_DATE('2026-01-15 10:30:00','YYYY-MM-DD HH24:MI:SS'), \
+                     TO_TIMESTAMP('2026-01-15 10:30:00.123456','YYYY-MM-DD HH24:MI:SS.FF6'), \
+                     '类型测试', N'NVARCHAR中文字符串', 'CLOB大对象文本')"
+                ))
+                .await;
+            let read: Result<Option<oceanbase_async::Row>, _> = conn
+                .query_first(format!("SELECT * FROM {types_table} WHERE ROWNUM = 1"))
+                .await;
+            let outcome = match (ins, read) {
+                (Ok(()), Ok(Some(row))) => {
+                    let vals = row.unwrap();
+                    let rendered: Vec<String> = vals.iter().map(value_render).collect();
+                    let nulls = rendered.iter().filter(|s| *s == "NULL").count();
+                    if nulls == 0 {
+                        Outcome::Pass(rendered.join(" | "))
+                    } else {
+                        Outcome::Warn(format!("{nulls} 列为 NULL: {}", rendered.join(" | ")))
+                    }
+                }
+                (Ok(()), Ok(None)) => Outcome::Fail("读不到行".to_string()),
+                (Ok(()), Err(e)) => Outcome::Fail(format!("{e}")),
+                (Err(e), _) => Outcome::Fail(format!("插入失败: {e}")),
+            };
+            rep.report(29, "类型解码", outcome, t.elapsed().as_millis());
+            let _: Result<(), _> = conn.query_drop(format!("DROP TABLE {types_table}")).await;
+        }
+        Err(e) => rep.report(
+            29,
+            "类型解码",
+            Outcome::Warn(format!("建表失败（权限？）: {e}")),
+            t.elapsed().as_millis(),
+        ),
+    }
+
+    // ── 30 断开 ──
     let t = Instant::now();
     let _ = conn.disconnect().await;
-    rep.report(26, "断开连接", Outcome::Pass("OK".to_string()), t.elapsed().as_millis());
+    rep.report(30, "断开连接", Outcome::Pass("OK".to_string()), t.elapsed().as_millis());
 
     rep.summary();
 }
