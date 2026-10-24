@@ -23,7 +23,7 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ListTree, Network } from 'lucide-react';
+import { ChevronsDownUp, ChevronsUpDown, ListTree, Network } from 'lucide-react';
 import type { DbExplainPlan, DbPlanNode } from '@/services/dbConnectionsService';
 import { cn } from '@/lib/utils';
 
@@ -106,20 +106,42 @@ function TreeLine({
   prefix,
   isLast,
   tree,
+  collapsed,
+  onToggle,
 }: {
   node: DbPlanNode;
   prefix: string;
   isLast: boolean;
   tree: PlanTree;
+  collapsed: Set<number>;
+  onToggle: (id: number) => void;
 }) {
+  const { t } = useTranslation();
   const level = tree.levels.get(node.id) ?? 'normal';
   const kids = tree.children.get(node.id) ?? [];
   const connector = prefix === '' ? '' : isLast ? '└─ ' : '├─ ';
   // 子层前缀：本层是末位用空格续、否则竖线续（根的子层从此非空）
   const childPrefix = prefix + (isLast ? '   ' : '│  ');
+  const isCollapsed = collapsed.has(node.id);
   return (
     <div className="whitespace-pre">
       <span className="text-foreground-subtlest select-none">{prefix + connector}</span>
+      {kids.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => onToggle(node.id)}
+          className="cursor-pointer px-0.5 text-foreground-subtle hover:text-foreground"
+          title={
+            isCollapsed
+              ? t('db.explainExpandHint', { count: kids.length })
+              : t('db.explainCollapseHint')
+          }
+        >
+          {isCollapsed ? '▸' : '▾'}
+        </button>
+      ) : (
+        <span className="px-0.5 select-none"> </span>
+      )}
       <span
         className={cn(
           'font-semibold',
@@ -140,20 +162,35 @@ function TreeLine({
           {node.bytes != null ? fmtBytes(node.bytes) : ''}
         </span>
       ) : null}
-      {kids.map((k, i) => (
-        <TreeLine
-          key={k.id}
-          node={k}
-          prefix={childPrefix}
-          isLast={i === kids.length - 1}
-          tree={tree}
-        />
-      ))}
+      {kids.length > 0 && isCollapsed ? (
+        <span className="ml-1.5 text-foreground-subtlest">⋯ {kids.length}</span>
+      ) : null}
+      {isCollapsed
+        ? null
+        : kids.map((k, i) => (
+            <TreeLine
+              key={k.id}
+              node={k}
+              prefix={childPrefix}
+              isLast={i === kids.length - 1}
+              tree={tree}
+              collapsed={collapsed}
+              onToggle={onToggle}
+            />
+          ))}
     </div>
   );
 }
 
-function TreePlanView({ nodes }: { nodes: DbPlanNode[] }) {
+function TreePlanView({
+  nodes,
+  collapsed,
+  onToggle,
+}: {
+  nodes: DbPlanNode[];
+  collapsed: Set<number>;
+  onToggle: (id: number) => void;
+}) {
   const tree = useMemo(() => buildTree(nodes), [nodes]);
   if (tree.roots.length === 0) return null;
   return (
@@ -166,6 +203,8 @@ function TreePlanView({ nodes }: { nodes: DbPlanNode[] }) {
             prefix=""
             isLast={i === tree.roots.length - 1}
             tree={tree}
+            collapsed={collapsed}
+            onToggle={onToggle}
           />
         ))}
       </div>
@@ -304,9 +343,31 @@ export function ExplainPlanGraph({
   const { t } = useTranslation();
   const [active, setActive] = useState(0);
   const [view, setView] = useState<PlanViewMode>('tree');
+  // 树形展开态（收起的节点 id 集）：切语句/切形态复位
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const plan = plans[Math.min(active, plans.length - 1)] ?? plans[0];
   const nodes = plan?.nodes ?? [];
   const hasNodes = nodes.length > 0;
+  const parentIds = useMemo(
+    () => new Set(nodes.filter((n) => n.parentId != null).map((n) => n.parentId as number)),
+    [nodes],
+  );
+  const toggleNode = (id: number) =>
+    setCollapsed((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  const resetCollapse = () => setCollapsed(new Set());
+  const collapseAll = () => setCollapsed(new Set(parentIds));
+  const switchStatement = (i: number) => {
+    setActive(i);
+    resetCollapse();
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -316,7 +377,7 @@ export function ExplainPlanGraph({
             <button
               key={i}
               type="button"
-              onClick={() => setActive(i)}
+              onClick={() => switchStatement(i)}
               className={cn(
                 'flex max-w-52 shrink-0 items-center gap-1 truncate rounded-md border px-2 py-0.5 font-mono text-ui-xs transition-colors',
                 i === active
@@ -338,6 +399,24 @@ export function ExplainPlanGraph({
         )}
         <div className="flex-1" />
         <div className="flex shrink-0 items-center rounded-md border border-border/70 p-0.5">
+          {view === 'tree'
+            ? (
+                [
+                  { icon: ChevronsUpDown, label: t('db.explainCollapseAll'), action: collapseAll },
+                  { icon: ChevronsDownUp, label: t('db.explainExpandAll'), action: resetCollapse },
+                ]
+              ).map(({ icon: Icon, label, action }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={action}
+                  title={label}
+                  className="flex items-center rounded px-1.5 py-0.5 text-ui-xs text-foreground-subtle transition-colors hover:text-foreground"
+                >
+                  <Icon className="size-3" />
+                </button>
+              ))
+            : null}
           {(
             [
               { mode: 'tree' as const, icon: ListTree, label: t('db.explainViewTree') },
@@ -347,7 +426,10 @@ export function ExplainPlanGraph({
             <button
               key={mode}
               type="button"
-              onClick={() => setView(mode)}
+              onClick={() => {
+                setView(mode);
+                resetCollapse();
+              }}
               className={cn(
                 'flex items-center gap-1 rounded px-1.5 py-0.5 text-ui-xs transition-colors',
                 view === mode
@@ -381,7 +463,7 @@ export function ExplainPlanGraph({
             {t('db.explainNoData')}
           </div>
         ) : view === 'tree' ? (
-          <TreePlanView nodes={nodes} />
+          <TreePlanView nodes={nodes} collapsed={collapsed} onToggle={toggleNode} />
         ) : (
           <GraphPlanView nodes={nodes} viewKey={active} />
         )}
