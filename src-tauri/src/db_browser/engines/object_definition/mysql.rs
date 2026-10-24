@@ -1,7 +1,6 @@
 //! MySQL 的对象定义（函数/过程/触发器/事件/序列）。
 
 use super::super::{oracle_engine, ObjectDefinition};
-use oracle_async::Queryable as _;
 
 pub(crate) async fn definition(
     conn: &mut mysql_async::Conn,

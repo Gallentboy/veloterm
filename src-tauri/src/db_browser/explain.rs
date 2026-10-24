@@ -331,7 +331,7 @@ fn parse_dm_lines(rows: &[Vec<String>]) -> Vec<PlanNode> {
             .trim_start_matches('[')
             .trim_end_matches(']')
             .split(',')
-            .filter_map(|s| num(s))
+            .filter_map(num)
             .collect();
         while stack.last().is_some_and(|(ind, _)| *ind >= indent) {
             stack.pop();

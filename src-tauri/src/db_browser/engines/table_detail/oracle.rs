@@ -3,7 +3,7 @@
 use oracle_async::Queryable as _;
 
 use super::super::{
-    apply_index_expr_overlay, format_bytes, oracle_dict_prefix,
+    apply_index_expr_overlay, oracle_dict_prefix,
 };
 use super::super::{
     ob_quote_literal, oracle_err, oracle_row_string, TableDetail,

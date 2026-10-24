@@ -6,7 +6,7 @@ use oracle_async::Queryable as _;
 
 use super::super::{
     CatalogNode, DbEngine, OB_DICT_PREFIX, ObjectGroup, dm_query_rows, dm_query_strings,
-    dm_row_i64, dm_row_string, ob_internal_object, ob_mysql_mviews, ob_mysql_sequences,
+    dm_row_string, ob_internal_object, ob_mysql_mviews, ob_mysql_sequences,
     ob_oracle_mviews, ob_oracle_packages, ob_oracle_tables, ob_quote_literal, oracle_dict_prefix,
     oracle_err, oracle_row_string, oracle_scalar_string, parse_redis_db, quote_ident,
     recycle_node, redis_scan_typed_keys, redis_select,
