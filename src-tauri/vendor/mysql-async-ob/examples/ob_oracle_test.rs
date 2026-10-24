@@ -685,16 +685,18 @@ async fn main() {
         Ok(_) => rep.report(28, "ORA-00904 错误", Outcome::Fail("无效列没报错".to_string()), t.elapsed().as_millis()),
     }
 
-    // ── 29 类型解码（NUMBER/INTEGER/DATE/TIMESTAMP/NVARCHAR2/CLOB）──
-    // 独立建表插一行读回，Value 逐列 to_string 渲染——看 OB 经文本协议
-    // 回传的真实字节形态（NLS 初始化生效与否在此暴露：NVARCHAR2 乱码即 NLS 未生效）
+    // ── 29 类型解码（NUMBER/INTEGER/DATE/TIMESTAMP/NVARCHAR2/CLOB/INTERVAL）──
+    // 独立建表插一行读回；列字符集编号感知解码（N 列 UTF-16BE，对齐 JDBC
+    // sendCharsetVariables 的 nCharacterEncoding="UTF-16BE"）+ INTERVAL
+    // 语义拆解校验。输出的 cs=NN 是列字符集编号（N 列应为 utf16 族 54/55）
     let types_table = format!("VELOTERM_TYPES_{run_stamp:X}");
     let t = Instant::now();
     let created: Result<(), _> = conn
         .query_drop(format!(
             "CREATE TABLE {types_table} (\
              c_number NUMBER(12,3), c_int INTEGER, c_date DATE, c_ts TIMESTAMP, \
-             c_varchar VARCHAR2(64), c_nvarchar NVARCHAR2(64), c_clob CLOB)"
+             c_varchar VARCHAR2(64), c_nvarchar NVARCHAR2(64), c_clob CLOB, \
+             c_iym INTERVAL YEAR(3) TO MONTH, c_ids INTERVAL DAY(3) TO SECOND(6))"
         ))
         .await;
     match created {
@@ -705,24 +707,95 @@ async fn main() {
                      12345.678, 42, \
                      TO_DATE('2026-01-15 10:30:00','YYYY-MM-DD HH24:MI:SS'), \
                      TO_TIMESTAMP('2026-01-15 10:30:00.123456','YYYY-MM-DD HH24:MI:SS.FF6'), \
-                     '类型测试', N'NVARCHAR中文字符串', 'CLOB大对象文本')"
+                     '类型测试', N'NVARCHAR中文字符串', 'CLOB大对象文本', \
+                     TO_YMINTERVAL('+001-02'), TO_DSINTERVAL('+002 03:04:05.000006'))"
                 ))
                 .await;
-            let read: Result<Option<oceanbase_async::Row>, _> = conn
-                .query_first(format!("SELECT * FROM {types_table} WHERE ROWNUM = 1"))
-                .await;
+            // query_iter 拿列元数据（名称 + 字符集编号）再收行
+            let read: Result<(Vec<(String, u16)>, Option<oceanbase_async::Row>), oceanbase_async::Error> = async {
+                let mut result = conn
+                    .query_iter(format!("SELECT * FROM {types_table} WHERE ROWNUM = 1"))
+                    .await?;
+                let meta: Vec<(String, u16)> = result
+                    .columns_ref()
+                    .iter()
+                    .map(|c| {
+                        (
+                            String::from_utf8_lossy(c.name_ref()).to_string(),
+                            c.character_set(),
+                        )
+                    })
+                    .collect();
+                let rows: Vec<oceanbase_async::Row> = result.collect_and_drop().await?;
+                Ok((meta, rows.into_iter().next()))
+            }
+            .await;
             let outcome = match (ins, read) {
-                (Ok(()), Ok(Some(row))) => {
+                (Ok(()), Ok((meta, Some(row)))) => {
                     let vals = row.unwrap();
-                    let rendered: Vec<String> = vals.iter().map(value_render).collect();
-                    let nulls = rendered.iter().filter(|s| *s == "NULL").count();
-                    if nulls == 0 {
-                        Outcome::Pass(rendered.join(" | "))
+                    let col = |needle: &str| meta.iter().position(|(n, _)| n == needle);
+                    let mut parts = Vec::new();
+                    let mut problems: Vec<String> = Vec::new();
+                    for (i, (name, cs)) in meta.iter().enumerate() {
+                        let rendered = match vals.get(i) {
+                            Some(oceanbase_async::Value::Bytes(b)) => {
+                                oceanbase_async::ob_types::decode_nchar_bytes(*cs, b)
+                            }
+                            other => other.map(value_render).unwrap_or_else(|| "NULL".into()),
+                        };
+                        if rendered == "NULL" {
+                            problems.push(format!("{name} 列为 NULL"));
+                        }
+                        parts.push(format!("{name}[cs={cs}]={rendered}"));
+                    }
+                    // NVARCHAR2 往返（字符集解码正确性——JDBC 同款 UTF-16BE）
+                    if let Some(i) = col("C_NVARCHAR") {
+                        if let Some(oceanbase_async::Value::Bytes(b)) = vals.get(i) {
+                            let dec = oceanbase_async::ob_types::decode_nchar_bytes(meta[i].1, b);
+                            if dec != "NVARCHAR中文字符串" {
+                                problems.push(format!(
+                                    "NVARCHAR2 解码不符（cs={}）：期望 NVARCHAR中文字符串，得 {dec:?}",
+                                    meta[i].1
+                                ));
+                            }
+                        }
+                    }
+                    // INTERVAL 语义拆解
+                    if let Some(i) = col("C_IYM") {
+                        if let Some(oceanbase_async::Value::Bytes(b)) = vals.get(i) {
+                            match oceanbase_async::ob_types::parse_ob_interval(
+                                &String::from_utf8_lossy(b),
+                            ) {
+                                Some(iv) if iv.years == 1 && iv.months == 2 => {}
+                                other => {
+                                    problems.push(format!("INTERVAL YM 解析不符: {other:?}"));
+                                }
+                            }
+                        }
+                    }
+                    if let Some(i) = col("C_IDS") {
+                        if let Some(oceanbase_async::Value::Bytes(b)) = vals.get(i) {
+                            match oceanbase_async::ob_types::parse_ob_interval(
+                                &String::from_utf8_lossy(b),
+                            ) {
+                                Some(iv) if iv.days == 2
+                                    && iv.hours == 3
+                                    && iv.minutes == 4
+                                    && iv.seconds == 5
+                                    && iv.micros == 6 => {}
+                                other => {
+                                    problems.push(format!("INTERVAL DS 解析不符: {other:?}"));
+                                }
+                            }
+                        }
+                    }
+                    if problems.is_empty() {
+                        Outcome::Pass(parts.join(" | "))
                     } else {
-                        Outcome::Warn(format!("{nulls} 列为 NULL: {}", rendered.join(" | ")))
+                        Outcome::Fail(format!("{}｜{}", problems.join("；"), parts.join(" | ")))
                     }
                 }
-                (Ok(()), Ok(None)) => Outcome::Fail("读不到行".to_string()),
+                (Ok(()), Ok((_, None))) => Outcome::Fail("读不到行".to_string()),
                 (Ok(()), Err(e)) => Outcome::Fail(format!("{e}")),
                 (Err(e), _) => Outcome::Fail(format!("插入失败: {e}")),
             };

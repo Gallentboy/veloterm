@@ -457,6 +457,10 @@ mod queryable;
 /// io 层接入是后续阶段，模块当前独立可测。
 pub mod ob20;
 
+/// OB Oracle 扩展类型的客户端解码与语义解析（N 列 UTF-16 解码 / INTERVAL
+/// 拆解，veloterm 分叉新增）——见模块头
+pub mod ob_types;
+
 /// 连接/认证阶段详细日志（`OB_DEBUG=1`，veloterm 分叉新增）——见模块头
 pub(crate) mod obdbg;
 
