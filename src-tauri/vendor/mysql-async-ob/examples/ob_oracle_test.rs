@@ -219,8 +219,7 @@ async fn main() {
             Outcome::Pass("服务端确认 Oracle 租户（status bit 2）".to_string())
         } else {
             Outcome::Warn(
-                "服务端 status flag 无 Oracle 位——检测未生效，read_settings 会照发 MySQL 探测"
-                    .to_string(),
+                "auth OK 未捕获 Oracle 位（bit2）——NLS 初始化未执行".to_string(),
             )
         },
         t.elapsed().as_millis(),
