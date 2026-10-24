@@ -1,14 +1,15 @@
 /**
- * 公用虚拟滚动数据表格（@tanstack/react-virtual 驱动）：固定表头、三态列
- * 排序（数值/文本自适应）、实时过滤、TSV 复制、行号列与单元格截断 Tooltip。
- * 从 SqlitePreview/CsvPreview/ExcelPreview 三处同构实现抽出（数据库工作台
- * 首先消费；旧三处的替换随后续批次回归验证）。
+ * 公用虚拟滚动数据表格（@tanstack/react-table + @tanstack/react-virtual）：
+ * 固定表头、三态列排序（数值/文本自适应 sortingFn）、实时过滤（globalFilter）、
+ * TSV 复制、行号列与单元格截断 Tooltip。从 SqlitePreview/CsvPreview/ExcelPreview
+ * 三处同构实现抽出（数据库工作台首先消费；旧三处的替换随后续批次回归验证）。
  *
- * 虚拟化形态：useVirtualizer 提供滚动订阅（useSyncExternalStore）与窗口
- * 切片，渲染保持真实 <table> 语义——上下各一条高度撑开的占位 <tr> 代替
- * 绝对定位（绝对定位与 table 自动列宽布局相斥，TanStack 官方 table 示例
- * 为此要求固定像素列宽，本表格列宽自适应不适用）。行高固定 32px
- * （h-8 由样式钉死），estimateSize 恒准、无测量层开销。
+ * 分工：react-table（headless）负责排序与过滤管线——sortingFn 保数值/文本
+ * 自适应比较，globalFilterFn 是全行任意列的子串匹配；react-virtual 负责滚动
+ * 窗口（useSyncExternalStore 订阅）。渲染保持真实 <table> 语义——上下各一条
+ * 高度撑开的占位 <tr> 代替绝对定位（绝对定位与 table 自动列宽布局相斥，
+ * TanStack 官方 table 示例为此要求固定像素列宽，本表格列宽自适应不适用）。
+ * 行高固定 32px（h-8 由样式钉死），estimateSize 恒准、无测量层开销。
  */
 
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, Copy } from 'lucide-react';
@@ -17,10 +18,18 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import {
+  getCoreRowModel,
+  getSortedRowModel,
+  useReactTable,
+  type Row,
+  type SortingState,
+} from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
 import {
@@ -45,6 +54,8 @@ export interface DataTableProps {
   statusFooter?: React.ReactNode;
 }
 
+/** 数值/文本自适应比较（asc 语义；desc 由 react-table 内部取反）：两值都
+ * 能 parse 成数字则数值比较，否则 localeCompare（numeric: true 让 "2" < "10"） */
 function compareCells(a: string, b: string): number {
   const valA = (a ?? '').trim();
   const valB = (b ?? '').trim();
@@ -65,8 +76,7 @@ export const DataTable = memo(function DataTable({
   statusFooter,
 }: DataTableProps) {
   const { t } = useTranslation();
-  const [sortCol, setSortCol] = useState<number | null>(null);
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
+  const [sorting, setSorting] = useState<SortingState>([]);
   const [filterInput, setFilterInput] = useState('');
   const deferredFilter = useDeferredValue(filterInput.trim().toLowerCase());
   const [copied, setCopied] = useState(false);
@@ -78,18 +88,35 @@ export const DataTable = memo(function DataTable({
   const { activeAnchor, handleCellMouseEnter, handleCellMouseLeave, handleContainerScroll } =
     useCellTooltip();
 
-  const processedRows = (() => {
-    let result = rows;
-    if (deferredFilter) {
-      result = result.filter((row) => row.some((cell) => cell.toLowerCase().includes(deferredFilter)));
-    }
-    if (sortCol != null && sortOrder != null && sortCol < columns.length) {
-      const col = sortCol;
-      const orderMul = sortOrder === 'asc' ? 1 : -1;
-      result = [...result].sort((a, b) => compareCells(a[col] ?? '', b[col] ?? '') * orderMul);
-    }
-    return result;
-  })();
+  // 列定义：纯字符串矩阵无 schema，按列序号动态生成（id = 下标字符串）
+  const tableColumns = useMemo(
+    () =>
+      columns.map((_, idx) => ({
+        id: String(idx),
+        accessorFn: (row: string[]) => row[idx] ?? '',
+        // 自定义 sortingFn：跨类型混排（数字串与文本同列）的稳定比较
+        sortingFn: (a: Row<string[]>, b: Row<string[]>) =>
+          compareCells(a.original[idx] ?? '', b.original[idx] ?? ''),
+        // 三态循环首击 asc（默认对字符串列首击 asc、数值列 desc，行为统一）
+        sortDescFirst: false,
+      })),
+    [columns],
+  );
+
+  const table = useReactTable({
+    data: rows,
+    columns: tableColumns,
+    state: { sorting, globalFilter: deferredFilter },
+    onSortingChange: setSorting,
+    // 全行任意列子串匹配（大小写不敏感）：deferredFilter 已 lowercase
+    globalFilterFn: (row: Row<string[]>, _columnId: string, value: string) =>
+      row.original.some((cell) => cell.toLowerCase().includes(value as string)),
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
+
+  // 排序 + 过滤后的最终行序（虚拟化的数据源；空过滤串时 globalFilter 短路全过）
+  const processedRows = table.getRowModel().rows.map((r) => r.original);
 
   const virtualizer = useVirtualizer({
     count: processedRows.length,
@@ -107,30 +134,13 @@ export const DataTable = memo(function DataTable({
 
   // 数据集变化（新查询）时复位排序与滚动位置
   useEffect(() => {
-    setSortCol(null);
-    setSortOrder(null);
+    setSorting([]);
     if (containerRef.current) {
       containerRef.current.scrollTop = 0;
     }
-    // scrollToOffset(0) 不必显式调用：DOM scrollTop 置零会触发 virtualizer 的
-    // 滚动订阅自行重算窗口
+    // DOM scrollTop 置零会触发 virtualizer 的滚动订阅自行重算窗口
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columns]);
-
-  const toggleSort = useCallback((colIndex: number) => {
-    setSortCol((prevCol) => {
-      if (prevCol !== colIndex) {
-        setSortOrder('asc');
-        return colIndex;
-      }
-      setSortOrder((prevOrder) => {
-        if (prevOrder === 'asc') return 'desc';
-        if (prevOrder === 'desc') return null;
-        return 'asc';
-      });
-      return colIndex;
-    });
-  }, []);
 
   const handleScroll = useCallback(
     (_e: React.UIEvent<HTMLDivElement>) => {
@@ -218,21 +228,24 @@ export const DataTable = memo(function DataTable({
               <th className="w-12 border-b border-r border-border/60 bg-surface px-2 py-2 text-center font-normal text-foreground-subtle select-none">
                 #
               </th>
-              {columns.map((col, idx) => {
-                const isSorted = sortCol === idx && sortOrder !== null;
+              {table.getHeaderGroups()[0]?.headers.map((header) => {
+                // 三态：getIsSorted() = false | 'asc' | 'desc'（三态循环由
+                // toggleSorting 默认的 enableSortingRemoval 驱动）
+                const sorted = header.column.getIsSorted();
+                const idx = Number(header.column.id);
                 return (
                   <th
-                    key={idx}
-                    onClick={() => toggleSort(idx)}
-                    onMouseEnter={(e) => handleCellMouseEnter(e, col)}
+                    key={header.column.id}
+                    onClick={header.column.getToggleSortingHandler()}
+                    onMouseEnter={(e) => handleCellMouseEnter(e, columns[idx] ?? '')}
                     onMouseLeave={handleCellMouseLeave}
                     className="cursor-pointer border-b border-r border-border/60 px-3 py-2 text-left font-semibold text-foreground hover:bg-hover select-none last:border-r-0"
                   >
                     <div className="flex items-center justify-between gap-1.5">
-                      <span className="truncate">{col}</span>
+                      <span className="truncate">{columns[idx]}</span>
                       <span className="shrink-0 text-foreground-subtle">
-                        {isSorted ? (
-                          sortOrder === 'asc' ? (
+                        {sorted ? (
+                          sorted === 'asc' ? (
                             <ArrowUp className="size-3 text-terminal-blue" />
                           ) : (
                             <ArrowDown className="size-3 text-terminal-blue" />
