@@ -50,7 +50,7 @@ export function AboutCard({ isExiting = false, onClose, okButtonRef, showCloseBu
   return (
     <div
       className={cn(
-        'relative flex h-[340px] w-64 flex-col overflow-hidden rounded-[12px] bg-[#f4f4f5] p-[22px] pb-3.5 pl-[15px] text-[#1d1d1f] select-none shadow-[0_18px_38px_-10px_rgb(0_0_0/0.38),0_6px_16px_-6px_rgb(0_0_0/0.22)] dark:bg-[#171717] dark:text-[#e8e8e8] dark:shadow-[0_18px_38px_-10px_rgb(0_0_0/0.55),0_6px_16px_-6px_rgb(0_0_0/0.4)]',
+        'relative flex h-auto w-64 flex-col overflow-hidden rounded-[12px] bg-[#f4f4f5] p-[22px] pb-3.5 pl-[15px] text-[#1d1d1f] select-none shadow-[0_18px_38px_-10px_rgb(0_0_0/0.38),0_6px_16px_-6px_rgb(0_0_0/0.22)] dark:bg-[#171717] dark:text-[#e8e8e8] dark:shadow-[0_18px_38px_-10px_rgb(0_0_0/0.55),0_6px_16px_-6px_rgb(0_0_0/0.4)]',
         isExiting ? 'about-card-out' : 'about-card-in',
       )}
       role="dialog"
@@ -103,7 +103,7 @@ export function AboutCard({ isExiting = false, onClose, okButtonRef, showCloseBu
         ref={okButtonRef}
         type="button"
         onClick={onClose}
-        className="mt-auto h-9 w-full rounded-full bg-[#0a0a0a] text-[13px] font-medium text-[#fafafa] outline-none active:opacity-80 dark:bg-[#fafafa] dark:text-[#0a0a0a]"
+        className="mt-5 h-9 w-full shrink-0 rounded-full bg-[#0a0a0a] text-[13px] font-medium text-[#fafafa] outline-none active:opacity-80 dark:bg-[#fafafa] dark:text-[#0a0a0a]"
       >
         {t('about.ok')}
       </button>
