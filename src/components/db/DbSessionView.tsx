@@ -336,6 +336,10 @@ export function DbSessionView({
     objectPagesRef.current = objectPages;
   }, [objectPages]);
   const openObjectPage = useCallback((req: OpenObjectTabRequest) => {
+    // 打开对象页即让位执行计划：计划图在结果面板里优先渲染（独立占满），
+    // 不清空会把新打开的对象页永久遮住——用户看到 tab 却看不到内容
+    setExplainPlans(null);
+    setExplainLoading(false);
     const dedupeKey = `${req.variant}:${req.schema}.${req.name}`;
     const current = objectPagesRef.current;
     const existing = current.find((p) => p.dedupeKey === dedupeKey);
@@ -922,6 +926,7 @@ export function DbSessionView({
       setResults([]);
       setActiveResult(0);
       setExplainPlans(null); // 普通查询让位：计划视图隐藏
+      setActiveObjectKey(null); // 让位结果集视图（对象页 tab 保留，点回即看）
       try {
         await dbQuery(sessionId, text, handleQueryEvent, {
           maxRows: rowCap,
@@ -970,6 +975,9 @@ export function DbSessionView({
       setExplainPlans(null);
       setResults([]);
       setActiveResult(0);
+      // 计划图独立占满结果面板：清空对象页激活项让计划可见（对象页 tab
+      // 保留，关闭计划后点 tab 即回）
+      setActiveObjectKey(null);
       dbExplain(sessionId, stmt, false)
         .then(setExplainPlans)
         .catch((e) => setConnectError(String(e)))
