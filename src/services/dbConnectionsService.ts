@@ -258,6 +258,7 @@ export function dbExplain(
     analyze,
     maxRows: options?.maxRows,
     timeoutMs: options?.timeoutMs,
+    onEvent: channel,
   });
 }
 
