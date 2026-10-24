@@ -151,6 +151,29 @@ impl<'a> Transaction<'a> {
             return Err(DriverError::ReadOnlyTransNotSupported.into());
         }
 
+        // OB Oracle：Java JDBC（oceanbase-client 2.4.19，MariaDB Connector/J
+        // 血统）没有 START TRANSACTION 概念——事务开启是 setAutoCommit(false)
+        // 即 `set autocommit = 0`（AbstractQueryProtocol.setAutoCommit：
+        // Oracle 模式只要值变化就发），结束是文本 COMMIT/ROLLBACK。
+        // START TRANSACTION 与 SET TRANSACTION ISOLATION LEVEL 均为
+        // MySQL 方言、Oracle 租户拒收，故事务选项（隔离级别/只读/一致快照）
+        // 在此形态明确报错（静默忽略会让调用方误以为生效）；
+        // commit/rollback 后补 `set autocommit = 1` 恢复常态（上游
+        // START TRANSACTION 语义即事务结束回到自动提交；假定进入前
+        // autocommit 开启——已手动 SET autocommit=0 的会话勿用事务 API）。
+        if conn.ob_is_oracle_mode() {
+            if isolation_level.is_some() || readonly.is_some() || consistent_snapshot {
+                return Err(crate::Error::Other(Box::new(std::io::Error::other(
+                    "OB Oracle 模式不支持事务选项（隔离级别/只读/一致快照）；\
+                     事务即 set autocommit=0 + 文本 COMMIT/ROLLBACK（对齐 Java JDBC）",
+                ))));
+            }
+            crate::obdbg!("Transaction::new(OB Oracle): set autocommit = 0");
+            conn.query_drop("set autocommit = 0").await?;
+            conn.set_tx_status(TxStatus::InTransaction);
+            return Ok(Transaction(conn));
+        }
+
         if let Some(isolation_level) = isolation_level {
             let query = format!("SET TRANSACTION ISOLATION LEVEL {}", isolation_level);
             conn.query_drop(query).await?;
@@ -179,6 +202,11 @@ impl<'a> Transaction<'a> {
     pub async fn commit(mut self) -> Result<()> {
         let result = self.0.query_iter("COMMIT").await?;
         result.drop_result().await?;
+        // OB Oracle：JDBC 形态事务结束恢复自动提交（见 new 的注释）
+        if self.0.ob_is_oracle_mode() {
+            crate::obdbg!("Transaction::commit(OB Oracle): 恢复 autocommit = 1");
+            self.0.query_drop("set autocommit = 1").await?;
+        }
         self.0.set_tx_status(TxStatus::None);
         Ok(())
     }
@@ -187,6 +215,11 @@ impl<'a> Transaction<'a> {
     pub async fn rollback(mut self) -> Result<()> {
         let result = self.0.query_iter("ROLLBACK").await?;
         result.drop_result().await?;
+        // OB Oracle：同 commit，回滚后恢复自动提交
+        if self.0.ob_is_oracle_mode() {
+            crate::obdbg!("Transaction::rollback(OB Oracle): 恢复 autocommit = 1");
+            self.0.query_drop("set autocommit = 1").await?;
+        }
         self.0.set_tx_status(TxStatus::None);
         Ok(())
     }

@@ -618,10 +618,9 @@ async fn main() {
     }
 
     // ── 25 驱动 API 事务 ──
-    // mysql_async 的 start_transaction 发 MySQL 方言（START TRANSACTION），
-    // OB Oracle 上大概率语法错——探针性质：可用为 PASS（API rollback 验证
-    // 生效），语法错为 WARN（事实记录：app 侧规避 Transaction API、
-    // 用文本 COMMIT/ROLLBACK）
+    // Transaction::new 的 OB Oracle 分支已对齐 Java JDBC（set autocommit=0
+    // 开事务 + 文本 COMMIT/ROLLBACK，事务选项明确报错）——正常应 PASS；
+    // WARN 仅在环境异常时出现（MySQL 方言 START TRANSACTION 路径已不适用）
     let t = Instant::now();
     let outcome = probe_api_transaction(&mut conn, &test_table).await;
     let outcome = match outcome {
