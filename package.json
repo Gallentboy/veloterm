@@ -16,6 +16,7 @@
     "veloterm:build:mac-arm": "RUSTFLAGS='-C target-cpu=native' tauri build --target aarch64-apple-darwin --bundles app --config src-tauri/tauri.macos-arm64.conf.json"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.22",
     "@tauri-apps/api": "^2.12.3",
     "@tauri-apps/plugin-clipboard-manager": "^2.4.2",
     "@tauri-apps/plugin-log": "^2.10.1",
