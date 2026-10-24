@@ -406,7 +406,9 @@ export const ManualModal = memo(function ManualModal({ open, onClose }: ManualMo
         className={cn(
           'flex flex-col overflow-hidden border border-border/80 bg-popover text-foreground shadow-2xl transition-[width,height,border-radius] duration-200',
           isFullscreen
-            ? 'h-full w-full rounded-none'
+            ? // 全屏同样走项目统一圆角（rounded-2xl）：遮罩自带 p-3/p-5 边距，
+              // 圆角在边距内完整可见，与常规态及其它弹层观感一致
+              'h-full w-full rounded-2xl'
             : 'h-[min(90vh,860px)] w-[min(95vw,1260px)] rounded-2xl',
         )}
         onClick={(e) => e.stopPropagation()}
