@@ -177,7 +177,14 @@ fn strip_ident_quotes(s: &str) -> &str {
 /// 「包含光标的完整语句」上（前后分号定界）——补全常发生在语句中段，
 /// 典型如 `SELECT t.u| FROM TUSER t`：别名 t 的定义在光标**之后**，只看
 /// 前缀就永远对不上。光标词 / 限定符 / 表名位判定仍只看光标前缀。
-pub fn parse_cursor_context(text: &str, cursor: usize) -> CursorContext {
+///
+/// 表引用/别名提取双路（sqlsplit 同型）：
+/// - **主路（完美模式）**：整句语法完整时（中段编辑的典型态——语句全部
+///   写完、光标只是停在中间）sqlparser 解析完整 AST，精准提取表因子与
+///   别名——无停用词猜测、天然处理嵌套 JOIN/派生表/UNION 各臂；
+/// - **降级路**：解析失败（语句真敲到一半：尾部悬空点/缺 FROM 等，或
+///   方言特有语法）回退行级 token 扫描启发式，语义同前端初版。
+pub fn parse_cursor_context(text: &str, cursor: usize, engine: &str) -> CursorContext {
     // 语句边界：光标前最后一个分号之后 → 光标后第一个分号之前
     let stmt_start = text.get(..cursor).unwrap_or(text).rfind(';').map(|p| p + 1).unwrap_or(0);
     let stmt_end = text
@@ -188,6 +195,177 @@ pub fn parse_cursor_context(text: &str, cursor: usize) -> CursorContext {
         .unwrap_or(text.len());
     let stmt = text.get(stmt_start..stmt_end).unwrap_or_default();
 
+    // 主路（完美模式）：整句语法完整 → AST 精准提取；降级路：解析失败
+    //（真敲到一半/方言特有语法）→ 行级 token 扫描启发式
+    let (aliases, referenced) =
+        match ast_tables_and_aliases(stmt, super::sqlsplit::dialect_for_engine(engine)) {
+            Some(v) => v,
+            None => token_scan_tables(stmt),
+        };
+
+    // 光标词与限定符：只看光标前缀（语句内 stmt_start..cursor），从尾部回扫
+    // `[标识符] 空白? . 空白? [词]`；word_start 补回语句起点得全文绝对偏移
+    let prefix = text.get(stmt_start..cursor).unwrap_or_default();
+    let (qualifier, _word, word_start_rel) = scan_word_and_qualifier(prefix);
+    let word_start = stmt_start + word_start_rel;
+
+    // 表名位：光标前缀的尾部是 `[表名位字符]*`，其前有空白，再前是表关键字。
+    // 限定形态不走此标志——建议解析的限定分支先行返回；含空白后的位置
+    // （FROM t |）视为列名位（正在敲别名/列）
+    let table_position = ends_with_table_position(prefix);
+
+    CursorContext {
+        qualifier,
+        word_start,
+        table_position,
+        aliases,
+        referenced,
+    }
+}
+
+// ── 主路：sqlparser AST 精准提取（解析成功 = 语句语法完整） ───────────────
+
+/// 整句解析成功时返回表引用与别名；解析失败（语句敲到一半/方言特有语法）
+/// 返回 None 由降级路接管
+fn ast_tables_and_aliases(
+    stmt: &str,
+    dialect: &'static dyn sqlparser::dialect::Dialect,
+) -> Option<(HashMap<String, RefTable>, Vec<RefTable>)> {
+    let stmts = sqlparser::parser::Parser::parse_sql(dialect, stmt).ok()?;
+    let mut aliases: HashMap<String, RefTable> = HashMap::new();
+    let mut referenced: Vec<RefTable> = Vec::new();
+    // 只取第一条语句（语句切片按分号定界本就单条）
+    if let Some(stmt) = stmts.first() {
+        collect_statement(stmt, &mut aliases, &mut referenced);
+    }
+    Some((aliases, referenced))
+}
+
+fn push_ref(r: RefTable, referenced: &mut Vec<RefTable>) {
+    let dup = referenced.iter().any(|x| {
+        x.table.eq_ignore_ascii_case(&r.table) && x.schema.eq_ignore_ascii_case(&r.schema)
+    });
+    if !dup {
+        referenced.push(r);
+    }
+}
+
+fn ref_from_object_name(name: &sqlparser::ast::ObjectName) -> RefTable {
+    // 一段 = 裸表名（schema 空，建议端用当前库兜底）；两段 = schema.table
+    let idents = &name.0;
+    match (idents.first(), idents.get(1)) {
+        (Some(t), Some(s)) => RefTable {
+            schema: s.value.clone(),
+            table: t.value.clone(),
+        },
+        (Some(t), None) => RefTable {
+            schema: String::new(),
+            table: t.value.clone(),
+        },
+        _ => RefTable {
+            schema: String::new(),
+            table: String::new(),
+        },
+    }
+}
+
+fn collect_factor(
+    factor: &sqlparser::ast::TableFactor,
+    aliases: &mut HashMap<String, RefTable>,
+    referenced: &mut Vec<RefTable>,
+) {
+    use sqlparser::ast::TableFactor;
+    if let TableFactor::Table { name, alias, .. } = factor {
+        let r = ref_from_object_name(name);
+        if !r.table.is_empty() {
+            push_ref(r.clone(), referenced);
+            if let Some(a) = alias {
+                aliases.insert(a.name.value.to_ascii_lowercase(), r);
+            }
+        }
+    }
+    // Derived（派生表/子查询）与表函数：列不可知，不进引用集——
+    // 其作用域隔离由 AST 结构天然保证（子查询内的表根本不在本层 from 里）
+}
+
+fn collect_twj(
+    twj: &sqlparser::ast::TableWithJoins,
+    aliases: &mut HashMap<String, RefTable>,
+    referenced: &mut Vec<RefTable>,
+) {
+    collect_factor(&twj.relation, aliases, referenced);
+    for j in &twj.joins {
+        collect_factor(&j.relation, aliases, referenced);
+    }
+}
+
+fn collect_body(
+    body: &sqlparser::ast::SetExpr,
+    aliases: &mut HashMap<String, RefTable>,
+    referenced: &mut Vec<RefTable>,
+) {
+    use sqlparser::ast::SetExpr;
+    match body {
+        // UNION/EXCEPT/INTERSECT：两臂的表都在结果作用域内
+        SetExpr::SetOperation { left, right, .. } => {
+            collect_body(left, aliases, referenced);
+            collect_body(right, aliases, referenced);
+        }
+        SetExpr::Query(q) => collect_query(q, aliases, referenced),
+        SetExpr::Select(select) => {
+            for twj in &select.from {
+                collect_twj(twj, aliases, referenced);
+            }
+        }
+        _ => {}
+    }
+    // SELECT 列表/WHERE 里的标量子查询不在本层作用域（列不可见），不递归——
+    // 这正是 AST 相对 token 扫描的作用域优势
+}
+
+fn collect_query(
+    q: &sqlparser::ast::Query,
+    aliases: &mut HashMap<String, RefTable>,
+    referenced: &mut Vec<RefTable>,
+) {
+    // CTE（WITH 子句）体在独立作用域，不进本层引用集
+    collect_body(&q.body, aliases, referenced);
+}
+
+fn collect_statement(
+    stmt: &sqlparser::ast::Statement,
+    aliases: &mut HashMap<String, RefTable>,
+    referenced: &mut Vec<RefTable>,
+) {
+    use sqlparser::ast::Statement;
+    match stmt {
+        Statement::Query(q) => collect_query(q, aliases, referenced),
+        Statement::Insert(insert) => {
+            let r = ref_from_object_name(&insert.table_name);
+            if !r.table.is_empty() {
+                push_ref(r, referenced);
+            }
+        }
+        Statement::Update { table, .. } => collect_twj(table, aliases, referenced),
+        Statement::Delete(delete) => {
+            // 0.53 的 FROM 形态：显式 FROM 关键字 / BigQuery 省略形态，
+            // 两分支都是 TableWithJoins 列表
+            use sqlparser::ast::FromTable;
+            let twjs: Vec<&sqlparser::ast::TableWithJoins> = match &delete.from {
+                FromTable::WithFromKeyword(f) => f.iter().collect(),
+                FromTable::WithoutKeyword(t) => t.iter().collect(),
+            };
+            for twj in twjs {
+                collect_twj(twj, aliases, referenced);
+            }
+        }
+        _ => {}
+    }
+}
+
+// ── 降级路：行级 token 扫描启发式（解析失败时接管，语义同前端初版） ────────
+
+fn token_scan_tables(stmt: &str) -> (HashMap<String, RefTable>, Vec<RefTable>) {
     let toks = tokenize(stmt);
     let mut aliases: HashMap<String, RefTable> = HashMap::new();
     let mut referenced: Vec<RefTable> = Vec::new();
@@ -283,25 +461,7 @@ pub fn parse_cursor_context(text: &str, cursor: usize) -> CursorContext {
         }
         i = end;
     }
-
-    // 光标词与限定符：只看光标前缀（语句内 stmt_start..cursor），从尾部回扫
-    // `[标识符] 空白? . 空白? [词]`；word_start 补回语句起点得全文绝对偏移
-    let prefix = text.get(stmt_start..cursor).unwrap_or_default();
-    let (qualifier, _word, word_start_rel) = scan_word_and_qualifier(prefix);
-    let word_start = stmt_start + word_start_rel;
-
-    // 表名位：光标前缀的尾部是 `[表名位字符]*`，其前有空白，再前是表关键字。
-    // 限定形态不走此标志——建议解析的限定分支先行返回；含空白后的位置
-    // （FROM t |）视为列名位（正在敲别名/列）
-    let table_position = ends_with_table_position(prefix);
-
-    CursorContext {
-        qualifier,
-        word_start,
-        table_position,
-        aliases,
-        referenced,
-    }
+    (aliases, referenced)
 }
 
 impl Tok {
@@ -639,21 +799,23 @@ pub async fn sql_completions(
     session: &DbSession,
     sql: &str,
     cursor_offset_utf16: usize,
-) -> Result<SqlCompletionResult, String> {    let cursor_byte = utf16_to_byte(sql, cursor_offset_utf16);
-    let ctx = parse_cursor_context(sql, cursor_byte);
+) -> Result<SqlCompletionResult, String> {
+    let cursor_byte = utf16_to_byte(sql, cursor_offset_utf16);
+    // 元信息一次读取：engine 决定 AST 方言，database 是裸表名的 schema 兜底
+    let (engine, current_db) = {
+        let meta = session
+            .meta
+            .read()
+            .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
+        (meta.engine.clone(), meta.database.clone().unwrap_or_default())
+    };
+    let ctx = parse_cursor_context(sql, cursor_byte, &engine);
     let word_start_u16 = byte_to_utf16(sql, ctx.word_start);
     let empty = || SqlCompletionResult {
         suggestions: vec![],
         word_start: word_start_u16,
     };
 
-    let current_db = session
-        .meta
-        .read()
-        .map_err(|_| "DB 会话元信息锁中毒".to_string())?
-        .database
-        .clone()
-        .unwrap_or_default();
     if current_db.is_empty() {
         // 无当前库（理论不可达：各引擎连接后都带默认库）——空建议保守返回
         return Ok(empty());
@@ -760,11 +922,11 @@ mod tests {
     use super::*;
 
     fn ctx(s: &str) -> CursorContext {
-        parse_cursor_context(s, s.len())
+        parse_cursor_context(s, s.len(), "postgres")
     }
 
     fn ctx_at(s: &str, cursor: usize) -> CursorContext {
-        parse_cursor_context(s, cursor)
+        parse_cursor_context(s, cursor, "postgres")
     }
 
     #[test]
@@ -888,6 +1050,44 @@ mod tests {
         let c = ctx_at("SELECT t.u FROM TUSER t; SELECT * FROM dual", 10);
         assert_eq!(c.aliases.len(), 1);
         assert!(c.referenced.iter().all(|r| r.table != "dual"));
+    }
+
+    #[test]
+    fn ast_path_joins_and_nested_scope() {
+        // 语法完整的语句走 AST 主路：JOIN 链别名、标量子查询隔离、
+        // UNION 两臂都在作用域内
+        let c = ctx("SELECT (SELECT max(1) FROM secret_tab) FROM emp e UNION ALL SELECT * FROM dept d");
+        let tables: Vec<&str> = c.referenced.iter().map(|r| r.table.as_str()).collect();
+        assert!(tables.contains(&"emp") && tables.contains(&"dept"), "{tables:?}");
+        assert!(!tables.contains(&"secret_tab"), "标量子查询内的表不得进外层");
+        assert_eq!(c.aliases.get("e").map(|t| t.table.as_str()), Some("emp"));
+        assert_eq!(c.aliases.get("d").map(|t| t.table.as_str()), Some("dept"));
+
+        // 引号别名（token 启发式同判，AST 主路同判）
+        let c = ctx(r#"SELECT * FROM emp AS "E" "#);
+        assert_eq!(c.aliases.get("e").map(|t| t.table.as_str()), Some("emp"));
+
+        // UPDATE/DELETE 的目标表
+        let c = ctx("DELETE FROM log_table WHERE 1=1");
+        assert_eq!(
+            c.referenced.first().map(|t| t.table.as_str()),
+            Some("log_table")
+        );
+    }
+
+    #[test]
+    fn fallback_path_on_incomplete_statement() {
+        // 残缺语句降级 token 扫描，既有语义保持；注意 sqlparser 的接受面比
+        // 想象宽（JOIN 无 ON 也能解析）——真正的降级触发是悬空点/缺子句等
+        let c = ctx("SELECT * FROM emp e JOIN dep");
+        let tables: Vec<&str> = c.referenced.iter().map(|r| r.table.as_str()).collect();
+        assert!(tables.contains(&"emp") && tables.contains(&"dep"), "{tables:?}");
+        assert_eq!(c.aliases.get("e").map(|t| t.table.as_str()), Some("emp"));
+
+        // 真正解析不了的形态：尾部悬空点（光标词所在）→ 降级路接住
+        let c = ctx("SELECT * FROM emp e WHERE e.");
+        assert_eq!(c.aliases.get("e").map(|t| t.table.as_str()), Some("emp"));
+        assert_eq!(c.qualifier.as_deref(), Some("e"));
     }
 
     #[test]
