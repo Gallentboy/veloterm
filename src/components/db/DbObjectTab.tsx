@@ -348,6 +348,7 @@ export function DbObjectTab({
           <ReadOnlySqlView
             ref={sqlViewRef}
             content={detail.ddl}
+            contentVersion={localRefresh + payload.refreshToken}
             className="scrollbar-slim min-h-0 flex-1"
           />
         ) : subTab === 'columns' ? (
@@ -484,6 +485,7 @@ export function DbObjectTab({
       <ReadOnlySqlView
         ref={sqlViewRef}
         content={definition.definition}
+        contentVersion={localRefresh + payload.refreshToken}
         className="min-h-0 flex-1"
       />
     </div>

@@ -36,13 +36,24 @@ export interface ReadOnlySqlViewHandle {
 interface ReadOnlySqlViewProps {
   content: string;
   className?: string;
+  /** 内容版本（每次重新取数递增）：刷新取回的文本可能与上次一字不差
+   *（同表同库），字符串相等会让内容同步 effect 判定依赖未变而跳过——
+   * 格式化过（model 已偏离 content）时就无法还原服务端原文。版本号变化
+   * 强制 effect 重跑，按 content 校正 model */
+  contentVersion?: number;
   /** 格式化方言（引擎名，双路择优见 sqlFormat.ts；不传回落默认 plsql */
   formatEngine?: string | null;
   /** 命令句柄（React 19 ref 即 prop） */
   ref?: React.Ref<ReadOnlySqlViewHandle>;
 }
 
-export function ReadOnlySqlView({ content, className, formatEngine = null, ref }: ReadOnlySqlViewProps) {
+export function ReadOnlySqlView({
+  content,
+  className,
+  contentVersion = 0,
+  formatEngine = null,
+  ref,
+}: ReadOnlySqlViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const modelRef = useRef<monaco.editor.ITextModel | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -98,13 +109,14 @@ export function ReadOnlySqlView({ content, className, formatEngine = null, ref }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 内容更新（对象页刷新/重复打开）：setValue 重 token 化，无历史残留
+  // 内容更新（对象页刷新/重复打开）：setValue 重 token 化，无历史残留。
+  // contentVersion 见 props 注释：刷新取回同文时强制校正（格式化后刷新还原）
   useEffect(() => {
     const model = modelRef.current;
     if (model && !model.isDisposed() && model.getValue() !== content) {
       model.setValue(content);
     }
-  }, [content]);
+  }, [content, contentVersion]);
 
   // 格式化（展示层变换）：model.setValue 是程序化写入，不受编辑器
   // readOnly/domReadOnly 门控——用户依然不能手改，仅按钮可触发
