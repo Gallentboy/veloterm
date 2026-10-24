@@ -1,8 +1,10 @@
 # SQL 执行计划（EXPLAIN）后端支持调研报告
 
-> 结论先行：**MySQL / PostgreSQL / SQLite / OceanBase MySQL 模式的执行计划，现有 `db_query` 通道（sqlsplit 切分 + 只读白名单 + 流式结果）已经完备，前端拼 EXPLAIN 前缀即可用，后端零改动**；Oracle 系（Oracle / OB Oracle 模式）与达梦需要真机验证 3 个点（见各节「验证清单」）；唯一建议的后端增量是一个 `db_explain` 统一封装命令（第二期，非必需）。
+> **落地状态（已更新）**：`db_explain` 命令已实现——方言装配全部对齐 DBeaver 开源实现（MySQL 裸 `EXPLAIN`（对 DBeaver `EXPLAIN EXTENDED` 的有据偏离：MySQL 8.0 已移除该关键字）/ PG `EXPLAIN [(ANALYZE, BUFFERS)]` / SQLite `EXPLAIN QUERY PLAN` / 达梦 `EXPLAIN` / Oracle `EXPLAIN PLAN SET STATEMENT_ID INTO <plan_table> FOR` + 原始 PLAN_TABLE 行读取，plan 表探测 PLAN_TABLE/TOAD_PLAN_TABLE 候选同 DBeaver getPlanTableName）；OB Oracle 模式明确拒绝（待 obclient 通道稳定）；Redis 拒绝。analyze 模式（真实执行语句）事前拒绝 DML（DBeaver 靠事后 rollback，我们无事务管理）。执行走 db_query 抽取出的同一条流式通道（取消/超时/行数上限全复用）；Oracle 的 EXPLAIN PLAN 落表动词是「辅助语句」（不占结果位次，失败整体报诊断错误）。**下文的真机验证清单仍然有效**——oracle_async 对 EXPLAIN PLAN 无结果集 verb 的响应帧、达梦 EXPLAIN 返回列类型两项需连真实实例确认。
 >
-> 配套前端已落地：SQL 编辑器右键菜单「查看执行计划」按引擎拼方言（Oracle 系两段式、SQLite `EXPLAIN QUERY PLAN`、其余 `EXPLAIN` 前缀），走既有 `dbQuery` 通道执行，计划以结果集表格展示。
+> 结论先行：**MySQL / PostgreSQL / SQLite / OceanBase MySQL 模式的执行计划，现有 `db_query` 通道（sqlsplit 切分 + 只读白名单 + 流式结果）已经完备，前端拼 EXPLAIN 前缀即可用，后端零改动**；Oracle 系（Oracle / OB Oracle 模式）与达梦需要真机验证 3 个点（见各节「验证清单」）；唯一建议的后端增量是一个 `db_explain` 统一封装命令（已按此实现）。
+>
+> 配套前端：SQL 编辑器右键菜单「查看执行计划」调 `db_explain`，计划以结果集表格展示。
 
 ## 一、通道现状（全部引擎共用的底座）
 

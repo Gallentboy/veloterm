@@ -108,6 +108,7 @@ pub fn run() {
             db_browser::db_catalog,
             db_browser::db_query,
             db_browser::db_query_cancel,
+            db_browser::db_explain,
             db_browser::db_list_databases,
             db_browser::db_use_database,
             db_browser::db_list_databases_for_record,

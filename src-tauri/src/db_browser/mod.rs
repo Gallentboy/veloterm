@@ -376,34 +376,61 @@ pub async fn db_query(
     }
 
     let row_cap = max_rows.unwrap_or(5_000).clamp(1, 50_000);
-    let total_budget = Duration::from_millis(timeout_ms.unwrap_or(60_000).clamp(1_000, 3_600_000));
+    let total_budget =
+        Duration::from_millis(timeout_ms.unwrap_or(60_000).clamp(1_000, 3_600_000));
+    let statements: Vec<(String, bool)> = statements
+        .into_iter()
+        .map(|s| (s.sql, true))
+        .collect();
+    run_statements_streaming(&session, &on_event, &statements, row_cap, total_budget).await
+}
+
+/// db_query / db_explain 共用的流式执行循环：逐条执行 + Channel 事件 +
+/// 取消 / 超时 / 行数上限。statements 是（SQL, 是否占结果位次）二元组：
+/// emit=false 的辅助语句（Oracle 执行计划的 EXPLAIN PLAN 落表动词）不向前端
+/// 发 StatementStart/Done/Columns/Rows，失败则整体失败（如 PLAN_TABLE 缺失
+/// 要直接报诊断错误而不是混进结果面板）；emit=true 的单条失败仍继续后续
+/// 语句（客户端常见行为）。结果位次 index 只在 emit 语句间递增。
+async fn run_statements_streaming(
+    session: &Arc<DbSession>,
+    on_event: &Channel<QueryEvent>,
+    statements: &[(String, bool)],
+    row_cap: usize,
+    total_budget: Duration,
+) -> Result<(), String> {
+    let emit_count = statements.iter().filter(|(_, emit)| *emit).count();
     let started = Instant::now();
 
     let _ = on_event.send(QueryEvent::Started {
-        statement_count: statements.len(),
+        statement_count: emit_count,
     });
 
     let mut engine = session.engine.lock().await;
     let mut any_cancelled = false;
+    let mut index = 0usize;
 
-    for (index, stmt) in statements.iter().enumerate() {
+    for (sql, emit) in statements {
         if session.cancelled.load(Ordering::Relaxed) {
             any_cancelled = true;
             break;
         }
         // 复位取消信号：上一条语句的正常结束不应吃掉本条的等待
         session.cancelled.store(false, Ordering::Relaxed);
-        let _ = on_event.send(QueryEvent::StatementStart {
-            index,
-            sql: stmt.sql.clone(),
-        });
+        if *emit {
+            let _ = on_event.send(QueryEvent::StatementStart {
+                index,
+                sql: sql.clone(),
+            });
+        }
 
         let remaining = total_budget.saturating_sub(started.elapsed());
         if remaining.is_zero() {
-            let _ = on_event.send(QueryEvent::StatementError {
-                index,
-                message: "执行超时（整体时间预算用尽）".to_string(),
-            });
+            if *emit {
+                let _ = on_event.send(QueryEvent::StatementError {
+                    index,
+                    message: "执行超时（整体时间预算用尽）".to_string(),
+                });
+            }
             any_cancelled = true;
             break;
         }
@@ -411,28 +438,34 @@ pub async fn db_query(
         let stmt_start = Instant::now();
 
         // 回调闭包须 Send + 'static（Oracle 同步引擎把回调移入 spawn_blocking）：
-        // 各自持有 Channel 克隆与原子行计数，不借用外层局部
+        // 各自持有 Channel 克隆与原子行计数，不借用外层局部；emit=false 的
+        // 辅助语句在回调内静默丢弃（不占结果位次）
+        let emit_flag = *emit;
         let cols_event = on_event.clone();
         let rows_event = on_event.clone();
-        let rows_counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let rows_counter = Arc::new(AtomicUsize::new(0));
 
         let exec = engine.exec_streaming(
-            &stmt.sql,
+            sql,
             row_cap,
             &session.cancel,
             move |cols| {
-                let _ = cols_event.send(QueryEvent::Columns {
-                    index,
-                    columns: cols.to_vec(),
-                });
+                if emit_flag {
+                    let _ = cols_event.send(QueryEvent::Columns {
+                        index,
+                        columns: cols.to_vec(),
+                    });
+                }
             },
             move |rows| {
-                let n = rows_counter.fetch_add(rows.len(), Ordering::Relaxed) + rows.len();
-                let _ = rows_event.send(QueryEvent::Rows {
-                    index,
-                    rows,
-                    total: n,
-                });
+                if emit_flag {
+                    let n = rows_counter.fetch_add(rows.len(), Ordering::Relaxed) + rows.len();
+                    let _ = rows_event.send(QueryEvent::Rows {
+                        index,
+                        rows,
+                        total: n,
+                    });
+                }
             },
         );
 
@@ -441,34 +474,52 @@ pub async fn db_query(
                 if summary.cancelled {
                     any_cancelled = true;
                 }
-                let _ = on_event.send(QueryEvent::StatementDone {
-                    index,
-                    affected: summary.affected,
-                    rows_read: summary.rows_read,
-                    truncated: summary.truncated,
-                    cancelled: summary.cancelled,
-                    elapsed_ms: stmt_start.elapsed().as_millis() as u64,
-                });
+                if *emit {
+                    let _ = on_event.send(QueryEvent::StatementDone {
+                        index,
+                        affected: summary.affected,
+                        rows_read: summary.rows_read,
+                        truncated: summary.truncated,
+                        cancelled: summary.cancelled,
+                        elapsed_ms: stmt_start.elapsed().as_millis() as u64,
+                    });
+                }
                 if summary.cancelled {
                     break;
                 }
             }
             Ok(Err(message)) => {
-                let _ = on_event.send(QueryEvent::StatementError { index, message });
-                // 单条语句失败继续执行后续语句（客户端常见行为）；
-                // 连接级故障会在下一条语句再次暴露
+                if *emit {
+                    let _ = on_event.send(QueryEvent::StatementError { index, message });
+                    // 单条语句失败继续执行后续语句（客户端常见行为）；
+                    // 连接级故障会在下一条语句再次暴露
+                } else {
+                    // 辅助语句失败整体失败：诊断信息直接抛给调用方
+                    return Err(message);
+                }
             }
             Err(_) => {
-                let _ = on_event.send(QueryEvent::StatementError {
-                    index,
-                    message: format!(
-                        "执行超时（>{}ms），已中止后续语句",
+                if *emit {
+                    let _ = on_event.send(QueryEvent::StatementError {
+                        index,
+                        message: format!(
+                            "执行超时（>{}ms），已中止后续语句",
+                            total_budget.as_millis()
+                        ),
+                    });
+                } else {
+                    return Err(format!(
+                        "执行计划辅助语句超时（>{}ms）",
                         total_budget.as_millis()
-                    ),
-                });
+                    ));
+                }
                 any_cancelled = true;
                 break;
             }
+        }
+
+        if *emit {
+            index += 1;
         }
     }
 
@@ -477,6 +528,162 @@ pub async fn db_query(
         cancelled: any_cancelled,
     });
     Ok(())
+}
+
+/// db_explain 的方言装配器（纯函数，可单测；Oracle 的两段式装配需要连接
+/// 探测 plan 表，见 db_explain 内联装配）。查询口径全部对齐 DBeaver 开源实现：
+/// - MySQL（含 OB MySQL 模式）：EXPLAIN <stmt>——DBeaver MySQLPlanClassic 用
+///   EXPLAIN EXTENDED，但 MySQL 8.0 已移除 EXTENDED/PARTITIONS 关键字（官方
+///   what's new：其效果 8.0 恒开），裸 EXPLAIN 全版本可用，此为对 DBeaver 的
+///   有据偏离；analyze（MySQL 8.0.18+，真实执行语句）为 EXPLAIN ANALYZE
+/// - PostgreSQL：EXPLAIN <stmt>；analyze 为 EXPLAIN (ANALYZE, BUFFERS)
+///   （DBeaver PostgreExecutionPlan 参数化形态的 TEXT 版）
+/// - SQLite：EXPLAIN QUERY PLAN（只读白名单 AST/降级两路均含 EXPLAIN）
+/// - 达梦：EXPLAIN <stmt>（直接返回计划结果集；analyze 概念不适用）
+fn explain_statements(
+    engine: &str,
+    mode: Option<&str>,
+    stmts: &[sqlsplit::SplitStatement],
+    analyze: bool,
+) -> Result<Vec<(String, bool)>, String> {
+    let prefix: &str = match engine {
+        "mysql" | "oceanbase" => {
+            if mode == Some("oracle") {
+                return Err(
+                    "OceanBase Oracle 模式的执行计划暂未接入（待 obclient 通道稳定后支持）"
+                        .to_string(),
+                );
+            }
+            if analyze { "EXPLAIN ANALYZE " } else { "EXPLAIN " }
+        }
+        "postgres" => {
+            if analyze {
+                "EXPLAIN (ANALYZE, BUFFERS) "
+            } else {
+                "EXPLAIN "
+            }
+        }
+        "sqlite" => "EXPLAIN QUERY PLAN ",
+        "dameng" => "EXPLAIN ",
+        "redis" => return Err("Redis 没有执行计划概念".to_string()),
+        // oracle 由 db_explain 单独装配（plan 表探测需要连接）
+        _ => return Err(format!("引擎 {engine} 不支持执行计划")),
+    };
+    Ok(stmts
+        .iter()
+        .map(|s| (format!("{prefix}{}", s.sql), true))
+        .collect())
+}
+
+/// 查看执行计划（SQL 编辑器右键菜单）：把选中语句按引擎方言装配为 EXPLAIN
+/// 语句序列，走 db_query 同一条流式通道（取消/超时/行数上限全复用）。SQL 口径
+/// 全部对齐 DBeaver 开源实现，调研与真机验证清单见
+/// docs/sql-explain-plan-support.md。
+#[tauri::command]
+pub async fn db_explain(
+    state: State<'_, DbState>,
+    session_id: String,
+    sql: String,
+    analyze: Option<bool>,
+    max_rows: Option<usize>,
+    timeout_ms: Option<u64>,
+    on_event: Channel<QueryEvent>,
+) -> Result<(), String> {
+    let session = state.get(&session_id)?;
+    let analyze = analyze.unwrap_or(false);
+    let (engine_kind, mode, dialect_key) = {
+        let meta = session
+            .meta
+            .read()
+            .map_err(|_| "DB 会话元信息锁中毒".to_string())?;
+        // 方言键映射与 db_query 同源（OB/达梦的双模式展开）
+        let key = match (meta.engine.as_str(), meta.mode.as_deref()) {
+            ("oceanbase", Some("oracle")) => "oracle".to_string(),
+            ("oceanbase", _) => "mysql".to_string(),
+            ("dameng", _) => format!(
+                "dameng:{}",
+                meta.compatible_mode.as_deref().unwrap_or("oracle")
+            ),
+            (other, _) => other.to_string(),
+        };
+        (meta.engine.clone(), meta.mode.clone(), key)
+    };
+    let user_stmts = sqlsplit::split_statements(&dialect_key, &sql);
+    if user_stmts.is_empty() {
+        return Err("SQL 语句为空".to_string());
+    }
+    // analyze 会真实执行语句（MySQL 8 EXPLAIN ANALYZE / PG ANALYZE）：
+    // 只放行白名单判定为只读的语句（DBeaver 靠事后 rollback 防护，我们无
+    // 事务管理，改为事前拒绝 DML）
+    if analyze && matches!(engine_kind.as_str(), "mysql" | "oceanbase" | "postgres") {
+        for stmt in &user_stmts {
+            if !sqlsplit::statement_is_readonly(&dialect_key, stmt) {
+                let head: String = stmt.sql.chars().take(60).collect();
+                return Err(format!(
+                    "ANALYZE 模式会真实执行语句，仅允许只读语句：{head}{}",
+                    if stmt.sql.chars().count() > 60 { "…" } else { "" }
+                ));
+            }
+        }
+    }
+
+    let row_cap = max_rows.unwrap_or(5_000).clamp(1, 50_000);
+    let total_budget =
+        Duration::from_millis(timeout_ms.unwrap_or(60_000).clamp(1_000, 3_600_000));
+
+    let statements: Vec<(String, bool)> = if engine_kind == "oracle" {
+        // Oracle：DBeaver OracleExecutionPlan 同源——plan 表探测（PLAN_TABLE /
+        // TOAD_PLAN_TABLE 候选，SELECT 1 探活同 DBeaver getPlanTableName）+
+        // EXPLAIN PLAN SET STATEMENT_ID INTO <表> FOR（辅助语句，不占结果
+        // 位次；DBeaver 另有的防御性 DELETE 略去——statement_id 每次调用唯一，
+        // 无残留可撞）+ SELECT * FROM <表> WHERE STATEMENT_ID ORDER BY ID
+        //（原始计划行，DBeaver 客户端建树的数据源；结果面板平铺展示全部列）
+        let plan_table = {
+            let mut engine = session.engine.lock().await;
+            let mut found = None;
+            for name in ["PLAN_TABLE", "TOAD_PLAN_TABLE"] {
+                let probe = format!("SELECT 1 FROM {name} WHERE ROWNUM = 1");
+                if engine
+                    .exec_streaming(&probe, 1, &session.cancel, |_| {}, |_| {})
+                    .await
+                    .is_ok()
+                {
+                    found = Some(name);
+                    break;
+                }
+            }
+            found
+        };
+        let Some(plan_table) = plan_table else {
+            return Err(
+                "未找到执行计划表（PLAN_TABLE / TOAD_PLAN_TABLE 均不可访问）：请以当前用户执行 \
+                 @?/rdbms/admin/utlxplan.sql 建表，或由 DBA 建全局 PLAN_TABLE\
+                 （DBeaver getPlanTableName 同型探测）"
+                    .to_string(),
+            );
+        };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        let mut out = Vec::with_capacity(user_stmts.len() * 2);
+        for (i, stmt) in user_stmts.iter().enumerate() {
+            let sid = format!("VELOTERM_{stamp:X}{i}");
+            out.push((
+                format!("EXPLAIN PLAN SET STATEMENT_ID = '{sid}' INTO {plan_table} FOR {}", stmt.sql),
+                false,
+            ));
+            out.push((
+                format!("SELECT * FROM {plan_table} WHERE STATEMENT_ID = '{sid}' ORDER BY ID"),
+                true,
+            ));
+        }
+        out
+    } else {
+        explain_statements(&engine_kind, mode.as_deref(), &user_stmts, analyze)?
+    };
+
+    run_statements_streaming(&session, &on_event, &statements, row_cap, total_budget).await
 }
 
 /// 取消当前正在执行的查询（流式循环 select 到信号即止）。
@@ -717,4 +924,62 @@ pub async fn sqlite_file_pick() -> Result<Option<String>, String> {
         .pick_file()
         .await;
     Ok(picked.map(|h| h.path().to_string_lossy().into_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::explain_statements;
+    use crate::db_browser::sqlsplit::split_statements;
+
+    /// 各引擎的 EXPLAIN 方言装配向量（口径对齐 DBeaver，MySQL 的
+    /// EXTENDED 偏离与 OB Oracle 跳过见 explain_statements 注释）
+    #[test]
+    fn explain_assembly_per_engine() {
+        let stmts = split_statements("mysql", "SELECT 1");
+        let assembled = explain_statements("mysql", None, &stmts, false).unwrap();
+        assert_eq!(assembled, vec![("EXPLAIN SELECT 1".to_string(), true)]);
+
+        // analyze（真实执行）：MySQL 8.0.18+ / PG 的 ANALYZE 形态
+        let assembled = explain_statements("mysql", None, &stmts, true).unwrap();
+        assert_eq!(
+            assembled,
+            vec![("EXPLAIN ANALYZE SELECT 1".to_string(), true)]
+        );
+        let pg_stmts = split_statements("postgres", "SELECT 1");
+        let assembled = explain_statements("postgres", None, &pg_stmts, true).unwrap();
+        assert_eq!(
+            assembled,
+            vec![("EXPLAIN (ANALYZE, BUFFERS) SELECT 1".to_string(), true)]
+        );
+
+        // SQLite / 达梦
+        let assembled = explain_statements("sqlite", None, &stmts, false).unwrap();
+        assert_eq!(
+            assembled,
+            vec![("EXPLAIN QUERY PLAN SELECT 1".to_string(), true)]
+        );
+        let assembled = explain_statements("dameng", None, &stmts, false).unwrap();
+        assert_eq!(assembled, vec![("EXPLAIN SELECT 1".to_string(), true)]);
+
+        // OceanBase：MySQL 模式走 MySQL 口径，Oracle 模式明确拒绝（暂未接入）
+        let assembled = explain_statements("oceanbase", Some("mysql"), &stmts, false).unwrap();
+        assert_eq!(assembled, vec![("EXPLAIN SELECT 1".to_string(), true)]);
+        assert!(explain_statements("oceanbase", Some("oracle"), &stmts, false).is_err());
+    }
+
+    /// 多语句选中：逐条装配为多个 EXPLAIN 结果（SQLite 复合语句语义）
+    #[test]
+    fn explain_assembly_multi_statements() {
+        let stmts = split_statements("mysql", "SELECT 1; SELECT 2");
+        let assembled = explain_statements("mysql", None, &stmts, false).unwrap();
+        assert_eq!(assembled.len(), 2);
+        assert_eq!(assembled[1].0, "EXPLAIN SELECT 2");
+    }
+
+    /// Redis 无执行计划概念，直接拒绝
+    #[test]
+    fn explain_assembly_redis_rejected() {
+        let stmts = split_statements("mysql", "SELECT 1");
+        assert!(explain_statements("redis", None, &stmts, false).is_err());
+    }
 }
