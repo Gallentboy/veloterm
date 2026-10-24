@@ -305,12 +305,24 @@ impl Conn {
 
     /// Handles OK packet.
     pub(crate) fn handle_ok(&mut self, ok_packet: OkPacket<'static>) {
+        crate::obdbg!(
+            "handle_ok: status={:#06x} bit2={} session_track={}",
+            ok_packet.status_flags().bits(),
+            ok_packet.status_flags().contains(StatusFlags::from_bits_retain(4)),
+            ok_packet.session_state_info_ref().is_some()
+        );
         // OB 能力回显：SESSION_TRACK_SYSTEM_VARIABLES 里的 ob_capability_flag
         //（十进制文本 u64）；含 OB_PROTOCOL_V2 位时切换 ob20（见 switch_to_ob20）
         if let Some(state) = ok_packet.session_state_info_ref() {
-            if let Some(cap) = crate::ob20::scan_capability_flag(state) {
-                self.inner.ob_capability = cap;
+            match crate::ob20::scan_capability_flag(state) {
+                Some(cap) => {
+                    self.inner.ob_capability = cap;
+                    crate::obdbg!("handle_ok: 能力回显命中 echo={cap:#x}");
+                }
+                None => crate::obdbg!("handle_ok: session_track 存在但无 ob_capability_flag"),
             }
+        } else {
+            crate::obdbg!("handle_ok: 无 session_track 段");
         }
         // Oracle 模式检测：OK 包 status_flags 的 bit 2（值 4）——服务端告知
         // 当前连接是 Oracle 租户（Java JDBC ServerStatus.OB_SERVER_USE_ORACLE_MODE）
@@ -557,6 +569,14 @@ impl Conn {
             .unwrap_or((0, 0, 0));
         self.inner.id = handshake.connection_id();
         self.inner.status = handshake.status_flags();
+        crate::obdbg!(
+            "handle_handshake: ver={:?} conn_id={} server_caps={:#x} status={:#06x} plugin_offered={:?}",
+            handshake.server_version_ref(),
+            self.inner.id,
+            handshake.capabilities().bits(),
+            handshake.status_flags().bits(),
+            handshake.auth_plugin()
+        );
 
         // Allow only CachingSha2Password and MysqlNativePassword here
         // because sha256_password is deprecated and other plugins won't
@@ -648,6 +668,7 @@ impl Conn {
         } else {
             None
         };
+        let attrs_count = connect_attrs.as_ref().map(|a| a.len()).unwrap_or(0);
 
         let handshake_response = HandshakeResponse::new(
             auth_data.as_deref(),
@@ -669,6 +690,13 @@ impl Conn {
 
         self.write_packet(buf).await?;
         self.inner.handshake_complete = true;
+        crate::obdbg!(
+            "handshake_response: plugin={:?} caps_sent={:#x} ob20_opt={} attrs={}",
+            self.inner.auth_plugin,
+            self.capabilities().bits(),
+            self.inner.opts.ob_protocol20(),
+            attrs_count
+        );
         Ok(())
     }
 
@@ -689,6 +717,11 @@ impl Conn {
             }
 
             self.inner.auth_plugin = auth_switch_request.auth_plugin().clone().into_owned();
+            crate::obdbg!(
+                "perform_auth_switch: -> {:?} nonce_len={}",
+                self.inner.auth_plugin,
+                self.inner.nonce.len()
+            );
 
             // ob_sm3_password：SM3 应答（其余插件回退上游 gen_data）
             let sm3_data = self.ob_sm3_auth_data();
@@ -736,6 +769,11 @@ impl Conn {
         // NOTE: we need to box this since it may recurse
         // see https://github.com/rust-lang/rust/issues/46415#issuecomment-528099782
         Box::pin(async move {
+            crate::obdbg!(
+                "continue_auth: dispatch plugin={:?} switched={}",
+                self.inner.auth_plugin,
+                self.inner.auth_switched
+            );
             match self.inner.auth_plugin {
                 AuthPlugin::MysqlNativePassword | AuthPlugin::MysqlOldPassword => {
                     self.continue_mysql_native_password_auth().await?;
@@ -785,6 +823,12 @@ impl Conn {
     /// 顺序必须在认证完成之后（libobclient 同此：run_plugin_auth 成功后才
     /// net->use_ob20protocol = TRUE）。
     fn switch_to_ob20(&mut self) -> Result<()> {
+        crate::obdbg!(
+            "switch_to_ob20: opt={} echo={:#x} V2位={}",
+            self.inner.opts.ob_protocol20(),
+            self.inner.ob_capability,
+            self.inner.ob_capability & crate::ob20::caps::OBCLIENT_CAP_OB_PROTOCOL_V2 != 0
+        );
         if self.inner.opts.ob_protocol20()
             && self.inner.ob_capability & crate::ob20::caps::OBCLIENT_CAP_OB_PROTOCOL_V2 != 0
         {
@@ -797,20 +841,37 @@ impl Conn {
                 stream.enable_ob20(self.inner.id, max_allowed_packet);
             }
             self.inner.ob20_active = true;
+            crate::obdbg!("switch_to_ob20: 已切换 ob20 编解码");
         }
         Ok(())
     }
 
     async fn continue_caching_sha2_password_auth(&mut self) -> Result<()> {
         let packet = self.read_packet().await?;
+        crate::obdbg!(
+            "caching_sha2: packet[0]={:#04x} sub={:#04x} len={}",
+            packet.first().unwrap_or(&0),
+            packet.get(1).unwrap_or(&0),
+            packet.len()
+        );
         match packet.first() {
             Some(0x00) => {
                 // ok packet for empty password——同样送 handle_ok 捕获 OB 回显
                 //（与 native 路径同型，上游在此丢弃包内容）
-                if let Ok(ok) =
-                    ParseBuf(&packet).parse::<OkPacketDeserializer<CommonOkPacket>>(self.capabilities())
+                match ParseBuf(&packet)
+                    .parse::<OkPacketDeserializer<CommonOkPacket>>(self.capabilities())
                 {
-                    self.handle_ok(ok.into_inner().into_owned());
+                    Ok(ok) => {
+                        let ok = ok.into_inner();
+                        let status = ok.status_flags();
+                        crate::obdbg!(
+                            "caching_sha2: OK 解析成功 status={:#06x} bit2(oracle)={}",
+                            status.bits(),
+                            status.contains(StatusFlags::from_bits_retain(4))
+                        );
+                        self.handle_ok(ok.into_owned());
+                    }
+                    Err(_) => crate::obdbg!("caching_sha2: OK 解析失败——检测信息丢失"),
                 }
                 Ok(())
             }
@@ -863,6 +924,12 @@ impl Conn {
 
     async fn continue_mysql_native_password_auth(&mut self) -> Result<()> {
         let packet = self.read_packet().await?;
+        crate::obdbg!(
+            "native_auth: packet[0]={:#04x} len={} raw={}",
+            packet.first().unwrap_or(&0),
+            packet.len(),
+            crate::obdbg::hex(&packet, 96)
+        );
         match packet.first() {
             Some(0x00) => {
                 // auth 最终 OK 包不能丢弃：OB 能力回显（ob_capability_flag，
@@ -871,10 +938,25 @@ impl Conn {
                 // oracle 模式检测恒 false（真机实测 read_settings 照发 MySQL
                 // 探测被拒 ORA-00900）。解析失败不影响认证结果判定（包类型
                 // 已确认是 OK）
-                if let Ok(ok) =
-                    ParseBuf(&packet).parse::<OkPacketDeserializer<CommonOkPacket>>(self.capabilities())
+                match ParseBuf(&packet)
+                    .parse::<OkPacketDeserializer<CommonOkPacket>>(self.capabilities())
                 {
-                    self.handle_ok(ok.into_inner().into_owned());
+                    Ok(ok) => {
+                        let ok = ok.into_inner();
+                        let status = ok.status_flags();
+                        crate::obdbg!(
+                            "native_auth: OK 解析成功 status={:#06x} bit2(oracle)={}",
+                            status.bits(),
+                            status.contains(StatusFlags::from_bits_retain(4))
+                        );
+                        self.handle_ok(ok.into_owned());
+                        crate::obdbg!(
+                            "native_auth: handle_ok 后 oracle={} echo={:#x}",
+                            self.inner.ob_is_oracle_mode,
+                            self.inner.ob_capability
+                        );
+                    }
+                    Err(_) => crate::obdbg!("native_auth: OK 解析失败——检测信息丢失（本轮根因候选）"),
                 }
                 Ok(())
             }
@@ -1033,11 +1115,27 @@ impl Conn {
     /// veloterm 分叉补捕获；解析失败不影响包丢弃语义）
     async fn drop_packet_capture_ok(&mut self) -> Result<()> {
         let packet = self.read_packet().await?;
+        crate::obdbg!(
+            "drop_packet_capture_ok: packet[0]={:#04x} len={} raw={}",
+            packet.first().unwrap_or(&0),
+            packet.len(),
+            crate::obdbg::hex(&packet, 96)
+        );
         if packet.first() == Some(&0x00) {
-            if let Ok(ok) =
-                ParseBuf(&packet).parse::<OkPacketDeserializer<CommonOkPacket>>(self.capabilities())
+            match ParseBuf(&packet)
+                .parse::<OkPacketDeserializer<CommonOkPacket>>(self.capabilities())
             {
-                self.handle_ok(ok.into_inner().into_owned());
+                Ok(ok) => {
+                    let ok = ok.into_inner();
+                    let status = ok.status_flags();
+                    crate::obdbg!(
+                        "drop_packet_capture_ok: OK 解析成功 status={:#06x} bit2(oracle)={}",
+                        status.bits(),
+                        status.contains(StatusFlags::from_bits_retain(4))
+                    );
+                    self.handle_ok(ok.into_owned());
+                }
+                Err(_) => crate::obdbg!("drop_packet_capture_ok: OK 解析失败"),
             }
         }
         Ok(())
@@ -1211,6 +1309,12 @@ impl Conn {
         // （ob_protocol20 恒 false 且无 oracle 位）行为不变。
         let skip_mysql_probe =
             self.inner.ob_is_oracle_mode || self.inner.opts.ob_protocol20();
+        crate::obdbg!(
+            "read_settings: skip_probe={}（oracle={} ob20_opt={}）",
+            skip_mysql_probe,
+            self.inner.ob_is_oracle_mode,
+            self.inner.opts.ob_protocol20()
+        );
 
         let mut actions = vec![
             if let Some(x) = self.opts().max_allowed_packet() {
