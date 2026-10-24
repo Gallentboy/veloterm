@@ -466,7 +466,10 @@ impl DbEngine {
 
     /// mysql_async 建连（mysql 与 OceanBase MySQL 模式共用：builder 构造 +
     /// 12s 超时 + TLS 映射）。
-    async fn mysql_conn(record: &DbConnectionRecord) -> Result<mysql_async::Conn, String> {
+    async fn mysql_conn(
+        record: &DbConnectionRecord,
+        ob_mode: Option<mysql_async::ObCompatMode>,
+    ) -> Result<mysql_async::Conn, String> {
         let mut builder = mysql_async::OptsBuilder::default()
             .ip_or_hostname(record.host.trim().to_string())
             .tcp_port(record.port);
@@ -480,6 +483,9 @@ impl DbEngine {
             builder = builder.db_name(Some(db.to_string()));
         }
         builder = builder.ssl_opts(mysql_ssl_opts(&record.ssl_mode)?);
+        // OB 租户兼容模式由连接方声明（驱动无法从线缆区分 OB MySQL 租户与
+        // 原生 MySQL）；原生 MySQL 传 None，目录查询保持原口径不变
+        builder = builder.ob_compat_mode(ob_mode);
         let conn = tokio::time::timeout(Duration::from_secs(12), mysql_async::Conn::new(builder))
             .await
             .map_err(|_| "MySQL 连接超时（12s）".to_string())?
@@ -488,7 +494,7 @@ impl DbEngine {
     }
 
     async fn connect_mysql(record: &DbConnectionRecord) -> Result<(DbEngine, String), String> {
-        let conn = Self::mysql_conn(record).await?;
+        let conn = Self::mysql_conn(record, None).await?;
         let (major, minor, patch) = conn.server_version();
         Ok((
             DbEngine::MySql(conn),
@@ -501,7 +507,8 @@ impl DbEngine {
     /// 版本串直显 SELECT version() 原文（"5.7.25-OceanBase-…" 含发行版信息；
     /// 查询失败回退 server_version 拼法）。
     async fn connect_ob_mysql(record: &DbConnectionRecord) -> Result<(DbEngine, String), String> {
-        let mut conn = Self::mysql_conn(record).await?;
+        let mut conn =
+            Self::mysql_conn(record, Some(mysql_async::ObCompatMode::MySql)).await?;
         use mysql_async::prelude::Queryable as _;
         conn.query_drop("SET NAMES utf8mb4")
             .await
@@ -1025,7 +1032,9 @@ impl DbEngine {
             .ip_or_hostname(record.host.trim())
             .tcp_port(record.port)
             .user(Some(username))
-            .ob_protocol20(true);
+            .ob_protocol20(true)
+            // OB Oracle 租户：对象目录全部走 ALL_* 数据字典
+            .ob_compat_mode(Some(mysql_async::ObCompatMode::Oracle));
         if let Some(pass) = record.password.as_deref().filter(|s| !s.is_empty()) {
             builder = builder.pass(Some(pass));
         }
@@ -1188,7 +1197,8 @@ impl DbEngine {
                     )
                     .await
                     .map_err(|e| format!("MySQL 查询库清单失败：{e}"))?;
-                Ok(names)
+                // OB MySQL 租户：滤掉内建 Oracle 兼容 schema（原生 MySQL 恒等）
+                Ok(ob_filter_schemas(conn, names))
             }
             DbEngine::Postgres(client) => {
                 let rows = client
@@ -1336,6 +1346,13 @@ impl DbEngine {
     ) -> Result<TableDetail, String> {
         match self {
             DbEngine::MySql(conn) => {
+                // OB Oracle 租户没有 information_schema：表详情走 ALL_* 数据
+                // 字典（ODC `OBOracleSchemaAccessor` 同口径，DDL 优先 OB 扩展
+                // 的 SHOW CREATE TABLE）
+                if conn.ob_is_oracle_mode() {
+                    return oracle_engine::ob_oracle_table_detail(conn, schema, table, kind)
+                        .await;
+                }
                 use mysql_async::prelude::Queryable as _;
                 let s = schema.replace('`', "``");
                 let n = table.replace('`', "``");
@@ -2856,10 +2873,24 @@ impl DbEngine {
     ) -> Result<ObjectDefinition, String> {
         match self {
             DbEngine::MySql(conn) => {
+                // OB Oracle 租户：表/视图走 SHOW CREATE TABLE 或 GET_DDL，
+                // 过程/函数/触发器/包走 all_source（ODC 同源口径）
+                if conn.ob_is_oracle_mode() {
+                    return oracle_engine::ob_oracle_object_definition(
+                        conn, schema, name, kind,
+                    )
+                    .await;
+                }
                 use mysql_async::prelude::Queryable as _;
-                // MySQL 无序列对象（AUTO_INCREMENT 列即其替代形态），树上也
-                // 不会出现序列分组，此处仅防御性拒绝
+                // 序列：原生 MySQL 无此对象（AUTO_INCREMENT 列即其替代形态），
+                // 树上也不会出现序列分组，此处仅防御性拒绝。OB MySQL 租户有
+                // 序列（树上会列出来），服务端没有 SHOW CREATE SEQUENCE，
+                // 故从字典/`SHOW SEQUENCES` 的列拼等价 DDL（见
+                // ob_mysql_sequence_definition 的探测链）
                 if kind == "sequence" {
+                    if conn.ob_compat_mode() == Some(mysql_async::ObCompatMode::MySql) {
+                        return ob_mysql_sequence_definition(conn, schema, name).await;
+                    }
                     return Err("MySQL 没有序列对象".to_string());
                 }
                 // 触发器：DBeaver MySQLTrigger 同源——SHOW CREATE TRIGGER
@@ -3951,7 +3982,8 @@ impl DbEngine {
                     )
                     .await
                     .map_err(|e| format!("MySQL 查询库清单失败：{e}"))?;
-                Ok(names
+                // OB MySQL 租户：滤掉内建 Oracle 兼容 schema（原生 MySQL 恒等）
+                Ok(ob_filter_schemas(conn, names)
                     .into_iter()
                     .map(|name| CatalogNode {
                         key: name.clone(),
@@ -4065,15 +4097,19 @@ impl DbEngine {
     pub async fn catalog_groups(&mut self, schema: &str) -> Result<Vec<CatalogNode>, String> {
         match self {
             DbEngine::MySql(conn) => {
-                // OB Oracle：all_objects 一表聚合（与原生 Oracle 臂同源；BIN$
-                // 回收站对象不计数）。OB 无 DBA_ 体系故恒 all_*
+                // OB Oracle：all_objects 聚合（与原生 Oracle 臂同源；BIN$
+                // 回收站对象不计数），表与包单独取更权威的字典：
+                // - 表走 all_tables（all_objects 会把外部表混进表分组）
+                // - 包合并 PACKAGE 与 PACKAGE BODY 并按名去重（只有包体、
+                //   没有包声明的包在只看 PACKAGE 时会漏）
+                // OB 无 DBA_ 体系故恒 all_*
                 if conn.ob_is_oracle_mode() {
                     use mysql_async::prelude::Queryable as _;
                     let sql = format!(
                         "SELECT object_type, COUNT(*) FROM {OB_DICT_PREFIX}_objects \
                          WHERE owner = {} AND object_name NOT LIKE 'BIN$%' \
-                           AND object_type IN ('TABLE','VIEW','FUNCTION','PROCEDURE',\
-                             'SEQUENCE','TRIGGER','SYNONYM','PACKAGE','TYPE') \
+                           AND object_type IN ('VIEW','FUNCTION','PROCEDURE',\
+                             'SEQUENCE','TRIGGER','SYNONYM','TYPE') \
                          GROUP BY object_type",
                         ob_quote_literal(schema)
                     );
@@ -4088,15 +4124,19 @@ impl DbEngine {
                             .map(|(_, c)| *c)
                             .unwrap_or(0)
                     };
+                    let table_count = ob_oracle_tables(conn, schema).await?.len() as i64;
+                    let package_count = ob_oracle_packages(conn, schema).await?.len() as i64;
+                    let mview_count = ob_oracle_mviews(conn, schema).await.len() as i64;
                     return Ok(group_nodes(
                         schema,
                         GroupCounts {
                             triggers: Some(count_of("TRIGGER")),
                             synonyms: Some(count_of("SYNONYM")),
-                            packages: Some(count_of("PACKAGE")),
+                            packages: Some(package_count),
+                            mviews: Some(mview_count),
                             datatypes: Some(count_of("TYPE")),
                             ..GroupCounts::base(
-                                count_of("TABLE"),
+                                table_count,
                                 count_of("VIEW"),
                                 count_of("FUNCTION"),
                                 count_of("PROCEDURE"),
@@ -4106,12 +4146,20 @@ impl DbEngine {
                     ));
                 }
                 use mysql_async::prelude::Queryable as _;
+                // OB MySQL 租户：物化视图的容器表 `__MV_CONTAINER_*` 与日志表
+                // `MLOG$_*` 是存储实现而非用户对象，计数时排除（LEFT 前缀比较
+                // 避免 LIKE 里 `_` 被当通配符）；原生 MySQL 计数口径不变
+                let ob_mysql = conn.ob_compat_mode() == Some(mysql_async::ObCompatMode::MySql);
+                let tables_sql = if ob_mysql {
+                    "SELECT table_type, COUNT(*) FROM information_schema.tables \
+                     WHERE table_schema = ? AND LEFT(table_name, 15) <> '__MV_CONTAINER_' \
+                       AND LEFT(table_name, 6) <> 'MLOG$_' GROUP BY table_type"
+                } else {
+                    "SELECT table_type, COUNT(*) FROM information_schema.tables \
+                     WHERE table_schema = ? GROUP BY table_type"
+                };
                 let tables: Vec<(String, i64)> = conn
-                    .exec(
-                        "SELECT table_type, COUNT(*) FROM information_schema.tables \
-                         WHERE table_schema = ? GROUP BY table_type",
-                        (schema,),
-                    )
+                    .exec(tables_sql, (schema,))
                     .await
                     .map_err(|e| format!("MySQL 查询表清单失败：{e}"))?;
                 let routines: Vec<(String, i64)> = conn
@@ -4122,18 +4170,22 @@ impl DbEngine {
                     )
                     .await
                     .map_err(|e| format!("MySQL 查询例程清单失败：{e}"))?;
-                // 序列：仅 MariaDB 有 information_schema.sequences，MySQL 8.0 报
-                // 表不存在 → 静默计 0（组不出现）
-                let sequences: i64 = match conn
-                    .exec_first::<i64, _, _>(
-                        "SELECT COUNT(*) FROM information_schema.sequences \
-                         WHERE sequence_schema = ?",
-                        (schema,),
-                    )
-                    .await
-                {
-                    Ok(Some(n)) => n,
-                    _ => 0,
+                // 序列：OB MySQL 租户走专有语法 SHOW SEQUENCES（OB 的
+                // information_schema 没有 sequences 表，旧口径恒 0）；其余
+                // 回落 information_schema.sequences（MariaDB 有、MySQL 8 无）
+                let sequences: i64 = match ob_mysql_sequences(conn, schema).await {
+                    Some(names) => names.len() as i64,
+                    None => match conn
+                        .exec_first::<i64, _, _>(
+                            "SELECT COUNT(*) FROM information_schema.sequences \
+                             WHERE sequence_schema = ?",
+                            (schema,),
+                        )
+                        .await
+                    {
+                        Ok(Some(n)) => n,
+                        _ => 0,
+                    },
                 };
                 // 触发器：DBeaver TriggerCache 同源（TRIGGER_SCHEMA 过滤）
                 let triggers: i64 = conn
@@ -4162,11 +4214,19 @@ impl DbEngine {
                         .map(|(_, c)| *c)
                         .unwrap_or(0)
                 };
+                // 物化视图：仅 OB MySQL 租户（OCEANBASE.DBA_MVIEWS，≥4.3.5.2；
+                // 低版本该视图不存在 → None，分组不出现）。原生 MySQL 无 MView
+                let mviews = if ob_mysql {
+                    ob_mysql_mviews(conn, schema).await.map(|v| v.len() as i64)
+                } else {
+                    None
+                };
                 Ok(group_nodes(
                     schema,
                     GroupCounts {
                         triggers: Some(triggers),
                         events: Some(events),
+                        mviews,
                         ..GroupCounts::base(
                             count_of("BASE TABLE", &tables),
                             count_of("VIEW", &tables),
@@ -4743,32 +4803,44 @@ impl DbEngine {
                 // 这些分组树上不出现，走到这里返回空集
                 if conn.ob_is_oracle_mode() {
                     use mysql_async::prelude::Queryable as _;
-                    let obj_type = match group {
-                        ObjectGroup::Table => Some("TABLE"),
-                        ObjectGroup::View => Some("VIEW"),
-                        ObjectGroup::Function => Some("FUNCTION"),
-                        ObjectGroup::Procedure => Some("PROCEDURE"),
-                        ObjectGroup::Sequence => Some("SEQUENCE"),
-                        ObjectGroup::Trigger => Some("TRIGGER"),
-                        ObjectGroup::Synonym => Some("SYNONYM"),
-                        ObjectGroup::Package => Some("PACKAGE"),
-                        ObjectGroup::DataType => Some("TYPE"),
+                    // 表与包走各自的权威清单（表=ALL_TABLES、包=PACKAGE ∪
+                    // PACKAGE BODY 去重），与 catalog_groups 的计数同源
+                    let special: Option<Vec<String>> = match group {
+                        ObjectGroup::Table => Some(ob_oracle_tables(conn, schema).await?),
+                        ObjectGroup::Package => Some(ob_oracle_packages(conn, schema).await?),
+                        ObjectGroup::MaterializedView => {
+                            Some(ob_oracle_mviews(conn, schema).await)
+                        }
                         _ => None,
                     };
-                    let Some(obj_type) = obj_type else {
-                        return Ok(Vec::new());
+                    let names = match special {
+                        Some(names) => names,
+                        None => {
+                            let obj_type = match group {
+                                ObjectGroup::View => Some("VIEW"),
+                                ObjectGroup::Function => Some("FUNCTION"),
+                                ObjectGroup::Procedure => Some("PROCEDURE"),
+                                ObjectGroup::Sequence => Some("SEQUENCE"),
+                                ObjectGroup::Trigger => Some("TRIGGER"),
+                                ObjectGroup::Synonym => Some("SYNONYM"),
+                                ObjectGroup::DataType => Some("TYPE"),
+                                _ => None,
+                            };
+                            let Some(obj_type) = obj_type else {
+                                return Ok(Vec::new());
+                            };
+                            let sql = format!(
+                                "SELECT object_name FROM {OB_DICT_PREFIX}_objects \
+                                 WHERE owner = {} AND object_type = {} \
+                                   AND object_name NOT LIKE 'BIN$%' ORDER BY object_name",
+                                ob_quote_literal(schema),
+                                ob_quote_literal(obj_type)
+                            );
+                            conn.exec(sql, ())
+                                .await
+                                .map_err(|e| format!("OceanBase 查询对象清单失败：{e}"))?
+                        }
                     };
-                    let sql = format!(
-                        "SELECT object_name FROM {OB_DICT_PREFIX}_objects \
-                         WHERE owner = {} AND object_type = {} \
-                           AND object_name NOT LIKE 'BIN$%' ORDER BY object_name",
-                        ob_quote_literal(schema),
-                        ob_quote_literal(obj_type)
-                    );
-                    let names: Vec<String> = conn
-                        .exec(sql, ())
-                        .await
-                        .map_err(|e| format!("OceanBase 查询对象清单失败：{e}"))?;
                     return Ok(names
                         .into_iter()
                         .map(|name| CatalogNode {
@@ -4780,10 +4852,30 @@ impl DbEngine {
                         .collect());
                 }
                 use mysql_async::prelude::Queryable as _;
-                let names: Vec<String> = conn
-                    .exec(sql_mysql, (schema,))
-                    .await
-                    .map_err(|e| format!("MySQL 查询对象清单失败：{e}"))?;
+                // OB MySQL 租户的两处口径差异：
+                // - 序列：OB 专有语法 SHOW SEQUENCES（information_schema 无此表）
+                // - 表：滤掉物化视图的容器表/日志表（内部实现，不是用户对象）
+                let ob_mysql = conn.ob_compat_mode() == Some(mysql_async::ObCompatMode::MySql);
+                let mut names: Vec<String> = if ob_mysql && group == ObjectGroup::Sequence {
+                    match ob_mysql_sequences(conn, schema).await {
+                        Some(list) => list,
+                        None => conn
+                            .exec(sql_mysql, (schema,))
+                            .await
+                            .map_err(|e| format!("MySQL 查询对象清单失败：{e}"))?,
+                    }
+                } else if ob_mysql && group == ObjectGroup::MaterializedView {
+                    // OB MySQL 物化视图（OCEANBASE.DBA_MVIEWS）；低版本视图不存在
+                    // → 空集（分组本身也不会出现，此处防御）
+                    ob_mysql_mviews(conn, schema).await.unwrap_or_default()
+                } else {
+                    conn.exec(sql_mysql, (schema,))
+                        .await
+                        .map_err(|e| format!("MySQL 查询对象清单失败：{e}"))?
+                };
+                if ob_mysql && group == ObjectGroup::Table {
+                    names.retain(|n| !ob_internal_object(n));
+                }
                 Ok(names
                     .into_iter()
                     .map(|name| CatalogNode {
@@ -5219,19 +5311,24 @@ impl DbEngine {
         match self {
             DbEngine::MySql(conn) => {
                 // OB Oracle：all_tab_columns（表与视图同表，与原生 Oracle 臂
-                // 同源口径）；列类型取 data_type 裸名
+                // 同源口径）；列类型取 data_type 裸名。`USER_GENERATED='YES'`
+                // 排除系统生成列与隐藏列（ODC 同源）；老版本没有该列时降级
                 if conn.ob_is_oracle_mode() {
                     use mysql_async::prelude::Queryable as _;
-                    let sql = format!(
+                    let lit_schema = ob_quote_literal(schema);
+                    let lit_table = ob_quote_literal(table);
+                    let base = format!(
                         "SELECT column_name, data_type FROM {OB_DICT_PREFIX}_tab_columns \
-                         WHERE owner = {} AND table_name = {} ORDER BY column_id",
-                        ob_quote_literal(schema),
-                        ob_quote_literal(table)
+                         WHERE owner = {lit_schema} AND table_name = {lit_table}"
                     );
-                    let rows: Vec<(String, String)> = conn
-                        .exec(sql, ())
-                        .await
-                        .map_err(|e| format!("OceanBase 查询列清单失败：{e}"))?;
+                    let sql = format!("{base} AND USER_GENERATED = 'YES' ORDER BY column_id");
+                    let rows: Vec<(String, String)> = match conn.exec(sql, ()).await {
+                        Ok(rows) => rows,
+                        Err(_) => conn
+                            .exec(format!("{base} ORDER BY column_id"), ())
+                            .await
+                            .map_err(|e| format!("OceanBase 查询列清单失败：{e}"))?,
+                    };
                     return Ok(rows
                         .into_iter()
                         .map(|(name, data_type)| CatalogNode {
@@ -6181,6 +6278,345 @@ fn format_float(v: f64) -> String {
 /// oracle_dict_prefix 探测式不适用）
 const OB_DICT_PREFIX: &str = "all";
 
+/// OB MySQL 租户下隐藏的 schema（ODC `ESCAPE_SCHEMA_SET` 同源）：这四个是
+/// OB 内建的 Oracle 兼容对象库，MySQL 模式下对用户无意义。精确大小写匹配
+/// （与 ODC 的 Set.contains 一致），避免误伤用户同名的自有 schema。
+const OB_HIDDEN_SCHEMAS: &[&str] = &["PUBLIC", "LBACSYS", "ORAAUDITOR", "__public"];
+
+/// OB 物化视图的内部对象前缀（ODC `OdcConstants` 同源）：容器表
+/// `__MV_CONTAINER_*` 与日志表 `MLOG$_*` 是 MView 的存储实现，不该出现在
+/// 用户的对象树里。
+const OB_MV_CONTAINER_PREFIX: &str = "__MV_CONTAINER_";
+const OB_MV_LOG_PREFIX: &str = "MLOG$_";
+
+/// 是否 OB MySQL 租户内建、需对用户隐藏的 schema
+#[inline(always)]
+fn ob_hidden_schema(name: &str) -> bool {
+    OB_HIDDEN_SCHEMAS.contains(&name)
+}
+
+/// 是否 OB 物化视图的内部对象（容器表 / 日志表），不进对象树
+#[inline]
+fn ob_internal_object(name: &str) -> bool {
+    name.starts_with(OB_MV_CONTAINER_PREFIX) || name.starts_with(OB_MV_LOG_PREFIX)
+}
+
+/// OB MySQL 租户的序列清单（OB 专有语法 `SHOW SEQUENCES IN <schema>`，
+/// ODC `OBMySQLSchemaAccessor.listSequences` 同源）。
+///
+/// 返回 `None` 表示「不是 OB MySQL 租户」或该语法不可用——调用方回落
+/// `information_schema.sequences`（MariaDB 有、MySQL 8 无），原生 MySQL
+/// 行为不变。
+async fn ob_mysql_sequences(
+    conn: &mut mysql_async::Conn,
+    schema: &str,
+) -> Option<Vec<String>> {
+    if conn.ob_compat_mode() != Some(mysql_async::ObCompatMode::MySql) {
+        return None;
+    }
+    use mysql_async::prelude::Queryable as _;
+    let s = schema.replace('`', "``");
+    conn.query::<String, _>(format!("SHOW SEQUENCES IN `{s}`"))
+        .await
+        .ok()
+}
+
+/// OB Oracle 表清单（`ALL_TABLES`，ODC `OBOracleSchemaAccessor.listTables`
+/// 同源）：用表字典而不是 `all_objects`，视图与回收站对象天然不在内。
+///
+/// `EXTERNAL` 是 OB 4.3.2+ 才有的扩展列，老版本查它会 ORA-00904——首次失败
+/// 即降级为不带该条件的同一查询（外部表会混进表分组，与老版本 ODC 一致）。
+async fn ob_oracle_tables(
+    conn: &mut mysql_async::Conn,
+    schema: &str,
+) -> Result<Vec<String>, String> {
+    use mysql_async::prelude::Queryable as _;
+    let lit = ob_quote_literal(schema);
+    let sql = format!(
+        "SELECT table_name FROM {OB_DICT_PREFIX}_tables \
+         WHERE owner = {lit} AND EXTERNAL = 'NO' ORDER BY table_name"
+    );
+    match conn.query::<String, _>(sql).await {
+        Ok(names) => Ok(names),
+        Err(_) => {
+            let sql = format!(
+                "SELECT table_name FROM {OB_DICT_PREFIX}_tables \
+                 WHERE owner = {lit} ORDER BY table_name"
+            );
+            conn.query::<String, _>(sql)
+                .await
+                .map_err(|e| format!("OceanBase 查询表清单失败：{e}"))
+        }
+    }
+}
+
+/// OB Oracle 包清单：`PACKAGE` 与 `PACKAGE BODY` 合并按名去重（ODC
+/// `listPackages` 的状态合并语义；只有包体的包也必须列出来）。
+async fn ob_oracle_packages(
+    conn: &mut mysql_async::Conn,
+    schema: &str,
+) -> Result<Vec<String>, String> {
+    use mysql_async::prelude::Queryable as _;
+    let sql = format!(
+        "SELECT DISTINCT object_name FROM {OB_DICT_PREFIX}_objects \
+         WHERE owner = {} AND object_name NOT LIKE 'BIN$%' \
+           AND object_type IN ('PACKAGE', 'PACKAGE BODY') ORDER BY object_name",
+        ob_quote_literal(schema)
+    );
+    conn.query::<String, _>(sql)
+        .await
+        .map_err(|e| format!("OceanBase 查询包清单失败：{e}"))
+}
+
+/// OB Oracle 物化视图清单（`ALL_MVIEWS`，ODC `OBOracleSchemaAccessor.listMViews`
+/// 同源）。OB Oracle 的物化视图同时有同名容器表，`ALL_TABLES` 也会列出——
+/// ODC 未做排除，此处保持一致。
+///
+/// 字典缺失（老版本无 ALL_MVIEWS）按空集处理：对象树宁可少一个分组，也不该
+/// 因为一个可选字典整棵树打不开。
+async fn ob_oracle_mviews(
+    conn: &mut mysql_async::Conn,
+    schema: &str,
+) -> Vec<String> {
+    use mysql_async::prelude::Queryable as _;
+    let sql = format!(
+        "SELECT mview_name FROM {OB_DICT_PREFIX}_mviews WHERE owner = {} ORDER BY mview_name",
+        ob_quote_literal(schema)
+    );
+    conn.query::<String, _>(sql).await.unwrap_or_default()
+}
+
+// ── OB MySQL 序列定义 ───────────────────────────────────────────────────
+//
+// MySQL 协议本身**没有「序列协议」**：序列是 OB 在 MySQL 模式下的扩展对象
+// （`CREATE SEQUENCE` / `NEXTVAL`），取元数据只能靠普通 COM_QUERY 文本查询，
+// 与驱动版本无关（mysql_async 只负责把 SQL 发出去、把结果集读回来）。
+//
+// 服务端当前没有 `SHOW CREATE SEQUENCE`——OB MySQL 语法里 `SHOW CREATE` 只
+// 覆盖 TABLE/VIEW/PROCEDURE/FUNCTION/TRIGGER/TENANT/TABLEGROUP/USER（见 ODC
+// 自带的 OBParser.g4，该文件可能滞后于服务端，故仍把它当第一优先级探测）。
+// 因此其余来源都是「查行集再按列名拼等价 DDL」，按「越标准越靠前」排序：
+// 1. `SHOW CREATE SEQUENCE`（若某版本支持，最权威，直接返回原文）
+// 2. `information_schema.SEQUENCES`（MySQL/MariaDB 的标准元数据入口）
+// 3. `SHOW SEQUENCES IN <db>`（OB 自己的列举语句）
+// 4. `oceanbase.DBA_SEQUENCES`（Oracle 兼容视图，最后兜底）
+//
+// 列名同时接受 MySQL/MariaDB 风格（TABLE_SCHEMA/TABLE_NAME/INCREMENT/
+// MINIMUM_VALUE/CYCLE_OPTION）与 Oracle 风格（SEQUENCE_OWNER/SEQUENCE_NAME/
+// INCREMENT_BY/MIN_VALUE/CYCLE_FLAG），按「列名大写 → 值」映射取值，
+// 任一来源能拼出必需属性即返回；都拿不到 INCREMENT BY 时给明确文案，
+// 绝不返回空定义。
+
+/// Row 转「列名大写 → 值」映射（`SELECT *` / `SHOW` 的列名随版本漂移，
+/// 按名取值比按下标稳）
+fn ob_row_value_map(row: &mysql_async::Row) -> std::collections::HashMap<String, String> {
+    let mut map = std::collections::HashMap::new();
+    for (i, col) in row.columns_ref().iter().enumerate() {
+        let key = col.name_str().to_ascii_uppercase();
+        if let Some(v) = row.get::<String, _>(i) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                map.insert(key, v);
+            }
+        }
+    }
+    map
+}
+
+/// 按候选列名取第一个存在的值
+fn ob_seq_attr<'a>(
+    map: &'a std::collections::HashMap<String, String>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    keys.iter().find_map(|k| map.get(*k).map(String::as_str))
+}
+
+/// Y/YES/1/TRUE/ON 视为真（各版本字典的布尔呈现不一致）
+fn ob_seq_flag(
+    map: &std::collections::HashMap<String, String>,
+    keys: &[&str],
+) -> Option<bool> {
+    ob_seq_attr(map, keys).map(|v| {
+        matches!(
+            v.to_ascii_uppercase().as_str(),
+            "Y" | "YES" | "1" | "TRUE" | "ON"
+        )
+    })
+}
+
+/// 由属性拼等价 `CREATE SEQUENCE`；缺 INCREMENT BY 视为「属性不足」返回 None
+/// （增量是序列语义的核心，缺了拼出来的 DDL 会误导用户）。
+fn ob_build_sequence_ddl(
+    schema: &str,
+    name: &str,
+    map: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let inc = ob_seq_attr(map, &["INCREMENT_BY", "INCREMENT"])?;
+    let ident = |v: &str| format!("`{}`", v.replace('`', "``"));
+    let mut ddl = format!(
+        "CREATE SEQUENCE {}.{}",
+        ident(schema),
+        ident(name)
+    );
+    if let Some(v) = ob_seq_attr(map, &["START_WITH", "START_VALUE", "START"]) {
+        ddl.push_str(&format!("\n  START WITH {v}"));
+    }
+    ddl.push_str(&format!("\n  INCREMENT BY {inc}"));
+    if let Some(v) = ob_seq_attr(map, &["MIN_VALUE", "MINIMUM_VALUE", "MINVALUE"]) {
+        ddl.push_str(&format!("\n  MINVALUE {v}"));
+    }
+    if let Some(v) = ob_seq_attr(map, &["MAX_VALUE", "MAXIMUM_VALUE", "MAXVALUE"]) {
+        ddl.push_str(&format!("\n  MAXVALUE {v}"));
+    }
+    if let Some(c) = ob_seq_flag(map, &["CYCLE_FLAG", "CYCLE_OPTION", "IS_CYCLE", "CYCLE"]) {
+        ddl.push_str(if c { "\n  CYCLE" } else { "\n  NOCYCLE" });
+    }
+    if let Some(o) = ob_seq_flag(map, &["ORDER_FLAG", "ORDER_OPTION", "SEQ_ORDER", "ORDER"]) {
+        ddl.push_str(if o { "\n  ORDER" } else { "\n  NOORDER" });
+    }
+    if let Some(v) = ob_seq_attr(map, &["CACHE_SIZE", "CACHE"]) {
+        if v == "0" || v.eq_ignore_ascii_case("NOCACHE") {
+            ddl.push_str("\n  NOCACHE");
+        } else {
+            ddl.push_str(&format!("\n  CACHE {v}"));
+        }
+    }
+    ddl.push(';');
+    Some(ddl)
+}
+
+/// OB MySQL 序列定义（探测链见上方模块注释）
+async fn ob_mysql_sequence_definition(
+    conn: &mut mysql_async::Conn,
+    schema: &str,
+    name: &str,
+) -> Result<ObjectDefinition, String> {
+    use mysql_async::prelude::Queryable as _;
+    let s = schema.replace('`', "``");
+    let n = name.replace('`', "``");
+
+    // 1) SHOW CREATE SEQUENCE：当前 OB MySQL 语法没有，高版本若支持则最权威
+    if let Ok(mut result) = conn
+        .query_iter(format!("SHOW CREATE SEQUENCE `{s}`.`{n}`"))
+        .await
+    {
+        let create_idx = result
+            .columns_ref()
+            .iter()
+            .position(|c| c.name_str().to_lowercase().contains("create"));
+        let ddl = match create_idx {
+            Some(idx) => result
+                .collect::<mysql_async::Row>()
+                .await
+                .ok()
+                .and_then(|rows| rows.into_iter().next())
+                .and_then(|row| row.get::<String, usize>(idx))
+                .unwrap_or_default(),
+            None => {
+                // 语句能执行但列形态不符（不该出现）：丢弃结果继续下一级
+                let _ = result.drop_result().await;
+                String::new()
+            }
+        };
+        if !ddl.trim().is_empty() {
+            return Ok(ObjectDefinition {
+                definition: ddl,
+                call_template: String::new(),
+                arg_count: 0,
+            });
+        }
+    }
+
+    // 2) 行集型来源：全是普通 COM_QUERY 文本查询（MySQL 协议没有「序列协议」
+    //    这类东西，序列是 OB 在 MySQL 模式下的扩展对象），按「越标准越靠前」：
+    //    information_schema.SEQUENCES（MySQL/MariaDB 标准元数据入口，OB 若
+    //    做了兼容即可用）→ SHOW SEQUENCES IN（OB 自己的列举语句）→
+    //    oceanbase.DBA_SEQUENCES（Oracle 兼容视图，最后兜底）。
+    //    任一来源能拼出必需属性即返回；查询失败/列不足静默进入下一级。
+    let sources = [
+        // MariaDB/MySQL 风格列名：TABLE_SCHEMA / TABLE_NAME / START_VALUE /
+        // MINIMUM_VALUE / MAXIMUM_VALUE / INCREMENT / CYCLE_OPTION
+        "SELECT * FROM information_schema.SEQUENCES".to_string(),
+        format!("SHOW SEQUENCES IN `{s}`"),
+        "SELECT * FROM oceanbase.DBA_SEQUENCES".to_string(),
+    ];
+    for sql in sources {
+        let Ok(rows) = conn.query::<mysql_async::Row, _>(sql).await else {
+            continue;
+        };
+        for row in rows {
+            let map = ob_row_value_map(&row);
+            let owner_ok = ob_seq_attr(
+                &map,
+                &[
+                    "TABLE_SCHEMA",
+                    "SEQUENCE_SCHEMA",
+                    "SEQUENCE_OWNER",
+                    "OWNER",
+                    "DATABASE_NAME",
+                    "SCHEMA_NAME",
+                ],
+            )
+            .map(|o| o.eq_ignore_ascii_case(schema))
+            .unwrap_or(true);
+            // SHOW SEQUENCES 的单列形态列名可能就是 SEQUENCE_NAME；MySQL 无此
+            // 对象时也可能没有名字列——都按候选名取，取不到就跳过该行
+            let name_ok = ob_seq_attr(
+                &map,
+                &["SEQUENCE_NAME", "TABLE_NAME", "NAME"],
+            )
+            .map(|v| v.eq_ignore_ascii_case(name))
+            .unwrap_or(false);
+            if owner_ok
+                && name_ok
+                && let Some(ddl) = ob_build_sequence_ddl(schema, name, &map)
+            {
+                return Ok(ObjectDefinition {
+                    definition: ddl,
+                    call_template: String::new(),
+                    arg_count: 0,
+                });
+            }
+        }
+    }
+
+    Err(
+        "OceanBase MySQL 模式的序列定义无法读取：服务端没有 SHOW CREATE SEQUENCE，\
+         且 information_schema.SEQUENCES / SHOW SEQUENCES / oceanbase.DBA_SEQUENCES \
+         均未返回可用的序列属性\
+         （对象树仍会列出序列名）"
+            .to_string(),
+    )
+}
+
+
+/// OB MySQL 物化视图清单（`OCEANBASE.DBA_MVIEWS`，ODC
+/// `OBMySQLSchemaAccessor.listMViews` 同源）。
+///
+/// 该视图 OB 4.3.5.2 起才有；更早版本查询报错 → 返回 `None`，分组不出现
+/// （与 ODC 在低版本显式抛 Unsupported 的可见结果一致）。
+async fn ob_mysql_mviews(
+    conn: &mut mysql_async::Conn,
+    schema: &str,
+) -> Option<Vec<String>> {
+    use mysql_async::prelude::Queryable as _;
+    let sql = format!(
+        "SELECT mview_name FROM OCEANBASE.DBA_MVIEWS WHERE OWNER = {} ORDER BY mview_name",
+        ob_quote_literal(schema)
+    );
+    conn.query::<String, _>(sql).await.ok()
+}
+
+/// OB MySQL 租户：隐藏内建 Oracle 兼容 schema（原生 MySQL 原样返回）。
+/// 非 OB 连接 `ob_compat_mode()` 为 None，此函数是恒等变换。
+fn ob_filter_schemas(conn: &mysql_async::Conn, names: Vec<String>) -> Vec<String> {
+    if conn.ob_compat_mode() == Some(mysql_async::ObCompatMode::MySql) {
+        names.into_iter().filter(|n| !ob_hidden_schema(n)).collect()
+    } else {
+        names
+    }
+}
+
 /// OB Oracle 系统账号黑名单（与 oracle_usernames 的 <12 分支同源；OB 的
 /// all_users 无 12c 的 oracle_maintained 列，统一走黑名单）
 const OB_SYS_USERS: &str = "'SYS','SYSTEM','OUTLN','DIP','ORACLE_OCM','DBSNMP',\
@@ -6311,6 +6747,31 @@ fn format_bytes(bytes: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// OB MySQL 租户的过滤规则（纯函数，无服务端可测的部分）：
+    /// - 内建 Oracle 兼容 schema 精确匹配隐藏（大小写敏感，不误伤用户 schema）
+    /// - 物化视图的容器表/日志表按前缀排除，普通表不受影响
+    #[test]
+    fn ob_mysql_filters() {
+        for name in ["PUBLIC", "LBACSYS", "ORAAUDITOR", "__public"] {
+            assert!(ob_hidden_schema(name), "{name} 应被隐藏");
+        }
+        for name in ["public", "Public", "APP", "SYS", "mysql", "information_schema"] {
+            assert!(!ob_hidden_schema(name), "{name} 不应被隐藏");
+        }
+
+        for name in [
+            "__MV_CONTAINER_mv1",
+            "MLOG$_T1",
+            "__MV_CONTAINER_",
+            "MLOG$_",
+        ] {
+            assert!(ob_internal_object(name), "{name} 属于 MV 内部对象");
+        }
+        for name in ["T1", "my_mlog", "MLOG_T1", "mv_container_x"] {
+            assert!(!ob_internal_object(name), "{name} 是普通表");
+        }
+    }
 
     /// Redis extra_options 解析：合法 camelCase JSON 取值、非法/空 JSON 按
     /// 单机默认（老记录兼容语义），拓扑标签映射三种形态

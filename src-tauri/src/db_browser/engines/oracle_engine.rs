@@ -7,6 +7,8 @@
 use oracle_async::Queryable;
 use crate::db_browser::oracle_messages;
 
+use super::{ObjectDefinition, TableDetail};
+
 /// 错误码的完整中文解释：优先查 19c 全量译文表（20362 条，含 message/
 /// cause/action），未收录时回落 80 条精简摘要表（一句话说明）。
 ///
@@ -329,4 +331,496 @@ pub(crate) fn oracle_row_string(row: &oracle_async::Row, i: usize) -> String {
         .get(i)
         .map(|v| v.to_string())
         .unwrap_or_else(|| "NULL".to_string())
+}
+
+// ── OceanBase Oracle 租户：表详情与对象定义 ────────────────────────────────
+//
+// 口径对齐 ODC `OBOracleSchemaAccessor` / `OracleSchemaAccessor`：
+// - 全部走 `ALL_*` 数据字典（OB 没有独立的 DBA_ 权限体系，恒 all_*）
+// - 表 DDL 优先 OB 扩展的 `SHOW CREATE TABLE`（输出含 OB 专有的
+//   partition/tablegroup 等子句），失败降级 `DBMS_METADATA.GET_DDL`
+// - 列过滤 `USER_GENERATED='YES'`（排除系统生成列与隐藏列），列上老版本
+//   没有该列时降级为不过滤
+//
+// 与原生 Oracle 臂（`DbEngine::Oracle`）的 SQL 同源，差别只有两处：字典
+// 前缀固定 `all`，以及执行走 mysql_async 的文本协议（OB Oracle 租户经
+// MySQL 线缆访问）。
+
+/// OB Oracle 标识符加双引号（Oracle 引用标识符规则，内部 `"` 翻倍）。
+#[inline]
+fn ob_ident(v: &str) -> String {
+    format!("\"{}\"", v.replace('"', "\"\""))
+}
+
+/// OB Oracle 表/视图详情（列/索引/约束/外键/注释/行数）。
+///
+/// `kind` 为 `"view"` 时 DDL 取 VIEW 定义（`SHOW CREATE TABLE` 对视图返回
+/// 建视图语句），其余按表处理。
+pub(crate) async fn ob_oracle_table_detail(
+    conn: &mut mysql_async::Conn,
+    schema: &str,
+    table: &str,
+    kind: &str,
+) -> Result<TableDetail, String> {
+    use mysql_async::prelude::Queryable as _;
+
+    let lit_s = ob_quote_literal(schema);
+    let lit_t = ob_quote_literal(table);
+    let is_view = kind == "view";
+
+    // 1) DDL：SHOW CREATE TABLE（OB 扩展）→ DBMS_METADATA → 空串
+    let mut ddl = String::new();
+    let show_sql = format!("SHOW CREATE TABLE {}.{}", ob_ident(schema), ob_ident(table));
+    if let Ok(rows) = conn.query::<(String, String), _>(show_sql).await
+        && let Some((_, d)) = rows.into_iter().next()
+    {
+        ddl = d;
+    }
+    if ddl.trim().is_empty() {
+        let object_type = if is_view { "VIEW" } else { "TABLE" };
+        let meta_sql = format!(
+            "SELECT DBMS_METADATA.GET_DDL({}, {}, {}) FROM dual",
+            ob_quote_literal(object_type),
+            lit_t,
+            lit_s
+        );
+        if let Ok(rows) = conn.query::<Option<String>, _>(meta_sql).await
+            && let Some(Some(d)) = rows.into_iter().next()
+        {
+            ddl = d.trim().to_string();
+        }
+    }
+
+    // 2) 列：all_tab_columns + all_col_comments（表与视图同表），
+    //    USER_GENERATED='YES' 排除系统生成列；老版本没有该列时降级
+    let cols_base = format!(
+        "SELECT c.column_name, c.data_type, c.nullable, cc.comments \
+         FROM all_tab_columns c \
+         LEFT JOIN all_col_comments cc ON cc.owner = c.owner \
+           AND cc.table_name = c.table_name AND cc.column_name = c.column_name \
+         WHERE c.owner = {lit_s} AND c.table_name = {lit_t}"
+    );
+    type ColRow = (String, String, Option<String>, Option<String>);
+    let col_rows: Vec<ColRow> =
+        match conn.query(format!("{cols_base} AND c.USER_GENERATED = 'YES' ORDER BY c.column_id")).await {
+            Ok(rows) => rows,
+            Err(_) => conn
+                .query(format!("{cols_base} ORDER BY c.column_id"))
+                .await
+                .map_err(|e| format!("OceanBase 查询列结构失败：{e}"))?,
+        };
+    let columns: Vec<Vec<String>> = col_rows
+        .iter()
+        .map(|(name, ty, nullable, comment)| {
+            vec![
+                name.clone(),
+                ty.clone(),
+                match nullable.as_deref() {
+                    Some("Y") | Some("y") => "YES".to_string(),
+                    Some("N") | Some("n") => "NO".to_string(),
+                    _ => String::new(),
+                },
+                comment.clone().unwrap_or_default(),
+            ]
+        })
+        .collect();
+
+    // 3) 索引：all_indexes + all_ind_columns，LISTAGG 按列位置聚列
+    let idx_sql = format!(
+        "SELECT i.index_name, i.uniqueness, \
+                LISTAGG(c.column_name, ', ') WITHIN GROUP (ORDER BY c.column_position) \
+         FROM all_indexes i \
+         JOIN all_ind_columns c ON c.index_name = i.index_name AND c.index_owner = i.owner \
+         WHERE i.table_owner = {lit_s} AND i.table_name = {lit_t} \
+         GROUP BY i.index_name, i.uniqueness ORDER BY i.index_name"
+    );
+    let index_rows: Vec<(String, Option<String>, Option<String>)> =
+        conn.query(idx_sql).await.unwrap_or_default();
+    let indexes: Vec<Vec<String>> = index_rows
+        .into_iter()
+        .map(|(name, uniq, cols)| {
+            vec![
+                name,
+                if uniq.as_deref() == Some("UNIQUE") {
+                    "UNIQUE".to_string()
+                } else {
+                    String::new()
+                },
+                cols.unwrap_or_default(),
+            ]
+        })
+        .collect();
+
+    // 4) 约束：all_constraints + all_cons_columns，按约束名聚列
+    let cons_sql = format!(
+        "SELECT c.constraint_name, c.constraint_type, c.r_owner, c.r_constraint_name, \
+                c.delete_rule, \
+                LISTAGG(cc.column_name, ',') WITHIN GROUP (ORDER BY cc.position) \
+         FROM all_constraints c \
+         LEFT JOIN all_cons_columns cc ON cc.owner = c.owner \
+           AND cc.constraint_name = c.constraint_name \
+         WHERE c.owner = {lit_s} AND c.table_name = {lit_t} \
+         GROUP BY c.constraint_name, c.constraint_type, c.r_owner, c.r_constraint_name, \
+                  c.delete_rule \
+         ORDER BY c.constraint_name"
+    );
+    type ConsRow = (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let cons_rows: Vec<ConsRow> = conn.query(cons_sql).await.unwrap_or_default();
+    let mut constraints: Vec<Vec<String>> = Vec::new();
+    // F 约束的（约束名, r_owner.r_constraint_name, delete_rule）待反查目标表
+    let mut fk_refs: Vec<(String, String, String)> = Vec::new();
+    for (name, ctype, r_owner, r_cons, del_rule, cols) in cons_rows {
+        let short = match ctype.as_deref() {
+            Some("P") => "PK",
+            Some("U") => "U",
+            Some("R") => "F",
+            _ => "C",
+        };
+        if short == "F" {
+            fk_refs.push((
+                name.clone(),
+                format!(
+                    "{}.{}",
+                    r_owner.as_deref().unwrap_or_default(),
+                    r_cons.as_deref().unwrap_or_default()
+                ),
+                del_rule.unwrap_or_default(),
+            ));
+        }
+        constraints.push(vec![
+            name,
+            short.to_string(),
+            cols.unwrap_or_default(),
+            String::new(),
+        ]);
+    }
+    // 外键目标表名 + 目标列（r_constraint_name → 目标约束），DELETE_RULE 非
+    // NO ACTION 时拼 "table(cols) ON DELETE CASCADE"
+    for (fk_name, r_owner_name, del_rule) in &fk_refs {
+        let parts: Vec<&str> = r_owner_name.splitn(2, '.').collect();
+        let [owner_part, cons_part] = parts[..] else {
+            continue;
+        };
+        let ref_sql = format!(
+            "SELECT c.table_name, \
+                    LISTAGG(cc.column_name, ',') WITHIN GROUP (ORDER BY cc.position) \
+             FROM all_constraints c \
+             JOIN all_cons_columns cc ON cc.owner = c.owner \
+               AND cc.constraint_name = c.constraint_name \
+             WHERE c.owner = {} AND c.constraint_name = {} \
+             GROUP BY c.table_name",
+            ob_quote_literal(owner_part),
+            ob_quote_literal(cons_part)
+        );
+        let Ok(rows) = conn
+            .query::<(String, Option<String>), _>(ref_sql)
+            .await
+        else {
+            continue;
+        };
+        let Some((target, target_cols)) = rows.into_iter().next() else {
+            continue;
+        };
+        if let Some(cell) = constraints
+            .iter_mut()
+            .find(|c| c.first().map(String::as_str) == Some(fk_name.as_str()))
+            && let Some(r) = cell.get_mut(3)
+        {
+            *r = match target_cols {
+                Some(cols) if !cols.is_empty() => format!("{target}({cols})"),
+                _ => target,
+            };
+            let rule = del_rule.trim();
+            if !rule.is_empty() && rule != "NO ACTION" {
+                r.push_str(" ON DELETE ");
+                r.push_str(rule);
+            }
+        }
+    }
+    // 5) 反向外键：谁引用了本表（本表 PK/UK 被 r_constraint_name 指向）
+    let inc_sql = format!(
+        "SELECT c.constraint_name, c.owner || '.' || c.table_name, \
+                (SELECT LISTAGG(cc.column_name, ',') WITHIN GROUP (ORDER BY cc.position) \
+                   FROM all_cons_columns cc \
+                  WHERE cc.owner = c.owner AND cc.constraint_name = c.constraint_name), \
+                (SELECT LISTAGG(cc.column_name, ',') WITHIN GROUP (ORDER BY cc.position) \
+                   FROM all_cons_columns cc \
+                  WHERE cc.owner = c.r_owner AND cc.constraint_name = c.r_constraint_name) \
+         FROM all_constraints c \
+         WHERE c.constraint_type = 'R' AND c.r_owner = {lit_s} \
+           AND c.r_constraint_name IN (SELECT rc.constraint_name FROM all_constraints rc \
+                 WHERE rc.owner = {lit_s} AND rc.table_name = {lit_t} \
+                   AND rc.constraint_type IN ('P','U')) \
+         ORDER BY c.owner, c.table_name, c.constraint_name"
+    );
+    let incoming: Vec<Vec<String>> = conn
+        .query::<(String, String, Option<String>, Option<String>), _>(inc_sql)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(n, t, c, rc)| {
+            vec![
+                n,
+                t,
+                c.unwrap_or_default(),
+                rc.unwrap_or_default(),
+            ]
+        })
+        .collect();
+
+    // 6) 注释 + 行数（NUM_ROWS 是统计近似，与 ODC 同口径）
+    let stat_sql = format!(
+        "SELECT (SELECT comments FROM all_tab_comments \
+                  WHERE owner = {lit_s} AND table_name = {lit_t}), \
+                (SELECT num_rows FROM all_tables \
+                  WHERE owner = {lit_s} AND table_name = {lit_t}) \
+         FROM dual"
+    );
+    let (comment, row_count) = match conn
+        .query::<(Option<String>, Option<String>), _>(stat_sql)
+        .await
+    {
+        Ok(rows) => rows
+            .into_iter()
+            .next()
+            .map(|(c, n)| (c.unwrap_or_default().trim().to_string(), n.unwrap_or_default()))
+            .unwrap_or_default(),
+        Err(_) => (String::new(), String::new()),
+    };
+
+    Ok(TableDetail {
+        ddl,
+        comment,
+        // 表大小需 USER_SEGMENTS/DBA_SEGMENTS 统计，OB 下不保证可读——
+        // 原生 Oracle 臂同样留空（两处口径一致）
+        size: String::new(),
+        row_count,
+        column_headers: vec![
+            "Column".into(),
+            "Type".into(),
+            "Nullable".into(),
+            "Comment".into(),
+        ],
+        columns,
+        index_headers: vec!["Index".into(), "Unique".into(), "Columns".into()],
+        indexes,
+        constraint_headers: vec![
+            "Constraint".into(),
+            "Type".into(),
+            "Columns".into(),
+            "References".into(),
+        ],
+        constraints,
+        reference_headers: vec![
+            "Constraint".into(),
+            "Table".into(),
+            "Columns".into(),
+            "References".into(),
+        ],
+        references: incoming,
+    })
+}
+
+/// OB Oracle 对象定义（DDL/源码）。
+///
+/// 与原生 Oracle 臂同源：过程/函数/触发器/包走 `all_source` 按行拼回
+/// （比 `DBMS_METADATA` 少一层权限依赖），表/视图/序列/同义词/类型走
+/// `SHOW CREATE TABLE` 或 `DBMS_METADATA.GET_DDL`。
+pub(crate) async fn ob_oracle_object_definition(
+    conn: &mut mysql_async::Conn,
+    schema: &str,
+    name: &str,
+    kind: &str,
+) -> Result<ObjectDefinition, String> {
+    use mysql_async::prelude::Queryable as _;
+
+    let lit_s = ob_quote_literal(schema);
+    let lit_n = ob_quote_literal(name);
+
+    // 表：OB 扩展的 SHOW CREATE TABLE（含 OB 专有子句），失败降级 GET_DDL
+    if kind == "table" {
+        let show_sql = format!(
+            "SHOW CREATE TABLE {}.{}",
+            ob_ident(schema),
+            ob_ident(name)
+        );
+        if let Ok(rows) = conn.query::<(String, String), _>(show_sql).await
+            && let Some((_, ddl)) = rows.into_iter().next()
+            && !ddl.trim().is_empty()
+        {
+            return Ok(ObjectDefinition {
+                definition: ddl,
+                call_template: format!("SELECT * FROM {};", ob_ident(name)),
+                arg_count: 0,
+            });
+        }
+        return ob_oracle_meta_ddl(conn, "TABLE", schema, name, String::new()).await;
+    }
+
+    // 视图 / 物化视图 / 序列 / 同义词 / 包 / 类型：DBMS_METADATA.GET_DDL
+    let meta_type = match kind {
+        "view" => Some("VIEW"),
+        "mview" => Some("MATERIALIZED_VIEW"),
+        "sequence" => Some("SEQUENCE"),
+        "synonym" => Some("SYNONYM"),
+        "package" => Some("PACKAGE"),
+        "datatype" => Some("TYPE"),
+        _ => None,
+    };
+    if let Some(meta_type) = meta_type {
+        let call_template = if kind == "sequence" {
+            format!("SELECT {schema}.{name}.NEXTVAL FROM dual;")
+        } else {
+            String::new()
+        };
+        let meta = ob_oracle_meta_ddl(conn, meta_type, schema, name, call_template.clone()).await;
+        if meta.is_ok() {
+            return meta;
+        }
+        // 视图降级 all_views 文本；包降级 all_source（GET_DDL 对包可能不含
+        // 包体，老版本也可能没有 MATERIALIZED_VIEW 的 GET_DDL 支持）
+        if kind == "view" {
+            let vs = format!(
+                "SELECT text FROM all_views WHERE owner = {lit_s} AND view_name = {lit_n}"
+            );
+            if let Ok(rows) = conn.query::<Option<String>, _>(vs).await
+                && let Some(Some(text)) = rows.into_iter().next()
+                && !text.trim().is_empty()
+            {
+                return Ok(ObjectDefinition {
+                    definition: text,
+                    call_template: String::new(),
+                    arg_count: 0,
+                });
+            }
+        }
+        if kind == "package" {
+            let definition = ob_oracle_source_text(conn, schema, name, "PACKAGE").await?;
+            return Ok(ObjectDefinition {
+                definition,
+                call_template: String::new(),
+                arg_count: 0,
+            });
+        }
+        return meta;
+    }
+
+    // 触发器：all_source TYPE='TRIGGER'
+    if kind == "trigger" {
+        let definition = ob_oracle_source_text(conn, schema, name, "TRIGGER").await?;
+        return Ok(ObjectDefinition {
+            definition,
+            call_template: String::new(),
+            arg_count: 0,
+        });
+    }
+
+    // 过程 / 函数：all_source + all_arguments 数入参个数
+    if kind != "function" && kind != "procedure" {
+        return Err(format!("OceanBase 不支持的取定义对象类型：{kind}"));
+    }
+    let obj_type = if kind == "function" { "FUNCTION" } else { "PROCEDURE" };
+    let definition = ob_oracle_source_text(conn, schema, name, obj_type).await?;
+    let cnt_sql = format!(
+        "SELECT COUNT(*) FROM all_arguments \
+         WHERE owner = {lit_s} AND object_name = {lit_n} AND argument_name IS NOT NULL"
+    );
+    let arg_count: usize = conn
+        .query::<Option<i64>, _>(cnt_sql)
+        .await
+        .ok()
+        .and_then(|rows| rows.into_iter().next().flatten())
+        .unwrap_or(0)
+        .max(0) as usize;
+    let call_template = if kind == "function" {
+        format!("SELECT {schema}.{name}() FROM dual;")
+    } else {
+        format!("CALL {schema}.{name}();")
+    };
+    Ok(ObjectDefinition {
+        definition,
+        call_template,
+        arg_count,
+    })
+}
+
+/// `DBMS_METADATA.GET_DDL('<type>', name, schema)` 取定义（统一错误文案）。
+async fn ob_oracle_meta_ddl(
+    conn: &mut mysql_async::Conn,
+    object_type: &str,
+    schema: &str,
+    name: &str,
+    call_template: String,
+) -> Result<ObjectDefinition, String> {
+    use mysql_async::prelude::Queryable as _;
+    let sql = format!(
+        "SELECT DBMS_METADATA.GET_DDL({}, {}, {}) FROM dual",
+        ob_quote_literal(object_type),
+        ob_quote_literal(name),
+        ob_quote_literal(schema)
+    );
+    let ddl = conn
+        .query::<Option<String>, _>(sql)
+        .await
+        .map_err(|e| format!("OceanBase 拉取定义失败：{e}"))?
+        .into_iter()
+        .next()
+        .flatten()
+        .unwrap_or_default();
+    if ddl.trim().is_empty() {
+        return Err("未找到该对象（可能已被删除）".to_string());
+    }
+    Ok(ObjectDefinition {
+        definition: ddl,
+        call_template,
+        arg_count: 0,
+    })
+}
+
+/// `all_source` 按行拼回完整源码（过程/函数/触发器/包的包体与声明都在其中）。
+async fn ob_oracle_source_text(
+    conn: &mut mysql_async::Conn,
+    schema: &str,
+    name: &str,
+    object_type: &str,
+) -> Result<String, String> {
+    use mysql_async::prelude::Queryable as _;
+    let sql = format!(
+        "SELECT text FROM all_source WHERE owner = {} AND name = {} AND type = {} \
+         ORDER BY line",
+        ob_quote_literal(schema),
+        ob_quote_literal(name),
+        ob_quote_literal(object_type)
+    );
+    let lines: Vec<Option<String>> = conn
+        .query(sql)
+        .await
+        .map_err(|e| format!("OceanBase 拉取源码失败：{e}"))?;
+    let definition: String = lines.into_iter().flatten().collect();
+    if definition.trim().is_empty() {
+        return Err("未找到该对象（可能已被删除）".to_string());
+    }
+    Ok(definition)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// OB Oracle 标识符引用：双引号包裹、内部双引号翻倍（Oracle 引用标识符
+    /// 规则，与 ODC `StringUtils.quoteOracleIdentifier` 同源）
+    #[test]
+    fn ob_ident_double_quotes_and_escapes() {
+        assert_eq!(ob_ident("T1"), "\"T1\"");
+        assert_eq!(ob_ident("lower_case"), "\"lower_case\"");
+        assert_eq!(ob_ident("a\"b"), "\"a\"\"b\"");
+        assert_eq!(ob_ident(""), "\"\"");
+    }
 }
