@@ -228,8 +228,12 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                     bit_vector = super::row_common::read_bitvector(conn, columns.len()).await?;
                 }
                 6 => {
-                    // Resultset row chunk header
-                    super::row_common::read_row_header(conn).await?;
+                    // Resultset row chunk header：位图非空时更新（v2 语义）
+                    if let Some(bv) =
+                        super::row_common::read_row_header(conn, columns.len()).await?
+                    {
+                        bit_vector = bv;
+                    }
                 }
                 7 => {
                     // 行数据到达。有出参（OUT/INOUT）时本消息体是「出参值区」
@@ -501,7 +505,12 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                 trace!("LOB prefetch MsgCode: {}", msg);
                 match msg {
                     6 => {
-                        super::row_common::read_row_header(conn).await?;
+                        // 位图非空时更新（v2 语义）
+                        if let Some(bv) =
+                            super::row_common::read_row_header(conn, columns.len()).await?
+                        {
+                            bit_vector = bv;
+                        }
                     }
                     21 => {
                         bit_vector = super::row_common::read_bitvector(conn, columns.len()).await?;

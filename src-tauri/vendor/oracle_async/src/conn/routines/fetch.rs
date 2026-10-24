@@ -72,7 +72,12 @@ impl Routine<FetchResponse> for FetchRoutine {
                     columns = new_cols;
                 }
                 6 => {
-                    super::row_common::read_row_header(conn).await?;
+                    // 位图非空时更新（v2 语义）
+                    if let Some(bv) =
+                        super::row_common::read_row_header(conn, columns.len()).await?
+                    {
+                        bit_vector = bv;
+                    }
                 }
                 21 => {
                     bit_vector = super::row_common::read_bitvector(conn, columns.len()).await?;

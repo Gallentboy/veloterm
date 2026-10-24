@@ -261,7 +261,13 @@ pub async fn read_column_meta(conn: &mut Conn) -> Result<ColumnMeta> {
 }
 
 /// Msg 6：行块头（go-ora resultSet.load）
-pub async fn read_row_header(conn: &mut Conn) -> Result<()> {
+pub async fn read_row_header(conn: &mut Conn, column_count: usize) -> Result<Option<Vec<bool>>> {
+    // v2 case 6 = ResultSet.load：跳 1 + i2 列数 + i4 高段 + i4 行数 + i2 UAC
+    // + DLC 存在位图 + DLC。位图非空时即本批行的列存在标记（v2 setBitVector
+    // 据此置每列 getDataFromServer，位序与 Msg 21 相同：列 n → 字节 n/8 位
+    // n%8）——服务端省略 NULL 单元格时缺了它就会按全存在去读，流直接错位
+    //（真机 PLAN_TABLE 大量可空列以 invalid int size 暴露）。空/NULL 位图
+    // 返回 None = 沿用现值
     conn.ensure_in_buffer(2).await?;
     let mut r = TtcReader::new(&mut conn.in_buffer);
     let _ = r.get_byte()?;
@@ -269,9 +275,18 @@ pub async fn read_row_header(conn: &mut Conn) -> Result<()> {
     let _ = r.get_int(4, true, true)?;
     let _ = r.get_int(4, true, true)?;
     let _ = r.get_int(2, true, true)?;
+    let bv = r.get_dlc()?;
     let _ = r.get_dlc()?;
-    let _ = r.get_dlc()?;
-    Ok(())
+    Ok(bv.filter(|b| !b.is_empty()).map(|bytes| {
+        (0..column_count)
+            .map(|i| {
+                bytes
+                    .get(i / 8)
+                    .map(|byte| byte & (1 << (i % 8)) != 0)
+                    .unwrap_or(false)
+            })
+            .collect()
+    }))
 }
 
 /// Msg 21：列存在位图（true = 本行该列有数据）
