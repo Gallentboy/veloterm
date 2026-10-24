@@ -22,11 +22,7 @@ import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { ensureExtendedLanguages } from '@/editor/languages';
 import { REDIS_COMMAND_SUGGESTIONS } from '@/components/db/redisCommands';
-import {
-  parseSqlCompletionContext,
-  resolveSchemaSuggestions,
-  type SqlSchemaCompleter,
-} from '@/components/db/sqlCompletion';
+import { dbSqlCompletions } from '@/services/dbConnectionsService';
 import { readClipboardText, writeClipboardText } from '@/lib/clipboard';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { cn } from '@/lib/utils';
@@ -47,9 +43,9 @@ export interface SqlEditorProps {
   className?: string;
   /** Redis 会话：plaintext 模型 + 静态命令词表补全，右键菜单隐藏执行计划 */
   redisMode?: boolean;
-  /** schema 感知补全数据源（表/列/别名，由调用方带缓存实现）；
-   * 不传或 null = 不启用（Redis 不传） */
-  schemaCompleter?: SqlSchemaCompleter | null;
+  /** schema 感知补全（表/列/别名）的会话 id；后端 db_sql_completions
+   * 解析 cursor 上下文与目录（带缓存），null/不传 = 不启用（Redis 不传） */
+  completionsSessionId?: string | null;
 }
 
 export function SqlEditor({
@@ -61,7 +57,7 @@ export function SqlEditor({
   onExplain,
   className,
   redisMode = false,
-  schemaCompleter = null,
+  completionsSessionId = null,
 }: SqlEditorProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -75,8 +71,8 @@ export function SqlEditor({
   selChangeRef.current = onSelectionChange;
   const explainRef = useRef(onExplain);
   explainRef.current = onExplain;
-  const completerRef = useRef(schemaCompleter);
-  completerRef.current = schemaCompleter;
+  const completionsSidRef = useRef(completionsSessionId);
+  completionsSidRef.current = completionsSessionId;
 
   // 右键菜单（portal 到 body + fixed 定位，项目弹层规范；与对象树右键菜单
   // 同型样式）。selected 为开菜单瞬间的选区快照
@@ -162,10 +158,12 @@ export function SqlEditor({
       });
     }
 
-    // schema 感知补全（表/列/别名）：注册在 sql 语言上，按 model 归属过滤
-    // 到本编辑器（同 Redis 词表补全的过滤模式；与静态关键字补全共存，
-    // Monaco 自动合并多 provider 的建议）；`.` 触发限定符二段补全。
-    // 异步 provider：首次触达某表列时向数据源取一趟（调用方带缓存）
+    // schema 感知补全（表/列/别名）：cursor 上下文解析与目录解析全在
+    // Rust 后端（db_sql_completions，会话级目录缓存），这里只做薄映射。
+    // 注册在 sql 语言上按 model 归属过滤（同 Redis 词表补全模式；与静态
+    // 关键字补全共存，Monaco 自动合并多 provider 建议）；`.` 触发限定符
+    // 二段补全。不需要防抖：Monaco 建议框自带触发节流，后端缓存命中后
+    // 每次只是一趟轻量 IPC
     let schemaProvider: monaco.IDisposable | null = null;
     if (!redisMode) {
       const draftKind = {
@@ -176,25 +174,15 @@ export function SqlEditor({
       schemaProvider = monaco.languages.registerCompletionItemProvider('sql', {
         triggerCharacters: ['.'],
         provideCompletionItems: async (doc, position) => {
-          const completer = completerRef.current;
-          if (!completer || doc !== model) return { suggestions: [] };
-          const textBefore = doc.getValueInRange({
-            startLineNumber: 1,
-            startColumn: 1,
-            endLineNumber: position.lineNumber,
-            endColumn: position.column,
-          });
-          const ctx = parseSqlCompletionContext(textBefore);
-          let drafts;
-          try {
-            drafts = await resolveSchemaSuggestions(ctx, completer);
-          } catch {
-            return { suggestions: [] };
-          }
-          if (drafts.length === 0) return { suggestions: [] };
-          // 替换范围：光标词（限定形态=点后的部分；wordStart 是全文偏移，
-          // textBefore 是 model 前缀故偏移可直接换算）
-          const startPos = model.getPositionAt(ctx.wordStart);
+          const sid = completionsSidRef.current;
+          if (!sid || doc !== model) return { suggestions: [] };
+          const offset = model.getOffsetAt(position);
+          const result = await dbSqlCompletions(sid, model.getValue(), offset).catch(
+            () => null,
+          );
+          if (!result || result.suggestions.length === 0) return { suggestions: [] };
+          // 替换范围：后端给的 wordStart（UTF-16 偏移）到光标
+          const startPos = model.getPositionAt(result.wordStart);
           const range = {
             startLineNumber: startPos.lineNumber,
             startColumn: startPos.column,
@@ -202,7 +190,7 @@ export function SqlEditor({
             endColumn: position.column,
           };
           return {
-            suggestions: drafts.map((d) => ({
+            suggestions: result.suggestions.map((d) => ({
               label: d.label,
               kind: draftKind[d.kind],
               detail: d.detail,
@@ -210,7 +198,7 @@ export function SqlEditor({
               range,
               sortText: d.sort,
               // schema 建议预选：建议列表初始高亮项直接落在本组
-              //（sortText 已压过静态关键字，preselect 再兜一层——多 provider
+              //（sortText 已压过静态关键字，preselect 再兑一层——多 provider
               // 合并时 Monaco 对 preselect 项优先作为初始选中）
               preselect: true,
             })),
