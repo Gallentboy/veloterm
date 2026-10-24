@@ -2,7 +2,9 @@
  * 轻量 Monaco SQL 编辑器包装：数据库工作台的查询输入框专用。
  * 不用 MonacoDocumentCard（与文件仓/草稿生命周期强耦合）；这里只做一个
  * 自持 model 的只读-可编辑小编辑器，languageId=sql（静态补全由
- * ensureSqlLanguage 在宿主侧注册）。⌘/Ctrl+Enter 执行全部；
+ * ensureSqlLanguage 在宿主侧注册；表/列/别名的 schema 感知补全由
+ * schemaCompleter prop 注入数据源，与静态关键字补全共存）。
+ * ⌘/Ctrl+Enter 执行全部；
  * ⌘/Ctrl+Shift+Enter 执行选中（选区经 onSelectionChange 上报，
  * 空选中上报空串，调用方据此禁用入口）。
  * 右键菜单为项目自绘弹层（portal + fixed，与对象树右键菜单同型）：
@@ -20,6 +22,11 @@ import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { ensureExtendedLanguages } from '@/editor/languages';
 import { REDIS_COMMAND_SUGGESTIONS } from '@/components/db/redisCommands';
+import {
+  parseSqlCompletionContext,
+  resolveSchemaSuggestions,
+  type SqlSchemaCompleter,
+} from '@/components/db/sqlCompletion';
 import { readClipboardText, writeClipboardText } from '@/lib/clipboard';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { cn } from '@/lib/utils';
@@ -40,6 +47,9 @@ export interface SqlEditorProps {
   className?: string;
   /** Redis 会话：plaintext 模型 + 静态命令词表补全，右键菜单隐藏执行计划 */
   redisMode?: boolean;
+  /** schema 感知补全数据源（表/列/别名，由调用方带缓存实现）；
+   * 不传或 null = 不启用（Redis 不传） */
+  schemaCompleter?: SqlSchemaCompleter | null;
 }
 
 export function SqlEditor({
@@ -51,6 +61,7 @@ export function SqlEditor({
   onExplain,
   className,
   redisMode = false,
+  schemaCompleter = null,
 }: SqlEditorProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -64,6 +75,8 @@ export function SqlEditor({
   selChangeRef.current = onSelectionChange;
   const explainRef = useRef(onExplain);
   explainRef.current = onExplain;
+  const completerRef = useRef(schemaCompleter);
+  completerRef.current = schemaCompleter;
 
   // 右键菜单（portal 到 body + fixed 定位，项目弹层规范；与对象树右键菜单
   // 同型样式）。selected 为开菜单瞬间的选区快照
@@ -149,6 +162,59 @@ export function SqlEditor({
       });
     }
 
+    // schema 感知补全（表/列/别名）：注册在 sql 语言上，按 model 归属过滤
+    // 到本编辑器（同 Redis 词表补全的过滤模式；与静态关键字补全共存，
+    // Monaco 自动合并多 provider 的建议）；`.` 触发限定符二段补全。
+    // 异步 provider：首次触达某表列时向数据源取一趟（调用方带缓存）
+    let schemaProvider: monaco.IDisposable | null = null;
+    if (!redisMode) {
+      const draftKind = {
+        column: monaco.languages.CompletionItemKind.Field,
+        table: monaco.languages.CompletionItemKind.Class,
+        schema: monaco.languages.CompletionItemKind.Module,
+      } as const;
+      schemaProvider = monaco.languages.registerCompletionItemProvider('sql', {
+        triggerCharacters: ['.'],
+        provideCompletionItems: async (doc, position) => {
+          const completer = completerRef.current;
+          if (!completer || doc !== model) return { suggestions: [] };
+          const textBefore = doc.getValueInRange({
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column,
+          });
+          const ctx = parseSqlCompletionContext(textBefore);
+          let drafts;
+          try {
+            drafts = await resolveSchemaSuggestions(ctx, completer);
+          } catch {
+            return { suggestions: [] };
+          }
+          if (drafts.length === 0) return { suggestions: [] };
+          // 替换范围：光标词（限定形态=点后的部分；wordStart 是全文偏移，
+          // textBefore 是 model 前缀故偏移可直接换算）
+          const startPos = model.getPositionAt(ctx.wordStart);
+          const range = {
+            startLineNumber: startPos.lineNumber,
+            startColumn: startPos.column,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column,
+          };
+          return {
+            suggestions: drafts.map((d) => ({
+              label: d.label,
+              kind: draftKind[d.kind],
+              detail: d.detail,
+              insertText: d.insertText,
+              range,
+              sortText: d.sort,
+            })),
+          };
+        },
+      });
+    }
+
     const editor = monaco.editor.create(containerRef.current, {
       model,
       theme: VELOTERM_MONACO_THEME,
@@ -194,6 +260,7 @@ export function SqlEditor({
     });
 
     return () => {
+      schemaProvider?.dispose();
       redisProvider?.dispose();
       editor.dispose();
       model.dispose();

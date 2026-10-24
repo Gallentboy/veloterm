@@ -6,7 +6,7 @@
  * 卸载即断开会话。全部会话状态内部留存（tab 常驻隐藏切换不丢）。
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlignLeft,
@@ -51,6 +51,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { Spinner } from '@/components/ui/spinner';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { SqlEditor } from '@/components/db/SqlEditor';
+import { CatalogCompleter } from '@/components/db/sqlCatalogCompleter';
 import { ExplainPlanGraph } from '@/components/db/ExplainPlanGraph';
 import {
   RedisBigkeysModal,
@@ -510,6 +511,15 @@ export function DbSessionView({
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const sessionIdRef = useRef<string | null>(null);
+  /** 当前会话元信息的实时读法（补全数据源取当前库名用，不进渲染周期） */
+  const metaRef = useRef<DbSessionMeta | null>(meta);
+  metaRef.current = meta;
+  /** SQL 编辑器 schema 感知补全数据源（表/列/别名）：目录三层缓存，
+   * catalogLoad 时 invalidate（连接/切库/刷新后目录可能已变） */
+  const schemaCompleter = useMemo(
+    () => new CatalogCompleter(() => sessionIdRef.current, () => metaRef.current?.database ?? ''),
+    [],
+  );
   /** 最近一次树状态：刷新按钮按它恢复展开态/已加载内容（不进 useCallback 依赖） */
   const branchesRef = useRef<Map<string, TreeBranch>>(new Map());
   useEffect(() => {
@@ -526,6 +536,8 @@ export function DbSessionView({
   const catalogLoad = useCallback(
     async (sessionId: string, currentDb?: string | null, opts?: { preserve?: boolean }) => {
       const preserve = opts?.preserve === true;
+      // 补全数据源同步失效（连接/切库/刷新后表与列可能已变）
+      schemaCompleter.invalidate();
       // prev = 刷新前的快照；非保留路径为 null（整棵重建）
       const prev = preserve ? branchesRef.current : null;
       if (!preserve) {
@@ -668,7 +680,7 @@ export function DbSessionView({
         setConnectError(String(e));
       }
     },
-    [],
+    [schemaCompleter],
   );
 
   const connect = useCallback(
@@ -1836,6 +1848,7 @@ export function DbSessionView({
               onSelectionChange={handleSelectionChange}
               onExplain={explainSelection}
               redisMode={meta.engine === 'redis'}
+              schemaCompleter={meta.engine === 'redis' ? null : schemaCompleter}
             />
           </div>
 
