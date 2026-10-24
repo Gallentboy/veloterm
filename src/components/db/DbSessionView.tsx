@@ -1752,6 +1752,7 @@ export function DbSessionView({
                     )}
                   >
                     <DbObjectTab
+                      active={activeObjectKey === page.key}
                       payload={{
                         sessionId: page.sessionId,
                         schema: page.schema,
