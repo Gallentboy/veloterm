@@ -357,7 +357,8 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                         // ORA-01403: no data found (end of rows)
                         // ORA-01403 = 游标取尽（正常 EOF，非错误）：本轮行数据
                         // 已收，后续 next_row 走 [3,5,0] 续取或结束
-                        debug!("Cursor exhausted (ORA-01403 normal EOF)");
+                        // 逐游标日志（每条查询取尽都打）：DEBUG 下太吵，降 TRACE
+                        trace!("Cursor exhausted (ORA-01403 normal EOF)");
                         has_more_rows = false;
                     } else if s.ret_code != 0 {
                         let msg_str =

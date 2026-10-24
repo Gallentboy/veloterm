@@ -1,5 +1,5 @@
 use bytes::{BufMut, BytesMut};
-use log::{debug, trace};
+use log::trace;
 use tokio_util::codec::{Decoder, Encoder};
 use crate::error::{Error, Result};
 use super::packet::{PacketType, RawPacket};
@@ -71,7 +71,8 @@ impl Decoder for TnsCodec {
             BytesMut::new()
         };
 
-        debug!(
+        // 逐包解码日志：DEBUG 下太吵（每个 TNS 包一条），降到 TRACE
+        trace!(
             "TNS Packet Decoded: type={:?}, flag={}, payload_len={}",
             ptype, flag, payload.len()
         );
