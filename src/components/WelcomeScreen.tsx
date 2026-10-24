@@ -60,7 +60,8 @@ export function WelcomeScreen({
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-7 overflow-y-auto px-8 py-10 scrollbar-slim select-none">
-      <div className="flex flex-col items-center gap-2 text-center">
+      {/* shrink-0：高度由内容自然撑满，窗口矮时不被 flex 压缩 */}
+      <div className="flex shrink-0 flex-col items-center gap-2 text-center">
         <div className="mb-1 flex size-16 items-center justify-center rounded-2xl border border-border bg-surface">
           <SquareTerminal className="size-8 text-foreground" strokeWidth={1.5} />
         </div>
@@ -68,7 +69,7 @@ export function WelcomeScreen({
         <p className="text-ui-base text-foreground-subtle">{t('welcome.subtitle')}</p>
       </div>
 
-      <div className={cn('w-full max-w-md overflow-hidden rounded-lg border border-border')}>
+      <div className={cn('w-full max-w-md shrink-0 overflow-hidden rounded-lg border border-border')}>
         <div className="border-b border-border/50 bg-surface px-3.5 py-2 text-ui-sm text-foreground-subtlest">
           {t('welcome.getStarted')}
         </div>
@@ -96,9 +97,12 @@ export function WelcomeScreen({
         </div>
       </div>
 
-      {/* 彩蛋轮播（佛祖 / cowsay 奶牛 / sl 小火车 / Matrix 代码雨）：
-          30s 自动换台、点击下一套、圆点跳选，见 WelcomeEasterEggs.tsx */}
-      <WelcomeEasterEggs />
+      {/* 彩蛋轮播（佛祖 / cowsay 奶牛 / sl 小火车 / Matrix 代码雨 / 打字机）：
+          30s 自动换台、点击下一套、圆点跳选；窗口高度不足时响应式隐藏
+          （max-height 720，见 styles.css）——优先保证头部与快捷入口完整 */}
+      <div className="welcome-eggs shrink-0">
+        <WelcomeEasterEggs />
+      </div>
     </div>
   );
 }
