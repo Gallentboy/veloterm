@@ -19,6 +19,7 @@
 //! 报错提示。
 
 pub mod engines;
+pub mod explain;
 pub mod obclient;
 /// Oracle 19c 错误消息全量中文译文（构建期嵌入、零堆分配稀疏查找）。
 /// 数据是机器辅助翻译、非官方译文；查不到时调用方回落 engines 里的
@@ -575,20 +576,18 @@ fn explain_statements(
         .collect())
 }
 
-/// 查看执行计划（SQL 编辑器右键菜单）：把选中语句按引擎方言装配为 EXPLAIN
-/// 语句序列，走 db_query 同一条流式通道（取消/超时/行数上限全复用）。SQL 口径
+/// 查看执行计划（SQL 编辑器右键菜单）：按引擎方言装配 EXPLAIN 语句执行后，
+/// 在后端解析为统一的 PlanNode 节点表（id/parent_id 即边表）直接返回——
+/// 前端按节点/边渲染图，不走流式结果通道（计划行是小数据量）。SQL 口径
 /// 全部对齐 DBeaver 开源实现，调研与真机验证清单见
-/// docs/sql-explain-plan-support.md。
+/// docs/sql-explain-plan-support.md。取消复用会话取消信号，单语句 60s 超时。
 #[tauri::command]
 pub async fn db_explain(
     state: State<'_, DbState>,
     session_id: String,
     sql: String,
     analyze: Option<bool>,
-    max_rows: Option<usize>,
-    timeout_ms: Option<u64>,
-    on_event: Channel<QueryEvent>,
-) -> Result<(), String> {
+) -> Result<Vec<explain::ExplainPlan>, String> {
     let session = state.get(&session_id)?;
     let analyze = analyze.unwrap_or(false);
     let (engine_kind, mode, dialect_key) = {
@@ -627,73 +626,122 @@ pub async fn db_explain(
         }
     }
 
-    let row_cap = max_rows.unwrap_or(5_000).clamp(1, 50_000);
-    let total_budget =
-        Duration::from_millis(timeout_ms.unwrap_or(60_000).clamp(1_000, 3_600_000));
+    let mut engine = session.engine.lock().await;
 
-    let statements: Vec<(String, bool)> = if engine_kind == "oracle" {
-        // Oracle：DBeaver OracleExecutionPlan 同源——plan 表探测（PLAN_TABLE /
-        // TOAD_PLAN_TABLE 候选，SELECT 1 探活同 DBeaver getPlanTableName）+
-        // EXPLAIN PLAN SET STATEMENT_ID INTO <表> FOR（辅助语句，不占结果
-        // 位次；DBeaver 另有的防御性 DELETE 略去——statement_id 每次调用唯一，
-        // 无残留可撞）+ SELECT * FROM <表> WHERE STATEMENT_ID ORDER BY ID
-        //（原始计划行，DBeaver 客户端建树的数据源；结果面板平铺展示全部列）
-        let plan_table = {
-            let mut engine = session.engine.lock().await;
-            let mut found = None;
-            let mut first_err = String::new();
-            for name in ["PLAN_TABLE", "TOAD_PLAN_TABLE"] {
-                let probe = format!("SELECT 1 FROM {name} WHERE ROWNUM = 1");
-                if let Err(e) = engine
-                    .exec_streaming(&probe, 1, &session.cancel, |_| {}, |_| {})
-                    .await
-                {
+    /// 执行一条语句并收集（列头, 行）；取消信号透传，60s 超时。回调须
+    /// Send + 'static（Oracle 同步引擎把回调移入 spawn_blocking），收集器
+    /// 走 Arc<Mutex>（与 db_query 的行计数同型），执行完锁取
+    async fn exec_collect(
+        engine: &mut DbEngine,
+        cancel: &Arc<tokio::sync::Notify>,
+        sql: &str,
+    ) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
+        let columns: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let rows: Arc<Mutex<Vec<Vec<String>>>> = Arc::new(Mutex::new(Vec::new()));
+        let cols_sink = Arc::clone(&columns);
+        let rows_sink = Arc::clone(&rows);
+        let exec = engine.exec_streaming(
+            sql,
+            10_000,
+            cancel,
+            move |cols| {
+                let mut sink = cols_sink.lock().unwrap_or_else(|p| p.into_inner());
+                if sink.is_empty() {
+                    *sink = cols.to_vec();
+                }
+            },
+            move |batch| {
+                rows_sink
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .extend(batch);
+            },
+        );
+        let summary = tokio::time::timeout(Duration::from_secs(60), exec)
+            .await
+            .map_err(|_| "执行计划语句超时（>60s）".to_string())??;
+        if summary.cancelled {
+            return Err("已取消".to_string());
+        }
+        let columns = columns.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let rows = rows.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        Ok((columns, rows))
+    }
+
+    let mut plans: Vec<explain::ExplainPlan> = Vec::with_capacity(user_stmts.len());
+    if engine_kind == "oracle" {
+        // plan 表探测（PLAN_TABLE/TOAD_PLAN_TABLE 候选 + ORA-00942 甄别，
+        // 同 DBeaver getPlanTableName）；DBeaver 的防御性 DELETE 略去——
+        // statement_id 每次调用唯一无残留可撞
+        let mut plan_table: Option<&'static str> = None;
+        let mut first_err = String::new();
+        for name in ["PLAN_TABLE", "TOAD_PLAN_TABLE"] {
+            match exec_collect(
+                &mut engine,
+                &session.cancel,
+                &format!("SELECT 1 FROM {name} WHERE ROWNUM = 1"),
+            )
+            .await
+            {
+                Ok(_) => {
+                    plan_table = Some(name);
+                    break;
+                }
+                Err(e) => {
                     // ORA-00942（表或视图不存在）→ 换下一候选；其他错误
                     //（协议/网络/权限）原样上抛——别把驱动问题误报成缺表
                     if !e.contains("ORA-00942") && first_err.is_empty() {
                         first_err = e;
                     }
-                    continue;
                 }
-                found = Some(name);
-                break;
             }
-            match found {
-                Some(name) => Some(name),
-                None if first_err.is_empty() => None,
-                None => return Err(first_err),
-            }
-        };
+        }
         let Some(plan_table) = plan_table else {
-            return Err(
+            return Err(if first_err.is_empty() {
                 "未找到执行计划表（PLAN_TABLE / TOAD_PLAN_TABLE 均不可访问）：请以当前用户执行 \
                  @?/rdbms/admin/utlxplan.sql 建表，或由 DBA 建全局 PLAN_TABLE\
                  （DBeaver getPlanTableName 同型探测）"
-                    .to_string(),
-            );
+                    .to_string()
+            } else {
+                first_err
+            });
         };
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or_default();
-        let mut out = Vec::with_capacity(user_stmts.len() * 2);
         for (i, stmt) in user_stmts.iter().enumerate() {
             let sid = format!("VELOTERM_{stamp:X}{i}");
-            out.push((
-                format!("EXPLAIN PLAN SET STATEMENT_ID = '{sid}' INTO {plan_table} FOR {}", stmt.sql),
-                false,
-            ));
-            out.push((
-                format!("SELECT * FROM {plan_table} WHERE STATEMENT_ID = '{sid}' ORDER BY ID"),
-                true,
-            ));
+            // 落表动词：失败整体上抛（PLAN_TABLE 类诊断直达用户）
+            exec_collect(
+                &mut engine,
+                &session.cancel,
+                &format!(
+                    "EXPLAIN PLAN SET STATEMENT_ID = '{sid}' INTO {plan_table} FOR {}",
+                    stmt.sql
+                ),
+            )
+            .await?;
+            let (cols, rows) = exec_collect(
+                &mut engine,
+                &session.cancel,
+                &format!(
+                    "SELECT * FROM {plan_table} WHERE STATEMENT_ID = '{sid}' ORDER BY ID"
+                ),
+            )
+            .await?;
+            plans.push(explain::parse_plan(&cols, &rows, &stmt.sql));
         }
-        out
     } else {
-        explain_statements(&engine_kind, mode.as_deref(), &user_stmts, analyze)?
-    };
-
-    run_statements_streaming(&session, &on_event, &statements, row_cap, total_budget).await
+        // 前缀式引擎（MySQL/PG/SQLite/达梦/OB MySQL）：装配与用户语句一一对应
+        let assembled =
+            explain_statements(&engine_kind, mode.as_deref(), &user_stmts, analyze)?;
+        for (stmt, (sql, _)) in user_stmts.iter().zip(assembled) {
+            let (cols, rows) = exec_collect(&mut engine, &session.cancel, &sql).await?;
+            plans.push(explain::parse_plan(&cols, &rows, &stmt.sql));
+        }
+    }
+    Ok(plans)
 }
 
 /// 取消当前正在执行的查询（流式循环 select 到信号即止）。

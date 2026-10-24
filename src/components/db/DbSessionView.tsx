@@ -50,6 +50,7 @@ import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { DataTable } from '@/components/ui/DataTable';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { SqlEditor } from '@/components/db/SqlEditor';
+import { ExplainPlanGraph } from '@/components/db/ExplainPlanGraph';
 import {
   RedisBigkeysModal,
   RedisKeyDeleteModal,
@@ -74,6 +75,7 @@ import {
   type CatalogNode,
   type CatalogParentArg,
   type DbConnectionRecord,
+  type DbExplainPlan,
   type DbQueryEvent,
   type DbSessionMeta,
   type ObjectDefinition,
@@ -297,6 +299,11 @@ export function DbSessionView({
   } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [ddlCopied, setDdlCopied] = useState(false);
+
+  // 执行计划视图（右键「查看执行计划」）：后端解析的节点表 + 加载态；
+  // 新查询时让位（runQuery 开头清空）
+  const [explainPlans, setExplainPlans] = useState<DbExplainPlan[] | null>(null);
+  const [explainLoading, setExplainLoading] = useState(false);
 
   // 树节点右键菜单（fixed 定位，坐标取 contextmenu 事件）
   const [contextMenu, setContextMenu] = useState<{
@@ -728,7 +735,7 @@ export function DbSessionView({
   }, []);
 
   const runQuery = useCallback(
-    async (overrideSql?: string, explain = false) => {
+    async (overrideSql?: string) => {
       const sessionId = sessionIdRef.current;
       const text = (overrideSql ?? sql).trim();
       if (!sessionId || running || !text) return;
@@ -737,20 +744,12 @@ export function DbSessionView({
       setActiveResult(0);
       setObjectDef(null); // 新查询让位：定义/表详情视图隐藏
       setTableDetail(null);
+      setExplainPlans(null); // 普通查询让位：计划视图隐藏
       try {
-        // 查看执行计划走后端 db_explain（方言装配对齐 DBeaver）；
-        // analyze 恒 false——带执行的计划需前端显式入口后再开
-        if (explain) {
-          await dbExplain(sessionId, text, false, handleQueryEvent, {
-            maxRows: rowCap,
-            timeoutMs: DEFAULT_TIMEOUT_MS,
-          });
-        } else {
-          await dbQuery(sessionId, text, handleQueryEvent, {
-            maxRows: rowCap,
-            timeoutMs: DEFAULT_TIMEOUT_MS,
-          });
-        }
+        await dbQuery(sessionId, text, handleQueryEvent, {
+          maxRows: rowCap,
+          timeoutMs: DEFAULT_TIMEOUT_MS,
+        });
       } catch (e) {
       setResults([
         {
@@ -769,17 +768,27 @@ export function DbSessionView({
     }
   }, [running, rowCap, sql, handleQueryEvent]);
 
-  // 查看执行计划：走后端 db_explain 命令——方言装配在后端（口径对齐
-  // DBeaver，调研与真机验证清单见 docs/sql-explain-plan-support.md；
-  // OB Oracle 模式后端明确拒绝），多语句选中逐条出计划
+  // 查看执行计划：后端 db_explain 返回结构化节点表（方言装配与解析口径
+  // 见 docs/sql-explain-plan-support.md；OB Oracle 后端明确拒绝）；
+  // 多语句选中逐条各一份计划
   const explainSelection = useCallback(
     (text: string) => {
-      if (!meta) return;
+      if (!meta || explainLoading || running) return;
       const stmt = text.trim();
-      if (!stmt) return;
-      void runQuery(stmt, true);
+      const sessionId = sessionIdRef.current;
+      if (!sessionId || !stmt) return;
+      setExplainLoading(true);
+      setExplainPlans(null);
+      setResults([]);
+      setActiveResult(0);
+      setObjectDef(null);
+      setTableDetail(null);
+      dbExplain(sessionId, stmt, false)
+        .then(setExplainPlans)
+        .catch((e) => setConnectError(String(e)))
+        .finally(() => setExplainLoading(false));
     },
-    [meta, runQuery],
+    [meta, explainLoading, running],
   );
 
   // 切换当前数据库：MySQL=USE；PG=重连（后端换引擎）；切换后刷新对象树。
@@ -1645,6 +1654,16 @@ export function DbSessionView({
                   </pre>
                 </div>
               </>
+            ) : explainLoading ? (
+              <div className="flex flex-1 items-center justify-center gap-2 text-ui-sm text-foreground-subtle select-none">
+                <Loader2 className="size-4 animate-spin" />
+                {t('db.explainLoading')}
+              </div>
+            ) : explainPlans ? (
+              <ExplainPlanGraph
+                plans={explainPlans}
+                onClose={() => setExplainPlans(null)}
+              />
             ) : results.length === 0 ? (
               <div className="flex flex-1 items-center justify-center text-ui-sm text-foreground-subtlest select-none">
                 {t('db.noResults')}

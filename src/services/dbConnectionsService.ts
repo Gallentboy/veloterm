@@ -239,27 +239,37 @@ export function dbQueryCancel(sessionId: string): Promise<void> {
   return invoke('db_query_cancel', { sessionId });
 }
 
-/** 查看执行计划（SQL 编辑器右键菜单）：方言由后端按 DBeaver 口径装配
- * （MySQL 裸 EXPLAIN / PG EXPLAIN/(ANALYZE,BUFFERS) / SQLite EXPLAIN QUERY
- * PLAN / 达梦 EXPLAIN / Oracle STATEMENT_ID 两段式；OB Oracle 拒绝）。
- * analyze=true 会真实执行语句，仅对只读语句放行（后端事前拒绝 DML）。 */
+/** 执行计划节点（后端统一解析：id/parentId 即边表，parentId=null 或指向
+ * 不存在节点即为根） */
+export interface DbPlanNode {
+  id: number;
+  parentId: number | null;
+  /** 操作名（TABLE ACCESS FULL / Sort / Seq Scan / SIMPLE · t1…） */
+  title: string;
+  /** 次要信息（对象名、访问方式、Extra…） */
+  detail: string;
+  cost: number | null;
+  rows: number | null;
+  bytes: number | null;
+}
+
+/** 一条语句的执行计划（多语句选中时逐条各一份） */
+export interface DbExplainPlan {
+  /** 被解释的语句原文（截断 120 字符，做 Tab 标签） */
+  statement: string;
+  nodes: DbPlanNode[];
+}
+
+/** 查看执行计划（SQL 编辑器右键菜单）：后端按 DBeaver 口径装配方言并解析为
+ * 统一节点表（MySQL 裸 EXPLAIN / PG EXPLAIN/(ANALYZE,BUFFERS) / SQLite
+ * EXPLAIN QUERY PLAN / 达梦 EXPLAIN / Oracle STATEMENT_ID 两段式；OB Oracle
+ * 拒绝）。analyze=true 会真实执行语句，仅对只读语句放行（后端事前拒 DML）。 */
 export function dbExplain(
   sessionId: string,
   sql: string,
   analyze: boolean,
-  onEvent: (event: DbQueryEvent) => void,
-  options?: DbQueryOptions,
-): Promise<void> {
-  const channel = new Channel<DbQueryEvent>();
-  channel.onmessage = onEvent;
-  return invoke('db_explain', {
-    sessionId,
-    sql,
-    analyze,
-    maxRows: options?.maxRows,
-    timeoutMs: options?.timeoutMs,
-    onEvent: channel,
-  });
+): Promise<DbExplainPlan[]> {
+  return invoke('db_explain', { sessionId, sql, analyze });
 }
 
 /** 可切换的数据库清单（MySQL=全部 schema；PG=服务器上可连的库）。 */
