@@ -415,6 +415,44 @@ body {
 }
 
 /*
+ * 主页彩蛋轮播：换台淡入；sl 小火车跑马灯（全编组右进左出横穿循环）。
+ * prefers-reduced-motion 下火车停靠（静止显示）、淡入保留（无位移动画）。
+ */
+.welcome-egg-enter {
+  animation: welcome-egg-fade-in 600ms ease-out both;
+}
+
+@keyframes welcome-egg-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.welcome-train-track {
+  animation: welcome-train-pass 16s linear infinite;
+}
+
+@keyframes welcome-train-pass {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-train-track {
+    animation: none;
+  }
+}
+
+/*
  * 关于卡片入场/出场动画（透明窗口形态，Windows 弹层复用同 keyframes 的
  * 浮现位移）：入场 320ms（下移 12px→0 + 淡入 + 0.98→1 缩放），出场 220ms
  * 反向（时长与 AboutWindow 的 ABOUT_EXIT_ANIMATION_MS、主窗遮罩渐变对齐）。

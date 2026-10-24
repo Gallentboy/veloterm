@@ -1,34 +1,8 @@
 import { ChevronRight, SquareTerminal } from 'lucide-react';
-import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PRIMARY_MODIFIER_LABEL } from '@/lib/keyboard';
 import { cn } from '@/lib/utils';
-
-/** 佛祖保佑字符画（程序员的经典护身符，形态对齐社区流传原版；
- * 转义校准经 node 打印逐行核对） */
-const BUDDHA_LINES = [
-  '                   _ooOoo_',
-  '                  o8888888o',
-  '                  88" . "88',
-  '                  (| -_- |)',
-  '                  O\\  =  /O',
-  "               ____/`---'\\____",
-  "             .'  \\\\|     |//  `.",
-  '            /  \\\\|||  :  |||//  \\',
-  '           /  _||||| -:- |||||-  \\',
-  '           |   | \\\\\\  -  /// |   |',
-  '           | \\_|  \'\'\\---/\'\'  |   |',
-  '           \\  .-\\__  `-`  ___/-. /',
-  '         ___`. .\'  /--.--\\  `. . __',
-  '      ."" \'<  `.___\\_<|>_/___.\'  >\'"".',
-  '     | | :  `- \\`.;\\ _ /`;.`/ - ` : | |',
-  '     \\  \\ `-.   \\_ __\\ /__ _/   .-` /  /',
-  '======`-.____`-.___\\_____/___.-`____.-\'======',
-  '                   `=---=\'',
-];
-/** 眼睛所在行（88" . "88）与眨眼形态 */
-const BUDDHA_EYES_LINE = 2;
-const BUDDHA_BLINK_LINE = '                  88" - "88';
+import { WelcomeEasterEggs } from '@/components/WelcomeEasterEggs';
 
 function ShortcutHint({
   keys,
@@ -84,20 +58,6 @@ export function WelcomeScreen({
 }) {
   const { t } = useTranslation();
 
-  // 佛祖眨眼：约 4s 一次，每次 160ms（眼睛行的两个 . 短暂变 -）
-  const [blink, setBlink] = useState(false);
-  useEffect(() => {
-    let closeTimer = 0;
-    const id = window.setInterval(() => {
-      setBlink(true);
-      closeTimer = window.setTimeout(() => setBlink(false), 160);
-    }, 4200);
-    return () => {
-      window.clearInterval(id);
-      window.clearTimeout(closeTimer);
-    };
-  }, []);
-
   return (
     <div className="flex h-full flex-col items-center justify-center gap-7 overflow-y-auto px-8 py-10 scrollbar-slim select-none">
       <div className="flex flex-col items-center gap-2 text-center">
@@ -136,24 +96,9 @@ export function WelcomeScreen({
         </div>
       </div>
 
-      {/* 佛祖保佑 · 永无 BUG：逐行呼吸浮动（stagger 相位差形成波纹）+ 眨眼，
-          动效类与 prefers-reduced-motion 降级见 styles.css */}
-      <div className="flex w-full flex-col items-center gap-3" aria-hidden="true">
-        <div className="flex flex-col font-mono text-[10px] leading-[1.35] text-foreground-subtle sm:text-[11px]">
-          {BUDDHA_LINES.map((line, i) => (
-            <span
-              key={i}
-              className="welcome-ascii-line whitespace-pre"
-              style={{ animationDelay: `${i * 110}ms` }}
-            >
-              {i === BUDDHA_EYES_LINE && blink ? BUDDHA_BLINK_LINE : line}
-            </span>
-          ))}
-        </div>
-        <p className="text-ui-xs tracking-[0.35em] text-foreground-subtlest">
-          {t('welcome.buddha')}
-        </p>
-      </div>
+      {/* 彩蛋轮播（佛祖 / cowsay 奶牛 / sl 小火车 / Matrix 代码雨）：
+          30s 自动换台、点击下一套、圆点跳选，见 WelcomeEasterEggs.tsx */}
+      <WelcomeEasterEggs />
     </div>
   );
 }

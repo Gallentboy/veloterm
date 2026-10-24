@@ -1179,6 +1179,13 @@ export default {
     manual: '使用说明',
     openSettings: '打开设置',
     buddha: '佛祖保佑 · 永无 BUG',
+    cowCaption: '奶牛有话说 · 程序员语录',
+    cowMoo: '哞~',
+    cowQuotes:
+      '在我电脑上是好的\n这个需求做不了\n马上就好（还没开始）\n不是 bug，是特性\n昨天还能跑\n别问，问就是在重构\n先上线再说\n我一会儿就提交（并没有）\n没有注释，怕你不懂\n又是周五部署的一天',
+    trainCaption: 'sl 小火车 · 别把 ls 敲错了',
+    matrixCaption: '欢迎来到矩阵',
+    eggSwitch: '换一个彩蛋',
   },
   settings: {
     title: '设置',
