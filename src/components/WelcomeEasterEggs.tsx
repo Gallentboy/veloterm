@@ -340,7 +340,8 @@ function TypewriterBanner() {
     // 宽度恒定：每行用空格垫到完整横幅宽（whitespace-pre 保留），打印
     // 过程中容器宽度不变——居中容器不逐帧重算。打印头光标块已按反馈去掉，
     // 仅保留逐列打印本身
-    <div className="flex flex-col font-mono text-[11px] leading-[1.45] text-terminal-green sm:text-[13px]">
+    // 主字体色（text-foreground 语义 token）：随亮/暗主题自动切换，不搞彩色
+    <div className="flex flex-col font-mono text-[11px] leading-[1.45] text-foreground sm:text-[13px]">
       {banner.map((line, i) => (
         <span key={i} className="whitespace-pre">
           {line.slice(0, cols).padEnd(width)}
