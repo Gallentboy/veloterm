@@ -2,7 +2,9 @@
  * 轻量 Monaco SQL 编辑器包装：数据库工作台的查询输入框专用。
  * 不用 MonacoDocumentCard（与文件仓/草稿生命周期强耦合）；这里只做一个
  * 自持 model 的只读-可编辑小编辑器，languageId=sql（静态补全由
- * ensureSqlLanguage 在宿主侧注册）。⌘/Ctrl+Enter 执行。
+ * ensureSqlLanguage 在宿主侧注册）。⌘/Ctrl+Enter 执行全部；
+ * ⌘/Ctrl+Shift+Enter 执行选中（选区经 onSelectionChange 上报，
+ * 空选中上报空串，调用方据此禁用入口）。
  * redisMode：模型语言换 plaintext（Redis 是逐行命令不是 SQL），并挂静态
  * 命令词表补全（redisCommands.ts，数据离线无网络依赖）。
  */
@@ -23,17 +25,33 @@ export interface SqlEditorProps {
   value: string;
   onChange: (value: string) => void;
   onRun: () => void;
+  /** 执行选中文本（⌘/Ctrl+Shift+Enter）；空选中时调用方自行保证不触发 */
+  onRunSelection?: () => void;
+  /** 选中文本变化（空串 = 无有效选中），驱动调用方「执行选中」按钮态 */
+  onSelectionChange?: (selected: string) => void;
   className?: string;
   /** Redis 会话：plaintext 模型 + 静态命令词表补全 */
   redisMode?: boolean;
 }
 
-export function SqlEditor({ value, onChange, onRun, className, redisMode = false }: SqlEditorProps) {
+export function SqlEditor({
+  value,
+  onChange,
+  onRun,
+  onRunSelection,
+  onSelectionChange,
+  className,
+  redisMode = false,
+}: SqlEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const modelRef = useRef<monaco.editor.ITextModel | null>(null);
   const runRef = useRef(onRun);
   runRef.current = onRun;
+  const runSelRef = useRef(onRunSelection);
+  runSelRef.current = onRunSelection;
+  const selChangeRef = useRef(onSelectionChange);
+  selChangeRef.current = onSelectionChange;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -113,6 +131,19 @@ export function SqlEditor({ value, onChange, onRun, className, redisMode = false
 
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       runRef.current();
+    });
+    editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter,
+      () => {
+        runSelRef.current?.();
+      },
+    );
+
+    // 选区跟踪：空选区/纯空白上报空串（调用方据此禁用「执行选中」）
+    editor.onDidChangeCursorSelection(() => {
+      const sel = editor.getSelection();
+      if (!sel) return;
+      selChangeRef.current?.(sel.isEmpty() ? '' : model.getValueInRange(sel));
     });
 
     return () => {
