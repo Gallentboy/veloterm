@@ -1157,20 +1157,20 @@ export function DbSessionView({
 
   if (connecting) {
     // 连接加载态：纯居中组合（无卡片容器）——大号数据库轮廓 + 旋转指示
-    // + 文案 + 不确定进度条。图标按视区比例缩放（clamp 56~112px），
-    // 整体组合块视觉约占主视区高度的 1/3
+    // + 文案 + 不确定进度条。图标按视区比例缩放（clamp 38~75px，较初版
+    // 缩小约 1/3——初版 112px 封顶偏大），整体组合块居中呈现
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-5 select-none">
         <div className="relative flex items-center justify-center">
           <Database
             className="text-foreground-subtlest/40"
-            style={{ width: 'clamp(56px, 14vmin, 112px)', height: 'clamp(56px, 14vmin, 112px)' }}
+            style={{ width: 'clamp(38px, 9.5vmin, 75px)', height: 'clamp(38px, 9.5vmin, 75px)' }}
             strokeWidth={1}
           />
           <Spinner
             aria-label={t('db.connecting')}
             className="absolute text-primary/70"
-            style={{ width: 'clamp(28px, 7vmin, 56px)', height: 'clamp(28px, 7vmin, 56px)' }}
+            style={{ width: 'clamp(19px, 4.7vmin, 38px)', height: 'clamp(19px, 4.7vmin, 38px)' }}
             strokeWidth={2}
           />
         </div>
