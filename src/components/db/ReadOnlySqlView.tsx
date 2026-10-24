@@ -28,6 +28,9 @@ export interface ReadOnlySqlViewHandle {
   /** 格式化当前内容（只读展示层变换：model.setValue 程序化写入，
    * 用户仍不可手改；刷新/重开会还原服务端原文） */
   format: () => Promise<void>;
+  /** 当前展示文本（含格式化后的形态）——「复制」按钮用它实现所见即所得，
+   * 避免复制到 state 里的服务端原文与已格式化视图不一致 */
+  getText: () => string;
 }
 
 interface ReadOnlySqlViewProps {
@@ -119,7 +122,17 @@ export function ReadOnlySqlView({ content, className, formatEngine = null, ref }
   formatRef.current = formatContent;
   const formatEngineRef = useRef(formatEngine);
   formatEngineRef.current = formatEngine;
-  useImperativeHandle(ref, () => ({ format: () => formatRef.current() }), []);
+  useImperativeHandle(
+    ref,
+    () => ({
+      format: () => formatRef.current(),
+      getText: () => {
+        const model = modelRef.current;
+        return model && !model.isDisposed() ? model.getValue() : '';
+      },
+    }),
+    [],
+  );
 
   return <div ref={containerRef} className={className} />;
 }

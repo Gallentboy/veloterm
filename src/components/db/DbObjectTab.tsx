@@ -304,7 +304,7 @@ export function DbObjectTab({
           {subTab === 'ddl' ? (
             <button
               type="button"
-              onClick={() => copyText(detail.ddl)}
+              onClick={() => copyText(sqlViewRef.current?.getText() ?? detail.ddl)}
               className="flex items-center gap-1 rounded-md px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-hover hover:text-foreground"
             >
               {copied ? (
@@ -418,7 +418,7 @@ export function DbObjectTab({
         </button>
         <button
           type="button"
-          onClick={() => copyText(definition.definition)}
+          onClick={() => copyText(sqlViewRef.current?.getText() ?? definition.definition)}
           className="flex items-center gap-1 rounded-md px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-hover hover:text-foreground"
           title={t('files.copyCode', '复制')}
         >
