@@ -419,11 +419,61 @@ fn remap_ob_column_type(packet: &mut [u8]) {
             return;
         }
     }
-    // 固定段内偏移：filler_len(2) + charset(2) + column_length(4) = 8
-    let type_off = pos + 8;
+    // 固定段 13 字节（mysql_common Column::deserialize 的 parse(13) 同口径）：
+    // fixed_length_fields_len(1B lenenc，实际恒 0x0C 单字节) + charset(2) +
+    // column_length(4) = 7 后即 column_type。此前误把 fixed_len 当 2 字节
+    //（真机实测 Unknown column type 202 的根因：偏 1 字节打到 flags 高位，
+    // 类型码原封未动）
+    let type_off = pos + 7;
     if let Some(&t) = packet.get(type_off) {
         if crate::ob20::OB_ORACLE_EXT_TYPES.contains(&t) {
             packet[type_off] = 253; // VAR_STRING
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remap_ob_column_type;
+
+    /// 构造一个列定义包（6 个 lenenc 字符串 + 13 字节固定段），类型码可指定。
+    /// 结构对齐 mysql_common Column::deserialize（catalog + 5 个 meta 字符串 +
+    /// parse(13) 固定段）。
+    fn column_def(column_type: u8) -> Vec<u8> {
+        let mut p = Vec::new();
+        for s in ["def", "S", "T", "T", "N", "N"] {
+            p.push(s.len() as u8);
+            p.extend_from_slice(s.as_bytes());
+        }
+        p.push(0x0c); // fixed_length_fields_len（lenenc，实际恒单字节 12）
+        p.extend_from_slice(&[0x00, 0x21]); // charset
+        p.extend_from_slice(&[0x00, 0x00, 0x00, 0x0a]); // column_length
+        p.push(column_type);
+        p.extend_from_slice(&[0x00, 0x00]); // flags
+        p.push(0x00); // decimals
+        p.extend_from_slice(&[0x00, 0x00]); // filler
+        p
+    }
+
+    /// 真机实锤的失败形态：TIMESTAMP 列的类型码 202（OB_TIMESTAMP_NANO）。
+    /// 此前偏移算错（fixed_len 误当 2 字节），替换打到 flags 高位、类型码
+    /// 原封不动——修复后必须命中类型字节
+    #[test]
+    fn remap_hits_type_byte_for_ob_ext_types() {
+        for code in crate::ob20::OB_ORACLE_EXT_TYPES {
+            let mut p = column_def(*code);
+            remap_ob_column_type(&mut p);
+            assert_eq!(p[14 + 7], 253, "类型码 {code} 应被降级为 VAR_STRING");
+        }
+    }
+
+    /// 标准类型码不受影响（非 OB 扩展码不改写）
+    #[test]
+    fn remap_leaves_standard_types_alone() {
+        for code in [0u8, 3, 7, 10, 246, 253, 254] {
+            let mut p = column_def(code);
+            remap_ob_column_type(&mut p);
+            assert_eq!(p[14 + 7], code, "标准类型码 {code} 不应被改写");
         }
     }
 }
