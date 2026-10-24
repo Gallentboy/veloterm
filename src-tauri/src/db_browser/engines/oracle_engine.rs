@@ -5,7 +5,6 @@
 //! all_users 黑名单口径。
 
 use oracle_async::Queryable;
-use crate::db_browser::obclient;
 use crate::db_browser::oracle_messages;
 
 /// 错误码的完整中文解释：优先查 19c 全量译文表（20362 条，含 message/
@@ -317,43 +316,10 @@ async fn query_usernames(
     Ok(usernames)
 }
 
-/// OB Oracle 模式的用户（schema）清单：all_users + 系统账号黑名单。黑名单
-/// 与 oracle_usernames 的 <12 分支同源照抄（OB 的 all_users 无 12c 的
-/// oracle_maintained 列，统一走黑名单；OB Oracle 租户自带的 SYS 等系统
-/// 账号同被滤除）。
-pub(crate) fn ob_oracle_usernames(conn: &mut obclient::ObConn) -> Result<Vec<String>, String> {
-    const SQL: &str = "SELECT username FROM all_users WHERE username NOT IN \
-         ('SYS','SYSTEM','OUTLN','DIP','ORACLE_OCM','DBSNMP','APPQOSSYS','WMSYS',\
-          'EXFSYS','CTXSYS','XDB','ANONYMOUS','XS$NULL','MDDATA','MDSYS','OLAPSYS',\
-          'ORDDATA','ORDPLUGINS','ORDSYS','SI_INFORMTN_SCHEMA','LBACSYS','OWBSYS',\
-          'OWBSYS_AUDIT','SPATIAL_CSW_ADMIN','SPATIAL_WFS_ADMIN','SYSMAN',\
-          'MGMT_VIEW','FLOWS_FILES') \
-         AND username NOT LIKE 'APEX\\_%' ESCAPE '\\' \
-         AND username NOT LIKE 'FLOWS\\_%' ESCAPE '\\' \
-         ORDER BY username";
-    Ok(conn
-        .query_rows(SQL)
-        .map_err(|e| format!("OceanBase 查询用户清单失败：{e}"))?
-        .into_iter()
-        // 单列查询：缺列行（网络截断半态）跳过不致命
-        .filter_map(|row| row.first().map(ob_cell_string))
-        .collect())
-}
-
 /// SQL 字符串字面量单引号翻倍（目录 SQL 的过滤值内联拼接——Oracle 单引号转义规则）。
 #[inline(always)]
 pub(crate) fn ob_quote_literal(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
-}
-
-/// OB 单元格 → 展示字符串（None = NULL 列；字节流 lossy 转串，与
-/// emit 流式臂的展示语义一致）。
-#[inline(always)]
-pub(crate) fn ob_cell_string(cell: &Option<Vec<u8>>) -> String {
-    match cell {
-        None => "NULL".to_string(),
-        Some(b) => String::from_utf8_lossy(b).into_owned(),
-    }
 }
 
 /// Row 按列取字符串（OracleValue Display 内置 NULL 处理与各类型形态；越界列回 NULL）
