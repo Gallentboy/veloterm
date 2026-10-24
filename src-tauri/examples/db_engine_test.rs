@@ -1,4 +1,4 @@
-//! 数据库工作台全链路真机测试 CLI（Oracle / 达梦）。
+//! 数据库工作台全链路真机测试 CLI（Oracle / 达梦 / MySQL / OB MySQL）。
 //!
 //! 与 ob_oracle_test 同型（PASS/WARN/FAIL 逐项 + 汇总退出码），但驱动的是
 //! **app 层真实代码路径**（db_browser::DbEngine 的目录/定义/表详情/执行
@@ -15,16 +15,26 @@
 //! cargo run --example db_engine_test -- dameng \
 //!     --host 127.0.0.1 --port 5236 --user SYSDBA --pass SYSDBA001 \
 //!     [--schema SYSDBA] [--table T1] [--dm-compat oracle|mysql]
+//! # MySQL / MariaDB（原生驱动口径）
+//! cargo run --example db_engine_test -- mysql \
+//!     --host 127.0.0.1 --port 3306 --user root --pass *** \
+//!     [--schema testdb] [--table T1]
+//! # OceanBase MySQL 租户（OB 专有字典分支）
+//! cargo run --example db_engine_test -- obmysql \
+//!     --host 127.0.0.1 --port 2881 --user 'root@tenant' --pass *** \
+//!     [--schema testdb] [--table T1]
 //! ```
 //!
-//! `--schema` 缺省取登录用户名原样；`--table` 缺省取对象树第一张表。
-//! 达梦的表空间/用户/角色是实例级组（挂 SYS schema），CLI 自动切 SYS 测。
+//! `--schema` 缺省：Oracle 取登录用户名大写；MySQL/OB MySQL 取会话当前库，
+//! 再退回清单里第一个非系统库；达梦取登录用户名。
+//! `--table` 缺省取对象树第一张表。达梦的表空间/用户/角色是实例级组
+//!（挂 SYS schema），CLI 自动切 SYS 测。
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use app_lib::db::DbConnectionRecord;
-use app_lib::db_browser::engines::{DbEngine, ObjectGroup};
+use app_lib::db_browser::engines::{CatalogParent, DbEngine, ObjectGroup};
 use app_lib::db_browser::{explain, explain_core, sqlsplit};
 
 // ── 参数与报告器 ─────────────────────────────────────────────────────────
@@ -45,9 +55,11 @@ fn parse_args() -> Result<Args, String> {
     let mut argv = std::env::args().skip(1);
     let engine = argv
         .next()
-        .ok_or("缺引擎参数：oracle | dameng")?;
-    if engine != "oracle" && engine != "dameng" {
-        return Err(format!("未知引擎 {engine}（支持 oracle | dameng）"));
+        .ok_or("缺引擎参数：oracle | dameng | mysql | obmysql")?;
+    if !matches!(engine.as_str(), "oracle" | "dameng" | "mysql" | "obmysql") {
+        return Err(format!(
+            "未知引擎 {engine}（支持 oracle | dameng | mysql | obmysql）"
+        ));
     }
     let mut a = Args {
         engine,
@@ -231,10 +243,10 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    let dialect_key = if args.engine == "dameng" {
-        format!("dameng:{}", args.dm_compat)
-    } else {
-        "oracle".to_string()
+    let dialect_key = match args.engine.as_str() {
+        "dameng" => format!("dameng:{}", args.dm_compat),
+        "mysql" | "obmysql" => "mysql".to_string(),
+        _ => "oracle".to_string(),
     };
     println!(
         "══ db_engine_test：{} @ {}:{}（dialect={dialect_key}）══",
@@ -247,12 +259,22 @@ async fn main() {
     let record = DbConnectionRecord {
         id: 0,
         name: "cli-test".into(),
-        engine: args.engine.clone(),
+        // obmysql：engine=oceanbase + mode=mysql（与前端表单一致，走 OB 专有
+        // 字典分支）；mysql：原生驱动口径
+        engine: if args.engine == "obmysql" {
+            "oceanbase".into()
+        } else {
+            args.engine.clone()
+        },
         host: args.host.clone(),
         port: args.port,
         database: None,
         service_name: args.service.clone(),
-        mode: None,
+        mode: if args.engine == "obmysql" {
+            Some("mysql".into())
+        } else {
+            None
+        },
         db_path: None,
         encryption_mode: "none".into(),
         username: Some(args.user.clone()),
@@ -292,14 +314,45 @@ async fn main() {
 
     // 02 库/schema 清单
     // Oracle 的 owner 名在字典里恒为大写（未加引号创建的用户）；应用前端
-    // 从 all_users 拿的是正确大小写，CLI 缺省对 Oracle 大写化免得查空
-    let mut schema = args.schema.clone().unwrap_or_else(|| {
-        if args.engine == "oracle" {
-            args.user.to_uppercase()
-        } else {
-            args.user.clone()
+    // 从 all_users 拿的是正确大小写，CLI 缺省对 Oracle 大写化免得查空。
+    // MySQL 的「schema」就是 database：缺省取会话当前库（连接串带库时非空），
+    // 空则退回清单里第一个非系统库。
+    let schema = match args.schema.clone() {
+        Some(s) => s,
+        None if args.engine == "oracle" => args.user.to_uppercase(),
+        None if args.engine == "dameng" => args.user.clone(),
+        None => {
+            let current = query(&mut engine, &cancel, "SELECT DATABASE()")
+                .await
+                .ok()
+                .and_then(|(_, rows)| rows.first().and_then(|r| r.first().cloned()))
+                .filter(|s| !s.is_empty() && s != "NULL");
+            match current {
+                Some(s) => s,
+                None => engine
+                    .list_databases()
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|s| {
+                        !matches!(
+                            s.to_ascii_lowercase().as_str(),
+                            "information_schema" | "mysql" | "performance_schema" | "sys"
+                        )
+                    })
+                    .unwrap_or_default(),
+            }
         }
-    });
+    };
+    if schema.is_empty() {
+        r.report(
+            "schema",
+            Outcome::Fail("无法确定测试 schema：请用 --schema 指定一个库".into()),
+            0,
+        );
+        r.summary();
+        std::process::exit(1);
+    }
     step(&mut r, "list_databases", || async {
         match engine.list_databases().await {
             Ok(list) if !list.is_empty() => {
@@ -312,7 +365,33 @@ async fn main() {
     })
     .await;
 
-    // 03 切 schema（Oracle/达梦 = 会话级 SET SCHEMA）
+    // 03 对象树根层（前端 db_catalog 的 Root 分支）
+    step(&mut r, "catalog_root", || async {
+        match engine.catalog(&CatalogParent::Root).await {
+            Ok(nodes) if !nodes.is_empty() => {
+                let want = if matches!(args.engine.as_str(), "mysql" | "obmysql") {
+                    "database"
+                } else {
+                    "schema"
+                };
+                let same = nodes.iter().filter(|n| n.kind == want).count();
+                if same == nodes.len() {
+                    Outcome::Pass(format!("{} 个顶层节点（kind={want}）", nodes.len()))
+                } else {
+                    Outcome::Warn(format!(
+                        "{} 个节点，其中 {} 个 kind={want}（其余 kind 不一致）",
+                        nodes.len(),
+                        same
+                    ))
+                }
+            }
+            Ok(_) => Outcome::Fail("根层为空".into()),
+            Err(e) => Outcome::Fail(e),
+        }
+    })
+    .await;
+
+    // 04 切 schema（Oracle/达梦 = 会话级 SET SCHEMA；MySQL = USE db）
     step(&mut r, "select_database", || async {
         match engine.select_database(&schema).await {
             Ok(()) => Outcome::Pass(format!("SET SCHEMA {schema}")),
@@ -349,7 +428,35 @@ async fn main() {
     })
     .await;
 
-    // 05 表清单 + 选定测试表
+    // 05 全组清单（树第二层逐个展开：视图/例程/触发器/事件/序列/物化视图）
+    if matches!(args.engine.as_str(), "mysql" | "obmysql") {
+        let mut groups = vec![
+            ObjectGroup::View,
+            ObjectGroup::Function,
+            ObjectGroup::Procedure,
+            ObjectGroup::Trigger,
+            ObjectGroup::Event,
+            ObjectGroup::Sequence,
+        ];
+        if args.engine == "obmysql" {
+            groups.push(ObjectGroup::MaterializedView);
+        }
+        for group in groups {
+            let name = format!("list:{}", group.as_str());
+            let g_schema = schema.clone();
+            step(&mut r, &name, || async {
+                match engine.catalog_objects(&g_schema, group).await {
+                    Ok(objs) if !objs.is_empty() => Outcome::Pass(format!("{} 个", objs.len())),
+                    // 空组是常态（无视图/无触发器/MariaDB 之外无序列）
+                    Ok(_) => Outcome::Warn("空组".into()),
+                    Err(e) => Outcome::Fail(e),
+                }
+            })
+            .await;
+        }
+    }
+
+    // 06 表清单 + 选定测试表
     let mut test_table = args.table.clone().unwrap_or_default();
     step(&mut r, "catalog_objects(table)", || async {
         match engine.catalog_objects(&schema, ObjectGroup::Table).await {
@@ -384,8 +491,10 @@ async fn main() {
     .await;
 
     // 07 对象定义扫描：各适用组取首个对象拉定义
-    let def_groups: Vec<ObjectGroup> = if args.engine == "oracle" {
-        vec![
+    // MySQL 侧前端只用 object_definition 取 过程/函数/触发器/事件（表与视图的
+    // DDL 走 table_detail）；序列分组已改为返回空定义，故不列进定义扫描。
+    let def_groups: Vec<ObjectGroup> = match args.engine.as_str() {
+        "oracle" => vec![
             ObjectGroup::View,
             ObjectGroup::Function,
             ObjectGroup::Procedure,
@@ -396,9 +505,14 @@ async fn main() {
             ObjectGroup::DbLink,
             ObjectGroup::RecycleBin,
             ObjectGroup::DataType,
-        ]
-    } else {
-        vec![
+        ],
+        "mysql" | "obmysql" => vec![
+            ObjectGroup::Function,
+            ObjectGroup::Procedure,
+            ObjectGroup::Trigger,
+            ObjectGroup::Event,
+        ],
+        _ => vec![
             ObjectGroup::View,
             ObjectGroup::Function,
             ObjectGroup::Procedure,
@@ -411,7 +525,7 @@ async fn main() {
             ObjectGroup::Tablespace,
             ObjectGroup::DmUser,
             ObjectGroup::DmRole,
-        ]
+        ],
     };
     for group in def_groups {
         let g_schema = if args.engine == "dameng"
@@ -510,21 +624,68 @@ async fn main() {
     })
     .await;
 
+    // 08b 视图详情（前端双击视图走同一 table_detail，kind=view）
+    if matches!(args.engine.as_str(), "mysql" | "obmysql") {
+        let vschema = schema.clone();
+        step(&mut r, "table_detail(view)", || async {
+            match engine.catalog_objects(&vschema, ObjectGroup::View).await {
+                Ok(objs) if !objs.is_empty() => {
+                    let Some(v) = objs.first() else {
+                        return Outcome::Fail("取首视图失败".into());
+                    };
+                    match engine.table_detail(&vschema, &v.name, "view").await {
+                        Ok(d) if !d.ddl.trim().is_empty() && !d.columns.is_empty() => {
+                            Outcome::Pass(format!(
+                                "{}：DDL {}B · 列 {}",
+                                v.name,
+                                d.ddl.len(),
+                                d.columns.len()
+                            ))
+                        }
+                        Ok(d) => Outcome::Fail(format!(
+                            "{}：DDL {}B / 列 {}（应为非空）",
+                            v.name,
+                            d.ddl.len(),
+                            d.columns.len()
+                        )),
+                        Err(e) => Outcome::Fail(e),
+                    }
+                }
+                Ok(_) => Outcome::Warn("无视图，跳过".into()),
+                Err(e) => Outcome::Fail(e),
+            }
+        })
+        .await;
+    }
+
     // 09 执行计划（结构化节点树；Oracle 走 PLAN_TABLE 探测 + 两段式，
-    // 同时回归 case-6 位图 / case-19 流控 / 伪步骤剔除等驱动修复点）
+    // 同时回归 case-6 位图 / case-19 流控 / 伪步骤剔除等驱动修复点；
+    // MySQL / OB MySQL 走前缀式 EXPLAIN，标识符用反引号）
     let explain_schema = schema.clone();
     let table_for_explain = test_table.clone();
-    let engine_kind = args.engine.clone();
+    let engine_kind = if args.engine == "obmysql" {
+        "oceanbase".to_string()
+    } else {
+        args.engine.clone()
+    };
+    let explain_mode: Option<String> = if args.engine == "obmysql" {
+        Some("mysql".into())
+    } else {
+        None
+    };
+    let mysql_family = matches!(args.engine.as_str(), "mysql" | "obmysql");
     let dk = dialect_key.clone();
     step(&mut r, "explain", || async {
         if table_for_explain.is_empty() {
             return Outcome::Warn("无测试表，跳过".into());
         }
-        let sql = format!(
+        let sql = if mysql_family {
+            format!("SELECT COUNT(*) FROM `{explain_schema}`.`{table_for_explain}`")
+        } else {
             // COUNT(*) 规避 ROWNUM 依赖（达梦 mysql 兼容模式可能不认
             // ROWNUM）；EXPLAIN 只做优化不执行，无全表风险
-            "SELECT COUNT(*) FROM \"{explain_schema}\".\"{table_for_explain}\""
-        );
+            format!("SELECT COUNT(*) FROM \"{explain_schema}\".\"{table_for_explain}\"")
+        };
         let stmts = sqlsplit::split_statements(&dk, &sql);
         if stmts.is_empty() {
             return Outcome::Fail("语句切分为空".into());
@@ -533,7 +694,7 @@ async fn main() {
             &mut engine,
             &cancel,
             &engine_kind,
-            None,
+            explain_mode.as_deref(),
             &stmts,
             false,
         )
