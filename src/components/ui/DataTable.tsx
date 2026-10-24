@@ -31,6 +31,7 @@ import {
   type SortingState,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { createPortal } from 'react-dom';
 
 import {
   CellTooltipPortal,
@@ -48,6 +49,10 @@ export interface DataTableProps {
   className?: string;
   /** 是否展示工具栏（过滤框 + 复制按钮）；默认展示 */
   showToolbar?: boolean;
+  /** 工具栏控件的外置宿主（portal 到页头等多 tab 标题行）：非 null 时
+   * 过滤框/复制按钮渲染到该元素，表格自身不再占一整条工具栏行。
+   * 过滤/复制逻辑仍在本组件内，外置仅改变控件所在位置 */
+  toolbarTarget?: HTMLElement | null;
   /** 空态文案 */
   emptyLabel?: string;
   /** 底部状态条自定义内容（行数统计等）；不传显示默认统计 */
@@ -72,6 +77,7 @@ export const DataTable = memo(function DataTable({
   rows,
   className,
   showToolbar = true,
+  toolbarTarget = null,
   emptyLabel,
   statusFooter,
 }: DataTableProps) {
@@ -183,42 +189,55 @@ export const DataTable = memo(function DataTable({
     }
   }, [columns, processedRows]);
 
+  // 工具栏控件（过滤框 + 复制按钮）：内联条或外置宿主两种落位共用同一份
+  const toolbarControls = (
+    <>
+      <div className="relative flex items-center">
+        <input
+          type="text"
+          value={filterInput}
+          onChange={(e) => setFilterInput(e.target.value)}
+          placeholder={t('dataTable.filter', '过滤...')}
+          className="h-6 w-32 rounded-md border border-border/60 bg-background px-2 text-ui-xs text-foreground outline-none transition-all focus:w-44 focus:border-border"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="flex items-center gap-1 rounded-md border border-border/60 bg-background px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-hover hover:text-foreground"
+        title={t('files.copyTable', '复制表格')}
+      >
+        {copied ? (
+          <>
+            <Check className="size-3 text-terminal-green" />
+            <span className="text-terminal-green">{t('files.copied', '已复制')}</span>
+          </>
+        ) : (
+          <>
+            <Copy className="size-3" />
+            <span>{t('files.copyTable', '复制表格')}</span>
+          </>
+        )}
+      </button>
+    </>
+  );
+
   return (
     // bg-transparent：随宿主背景走——工作台结果面板/对象页与主背景一致
     //（此前刷 bg-popover，亮色 #ffffff 对 #f8f8f8、暗色 #2b2b2b 对 #161616，
     // 表格自垫一层色形成可见色块）；弹窗内随面板色，两种宿主都正确
     <div className={cn('flex h-full min-h-0 w-full flex-col bg-transparent font-mono text-ui-xs', className)}>
-      {showToolbar ? (
-        <div className="flex shrink-0 items-center justify-end gap-2 border-b border-border/60 bg-surface/40 px-2 py-1 select-none">
-          <div className="relative flex items-center">
-            <input
-              type="text"
-              value={filterInput}
-              onChange={(e) => setFilterInput(e.target.value)}
-              placeholder={t('dataTable.filter', '过滤...')}
-              className="h-6 w-32 rounded-md border border-border/60 bg-background px-2 text-ui-xs text-foreground outline-none transition-all focus:w-44 focus:border-border"
-            />
+      {toolbarTarget
+        ? // 外置宿主：控件 portal 到宿主元素（多 tab 标题行），自身不占行
+          createPortal(
+            <span className="flex items-center gap-2">{toolbarControls}</span>,
+            toolbarTarget,
+          )
+        : showToolbar ? (
+          <div className="flex shrink-0 items-center justify-end gap-2 border-b border-border/60 bg-surface/40 px-2 py-1 select-none">
+            {toolbarControls}
           </div>
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="flex items-center gap-1 rounded-md border border-border/60 bg-background px-2 py-0.5 text-ui-xs text-foreground-subtle hover:bg-hover hover:text-foreground"
-            title={t('files.copyTable', '复制表格')}
-          >
-            {copied ? (
-              <>
-                <Check className="size-3 text-terminal-green" />
-                <span className="text-terminal-green">{t('files.copied', '已复制')}</span>
-              </>
-            ) : (
-              <>
-                <Copy className="size-3" />
-                <span>{t('files.copyTable', '复制表格')}</span>
-              </>
-            )}
-          </button>
-        </div>
-      ) : null}
+        ) : null}
 
       <div
         ref={containerRef}

@@ -130,6 +130,10 @@ export function DbObjectTab({
   const [subTab, setSubTab] = useState<'ddl' | 'columns' | 'indexes' | 'constraints' | 'references'>('ddl');
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // 表格工具栏的外置宿主（表详情多 tab 标题行右侧）：DataTable 的过滤框/
+  // 复制按钮 portal 到这里，表格自身不再占一行；子 tab 切到 DDL 时表格
+  // 卸载、portal 随之清空，宿主 span 收起不留空位
+  const [tableToolbarHost, setTableToolbarHost] = useState<HTMLSpanElement | null>(null);
   // 只读 SQL 视图的命令句柄（格式化按钮调 format()；定义视图与表 DDL
   // 两个形态各自只挂一个实例，共用一个 ref）
   const sqlViewRef = useRef<ReadOnlySqlViewHandle | null>(null);
@@ -263,6 +267,11 @@ export function DbObjectTab({
               ))}
           </span>
           <div className="flex-1" />
+          <span
+            ref={setTableToolbarHost}
+            className="flex items-center gap-2"
+            aria-hidden={tableToolbarHost == null}
+          />
           <button
             type="button"
             onClick={() => setLocalRefresh((v) => v + 1)}
@@ -316,13 +325,19 @@ export function DbObjectTab({
             className="scrollbar-slim min-h-0 flex-1"
           />
         ) : subTab === 'columns' ? (
-          <DataTable className="flex-1" columns={detail.columnHeaders} rows={detail.columns} />
+          <DataTable
+            className="flex-1"
+            columns={detail.columnHeaders}
+            rows={detail.columns}
+            toolbarTarget={tableToolbarHost}
+          />
         ) : subTab === 'indexes' ? (
           <DataTable
             className="flex-1"
             columns={detail.indexHeaders}
             rows={detail.indexes}
             emptyLabel={t('db.noIndexes')}
+            toolbarTarget={tableToolbarHost}
           />
         ) : subTab === 'references' ? (
           <DataTable
@@ -330,6 +345,7 @@ export function DbObjectTab({
             columns={detail.referenceHeaders}
             rows={detail.references}
             emptyLabel={t('db.noReferences')}
+            toolbarTarget={tableToolbarHost}
           />
         ) : (
           <DataTable
@@ -337,6 +353,7 @@ export function DbObjectTab({
             columns={detail.constraintHeaders}
             rows={detail.constraints}
             emptyLabel={t('db.noConstraints')}
+            toolbarTarget={tableToolbarHost}
           />
         )}
       </div>
