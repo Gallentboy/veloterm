@@ -5,17 +5,23 @@
  * ensureSqlLanguage 在宿主侧注册）。⌘/Ctrl+Enter 执行全部；
  * ⌘/Ctrl+Shift+Enter 执行选中（选区经 onSelectionChange 上报，
  * 空选中上报空串，调用方据此禁用入口）。
+ * 右键菜单为项目自绘弹层（portal + fixed，与对象树右键菜单同型）：
+ * 复制/粘贴/执行选中/全部执行/查看执行计划（redisMode 隐藏执行计划）。
  * redisMode：模型语言换 plaintext（Redis 是逐行命令不是 SQL），并挂静态
  * 命令词表补全（redisCommands.ts，数据离线无网络依赖）。
  */
 
 import * as monaco from 'monaco-editor';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { createPortal } from 'react-dom';
 
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { ensureExtendedLanguages } from '@/editor/languages';
 import { REDIS_COMMAND_SUGGESTIONS } from '@/components/db/redisCommands';
+import { readClipboardText, writeClipboardText } from '@/lib/clipboard';
+import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
 import { cn } from '@/lib/utils';
 
 // 模块级幂等注册（伞入口内部各 ensure 亦幂等）
@@ -29,8 +35,10 @@ export interface SqlEditorProps {
   onRunSelection?: () => void;
   /** 选中文本变化（空串 = 无有效选中），驱动调用方「执行选中」按钮态 */
   onSelectionChange?: (selected: string) => void;
+  /** 查看执行计划（入参为选中文本；引擎方言由调用方拼，本组件不感知） */
+  onExplain?: (selected: string) => void;
   className?: string;
-  /** Redis 会话：plaintext 模型 + 静态命令词表补全 */
+  /** Redis 会话：plaintext 模型 + 静态命令词表补全，右键菜单隐藏执行计划 */
   redisMode?: boolean;
 }
 
@@ -40,9 +48,11 @@ export function SqlEditor({
   onRun,
   onRunSelection,
   onSelectionChange,
+  onExplain,
   className,
   redisMode = false,
 }: SqlEditorProps) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const modelRef = useRef<monaco.editor.ITextModel | null>(null);
@@ -52,6 +62,40 @@ export function SqlEditor({
   runSelRef.current = onRunSelection;
   const selChangeRef = useRef(onSelectionChange);
   selChangeRef.current = onSelectionChange;
+  const explainRef = useRef(onExplain);
+  explainRef.current = onExplain;
+
+  // 右键菜单（portal 到 body + fixed 定位，项目弹层规范；与对象树右键菜单
+  // 同型样式）。selected 为开菜单瞬间的选区快照
+  const [menu, setMenu] = useState<{ x: number; y: number; selected: string } | null>(
+    null,
+  );
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  useDismissOnOutsidePointer(menu !== null, menuRef, () => setMenu(null));
+
+  const openContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const sel = editorRef.current?.getSelection();
+    const model = modelRef.current;
+    const selected = sel && !sel.isEmpty() && model ? model.getValueInRange(sel) : '';
+    setMenu({ x: e.clientX, y: e.clientY, selected });
+  };
+
+  const pasteFromClipboard = () => {
+    const editor = editorRef.current;
+    const model = modelRef.current;
+    if (!editor || !model) return;
+    void readClipboardText()
+      .then((text) => {
+        // 覆盖当前选区（零宽选区即光标处插入）；executeEdits 走 undo 栈
+        const sel = editor.getSelection();
+        editor.executeEdits('ctx-paste', [
+          { range: sel ?? model.getFullModelRange(), text, forceMoveMarkers: false },
+        ]);
+        editor.focus();
+      })
+      .catch(() => undefined);
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -126,6 +170,9 @@ export function SqlEditor({
       quickSuggestions: { other: true, comments: false, strings: false },
       suggestSelection: 'first',
       tabSize: 2,
+      // 关掉 Monaco 自带右键菜单，换成项目自绘弹层（Go to Definition 等
+      // 对工作台无意义，只要复制/粘贴/执行/执行计划）
+      contextmenu: false,
     });
     editorRef.current = editor;
 
@@ -166,5 +213,82 @@ export function SqlEditor({
     }
   }, [value]);
 
-  return <div ref={containerRef} className={cn('h-full w-full overflow-hidden', className)} />;
+  return (
+    <div
+      ref={containerRef}
+      onContextMenu={openContextMenu}
+      className={cn('h-full w-full overflow-hidden', className)}
+    >
+      {menu
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              style={{ position: 'fixed', top: menu.y, left: menu.x }}
+              className="z-[120] min-w-44 overflow-hidden rounded-lg border border-border bg-menu p-1 shadow-lg select-none"
+            >
+              {(() => {
+                const hasSel = menu.selected.trim().length > 0;
+                const items: {
+                  key: string;
+                  label: string;
+                  disabled?: boolean;
+                  action: () => void;
+                }[] = [
+                  {
+                    key: 'copy',
+                    label: t('db.ctxCopy'),
+                    disabled: !hasSel,
+                    action: () => {
+                      void writeClipboardText(menu.selected).catch(() => undefined);
+                    },
+                  },
+                  {
+                    key: 'paste',
+                    label: t('db.ctxPaste'),
+                    action: pasteFromClipboard,
+                  },
+                  {
+                    key: 'runSel',
+                    label: t('db.runSelected'),
+                    disabled: !hasSel,
+                    action: () => runSelRef.current?.(),
+                  },
+                  {
+                    key: 'runAll',
+                    label: t('db.runAll'),
+                    disabled: !value.trim(),
+                    action: () => runRef.current(),
+                  },
+                ];
+                if (!redisMode) {
+                  items.push({
+                    key: 'explain',
+                    label: t('db.ctxExplain'),
+                    disabled: !hasSel,
+                    action: () => explainRef.current?.(menu.selected),
+                  });
+                }
+                return items.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    role="menuitem"
+                    disabled={item.disabled}
+                    onClick={() => {
+                      setMenu(null);
+                      item.action();
+                    }}
+                    className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-menu-hover disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    {item.label}
+                  </button>
+                ));
+              })()}
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
 }
