@@ -492,15 +492,26 @@ async fn main() {
     }
 
     // ── 20 事务：CREATE + INSERT + COMMIT ──
+    // 表名带每轮唯一后缀 + DROP 仅在本轮建表成功后执行——彻底排除两种
+    // 误删场景：schema 里恰有同名表（历史残留/他人巧合同名）时 CREATE 失败
+    // 但无条件 DROP 会删掉它；测试中途断连的残留表也因唯一名互不干扰
+    let run_stamp = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let test_table = format!("VELOTERM_TEST_{run_stamp:X}");
+    let mut test_table_created = false;
     let t = Instant::now();
-    let test_table = "VELOTERM_TEST_$$";
     let create: Result<(), _> = conn
         .query_drop(format!(
             "CREATE TABLE {test_table} (id NUMBER, name VARCHAR2(100), created DATE DEFAULT SYSDATE)"
         ))
         .await;
     match create {
-        Ok(()) => rep.report(20, "CREATE TABLE", Outcome::Pass(test_table.to_string()), t.elapsed().as_millis()),
+        Ok(()) => {
+            test_table_created = true;
+            rep.report(20, "CREATE TABLE", Outcome::Pass(test_table.clone()), t.elapsed().as_millis())
+        }
         Err(e) => {
             rep.report(20, "CREATE TABLE", Outcome::Fail(format!("{e}")), t.elapsed().as_millis());
         }
@@ -630,12 +641,21 @@ async fn main() {
     };
     rep.report(25, "驱动 API 事务", outcome, t.elapsed().as_millis());
 
-    // ── 26 清理 ──
+    // ── 26 清理（仅本轮建出的表；未建成则跳过，不动库里任何已有同名表）──
     let t = Instant::now();
-    let drop: Result<(), _> = conn.query_drop(format!("DROP TABLE {test_table}")).await;
-    match drop {
-        Ok(()) => rep.report(26, "DROP TABLE 清理", Outcome::Pass("OK".to_string()), t.elapsed().as_millis()),
-        Err(e) => rep.report(26, "DROP TABLE 清理", Outcome::Fail(format!("{e}")), t.elapsed().as_millis()),
+    if test_table_created {
+        let drop: Result<(), _> = conn.query_drop(format!("DROP TABLE {test_table}")).await;
+        match drop {
+            Ok(()) => rep.report(26, "DROP TABLE 清理", Outcome::Pass("OK".to_string()), t.elapsed().as_millis()),
+            Err(e) => rep.report(26, "DROP TABLE 清理", Outcome::Fail(format!("{e}")), t.elapsed().as_millis()),
+        }
+    } else {
+        rep.report(
+            26,
+            "DROP TABLE 清理",
+            Outcome::Warn("建表未成功，跳过清理（不触碰非本轮建出的表）".to_string()),
+            t.elapsed().as_millis(),
+        );
     }
 
     // ── 27 错误处理：ORA-00942 ──
@@ -668,7 +688,7 @@ async fn main() {
     // ── 29 类型解码（NUMBER/INTEGER/DATE/TIMESTAMP/NVARCHAR2/CLOB）──
     // 独立建表插一行读回，Value 逐列 to_string 渲染——看 OB 经文本协议
     // 回传的真实字节形态（NLS 初始化生效与否在此暴露：NVARCHAR2 乱码即 NLS 未生效）
-    let types_table = "VELOTERM_TYPES_TEST";
+    let types_table = format!("VELOTERM_TYPES_{run_stamp:X}");
     let t = Instant::now();
     let created: Result<(), _> = conn
         .query_drop(format!(
