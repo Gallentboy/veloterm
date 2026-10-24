@@ -1300,7 +1300,7 @@ export function DbSessionView({
               ref={contextMenuRef}
               role="menu"
               style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x }}
-              className="z-[120] min-w-44 overflow-hidden rounded-lg border border-border bg-menu p-1 shadow-lg select-none"
+              className="z-[120] overflow-hidden rounded-lg border border-border bg-menu p-1 shadow-lg select-none"
             >
               {(() => {
                 // 菜单命名统一为「动词 + 对象」：查看数据 / 查看详情 / 查看定义 /
@@ -1389,7 +1389,7 @@ export function DbSessionView({
                       setContextMenu(null);
                       item.action();
                     }}
-                    className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-menu-hover"
+                    className="flex w-full items-center whitespace-nowrap rounded-md px-2.5 py-1.5 text-left text-ui-sm text-foreground transition-colors hover:bg-menu-hover"
                   >
                     {item.label}
                   </button>
