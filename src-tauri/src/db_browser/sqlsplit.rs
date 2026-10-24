@@ -52,7 +52,7 @@ pub fn dialect_for_engine(engine: &str) -> &'static dyn Dialect {
 
 /// 达梦 Oracle 兼容（含裸 `"dameng"` 与显式 `"dameng:oracle"` 两种写法）：
 /// 服务器侧是 PL/SQL 语义，语句分割要做块整段化。
-fn is_plsql_engine(engine: &str) -> bool {
+pub(crate) fn is_plsql_engine(engine: &str) -> bool {
     engine == "oracle"
         || engine == "dameng"
         || engine.strip_prefix("dameng:").is_some_and(|m| m != "mysql")
@@ -122,7 +122,7 @@ pub fn split_statements(engine: &str, sql: &str) -> Vec<SplitStatement> {
 /// BEGIN（MySQL 事务缩写也仅限 mysql 引擎）；字符串/注释里的字面量
 /// 'BEGIN' 不误判。CREATE OR REPLACE PROCEDURE/FUNCTION 体含 BEGIN，
 /// 同样整段化——从工作台执行存储过程定义是合法场景。
-fn contains_plsql_block(sql: &str) -> bool {
+pub(crate) fn contains_plsql_block(sql: &str) -> bool {
     #[derive(PartialEq)]
     enum St {
         Code,

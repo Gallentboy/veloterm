@@ -1893,7 +1893,11 @@ export function DbSessionView({
               <button
                 type="button"
                 disabled={!sql.trim()}
-                onClick={() => void sqlEditorRef.current?.format()}
+                onClick={() =>
+                  void sqlEditorRef.current
+                    ?.format()
+                    .catch((e) => setConnectError(String(e)))
+                }
                 title={t('db.formatSqlHint')}
                 className="flex items-center gap-1 rounded-md bg-surface px-2 py-0.5 text-ui-xs font-medium text-foreground hover:bg-hover disabled:opacity-40"
               >

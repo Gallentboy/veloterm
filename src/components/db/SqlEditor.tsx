@@ -96,10 +96,9 @@ export function SqlEditor({
     const range = sel && !sel.isEmpty() ? sel : model.getFullModelRange();
     const source = model.getValueInRange(range);
     if (!source.trim()) return;
-    const formatted = await dbFormatSql(source, formatEngineRef.current ?? undefined).catch(
-      () => null,
-    );
-    if (formatted == null || formatted === source) return;
+    // 后端拒绝（PL/SQL 块等）时向上抛错，由调用方（工具栏按钮）展示
+    const formatted = await dbFormatSql(source, formatEngineRef.current ?? undefined);
+    if (formatted === source) return;
     editor.executeEdits('sql-format', [
       { range, text: formatted, forceMoveMarkers: false },
     ]);
@@ -370,7 +369,7 @@ export function SqlEditor({
                 items.push({
                   key: 'format',
                   label: hasSel ? t('db.formatSelection') : t('db.formatSql'),
-                  action: () => void formatRef.current(),
+                  action: () => void formatRef.current().catch(() => undefined),
                 });
               }
                 return items.map((item) => (

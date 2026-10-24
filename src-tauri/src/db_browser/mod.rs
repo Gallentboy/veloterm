@@ -380,14 +380,21 @@ pub async fn db_sql_completions_invalidate(
 
 /// 格式化 SQL（sqlformat 0.5：纯空白/缩进/折行规整，参数占位符不替换，
 /// 关键字大小写不强制改写）。无会话依赖的纯函数；dialect 传引擎名
-///（postgres → 数组语法 Dialect::PostgreSql，其余走 Generic）
+///（postgres → 数组语法 Dialect::PostgreSql，其余走 Generic）。
+/// PL/SQL 块（Oracle/达梦引擎，词界 BEGIN/DECLARE，含存储过程/函数体）
+/// 拒绝格式化：sqlformat 是语句级 SQL 格式化器，块内的 := 赋值、loop、
+/// end if 等 PL 语法会被彻底打乱——整段保持原文并报错说明
 #[tauri::command]
-pub fn db_format_sql(sql: String, dialect: Option<String>) -> String {
+pub fn db_format_sql(sql: String, dialect: Option<String>) -> Result<String, String> {
+    let engine = dialect.as_deref().unwrap_or("");
+    if sqlsplit::is_plsql_engine(engine) && sqlsplit::contains_plsql_block(&sql) {
+        return Err("检测到 PL/SQL 块（BEGIN/DECLARE）：暂不支持格式化，已保持原文".to_string());
+    }
     let mut options = sqlformat::FormatOptions::default(); // 2 空格缩进
-    if dialect.as_deref() == Some("postgres") {
+    if engine == "postgres" {
         options.dialect = sqlformat::Dialect::PostgreSql;
     }
-    sqlformat::format(&sql, &sqlformat::QueryParams::None, &options)
+    Ok(sqlformat::format(&sql, &sqlformat::QueryParams::None, &options))
 }
 
 /// 目录父层（前端参数形态；None = 根层）。
@@ -1271,10 +1278,18 @@ mod tests {
 
     #[test]
     fn format_sql_basics() {
+        // PL/SQL 块拒格式化（sqlformat 是语句级格式化器，块内 :=/loop/end if
+        // 会被彻底打乱）——用户实测反馈的回归向量
+        let plsql = "create or replace function f(vStr varchar2) return number is\nm number;\nbegin\nm := 0;\nfor cur in (select * from table(split(vStr, ','))) loop\nif instr(vStr, cur.column_value) > 0 then m := 1;\nreturn m;\nend if;\nend loop;\nreturn m;\nend;";
+        let out = db_format_sql(plsql.to_string(), Some("oracle".into()));
+        assert!(out.is_err(), "PL/SQL 块应拒格式化");
+        assert_eq!(out.unwrap_err().contains("PL/SQL"), true);
+
         let out = db_format_sql(
             "SELECT id, NAME from t_user WHERE id=1 and name like 'a%'".into(),
             None,
-        );
+        )
+        .expect("普通 SQL 应可格式化");
         // 折行 + 缩进生效，token 无丢失，字符串字面量原样
         assert!(out.contains('\n'), "应折行：{out}");
         assert!(out.contains("t_user") && out.contains("'a%'"), "{out}");
@@ -1283,7 +1298,7 @@ mod tests {
         assert!(out.contains("from"), "保留用户小写关键字：{out}");
 
         // 多语句与分号保留
-        let out2 = db_format_sql("select 1; select 2".into(), None);
+        let out2 = db_format_sql("select 1; select 2".into(), None).expect("多语句应可格式化");
         assert!(out2.contains(';'), "{out2}");
     }
 
