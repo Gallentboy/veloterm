@@ -11,17 +11,18 @@ fn main() {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     println!("cargo:rustc-env=OB_FORK_BUILD_EPOCH={secs}");
-    println!("cargo:rustc-env=OB_FORK_BUILD_UTC={}", format_utc(secs));
+    println!("cargo:rustc-env=OB_FORK_BUILD_CST={}", format_cst(secs));
 }
 
-/// epoch 秒 → `YYYY-MM-DD HH:MM:SS UTC`（Howard Hinnant 的 civil_from_days
-/// 算法，days→(y,m,d) 纯整数运算，零依赖）
-fn format_utc(secs: u64) -> String {
+/// epoch 秒 → 北京时间 `YYYY-MM-DD HH:MM:SS +0800`（UTC+8 整小时偏移，
+/// Howard Hinnant 的 civil_from_days 算法纯整数运算，零依赖）
+fn format_cst(secs: u64) -> String {
+    let secs = secs + 8 * 3600;
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (y, m, d) = civil_from_days(days);
     format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02} UTC",
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02} +0800",
         rem / 3600,
         rem % 3600 / 60,
         rem % 60

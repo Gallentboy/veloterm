@@ -149,8 +149,8 @@ async fn main() {
 
     let mut rep = Reporter::new();
     println!(
-        "═══ OB Oracle 纯 Rust 驱动测试 ═══\n编译时间: {}（epoch {}，核对手里的 exe 是哪次构建）\n目标: {}:{}  用户: {}  OB20: {}\n",
-        option_env!("OB_FORK_BUILD_UTC").unwrap_or("unknown"),
+        "═══ OB Oracle 纯 Rust 驱动测试 ═══\n编译时间(北京): {}（epoch {}，核对手里的 exe 是哪次构建）\n详细日志: 设环境变量 OB_DEBUG=1（cmd: set OB_DEBUG=1；PowerShell: $env:OB_DEBUG=1）\n目标: {}:{}  用户: {}  OB20: {}\n",
+        option_env!("OB_FORK_BUILD_CST").unwrap_or("unknown"),
         option_env!("OB_FORK_BUILD_EPOCH").unwrap_or("?"),
         args.host,
         args.port,

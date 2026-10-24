@@ -457,6 +457,9 @@ mod queryable;
 /// io 层接入是后续阶段，模块当前独立可测。
 pub mod ob20;
 
+/// 连接/认证阶段详细日志（`OB_DEBUG=1`，veloterm 分叉新增）——见模块头
+pub(crate) mod obdbg;
+
 type BoxFuture<'a, T> = futures_core::future::BoxFuture<'a, Result<T>>;
 
 fn buffer_pool() -> &'static Arc<crate::buffer_pool::BufferPool> {
