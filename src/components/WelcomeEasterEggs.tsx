@@ -257,9 +257,95 @@ function MatrixRain() {
   );
 }
 
+// ── 5. VeloTerm 打字机（程序内建 5 行像素字体拼横幅，逐列打印） ────────
+
+/** 仅收录所需字母的 5×5 像素字体（# 为墨点）：拼 "VELOTERM" 横幅 */
+const BANNER_FONT: Record<string, string[]> = {
+  V: ['#   #', '#   #', '#   #', ' # # ', '  #  '],
+  E: ['#####', '#    ', '#### ', '#    ', '#####'],
+  L: ['#    ', '#    ', '#    ', '#    ', '#####'],
+  O: [' ### ', '#   #', '#   #', '#   #', ' ### '],
+  T: ['#####', '  #  ', '  #  ', '  #  ', '  #  '],
+  R: ['#### ', '#   #', '#### ', '#  # ', '#   #'],
+  M: ['#   #', '## ##', '# # #', '#   #', '#   #'],
+};
+const BANNER_TEXT = 'VELOTERM';
+const BANNER_GAP = 2;
+
+/** 拼横幅：每字母 5 列 + 间隔列，逐行拼接 */
+function buildBanner(): string[] {
+  const rows = ['','','','',''];
+  for (const ch of BANNER_TEXT) {
+    const glyph = BANNER_FONT[ch] ?? ['','','','',''];
+    for (let r = 0; r < 5; r += 1) {
+      rows[r] = (rows[r] ?? '') + (glyph[r] ?? '') + ' '.repeat(BANNER_GAP);
+    }
+  }
+  return rows;
+}
+
+function TypewriterBanner() {
+  const banner = useMemo(buildBanner, []);
+  const width = banner[0]?.length ?? 0;
+  const [cols, setCols] = useState(0);
+  const [done, setDone] = useState(false);
+  const [cursorOn, setCursorOn] = useState(true);
+
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setCols(width);
+      setDone(true);
+      return;
+    }
+    // 逐列打印（~45ms/列，像点阵打印机扫描）；写完 8s 后重打
+    let replay = 0;
+    const id = window.setInterval(() => {
+      setCols((c) => {
+        if (c >= width) {
+          window.clearInterval(id);
+          setDone(true);
+          replay = window.setTimeout(() => {
+            setDone(false);
+            setCols(0);
+          }, 8000);
+          return c;
+        }
+        return c + 1;
+      });
+    }, 45);
+    const blink = window.setInterval(() => setCursorOn((v) => !v), 530);
+    return () => {
+      window.clearInterval(id);
+      window.clearInterval(blink);
+      window.clearTimeout(replay);
+    };
+  }, [width]);
+
+  const printRow = Math.min(2, 4); // 打印头光标块所在的行（中间行）
+  return (
+    <div className="flex flex-col font-mono text-[10px] leading-[1.4] text-terminal-green sm:text-[11px]">
+      {banner.map((line, i) => (
+        <span key={i} className="whitespace-pre">
+          {line.slice(0, cols)}
+          {!done && i === printRow && cols < width ? (
+            <span className="text-terminal-green">█</span>
+          ) : null}
+        </span>
+      ))}
+      {/* 写完：终端提示符 + 闪烁光标 */}
+      {done ? (
+        <span className="mt-1 whitespace-pre text-foreground-subtle">
+          {'~$ '}
+          <span className={cursorOn ? 'opacity-100' : 'opacity-0'}>█</span>
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 // ── 轮播容器 ───────────────────────────────────────────────────────────────
 
-const SETS = ['buddha', 'cow', 'train', 'matrix'] as const;
+const SETS = ['buddha', 'cow', 'train', 'matrix', 'banner'] as const;
 type EggSet = (typeof SETS)[number];
 
 /** 主页彩蛋轮播：30s 自动换台、点击整个区域下一套、圆点跳选 */
@@ -278,6 +364,7 @@ export function WelcomeEasterEggs() {
     cow: t('welcome.cowCaption'),
     train: t('welcome.trainCaption'),
     matrix: t('welcome.matrixCaption'),
+    banner: t('welcome.bannerCaption'),
   };
   const current = SETS[idx] ?? 'buddha';
 
@@ -300,6 +387,7 @@ export function WelcomeEasterEggs() {
           {current === 'cow' ? <CowArt /> : null}
           {current === 'train' ? <TrainArt /> : null}
           {current === 'matrix' ? <MatrixRain /> : null}
+          {current === 'banner' ? <TypewriterBanner /> : null}
           <p className="text-ui-xs tracking-[0.3em] text-foreground-subtlest">
             {captions[current]}
           </p>
