@@ -226,6 +226,9 @@ export function SqlEditor({
       scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
       padding: { top: 8, bottom: 8 },
       quickSuggestions: { other: true, comments: false, strings: false },
+      // 关掉文档词建议：schema 感知补全（表/列）已覆盖，文档里其它词在此
+      // 全是噪音——尤其 t. 之后会把编辑器里出现过的任意词混进列清单
+      wordBasedSuggestions: 'off',
       suggestSelection: 'first',
       tabSize: 2,
       // 关掉 Monaco 自带右键菜单，换成项目自绘弹层（Go to Definition 等

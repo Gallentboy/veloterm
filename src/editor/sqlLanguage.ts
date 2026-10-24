@@ -182,6 +182,12 @@ export function ensureSqlLanguage(monaco: typeof MonacoNs): void {
         endLineNumber: position.lineNumber,
         endColumn: position.column,
       });
+      // 限定符位置（标识符. 后，含刚敲完点）：只可能是列名/限定表名二段，
+      // 关键字/函数/片段在这里全是噪音——让位给 schema 感知补全
+      //（db_sql_completions 后端服务），保证 t. 后列表只剩目标字段
+      if (/(?:[A-Za-z_$][\w$]*|"[^"]*"|`[^`]*`)\s*\.\s*[\w$]*$/.test(before)) {
+        return { suggestions: [] };
+      }
       const clause = sqlClauseContext(currentStatement(before));
 
       const items: MonacoNs.languages.CompletionItem[] = [];
