@@ -7,6 +7,10 @@
  * model（内容 + 行缓冲），实例不增、库与 worker 本就全局一份。此前每页
  * 一个 editor 实例（DOM 视图 + ViewModel 各一套），页数多时线性吃内存。
  *
+ * editor 惰性到首次附着时在真实容器上创建（不挂游离 div 初始化——游离
+ * 容器无盒模型，初始化测量 0×0，搬进文档后 automaticLayout 的
+ * ResizeObserver 对「游离→挂载」转换不可靠，会停在 0×0 白屏）。
+ *
  * 模型生命周期：挂载 createModel（不指定 Uri——Monaco 自动生成唯一 Uri，
  * 固定 Uri 在多会话同开同一对象/重开时序下会撞「model already exists」
  * 直接崩树；只读高亮走语言参数不依赖 Uri）、content 变化 setValue（只读
@@ -34,7 +38,7 @@ function getEmptyModel(): monaco.editor.ITextModel {
   return emptyModel;
 }
 
-function getSharedEditor(): monaco.editor.IStandaloneCodeEditor {
+function getSharedEditor(host: HTMLElement): monaco.editor.IStandaloneCodeEditor {
   if (!sharedEditor) {
     // 与 SqlEditor 同序：先 worker 环境，再主题/扩展语言（幂等）
     setupMonacoEnvironment();
@@ -43,8 +47,9 @@ function getSharedEditor(): monaco.editor.IStandaloneCodeEditor {
       ensureExtendedLanguages(monaco);
       languagesRegistered = true;
     }
-    // 宿主容器由激活视图现场提供（游离状态下挂在游离 div 上）
-    sharedEditor = monaco.editor.create(document.createElement('div'), {
+    // 直接在真实容器上创建（host 在文档流内，初始化测量有效）；后续切页
+    // 只搬 DOM 节点 + setModel，不重建
+    sharedEditor = monaco.editor.create(host, {
       model: getEmptyModel(),
       theme: VELOTERM_MONACO_THEME,
       automaticLayout: true,
@@ -90,13 +95,13 @@ export function ReadOnlySqlView({ content, className, active = true }: ReadOnlyS
   // 模型生命周期：挂载建一次（无 Uri，Monaco 自动唯一——固定 Uri 多会话
   // 同开同一对象会撞「model already exists」崩树）、卸载释放
   useEffect(() => {
-    const editor = getSharedEditor();
     const model = monaco.editor.createModel(content, 'sql');
     modelRef.current = model;
     return () => {
-      // editor 还挂着这个 model 时先摘下（dispose 被引用的 model 会抛）
-      if (!model.isDisposed() && editor.getModel() === model) {
-        editor.setModel(getEmptyModel());
+      // editor 还挂着这个 model 时先摘下（dispose 被引用的 model 会抛）；
+      // editor 尚未创建（从未激活过）则直接释放
+      if (sharedEditor && !model.isDisposed() && sharedEditor.getModel() === model) {
+        sharedEditor.setModel(getEmptyModel());
       }
       model.dispose();
       modelRef.current = null;
@@ -121,7 +126,8 @@ export function ReadOnlySqlView({ content, className, active = true }: ReadOnlyS
     const container = containerRef.current;
     const model = modelRef.current;
     if (!container || !model || model.isDisposed()) return;
-    const editor = getSharedEditor();
+    // 首次调用时 editor 直接在本容器上创建（消除游离初始化的 0×0 测量）
+    const editor = getSharedEditor(container);
     if (editor.getModel() !== model) {
       editor.setModel(model);
     }
@@ -130,8 +136,11 @@ export function ReadOnlySqlView({ content, className, active = true }: ReadOnlyS
     if (domNode && domNode.parentElement !== container) {
       container.appendChild(domNode);
     }
-    // attach 时容器刚从 hidden 恢复（同一提交内 class 已生效），布局有效
+    // 同步 layout + rAF 二次 layout：确保「hidden→可见」「容器首挂」两种
+    // 时序下尺寸测量都生效（ResizeObserver 对游离→挂载转换不可靠）
     editor.layout();
+    const raf = requestAnimationFrame(() => editor.layout());
+    return () => cancelAnimationFrame(raf);
   }, [active]);
 
   return <div ref={containerRef} className={className} />;
