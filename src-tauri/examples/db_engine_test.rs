@@ -443,12 +443,19 @@ async fn main() {
                             def.definition.len()
                         )),
                         Ok(_) => Outcome::Fail(format!("{}：定义为空", first.name)),
-                        // 带对象名与同组样本，便于直接定位字典口径问题
-                        Err(e) => Outcome::Fail(format!(
-                            "{}：{e}（同组样本：{}）",
-                            first.name,
-                            sample.join(", ")
-                        )),
+                        Err(e) => {
+                            // 系统内置对象无源码是常态（SYSDBA 的 SP_* 备份/
+                            // 维护过程不对外暴露源码）：降为 WARN 不记失败
+                            if e.contains("均无源码") {
+                                Outcome::Warn(format!("{}：{e}", first.name))
+                            } else {
+                                Outcome::Fail(format!(
+                                    "{}：{e}（同组样本：{}）",
+                                    first.name,
+                                    sample.join(", ")
+                                ))
+                            }
+                        }
                     }
                 }
                 // 组为空是常态（如回收站/DB Link 未使用）：警告不失败
