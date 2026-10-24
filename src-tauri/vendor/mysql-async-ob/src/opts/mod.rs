@@ -553,6 +553,20 @@ impl Default for PoolOpts {
     }
 }
 
+/// OceanBase 租户兼容模式（veloterm 分叉新增）。
+///
+/// 驱动无法从线缆上区分「OB MySQL 租户」与「原生 MySQL」（两者握手与
+/// 查询行为一致），只能由连接建立方按数据源类型声明；目录查询据此选择
+/// OB 专有字典与过滤规则，声明为 `None` 时保持原生 MySQL 行为不变。
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+pub enum ObCompatMode {
+    /// OB MySQL 租户：物化视图走 `OCEANBASE.DBA_MVIEWS`、序列走
+    /// `SHOW SEQUENCES`、隐藏 OB 内建的 Oracle 兼容 schema 与 MV 容器表。
+    MySql,
+    /// OB Oracle 租户：对象目录全部走 `ALL_*` 数据字典。
+    Oracle,
+}
+
 #[derive(Clone, Eq, PartialEq, Default, Debug)]
 pub(crate) struct InnerOpts {
     mysql_opts: MysqlOpts,
@@ -672,6 +686,13 @@ pub(crate) struct MysqlOpts {
     /// 切换为 ob20 包格式（对 OceanBase Oracle 租户；默认 false——对普通
     /// MySQL 服务器无副作用，能力位不会回显，连接保持标准形态）。
     ob_protocol20: bool,
+
+    /// veloterm 分叉新增：调用方声明的 OceanBase 租户兼容模式（默认 None
+    /// = 非 OceanBase）。驱动无法从线缆上区分「OB MySQL 租户」与「原生
+    /// MySQL」，只能由连接建立方按数据源类型声明；目录查询据此选择 OB 专有
+    /// 字典（`SHOW SEQUENCES`、`OCEANBASE.DBA_MVIEWS`、内部表前缀过滤），
+    /// 对原生 MySQL 零影响。
+    ob_compat_mode: Option<ObCompatMode>,
 }
 
 /// Mysql connection options.
@@ -990,6 +1011,11 @@ impl Opts {
         self.inner.mysql_opts.ob_protocol20
     }
 
+    /// 调用方声明的 OceanBase 租户兼容模式（veloterm 分叉新增，见字段说明）
+    pub fn ob_compat_mode(&self) -> Option<ObCompatMode> {
+        self.inner.mysql_opts.ob_compat_mode
+    }
+
     /// Path to unix socket (or named pipe on Windows) (defaults to `None`).
     ///
     /// # Connection URL
@@ -1146,6 +1172,7 @@ impl Default for MysqlOpts {
             local_infile_handler: None,
             pool_opts: Default::default(),
             ob_protocol20: false,
+            ob_compat_mode: None,
             conn_ttl: None,
             stmt_cache_size: DEFAULT_STMT_CACHE_SIZE,
             ssl_opts: None,
@@ -1382,6 +1409,12 @@ impl OptsBuilder {
     /// Defines `ob_protocol20` option. See [`Opts::ob_protocol20`].
     pub fn ob_protocol20<T: Into<Option<bool>>>(mut self, ob_protocol20: T) -> Self {
         self.opts.ob_protocol20 = ob_protocol20.into().unwrap_or(false);
+        self
+    }
+
+    /// Defines `ob_compat_mode` option. See [`Opts::ob_compat_mode`].
+    pub fn ob_compat_mode<T: Into<Option<ObCompatMode>>>(mut self, mode: T) -> Self {
+        self.opts.ob_compat_mode = mode.into();
         self
     }
 

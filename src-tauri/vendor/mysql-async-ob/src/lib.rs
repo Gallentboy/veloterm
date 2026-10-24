@@ -503,7 +503,7 @@ pub use self::opts::ClientIdentity;
 
 #[doc(inline)]
 pub use self::opts::{
-    ChangeUserOpts, Opts, OptsBuilder, PoolConstraints, PoolOpts, SslOpts,
+    ChangeUserOpts, ObCompatMode, Opts, OptsBuilder, PoolConstraints, PoolOpts, SslOpts,
     DEFAULT_INACTIVE_CONNECTION_TTL, DEFAULT_POOL_CONSTRAINTS, DEFAULT_STMT_CACHE_SIZE,
     DEFAULT_TTL_CHECK_INTERVAL,
 };

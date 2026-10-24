@@ -265,6 +265,13 @@ impl Conn {
         self.inner.ob_is_oracle_mode
     }
 
+    /// 调用方声明的 OB 租户兼容模式（见 [`crate::ObCompatMode`]）。
+    /// 驱动无法从线缆区分 OB MySQL 租户与原生 MySQL，故由连接建立方声明；
+    /// 原生 MySQL 连接恒 `None`。
+    pub fn ob_compat_mode(&self) -> Option<crate::ObCompatMode> {
+        self.opts().ob_compat_mode()
+    }
+
     /// 服务端回显的 OB 能力位（0 = 未收到回显，诊断用）
     pub fn ob_capability_echo(&self) -> u64 {
         self.inner.ob_capability

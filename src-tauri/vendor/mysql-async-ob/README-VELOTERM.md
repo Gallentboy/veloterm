@@ -17,10 +17,10 @@ libobclient（`src-tauri/vendor/obconnector-c`，LGPL-2.1 C 库）的**纯 Rust 
 | `src/ob20.rs`（新增） | OB20 协议层：24B 头（magic 0x20AB/version 20/conn_id/request_id(u24)/pkt_seq/payload_len/flags/CRC16-ARC）、CRC32 尾包、extra 区跳过、能力位 shift 0..=20、connect attrs 键值、`scan_capability_flag`（OK 包 session-track 解析）；`sm3` 子模块（GB/T 32905 SM3 + `ob_sm3_password` 应答算法） |
 | `src/io/ob20_codec.rs`（新增） | `Ob20Codec`：写 = MySQL 分块 → ob20 包 → zlib → 外层压缩帧；读 = 解外层帧 → 解压 → unwrap → 多块重组；内/外序号与 request_id 管理 |
 | `src/io/mod.rs` | `PacketCodec` → `ConnCodec` 枚举（Plain/Ob20）贯穿 Framed；`Stream::enable_ob20` 热换 codec（`make_secure` 同型）；`ConnCodec` 的 Decoder/Encoder/seq/max_packet/compress 转发 |
-| `src/opts/mod.rs` | 新增 `ob_protocol20` 字段 + getter + builder 方法 + `Default` 初值 |
-| `src/conn/mod.rs` | `ConnInner.ob_capability`；`handle_ok` 解析能力回显；`do_handshake_response` 上报 connect attrs（`opts.ob_protocol20()` 时）；`ob_sm3_auth_data`（SM3 应答，借道 `AuthPluginData::Sha2` 的 32 字节载体）；`perform_auth_switch`/`continue_auth` 支持 `ob_sm3_password` 插件；`switch_to_ob20`（认证后按能力位切换，`lib.rs` 连接流程里紧跟 `switch_to_compression`） |
+| `src/opts/mod.rs` | 新增 `ob_protocol20` 字段 + getter + builder 方法 + `Default` 初值；新增 `ObCompatMode`（`MySql`/`Oracle`）与 `ob_compat_mode: Option<ObCompatMode>` 字段/getter/builder——驱动无法从线缆区分「OB MySQL 租户」与「原生 MySQL」，由连接建立方声明（原生 MySQL 传 None），对象目录查询据此选择 OB 专有字典 |
+| `src/conn/mod.rs` | `ConnInner.ob_capability`；`handle_ok` 解析能力回显；`do_handshake_response` 上报 connect attrs（`opts.ob_protocol20()` 时）；`ob_sm3_auth_data`（SM3 应答，借道 `AuthPluginData::Sha2` 的 32 字节载体）；`perform_auth_switch`/`continue_auth` 支持 `ob_sm3_password` 插件；`switch_to_ob20`（认证后按能力位切换，`lib.rs` 连接流程里紧跟 `switch_to_compression`）；`ob_compat_mode()` 读回调用方声明 |
 | `Cargo.toml` | 改名 `oceanbase_async`、lib 名同步；加 `crc32fast`；删 native-tls 分支与 `Cargo.toml.orig`/`Cargo.lock`（features 只留 rustls 形态） |
-| `src/lib.rs` | `pub mod ob20;` |
+| `src/lib.rs` | `pub mod ob20;`；导出 `ObCompatMode` |
 
 ## 协议事实（对照 obconnector-c 源码）
 
@@ -80,7 +80,7 @@ OpenSSL 依赖）。
   类型以字符串返回，够工作台用）。
 - `ob20` 头 pkt_seq 用外层帧序号；若真实服务端要求两者独立递增，需按抓包调整
   （当前按 libobclient 同计数器实现）。
-- 真机验证（OB Oracle 租户 + Rust 驱动）尚未执行，门禁不依赖。
+- 连接通道（OB Oracle 租户 + Rust 驱动：握手/认证/查询/事务）已由用户真机实测稳定，门禁不依赖；ob20 线缆是否激活取决于服务端能力位回显，未回显时保持 plain 协议。
 
 ## 许可证
 
