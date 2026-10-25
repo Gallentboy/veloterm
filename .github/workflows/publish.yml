@@ -181,12 +181,39 @@ jobs:
       #    runner 预装 C:\msys64，只补包。libqalculate 是 autotools C++ 库
       #    （GMP/MPFR/libxml2 硬依赖），无 MSVC 工程且官方 Windows 版即
       #    MinGW 构建——build-tools.mjs 在该环境里 configure/make 出静态库
-      #    并链接自包含的 qalcffi.dll（见 vendor/libqalculate/README.md）。
+      #    并链接自包含 qalcffi.dll（见 vendor/libqalculate/README.md）。
       #    仅是构建期依赖：安装包内的 qalcffi.dll 依赖全静态打入，最终用户
       #    不需要 MSYS2。pacman -Sy：runner 镜像的包数据库未同步，直接
       #    -S 会报 target not found。
       #    （nmap 不走此段：走 MSVC + CMake，见 build-tools.mjs 的 nmap 段
       #    与 vendor/nmap/veloterm-win/CMakeLists.txt，复用上面的 vcpkg OpenSSL。）
+      #
+      #    MSYS2 版本冻结（actions/cache 自管，防 runner 镜像滚动漂移——
+      #    v1.0.10 曾因 crt r495→r532 滚动挂掉 qcalcffi 链接）：
+      #    - 缓存命中：整树替换 C:\msys64 为上次出包验证过的快照，版本
+      #      与上次发布完全一致，pacman --needed 全空转（不升级）；
+      #    - 缓存未命中：按上面 pacman 步装当前版本，装完打包 tgz 存缓存
+      #      （job 成功后 actions/cache 自动上传）→ 自此冻结。
+      #    升级工具链 = 手动递增键里的 vN（先跑 test-qalc 车道验证再动这里；
+      #    test 车道刻意不冻结，作为滚动源的前哨哨兵）。
+      - name: Restore pinned MSYS2 toolchain (Windows)
+        if: runner.os == 'Windows'
+        id: msys2_pin
+        uses: actions/cache@v4
+        with:
+          key: msys2-pin-${{ matrix.msys_arch }}-v1
+          path: C:\msys2-pinned.tgz
+
+      - name: Apply pinned MSYS2 toolchain (cache hit)
+        if: runner.os == 'Windows' && steps.msys2_pin.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: |
+          # 整树干净替换（不是叠加）：预装目录可能有快照里没有的新文件，
+          # 叠加会得到混合树；删干净再解包保证与冻结快照逐字节一致
+          Remove-Item -Recurse -Force C:\msys64
+          New-Item -ItemType Directory -Path C:\msys64 | Out-Null
+          tar -xzf C:\msys2-pinned.tgz -C C:\msys64
+
       - name: Install MSYS2 packages for qalc (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -199,6 +226,18 @@ jobs:
             'make gettext mingw-w64-clang-aarch64-gcc-compat mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-pkg-config mingw-w64-clang-aarch64-libxml2 mingw-w64-clang-aarch64-gmp mingw-w64-clang-aarch64-mpfr'
           }
           C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm $pkgs"
+
+      - name: Snapshot MSYS2 toolchain for pinning (cache miss)
+        # 缓存未命中：把刚装好的整套工具链打包，job 成功后由 actions/cache
+        # 自动上传 → 下次出包起冻结在该版本
+        if: runner.os == 'Windows' && steps.msys2_pin.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          # 排除 pacman 包缓存（数百 MB 的 .pkg.zst，重装用不上）
+          $dirs = @('usr','etc','var','mingw64','clangarm64') |
+            Where-Object { Test-Path "C:\msys64\$_" }
+          tar --exclude 'var/cache/pacman/pkg' -czf C:\msys2-pinned.tgz -C C:\msys64 @dirs
+          if ($LASTEXITCODE -ne 0) { throw '打包 MSYS2 快照失败' }
 
       # windows-11-arm 镜像不预装 Go（x64 镜像预装）：goffi 段（yq+fzf 的
       # c-shared DLL）需要；与 test-jq/test-commands 车道同一 setup 手法
