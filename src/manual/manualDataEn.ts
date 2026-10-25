@@ -818,23 +818,25 @@ Try out a gRPC service without writing a program: see what it offers, fill in a 
       {
         id: 'db-connections',
         title: 'Saving database connections',
-        badge: 'DB',
-        keywords: ['database', 'mysql', 'postgresql', 'oracle', 'dameng', 'dm8', 'connection', 'ssl', 'read-only', 'compatibility mode'],
+        badge: '8 types',
+        keywords: ['database', 'mysql', 'postgresql', 'oracle', 'oceanbase', 'dameng', 'dm8', 'redis', 'sqlite', 'odbc', 'dsn', 'data source', 'connection', 'ssl', 'read-only', 'compatibility mode'],
         content: `### What it does
-Save connections to MySQL, PostgreSQL, Oracle and Dameng DM8 databases, with passwords stored encrypted, a protective read-only mode, and a one-click connection test.
+Save connections to eight database types: MySQL, PostgreSQL, Oracle, OceanBase, Dameng DM8, Redis, SQLite, and ODBC (a universal adapter for almost anything else).
 
 ### Where to find it
 - The "DB Hosts" page on the sidebar.
 
 ### How to use it
-1. Click "New Connection" and pick the database type — the usual port is filled in for you (MySQL 3306, PostgreSQL 5432, Oracle 1521, Dameng 5236).
-2. Enter the address, database, user name and password; pick an SSL option if the server supports encrypted connections (Dameng doesn't offer one, so the choice is hidden there).
-3. Optionally set the environment (dev/test/staging/prod) and keep "Read-only session" switched on — changes are then refused.
-4. Click "Test" before saving: it connects, reports the server version and the round-trip time in milliseconds.
+1. Click "New Connection" and pick the database type — the usual port is filled in for you (MySQL 3306, PostgreSQL 5432, Oracle 1521, OceanBase 2881, Redis 6379, Dameng 5236).
+2. SQLite is a local file: just pick a .db file (optionally encrypted) — no address needed. Redis is a key-value store: address and password are enough, the database box is optional.
+3. For databases not on the list (DB2, HighGo, GBase, …) choose ODBC — the database's ODBC driver must be installed first. Pick a DSN from the dropdown, switch to "Driver direct" and name the driver, or paste a full connection string.
+4. Pick an SSL option if the server supports encrypted connections (Oracle, Dameng and ODBC don't offer one, so the choice stays at "Disable"); optionally set the environment (dev/test/staging/prod) and keep "Read-only session" switched on — changes are then refused.
+5. Click "Test" before saving: it connects, reports the server version and the round-trip time in milliseconds.
 
 ### Tips
 - Editing a saved connection with the password box left empty keeps the old password.
-- Dameng specifics: the MySQL/Oracle "Compatibility" choice only changes how VeloTerm handles its SQL — it never affects whether you can connect; the database box may be left empty; and no extra driver software is needed.`,
+- Dameng specifics: the MySQL/Oracle "Compatibility" choice only changes how VeloTerm handles its SQL — it never affects whether you can connect; the database box may be left empty; no extra driver software is needed.
+- ODBC encryption and driver options live in the system data source / connection string. Without an ODBC driver manager installed, VeloTerm tells you how to get one (built into Windows; one brew command on macOS).`,
       },
       {
         id: 'db-workbench',
@@ -849,12 +851,13 @@ A workspace for SQL: browse the database's tables and objects on the left, write
 - Run: \`⌘/Ctrl + Enter\`; the cancel button and the row limit (1,000–50,000) sit on the toolbar.
 
 ### How to use it
-1. Expand a database to find its tables, views, functions and more; click a table to see its columns, or double-click it to get a ready-made \`SELECT\` in the editor.
-2. Write one or more statements (separate them with semicolons) and run with \`⌘/Ctrl + Enter\`.
+1. Expand a database to find its tables, views, functions and more; click a table to see its columns, or double-click it to get a ready-made \`SELECT\` in the editor. Redis connections show logical databases → value types → keys instead; click a key to view its content.
+2. Write one or more statements (separate them with semicolons) and run with \`⌘/Ctrl + Enter\`. On Redis you type commands (like GET key), one per line, instead of SQL.
 3. Each statement gets its own result tab — sortable, filterable, copyable. Long queries can be stopped at any moment.
 
 ### Tips
-- Switching pages keeps everything as it was; closing a tab disconnects. In read-only connections, changes are stopped with a clear explanation.`,
+- Switching pages keeps everything as it was; closing a tab disconnects. In read-only connections, changes are stopped with a clear explanation.
+- Oracle connections pick the right driver automatically by server version (official driver on modern servers, the built-in one on old versions) — nothing to configure.`,
       },
     ],
   },
