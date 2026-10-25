@@ -111,7 +111,7 @@ jobs:
       # 子命令模式按设计不支持，verify-dll-layout 的 -OwnArgv 探针经 <Cmd>.exe
       # 短名硬链接调用（argv[0] 分发，与安装后 tools\vim.exe 同一通路）。vim 段
       # 零外部依赖（只需 VS nmake），放本车道比另起车道省。
-      - name: Build vim64.dll (OWN_ARGV hosting verification)
+      - name: Build vim.dll (OWN_ARGV hosting verification)
         run: node scripts/build-tools.mjs --only vim --target x86_64-pc-windows-msvc
 
       - name: Verify vim hosting (OWN_ARGV short-name layouts)
@@ -119,7 +119,7 @@ jobs:
         run: |
           pwsh -NoProfile -File scripts/verify-dll-layout.ps1 `
             -Coreutils src-tauri/binaries/coreutils-x86_64-pc-windows-msvc.exe `
-            -Dll src-tauri/binaries/vim64.dll `
+            -Dll src-tauri/binaries/vim.dll `
             -Cmd vim -OwnArgv
 
       # jq 分层耗时诊断 + 退出路径/功能回归门禁：把 in-main 探针（VELOTERM_JQ_TIMING）
