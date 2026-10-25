@@ -1080,9 +1080,9 @@ pub struct DbConnectionRecord {
     /// 其他引擎忽略此字段（OceanBase 的同概念字段是 mode）。
     #[serde(default)]
     pub compatible_mode: Option<String>,
-    /// 引擎专属扩展配置（JSON 文本）。当前仅 Redis 消费：拓扑（single/cluster/
-    /// sentinel）+ 节点清单 + 哨兵 master 名 + mTLS 客户端证书/私钥 PEM 路径。
-    /// 其他引擎恒 None；结构由 db_browser::engines 的 RedisExtraOptions 定义。
+    /// 引擎专属扩展配置（JSON 文本）。消费者：Redis（拓扑/节点/哨兵/
+    /// mTLS，RedisExtraOptions）与 ODBC（连接方式/DSN/驱动/连接串，
+    /// OdbcExtraOptions）；其余引擎恒 None。
     #[serde(default)]
     pub extra_options: Option<String>,
     pub created_at: i64,
@@ -1125,6 +1125,7 @@ impl DbConnectionRecord {
                 | "oceanbase"
                 | "sqlite"
                 | "dameng"
+                | "odbc"
         )
     }
 

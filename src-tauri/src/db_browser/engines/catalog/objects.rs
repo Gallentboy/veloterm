@@ -5,9 +5,9 @@
 use super::super::{
     CatalogNode, DbEngine, OB_DICT_PREFIX, ObjectGroup, dm_query_rows, dm_query_strings,
     dm_row_string, ob_internal_object, ob_mysql_mviews, ob_mysql_sequences,
-    ob_oracle_mviews, ob_oracle_packages, ob_oracle_tables, ob_quote_literal, oracle_dict_prefix,
-    oracle_row_string, oracle_scalar_string, parse_redis_db, quote_ident,
-    recycle_node, redis_scan_typed_keys, redis_select,
+    ob_oracle_mviews, ob_oracle_packages, ob_oracle_tables, ob_quote_literal, odbc_is_view_type,
+    odbc_row_string, oracle_dict_prefix, oracle_row_string, oracle_scalar_string, parse_redis_db,
+    quote_ident, recycle_node, redis_scan_typed_keys, redis_select,
 };
 
 pub(crate) async fn objects(
@@ -635,6 +635,60 @@ pub(crate) async fn objects(
                         .collect())
                 })
                 .await
+            }
+            DbEngine::Odbc(_) => {
+                // 标准 SQLTables 全量取回后在客户端按 TABLE_TYPE 过滤（不把
+                // 类型传给 SQLTables 的 table_type 参数——部分驱动对
+                // "VIEW" 过滤不匹配 "SYSTEM VIEW"，客户端过滤口径与分组
+                // 计数严格一致）。显示名带 schema 前缀（SCHEM.NAME），供
+                // 列/主键/索引查询拆开限定
+                let want_view = matches!(group, ObjectGroup::View);
+                let want_table = matches!(group, ObjectGroup::Table);
+                if !want_view && !want_table {
+                    // 其它分组（函数/过程等）ODBC 目录体系没有，树上也不会
+                    // 出现；防御性空集
+                    return Ok(Vec::new());
+                }
+                let catalog = schema.to_string();
+                let kind_o = kind.clone();
+                engine
+                    .with_odbc(move |eng| {
+                        let api = crate::db_browser::engines::odbc_engine::odbc_api()?;
+                        let (_, rows) = api
+                            .tables(eng.dbc.0, &catalog, "", "", "")
+                            .map_err(|e| format!("ODBC 查询对象清单失败：{e}"))?;
+                        let mut nodes = Vec::new();
+                        for row in &rows {
+                            let t = odbc_row_string(row, 3);
+                            let matched = if want_view {
+                                odbc_is_view_type(&t)
+                            } else {
+                                t.eq_ignore_ascii_case("TABLE")
+                                    || t.eq_ignore_ascii_case("SYSTEM TABLE")
+                            };
+                            if !matched {
+                                continue;
+                            }
+                            let name = odbc_row_string(row, 2);
+                            if name.is_empty() || name == "NULL" {
+                                continue;
+                            }
+                            let schem = odbc_row_string(row, 1);
+                            let display = if schem.is_empty() || schem == "NULL" {
+                                name
+                            } else {
+                                format!("{schem}.{name}")
+                            };
+                            nodes.push(CatalogNode {
+                                key: format!("{catalog}.{display}"),
+                                name: display,
+                                kind: kind_o.clone(),
+                                detail: None,
+                            });
+                        }
+                        Ok(nodes)
+                    })
+                    .await
             }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }

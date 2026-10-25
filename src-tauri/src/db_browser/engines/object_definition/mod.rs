@@ -2,5 +2,6 @@
 
 pub(crate) mod dameng;
 pub(crate) mod mysql;
+pub(crate) mod odbc;
 pub(crate) mod oracle;
 pub(crate) mod postgres;

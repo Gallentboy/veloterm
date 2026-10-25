@@ -13,7 +13,7 @@ use super::oracle_official::OfficialOracle;
 use super::{
     DbConnectionRecord, DbEngine, RedisConn, RedisExtraOptions, SqliteEngine, dm_server_version, dm_valid_identifier,
     redis_addr, redis_connect_error, redis_connection_info, redis_db_index,
-    oracle_err, redis_extra_options, redis_node_list, redis_tls_certs, redis_value_string,
+    odbc_extra_options, oracle_err, redis_extra_options, redis_node_list, redis_tls_certs, redis_value_string,
     redis_version,
 };
 
@@ -31,8 +31,43 @@ pub(crate) async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, St
         ("oceanbase", _) => Err("OceanBase 需要选择租户模式（MySQL/Oracle）".to_string()),
         ("sqlite", _) => connect_sqlite(record).await,
         ("dameng", _) => connect_dameng(record).await,
+        ("odbc", _) => connect_odbc(record).await,
         (other, _) => Err(format!("不支持的数据库引擎：{other}")),
     }
+}
+
+/// ODBC 建连：extra_options 三态连接串（raw > dsn > driver）→ 运行时加载的
+/// 驱动管理器上 SQLDriverConnect（无提示模式，禁止弹系统对话框）。
+/// 驱动管理器缺失/驱动报错都归一为可读中文错误（安装指引见
+/// odbc_engine 的 missing_manager_error）。TLS 档位对 ODBC 不参与：加密由
+/// DSN/驱动自带配置决定（连接串里可以自带 Encrypt=true 之类，由驱动解释）。
+pub(crate) async fn connect_odbc(record: &DbConnectionRecord) -> Result<(DbEngine, String), String> {
+    let extra = odbc_extra_options(record.extra_options.as_deref());
+    let username = record
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("");
+    let password = record.password.as_deref().unwrap_or("");
+    let connection_string = super::odbc_engine::odbc_connection_string(
+        &extra,
+        &record.host,
+        record.port,
+        username,
+        password,
+    )?;
+
+    // 建连 12s 预算（同 MySQL/Redis）：超时后孤儿阻塞线程自然收尾，句柄经
+    // OdbcDbc 的 Drop 兑底释放
+    let (engine, version) = tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        tokio::task::spawn_blocking(move || super::odbc_engine::OdbcEngine::connect(&connection_string)),
+    )
+    .await
+    .map_err(|_| "ODBC 连接超时（12s）：请检查目标库可达性与 DSN/驱动配置".to_string())?
+    .map_err(|e| format!("ODBC 连接任务失败：{e}"))??;
+    Ok((DbEngine::Odbc(engine), version))
 }
 
 /// mysql_async 建连（mysql 与 OceanBase MySQL 模式共用：builder 构造 +

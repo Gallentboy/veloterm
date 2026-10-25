@@ -93,6 +93,13 @@ pub(crate) use self::dameng_engine::{
 /// 仅测试模块使用（`use super::*` 引入）
 #[cfg(test)]
 pub(crate) use self::dameng_engine::dm_value_to_i64;
+/// ODBC 引擎（第 7 引擎，通用兜底）：dlopen 运行时加载驱动管理器、
+/// 标准 Catalog API 目录、行间协作取消。绑定层与辅助见 odbc_engine.rs。
+pub mod odbc_engine;
+pub(crate) use self::odbc_engine::{
+    odbc_catalog_names, odbc_extra_options, odbc_is_null, odbc_is_view_type, odbc_row_string,
+    odbc_split_qualified, OdbcEngine,
+};
 /// SQL 系三引擎（SQLite / MySQL / PG）的单元格取值与标识符转义，从本文件拆出。
 pub mod sql_engines;
 pub(crate) use self::sql_engines::{
@@ -439,6 +446,8 @@ pub enum DbEngine {
     },
     Sqlite(SqliteEngine),
     Dameng(dm_pure::DmClient),
+    /// 通用 ODBC（运行时 dlopen，见 odbc_engine.rs 模块头）
+    Odbc(OdbcEngine),
     Closed,
 }
 
@@ -460,14 +469,21 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
         } else if let DbEngine::Dameng(mut client) = taken {
             // dm-pure 的 close 只是丢弃 socket（无网络往返），同步调用即可
             client.close();
+        } else if let DbEngine::Odbc(engine) = taken {
+            // OdbcDbc 的 Drop 兜底断开释放（含 close 后置空防双释放），此处
+            // 显式 drop 触发同步断开
+            drop(engine);
         }
         // SQLite：rusqlite::Connection 的 Drop 即 sqlite3_close（文件句柄与加密
         // codec 一并释放），无需显式动作
     }
 
-    /// 绑定会话取消标志（仅 SQLite 生效：progress handler 轮询；其它引擎空操作）。
+    /// 绑定会话取消标志（SQLite：progress handler 轮询；ODBC：读取循环逐行
+    /// 轮询——两者同为阻塞线程内的协作取消；其它引擎空操作）。
     pub fn bind_cancel_flag(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {
         if let DbEngine::Sqlite(engine) = self {
+            engine.bind_cancel(flag);
+        } else if let DbEngine::Odbc(engine) = self {
             engine.bind_cancel(flag);
         }
     }
@@ -490,6 +506,12 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
             }
             DbEngine::Dameng(_) => {
                 self.with_dameng(|client| client.commit().map_err(|e| format!("达梦：{e}"))).await
+            }
+            DbEngine::Odbc(_) => {
+                self.with_odbc(|engine| {
+                    odbc_engine::odbc_api()?.end_tran(engine.dbc.0, true)
+                })
+                .await
             }
             DbEngine::Sqlite(_) => {
                 self.with_sqlite(|conn| conn.execute("COMMIT", []).map(|_| ()).map_err(|e| format!("SQLite：{e}"))).await
@@ -514,6 +536,12 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
             }
             DbEngine::Dameng(_) => {
                 self.with_dameng(|client| client.rollback().map_err(|e| format!("达梦：{e}"))).await
+            }
+            DbEngine::Odbc(_) => {
+                self.with_odbc(|engine| {
+                    odbc_engine::odbc_api()?.end_tran(engine.dbc.0, false)
+                })
+                .await
             }
             DbEngine::Sqlite(_) => {
                 self.with_sqlite(|conn| conn.execute("ROLLBACK", []).map(|_| ()).map_err(|e| format!("SQLite：{e}"))).await
@@ -545,6 +573,14 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                     client.set_auto_commit(val);
                     Ok(())
                 }).await
+            }
+            // ODBC：SQL_ATTR_AUTOCOMMIT 连接属性（与 MySQL 的 SET autocommit
+            // 同为服务端/连接级语义）；连接建立时保持 ODBC 默认 ON
+            DbEngine::Odbc(_) => {
+                self.with_odbc(move |engine| {
+                    odbc_engine::odbc_api()?.set_autocommit(engine.dbc.0, val)
+                })
+                .await
             }
             // Oracle / PG / SQLite 的自动提交由执行层控制（本地标志位），
             // 这里只确认连接可用
@@ -629,6 +665,37 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
         }
     }
 
+    /// 同步 ODBC 连接的阻塞包裹（with_dameng 同型）：ODBC 是纯同步 C API，
+    /// 句柄经 OdbcDbc 的 Send 包装跨线程；同一时刻仅此闭包持有连接。
+    async fn with_odbc<T, F>(&mut self, f: F) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut OdbcEngine) -> Result<T, String> + Send + 'static,
+    {
+        let taken = std::mem::replace(self, DbEngine::Closed);
+        let DbEngine::Odbc(mut engine) = taken else {
+            *self = taken;
+            return Err("连接已关闭".to_string());
+        };
+        let result = tokio::task::spawn_blocking(move || {
+            let r = f(&mut engine);
+            (r, engine)
+        })
+        .await
+        .map_err(|e| format!("ODBC 任务失败：{e}"));
+        match result {
+            Ok((r, engine)) => {
+                *self = DbEngine::Odbc(engine);
+                r
+            }
+            Err(e) => {
+                // JoinError（panic/取消）：连接已无法取回，置 Closed 由会话层重建
+                *self = DbEngine::Closed;
+                Err(e)
+            }
+        }
+    }
+
 
     /// 可切换的数据库清单（MySQL=全部 schema；PG=服务器上可连的 database，
     /// 与 catalog_root 的 schema 层不同——PG 切库是连接级操作；Redis=逻辑库
@@ -694,6 +761,11 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 //（TYPE$='SCH'，见 DM_SCHEMAS_SQL 注释）。不滤系统 schema——
                 // 工作台需要能看到 SYS/SYSDBA 等库供排查
                 self.with_dameng(dm_schema_names).await
+            }
+            DbEngine::Odbc(_) => {
+                // 顶层 = catalog（SQLTables 聚合 TABLE_CAT；不填的驱动回落
+                // DBMS 名单根，见 odbc_catalog_names 注释）
+                self.with_odbc(odbc_catalog_names).await
             }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
@@ -783,6 +855,11 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 })
                 .await
             }
+            DbEngine::Odbc(_) => {
+                // ODBC 无连接级切目录：目录查询按 catalog 参数显式限定
+                //（同 SQLite 的 meta-only 语义）
+                Ok(())
+            }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
     }
@@ -814,6 +891,9 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
             }
             DbEngine::Dameng(_) => {
                 table_detail::dameng::detail(self, schema, table, kind).await
+            }
+            DbEngine::Odbc(_) => {
+                table_detail::odbc::detail(self, schema, table, kind).await
             }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
@@ -868,6 +948,9 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
             }
             DbEngine::Dameng(_) => {
                 object_definition::dameng::definition(self, schema, name, kind).await
+            }
+            DbEngine::Odbc(_) => {
+                object_definition::odbc::definition(self, schema, name, kind).await
             }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
@@ -1005,6 +1088,22 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                             key: name.clone(),
                             name,
                             kind: "schema".to_string(),
+                            detail: None,
+                        })
+                        .collect())
+                })
+                .await
+            }
+            DbEngine::Odbc(_) => {
+                // 顶层 = catalog（TABLE_CAT 聚合），kind 用 database（与 MySQL
+                // 臂一致——ODBC 的目录语义就是 database 而非 schema）
+                self.with_odbc(|engine| {
+                    Ok(odbc_catalog_names(engine)?
+                        .into_iter()
+                        .map(|name| CatalogNode {
+                            key: name.clone(),
+                            name,
+                            kind: "database".to_string(),
                             detail: None,
                         })
                         .collect())
@@ -1255,6 +1354,36 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                             }
                         })
                         .collect())
+                })
+                .await
+            }
+            DbEngine::Odbc(_) => {
+                // 标准 SQLColumns 目录：列名(4)/类型名(6)。表名可能带 schema
+                // 前缀（对象清单的显示名），拆开后分别过滤
+                let catalog = schema.to_string();
+                let qualified = table.to_string();
+                self.with_odbc(move |engine| {
+                    let api = odbc_engine::odbc_api()?;
+                    let (schem, tbl) = odbc_split_qualified(&qualified);
+                    let schem = schem.unwrap_or_default();
+                    let (_, rows) = api
+                        .columns_catalog(engine.dbc.0, &catalog, &schem, &tbl)
+                        .map_err(|e| format!("ODBC 查询列清单失败：{e}"))?;
+                    let mut nodes = Vec::new();
+                    for row in &rows {
+                        let name = odbc_row_string(row, 3);
+                        if name.is_empty() || name == "NULL" {
+                            continue;
+                        }
+                        let data_type = odbc_row_string(row, 5);
+                        nodes.push(CatalogNode {
+                            key: format!("{catalog}.{qualified}.{name}"),
+                            name,
+                            kind: "column".to_string(),
+                            detail: Some(data_type),
+                        });
+                    }
+                    Ok(nodes)
                 })
                 .await
             }
@@ -1695,6 +1824,49 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                                 }
                             }
                         }
+                        Ok(summary)
+                    })
+                    .await;
+                let _ = cancel_notify;
+                result
+            }
+
+            DbEngine::Odbc(_) => {
+                // 同步引擎（同达梦臂）：exec + 全量读取都在一个阻塞调用里，
+                // 批回调在阻塞线程内发送（Channel Send 安全）。取消是行间
+                // 协作——读取循环逐行查会话取消标志（bind_cancel_flag
+                // 注入，SQLite progress handler 同型），命中即停并标
+                // cancelled；in-flight 的单次 SQLFetch 阻塞不可中断，语句
+                // 随句柄释放而终止（已知边界，见 odbc_engine 模块头）
+                let sql_o = sql.to_string();
+                let result = self
+                    .with_odbc(move |engine| {
+                        let api = odbc_engine::odbc_api()?;
+                        let outcome =
+                            api.exec_query(engine.dbc.0, &sql_o, max_rows, &engine.cancel)?;
+                        let mut summary = ExecSummary {
+                            columns: outcome.columns,
+                            ..Default::default()
+                        };
+                        if summary.columns.is_empty() {
+                            summary.affected = outcome.affected;
+                        } else {
+                            on_columns(&summary.columns.clone());
+                            let mut batch: Vec<Vec<String>> =
+                                Vec::with_capacity(ROWS_PER_BATCH);
+                            for row in outcome.rows {
+                                batch.push(row);
+                                summary.rows_read += 1;
+                                if batch.len() >= ROWS_PER_BATCH {
+                                    on_rows(std::mem::take(&mut batch));
+                                }
+                            }
+                            if !batch.is_empty() {
+                                on_rows(batch);
+                            }
+                        }
+                        summary.cancelled = outcome.cancelled;
+                        summary.truncated = outcome.truncated;
                         Ok(summary)
                     })
                     .await;

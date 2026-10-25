@@ -15,7 +15,8 @@ export type DbEngineKind =
   | 'redis'
   | 'oceanbase'
   | 'sqlite'
-  | 'dameng';
+  | 'dameng'
+  | 'odbc';
 
 /**
  * SQLite 加密方式（后端 db.rs 的 encryption_mode 列）：
@@ -44,6 +45,18 @@ export interface RedisExtraOptions {
   clientKeyPath?: string;
 }
 
+/** ODBC 的 extra_options JSON 结构（后端 OdbcExtraOptions 同构，
+ * camelCase）；其他引擎恒为 null。connectionType 缺省/空 = dsn */
+export interface OdbcExtraOptions {
+  connectionType: 'dsn' | 'driver' | 'raw';
+  /** connectionType='dsn'：系统已配置的数据源名 */
+  dsn?: string;
+  /** connectionType='driver'：驱动描述名（Driver={...} 直连） */
+  driver?: string;
+  /** connectionType='raw'：完整连接串透传 */
+  connectionString?: string;
+}
+
 export interface DbConnectionRecord {
   id: number;
   name: string;
@@ -63,7 +76,7 @@ export interface DbConnectionRecord {
   /** 仅达梦有意义：客户端侧方言选择（服务器行为由 dm.ini 的 COMPATIBLE_MODE 决定）。
  *  null/undefined = 按 oracle 处理。 */
   compatibleMode: 'oracle' | 'mysql' | null;
-  /** 引擎专属扩展配置（JSON 文本，当前仅 Redis 消费，见 RedisExtraOptions）；
+  /** 引擎专属扩展配置（JSON 文本；Redis 与 ODBC 消费，见各自 interface）；
  *  其他引擎恒为 null */
   extraOptions: string | null;
   username: string | null;
@@ -513,4 +526,16 @@ export function redisBigkeys(
 /** 选择本地 SQLite 数据库文件；取消返回 null */
 export function sqliteFilePick(): Promise<string | null> {
   return invoke('sqlite_file_pick');
+}
+
+// ── ODBC 驱动管理器枚举（连接表单下拉）──
+
+/** 系统已安装的 ODBC 驱动描述清单；驱动管理器未装时 reject（带安装指引）。 */
+export function dbOdbcDrivers(): Promise<string[]> {
+  return invoke('db_odbc_drivers');
+}
+
+/** 系统已配置的 ODBC 数据源（DSN）清单，条目形如 "name（driver）"。 */
+export function dbOdbcDataSources(): Promise<string[]> {
+  return invoke('db_odbc_data_sources');
 }
