@@ -2,13 +2,11 @@
 //! 拆自 engines/mod.rs 的同名方法，行为零变更（含 Redis 前置 early-return
 //! 与 MySQL/PG 共享 SQL 模板元组）。
 
-use oracle_async::Queryable as _;
-
 use super::super::{
     CatalogNode, DbEngine, OB_DICT_PREFIX, ObjectGroup, dm_query_rows, dm_query_strings,
     dm_row_string, ob_internal_object, ob_mysql_mviews, ob_mysql_sequences,
     ob_oracle_mviews, ob_oracle_packages, ob_oracle_tables, ob_quote_literal, oracle_dict_prefix,
-    oracle_err, oracle_row_string, oracle_scalar_string, parse_redis_db, quote_ident,
+    oracle_row_string, oracle_scalar_string, parse_redis_db, quote_ident,
     recycle_node, redis_scan_typed_keys, redis_select,
 };
 
@@ -304,18 +302,14 @@ pub(crate) async fn objects(
                         ob_quote_literal(schema)
                     );
                     let mut rs = conn
-                        .query(&sql)
+                        .query_rows(&sql)
                         .await
-                        .map_err(|e| format!("Oracle 查询 DB Link 清单失败：{}", oracle_err(e)))?;
+                        .map_err(|e| format!("Oracle 查询 DB Link 清单失败：{e}"))?;
                     let mut nodes = Vec::new();
-                    while let Some(row) = rs
-                        .next_row()
-                        .await
-                        .map_err(|e| format!("Oracle 读取 DB Link 清单失败：{}", oracle_err(e)))?
-                    {
-                        let name = oracle_row_string(&row, 0);
-                        let user = oracle_row_string(&row, 1);
-                        let host = oracle_row_string(&row, 2);
+                    while let Some(row) = rs.next_row() {
+                        let name = oracle_row_string(row, 0);
+                        let user = oracle_row_string(row, 1);
+                        let host = oracle_row_string(row, 2);
                         let detail = match (user != "NULL", host != "NULL") {
                             (true, true) => Some(format!("{user}@{host}")),
                             (true, false) => Some(user),
@@ -338,10 +332,10 @@ pub(crate) async fn objects(
                         ob_quote_literal(schema)
                     );
                     let mut nodes: Vec<CatalogNode> = Vec::new();
-                    match conn.query(&dba_sql).await {
+                    match conn.query_rows(&dba_sql).await {
                         Ok(mut rs) => {
-                            while let Ok(Some(row)) = rs.next_row().await {
-                                if let Some(node) = recycle_node(&row, schema, &kind) {
+                            while let Some(row) = rs.next_row() {
+                                if let Some(node) = recycle_node(row, schema, &kind) {
                                     nodes.push(node);
                                 }
                             }
@@ -354,14 +348,14 @@ pub(crate) async fn objects(
                             if !login.is_empty()
                                 && login.eq_ignore_ascii_case(schema)
                                 && let Ok(mut rs) = conn
-                                    .query(
+                                    .query_rows(
                                         "SELECT OBJECT_NAME, ORIGINAL_NAME, TYPE \
                                          FROM user_recyclebin ORDER BY DROPTIME DESC",
                                     )
                                     .await
                             {
-                                while let Ok(Some(row)) = rs.next_row().await {
-                                    if let Some(node) = recycle_node(&row, schema, &kind) {
+                                while let Some(row) = rs.next_row() {
+                                    if let Some(node) = recycle_node(row, schema, &kind) {
                                         nodes.push(node);
                                     }
                                 }
@@ -393,18 +387,14 @@ pub(crate) async fn objects(
                     ob_quote_literal(obj_type)
                 );
                 let mut rs = conn
-                    .query(&sql)
+                    .query_rows(&sql)
                     .await
-                    .map_err(|e| format!("Oracle 查询对象清单失败：{}", oracle_err(e)))?;
+                    .map_err(|e| format!("Oracle 查询对象清单失败：{e}"))?;
                 let mut nodes = Vec::new();
-                while let Some(row) = rs
-                    .next_row()
-                    .await
-                    .map_err(|e| format!("Oracle 读取对象清单失败：{}", oracle_err(e)))?
-                {
-                    let name = oracle_row_string(&row, 0);
+                while let Some(row) = rs.next_row() {
+                    let name = oracle_row_string(row, 0);
                     // INVALID 才标（触发器/过程/视图失效常见，全标 VALID 太吵）
-                    let status = oracle_row_string(&row, 1);
+                    let status = oracle_row_string(row, 1);
                     nodes.push(CatalogNode {
                         key: format!("{schema}.{name}"),
                         name,

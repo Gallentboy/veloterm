@@ -1,14 +1,13 @@
 //! Oracle 的对象定义（函数/过程/序列/触发器/同义词/包/视图/DB Link/回收站/类型）。
 
-use oracle_async::Queryable as _;
-
+use super::super::oracle_conn::OracleConn;
 use super::super::{
-    ob_quote_literal, oracle_dict_prefix, oracle_err, oracle_row_string,
+    ob_quote_literal, oracle_dict_prefix, oracle_row_string,
     oracle_scalar_string, ObjectDefinition,
 };
 
 pub(crate) async fn definition(
-    conn: &mut oracle_async::Conn,
+    conn: &mut OracleConn,
     schema: &str,
     name: &str,
     kind: &str,
@@ -27,10 +26,10 @@ pub(crate) async fn definition(
                         ob_quote_literal(schema)
                     );
                     let mut ddl = String::new();
-                    if let Ok(mut rs) = conn.query(&ddl_sql).await
-                        && let Ok(Some(row)) = rs.next_row().await
+                    if let Ok(mut rs) = conn.query_rows(&ddl_sql).await
+                        && let Some(row) = rs.next_row()
                     {
-                        ddl = oracle_row_string(&row, 0);
+                        ddl = oracle_row_string(row, 0);
                     }
                     if ddl.trim().is_empty() {
                         // 降级 all_views 文本（旧库 GET_DDL 权限缺失时）
@@ -39,10 +38,10 @@ pub(crate) async fn definition(
                             ob_quote_literal(schema),
                             ob_quote_literal(name)
                         );
-                        if let Ok(mut rs) = conn.query(&vs).await
-                            && let Ok(Some(row)) = rs.next_row().await
+                        if let Ok(mut rs) = conn.query_rows(&vs).await
+                            && let Some(row) = rs.next_row()
                         {
-                            ddl = oracle_row_string(&row, 0);
+                            ddl = oracle_row_string(row, 0);
                         }
                     }
                     if ddl.trim().is_empty() {
@@ -65,10 +64,10 @@ pub(crate) async fn definition(
                         ob_quote_literal(schema)
                     );
                     let mut ddl = String::new();
-                    if let Ok(mut rs) = conn.query(&ddl_sql).await
-                        && let Ok(Some(row)) = rs.next_row().await
+                    if let Ok(mut rs) = conn.query_rows(&ddl_sql).await
+                        && let Some(row) = rs.next_row()
                     {
-                        ddl = oracle_row_string(&row, 0);
+                        ddl = oracle_row_string(row, 0);
                     }
                     if !ddl.trim().is_empty() {
                         return Ok(ObjectDefinition {
@@ -84,11 +83,11 @@ pub(crate) async fn definition(
                         ob_quote_literal(name)
                     );
                     let mut attrs: Vec<(String, String)> = Vec::new();
-                    if let Ok(mut rs) = conn.query(&attr_sql).await {
-                        while let Ok(Some(row)) = rs.next_row().await {
+                    if let Ok(mut rs) = conn.query_rows(&attr_sql).await {
+                        while let Some(row) = rs.next_row() {
                             attrs.push((
-                                oracle_row_string(&row, 0),
-                                oracle_row_string(&row, 1),
+                                oracle_row_string(row, 0),
+                                oracle_row_string(row, 1),
                             ));
                         }
                     }
@@ -118,17 +117,15 @@ pub(crate) async fn definition(
                         ob_quote_literal(name)
                     );
                     let mut rs = conn
-                        .query(&sql)
+                        .query_rows(&sql)
                         .await
-                        .map_err(|e| format!("Oracle 拉取 DB Link 定义失败：{}", oracle_err(e)))?;
+                        .map_err(|e| format!("Oracle 拉取 DB Link 定义失败：{e}"))?;
                     let row = rs
                         .next_row()
-                        .await
-                        .map_err(|e| format!("Oracle 读取 DB Link 定义失败：{}", oracle_err(e)))?
                         .ok_or_else(|| "未找到该 DB Link（可能已被删除）".to_string())?;
-                    let user = oracle_row_string(&row, 0);
-                    let host = oracle_row_string(&row, 1);
-                    let scope = oracle_row_string(&row, 2);
+                    let user = oracle_row_string(row, 0);
+                    let host = oracle_row_string(row, 1);
+                    let scope = oracle_row_string(row, 2);
                     let mut definition = String::from("CREATE ");
                     if scope == "PUBLIC" {
                         definition.push_str("PUBLIC ");
@@ -161,15 +158,15 @@ pub(crate) async fn definition(
                         ob_quote_literal(name)
                     );
                     let mut bins: Vec<(String, String, String)> = Vec::new();
-                    match conn.query(&dba_sql).await {
+                    match conn.query_rows(&dba_sql).await {
                         Ok(mut rs) => {
-                            while let Ok(Some(row)) = rs.next_row().await {
-                                let obj = oracle_row_string(&row, 0);
+                            while let Some(row) = rs.next_row() {
+                                let obj = oracle_row_string(row, 0);
                                 if obj != "NULL" {
                                     bins.push((
                                         obj,
-                                        oracle_row_string(&row, 1),
-                                        oracle_row_string(&row, 2),
+                                        oracle_row_string(row, 1),
+                                        oracle_row_string(row, 2),
                                     ));
                                 }
                             }
@@ -183,14 +180,14 @@ pub(crate) async fn definition(
                                      WHERE ORIGINAL_NAME = {} ORDER BY DROPTIME DESC",
                                     ob_quote_literal(name)
                                 );
-                                if let Ok(mut rs) = conn.query(&user_sql).await {
-                                    while let Ok(Some(row)) = rs.next_row().await {
-                                        let obj = oracle_row_string(&row, 0);
+                                if let Ok(mut rs) = conn.query_rows(&user_sql).await {
+                                    while let Some(row) = rs.next_row() {
+                                        let obj = oracle_row_string(row, 0);
                                         if obj != "NULL" {
                                             bins.push((
                                                 obj,
-                                                oracle_row_string(&row, 1),
-                                                oracle_row_string(&row, 2),
+                                                oracle_row_string(row, 1),
+                                                oracle_row_string(row, 2),
                                             ));
                                         }
                                     }
@@ -229,15 +226,11 @@ pub(crate) async fn definition(
                         ob_quote_literal(schema)
                     );
                     let mut rs = conn
-                        .query(&ddl_sql)
+                        .query_rows(&ddl_sql)
                         .await
-                        .map_err(|e| format!("Oracle 拉取序列定义失败：{}", oracle_err(e)))?;
-                    let ddl = match rs
-                        .next_row()
-                        .await
-                        .map_err(|e| format!("Oracle 读取序列定义失败：{}", oracle_err(e)))?
-                    {
-                        Some(row) => oracle_row_string(&row, 0),
+                        .map_err(|e| format!("Oracle 拉取序列定义失败：{e}"))?;
+                    let ddl = match rs.next_row() {
+                        Some(row) => oracle_row_string(row, 0),
                         None => String::new(),
                     };
                     if ddl.trim().is_empty() {
@@ -259,16 +252,12 @@ pub(crate) async fn definition(
                         ob_quote_literal(name)
                     );
                     let mut rs = conn
-                        .query(&sql)
+                        .query_rows(&sql)
                         .await
-                        .map_err(|e| format!("Oracle 拉取触发器定义失败：{}", oracle_err(e)))?;
+                        .map_err(|e| format!("Oracle 拉取触发器定义失败：{e}"))?;
                     let mut lines = Vec::new();
-                    while let Some(row) = rs
-                        .next_row()
-                        .await
-                        .map_err(|e| format!("Oracle 读取触发器定义失败：{}", oracle_err(e)))?
-                    {
-                        lines.push(oracle_row_string(&row, 0));
+                    while let Some(row) = rs.next_row() {
+                        lines.push(oracle_row_string(row, 0));
                     }
                     let definition = lines.join("");
                     if definition.trim().is_empty() {
@@ -290,16 +279,12 @@ pub(crate) async fn definition(
                         ob_quote_literal(schema)
                     );
                     let mut rs = conn
-                        .query(&ddl_sql)
+                        .query_rows(&ddl_sql)
                         .await
-                        .map_err(|e| format!("Oracle 拉取定义失败：{}", oracle_err(e)))?;
+                        .map_err(|e| format!("Oracle 拉取定义失败：{e}"))?;
                     let mut ddl = String::new();
-                    if let Some(row) = rs
-                        .next_row()
-                        .await
-                        .map_err(|e| format!("Oracle 读取定义失败：{}", oracle_err(e)))?
-                    {
-                        ddl = oracle_row_string(&row, 0);
+                    if let Some(row) = rs.next_row() {
+                        ddl = oracle_row_string(row, 0);
                     }
                     // 包有源码时优先 all_source（GET_DDL 对包可能不含包体）
                     if kind == "package" && ddl.trim().is_empty() {
@@ -310,15 +295,11 @@ pub(crate) async fn definition(
                             ob_quote_literal(name)
                         );
                         let mut src_rs = conn
-                            .query(&src_sql)
+                            .query_rows(&src_sql)
                             .await
-                            .map_err(|e| format!("Oracle 拉取包源码失败：{}", oracle_err(e)))?;
-                        while let Some(row) = src_rs
-                            .next_row()
-                            .await
-                            .map_err(|e| format!("Oracle 读取包源码失败：{}", oracle_err(e)))?
-                        {
-                            ddl.push_str(&oracle_row_string(&row, 0));
+                            .map_err(|e| format!("Oracle 拉取包源码失败：{e}"))?;
+                        while let Some(row) = src_rs.next_row() {
+                            ddl.push_str(&oracle_row_string(row, 0));
                         }
                     }
                     if ddl.trim().is_empty() {
@@ -338,16 +319,12 @@ pub(crate) async fn definition(
                     ob_quote_literal(obj_type)
                 );
                 let mut rs = conn
-                    .query(&sql)
+                    .query_rows(&sql)
                     .await
-                    .map_err(|e| format!("Oracle 拉取定义失败：{}", oracle_err(e)))?;
+                    .map_err(|e| format!("Oracle 拉取定义失败：{e}"))?;
                 let mut lines = Vec::new();
-                while let Some(row) = rs
-                    .next_row()
-                    .await
-                    .map_err(|e| format!("Oracle 读取定义失败：{}", oracle_err(e)))?
-                {
-                    lines.push(oracle_row_string(&row, 0));
+                while let Some(row) = rs.next_row() {
+                    lines.push(oracle_row_string(row, 0));
                 }
                 let definition = lines.join("");
                 if definition.trim().is_empty() {
@@ -360,15 +337,14 @@ pub(crate) async fn definition(
                     ob_quote_literal(name)
                 );
                 let mut cnt_rs = conn
-                    .query(&cnt_sql)
+                    .query_rows(&cnt_sql)
                     .await
-                    .map_err(|e| format!("Oracle 查询参数个数失败：{}", oracle_err(e)))?;
-                let arg_count: usize = match cnt_rs
-                    .next_row()
-                    .await
-                    .map_err(|e| format!("Oracle 读取参数个数失败：{}", oracle_err(e)))?
-                {
-                    Some(row) => row.get::<i64>(0).unwrap_or(0).max(0) as usize,
+                    .map_err(|e| format!("Oracle 查询参数个数失败：{e}"))?;
+                let arg_count: usize = match cnt_rs.next_row() {
+                    Some(row) => oracle_row_string(row, 0)
+                        .parse::<i64>()
+                        .unwrap_or(0)
+                        .max(0) as usize,
                     None => 0,
                 };
 

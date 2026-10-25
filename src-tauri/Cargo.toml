@@ -173,6 +173,12 @@ agg = { path = "vendor/agg" }
 # Oracle 引擎：oracle_async（纯 Rust 原生异步驱动，TNS/TTC 线路协议）vendor 树，
 # 零 C 依赖（无需 Oracle Instant Client / OCI / ODPI-C），Tokio 异步全链路。
 oracle_async = { path = "vendor/oracle_async" }
+# Oracle 引擎双驱动之二：Oracle 官方纯 Rust 瘦驱动（python-oracledb thin 的
+# clean-room 移植，UPL-1.0 OR Apache-2.0 双许可无商用负担）。连接 12c+（19c/
+# 21c/26ai 过认证），10g/11g 仍走自研 oracle_async——版本自动路由见
+# engines/connect.rs。同步 API，经 spawn_blocking 桥接（oracle_official.rs）。
+# 锁死精确版本：Beta 阶段 API 仍在变动，升级需人工评估（rustgrid 同款约定）。
+oracledb = { version = "=26.0.0-beta.4", default-features = false }
 # 达梦 DM8 引擎：dm-pure（纯 Rust 自实现 DM 网络协议）vendor 树，MIT。
 # 零外部数据库依赖（无需达梦 Instant Client / libdmdpi），8 个纯 Rust 依赖、
 # 无构建脚本、无 tokio（同步 std::net，engines.rs 经 spawn_blocking 包裹）。

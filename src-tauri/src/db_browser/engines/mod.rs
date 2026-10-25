@@ -1,6 +1,7 @@
 //! 引擎层：MySQL（mysql_async）/ PostgreSQL（tokio-postgres）/ Oracle
-//!（vendor oracle_async，纯 Rust 原生异步驱动，TNS/TTC 线路协议）/
-//! Redis（redis-rs 多路复用异步连接）/
+//!（双驱动：10g/11g 走 vendor oracle_async 纯 Rust 异步 TNS/TTC；12c+
+//! 经版本自动路由切官方 oracledb crate——同步 API 经 spawn_blocking
+//! 桥接，见 oracle_conn.rs / oracle_official.rs / connect.rs）/ Redis（redis-rs 多路复用异步连接）/
 //! OceanBase（双模式：MySQL 模式租户说标准 MySQL 线缆协议、复用
 //! mysql_async 臂仅微调；Oracle 模式租户同分叉（vendor/mysql-async-ob）
 //! 的 ob_protocol20 路径——纯 Rust，SM3 认证、OB 方言探测与 N 列
@@ -21,11 +22,15 @@
 //! databases 推出（协议本身不提供枚举）。执行层是单行命令（sqlsplit 按行
 //! 分割），没有 DDL/DML 语义，也没有 affected-rows 概念。
 //!
-//! Oracle 侧说明：oracle_async 是纯 Rust 原生异步驱动（TNS/TTC 线路协议），
-//! 零 C 依赖——无需 Oracle Instant Client / OCI / ODPI-C，各臂直接 await。
-//! 取消经 TNS Break Marker 真中断（tokio::select! 协作）；TLS/TCPS 不实现
-//! （前端 Oracle 表单隐藏 SSL 选项，后端对非 disable 直接报错，不做静默
-//! 明文回退）。
+//! Oracle 侧说明：双驱动形态——自研 oracle_async（纯 Rust 原生异步，
+//! TNS/TTC 线路协议，10g/11g/12c+）承担老版本与官方连接失败的降级
+//! 兜底；官方 oracledb（12c+，19c/21c/26ai 过认证）承接新版本，取消经
+//! call_timeout 兜底（无中断 API，取消丢弃后续批次、正在执行的语句等
+//! 自然返回）、无隐式结果集 API（dbms_sql.return_result 只见主结果集）。
+//! 两路径的错误文案共用同一中文码表（oracle_engine 的
+//! ora_server_text/ora_text_sniff）。自研路径取消经 TNS Break Marker
+//! 真中断；TLS/TCPS 两路径都不实现（前端 Oracle 表单隐藏 SSL 选项，
+//! 后端对非 disable 直接报错，不做静默明文回退）。
 //!
 //! OceanBase 侧说明：Oracle 模式走纯 Rust 分叉驱动（同 MySQL 臂四档 TLS
 //! 能力）；取消粒度：语句间生效（会话层 AtomicBool），行流中不可打断，
@@ -51,7 +56,13 @@ use futures_util::StreamExt as _;
 use serde::Serialize;
 
 use crate::db::DbConnectionRecord;
-use oracle_async::Queryable as _;
+
+/// Oracle 双驱动统一抽象（自研 oracle_async / 官方 oracledb），
+/// 见模块头注释。pub(crate) 供 oracle_engine / catalog / table_detail 等子模块引用。
+pub mod oracle_conn;
+/// 官方 oracledb 驱动桥接（12c+ 路径，spawn_blocking + 批量行流）。
+pub mod oracle_official;
+use oracle_conn::OracleConn;
 
 /// Redis 引擎专属实现（拓扑/命令/键检视/分词），从本文件拆出。
 ///
@@ -416,7 +427,8 @@ unsafe extern "C" fn sqlite_progress_trampoline(
 pub enum DbEngine {
     MySql(mysql_async::Conn),
     Postgres(tokio_postgres::Client),
-    Oracle(oracle_async::Conn),
+    /// 双驱动统一抽象（自研 oracle_async 或官方 oracledb，见 oracle_conn.rs）
+    Oracle(OracleConn),
     Redis {
         conn: RedisConn,
         /// 当前逻辑库索引（SELECT n 的目标；元信息展示为 "db{n}"）
@@ -474,7 +486,7 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 client.simple_query("COMMIT").await.map_err(|e| format!("PostgreSQL：{e}")).map(|_| ())
             }
             DbEngine::Oracle(conn) => {
-                conn.commit().await.map_err(|e| format!("Oracle：{}", crate::db_browser::engines::oracle_err(e)))
+                conn.commit().await.map_err(|e| format!("Oracle：{e}"))
             }
             DbEngine::Dameng(_) => {
                 self.with_dameng(|client| client.commit().map_err(|e| format!("达梦：{e}"))).await
@@ -498,7 +510,7 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 client.simple_query("ROLLBACK").await.map_err(|e| format!("PostgreSQL：{e}")).map(|_| ())
             }
             DbEngine::Oracle(conn) => {
-                conn.rollback().await.map_err(|e| format!("Oracle：{}", crate::db_browser::engines::oracle_err(e)))
+                conn.rollback().await.map_err(|e| format!("Oracle：{e}"))
             }
             DbEngine::Dameng(_) => {
                 self.with_dameng(|client| client.rollback().map_err(|e| format!("达梦：{e}"))).await
@@ -729,7 +741,7 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 let sql = format!("ALTER SESSION SET CURRENT_SCHEMA = {database}");
                 conn.exec(&sql)
                     .await
-                    .map_err(|e| format!("Oracle 切换 schema 失败：{}", oracle_err(e)))?;
+                    .map_err(|e| format!("Oracle 切换 schema 失败：{e}"))?;
                 Ok(())
             }
             DbEngine::Redis { conn, db, cluster } => {
@@ -1118,17 +1130,13 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                     ob_quote_literal(table)
                 );
                 let mut rs = conn
-                    .query(&sql)
+                    .query_rows(&sql)
                     .await
-                    .map_err(|e| format!("Oracle 查询列清单失败：{}", oracle_err(e)))?;
+                    .map_err(|e| format!("Oracle 查询列清单失败：{e}"))?;
                 let mut nodes = Vec::new();
-                while let Some(row) = rs
-                    .next_row()
-                    .await
-                    .map_err(|e| format!("Oracle 读取列清单失败：{}", oracle_err(e)))?
-                {
-                    let name = oracle_row_string(&row, 0);
-                    let data_type = oracle_row_string(&row, 1);
+                while let Some(row) = rs.next_row() {
+                    let name = oracle_row_string(row, 0);
+                    let data_type = oracle_row_string(row, 1);
                     nodes.push(CatalogNode {
                         key: format!("{schema}.{table}.{name}"),
                         name,
@@ -1403,9 +1411,12 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 // PG extended protocol 拿不到 DML 的 affected rows（空列即视为已执行）
                 Ok(summary)
             }
-            DbEngine::Oracle(conn) => {
-                // 纯 Rust 异步驱动：query 流式取行，PL/SQL 匿名块的隐式结果集
-                // 由 QueryResult 自动接续（oracle_async 的 Msg 27 链）
+            DbEngine::Oracle(oracle_conn) => match oracle_conn {
+                // 自研异步驱动：query 流式取行，PL/SQL 匿名块的隐式结果集
+                // 由 QueryResult 自动接续（oracle_async 的 Msg 27 链）；
+                // 取消经 TNS Break Marker 真中断
+                OracleConn::Legacy(conn) => {
+                use oracle_async::Queryable as _;
                 let mut rs = tokio::select! {
                     res = conn.query(sql) => res.map_err(|e| format!("Oracle：{}", oracle_err(e)))?,
                     _ = cancel_notify.notified() => {
@@ -1485,7 +1496,14 @@ pub async fn connect(record: &DbConnectionRecord) -> Result<(DbEngine, String), 
                 let _ = rs.close().await;
                 read_outcome?;
                 Ok(summary)
-            }
+                }
+                // 官方驱动：批量桥接（每批 ≤300 行 + 批间取消检查；
+                // 取消/隐式结果集的降级语义见 oracle_official 模块头）
+                OracleConn::Official(off) => {
+                    off.exec_streaming(sql, max_rows, cancel_notify, on_columns, on_rows)
+                        .await
+                }
+            },
             DbEngine::Redis { conn, db, .. } => {
                 // 单行命令执行：tokenize → 一次往返 → 值转表 → 分批回调。
                 // 取消粒度 = 单条命令（select! 只在等待往返期间生效）：
@@ -2053,42 +2071,42 @@ async fn ob_oracle_usernames(conn: &mut mysql_async::Conn) -> Result<Vec<String>
 /// SELECT_CATALOG_ROLE）即切 DBA_*（实例全量可见），否则 ALL_*（仅当前
 /// 用户可访问对象）。每次目录操作探测一回（一条 ROWNUM=1 的轻量探测）；
 /// 失败按无权限回 ALL_*（普通用户查 dba_objects 直接 ORA-00942）
-pub(crate) async fn oracle_dict_prefix(conn: &mut oracle_async::Conn) -> &'static str {
+pub(crate) async fn oracle_dict_prefix(conn: &mut OracleConn) -> &'static str {
     match conn
-        .query("SELECT 1 FROM dba_objects WHERE ROWNUM = 1")
+        .query_rows("SELECT 1 FROM dba_objects WHERE ROWNUM = 1")
         .await
     {
-        Ok(mut rs) => match rs.next_row().await {
-            Ok(Some(_)) => "dba",
-            _ => "all",
-        },
+        Ok(mut rs) => {
+            if rs.next_row().is_some() {
+                "dba"
+            } else {
+                "all"
+            }
+        }
         Err(_) => "all",
     }
 }
 
 /// Oracle 容错计数：查询失败（权限/视图缺失）返回 None
-pub(crate) async fn oracle_count_opt(conn: &mut oracle_async::Conn, sql: &str) -> Option<i64> {
-    let mut rs = conn.query(sql).await.ok()?;
-    let row = rs.next_row().await.ok()??;
-    oracle_row_string(&row, 0).parse::<i64>().ok()
+pub(crate) async fn oracle_count_opt(conn: &mut OracleConn, sql: &str) -> Option<i64> {
+    let mut rs = conn.query_rows(sql).await.ok()?;
+    rs.scalar()?.parse::<i64>().ok()
 }
 
 /// Oracle 标量字符串（容错：失败/空结果返回空串）
-pub(crate) async fn oracle_scalar_string(conn: &mut oracle_async::Conn, sql: &str) -> String {
-    match conn.query(sql).await {
-        Ok(mut rs) => match rs.next_row().await {
-            Ok(Some(row)) => oracle_row_string(&row, 0),
-            _ => String::new(),
-        },
-        Err(_) => String::new(),
-    }
+pub(crate) async fn oracle_scalar_string(conn: &mut OracleConn, sql: &str) -> String {
+    conn.query_rows(sql)
+        .await
+        .ok()
+        .and_then(|mut rs| rs.scalar().map(str::to_string))
+        .unwrap_or_default()
 }
 
 /// 回收站行 → CatalogNode（OBJECT_NAME/ORIGINAL_NAME/TYPE 三列形态；
 /// key 用 BIN$ 实名防同名多版本冲突，显示名用 ORIGINAL_NAME）。
 /// `#[inline]`：回收站逐行调用，函数体只有三次列取值 + 一次结构构造
 #[inline]
-pub(crate) fn recycle_node(row: &oracle_async::Row, schema: &str, kind: &str) -> Option<CatalogNode> {
+pub(crate) fn recycle_node(row: &[String], schema: &str, kind: &str) -> Option<CatalogNode> {
     let obj = oracle_row_string(row, 0);
     if obj == "NULL" {
         return None;
@@ -2401,6 +2419,32 @@ mod tests {
         assert!(msg.contains("EMP"), "应保留 arguments 定位信息：{msg}");
         // 不应残留英文噪音
         assert!(!msg.contains("No message file"), "应剥掉缺消息文件尾巴：{msg}");
+    }
+
+    /// 文本嗅探路径（双驱动共用：自研非 Server 变体与官方非 DbError
+    /// 变体都归一到 ora_text_sniff）：含 ORA-xxxxx 的文本接中文码表，
+    /// 纯协议/网络文案原样透传
+    #[test]
+    fn ora_text_sniff_attaches_chinese_hint() {
+        use crate::db_browser::engines::oracle_engine::ora_text_sniff;
+
+        // 带 ORA 码的服务器原文：追加中文解释
+        let msg = ora_text_sniff("DPI-1010: ORA-01017: invalid username/password; logon denied");
+        assert!(msg.contains("ORA-01017"), "原文保留：{msg}");
+        assert!(msg.contains("中文："), "应追加中文解释：{msg}");
+        // 全量中文码表（20362 条）优先命中，文案与精简表措辞不同
+        assert!(msg.contains("口令无效"), "ORA-01017 的码表文案应命中：{msg}");
+
+        // 无 ORA 码的协议文案：原样返回
+        let plain = "connection lost contact";
+        assert_eq!(ora_text_sniff(plain), plain);
+
+        // 缺消息文件形态走完整三段重组（与 oracle_err 同源行为）
+        let noisy = ora_text_sniff(
+            "ORA-00904: Message 904 not found; No message file for product=RDBMS, facility=ORA",
+        );
+        assert!(noisy.starts_with("ORA-00904："), "应重组为中文形态：{noisy}");
+        assert!(!noisy.contains("No message file"), "应剥掉英文尾巴：{noisy}");
     }
 
     /// 达梦值字符串化/数值归一/标识符校验的纯函数边界（连库行为无法在无
