@@ -1,11 +1,12 @@
 //! 数据库工作台（侧栏「数据库」菜单）：MySQL / PostgreSQL / Oracle /
 //! OceanBase / SQLite 连接管理、对象树浏览与流式 SQL 执行。会话模型与
 //! ZkState 同型（tauri manage 注入 State + 会话表 + 前端按 sessionId
-//! 交互）；引擎层见 engines.rs（Oracle 走 vendor oracle_async——纯 Rust
-//! 原生异步驱动，零 C 依赖无需 Oracle Instant Client，Tokio 全链路异步；
-//! PL/SQL 经 sqlsplit 整段化，隐式结果集（Msg 27）由 QueryResult 自动接续，
-//! database 字段在 Oracle 语义 =
-//! 服务名，「切库」= CURRENT_SCHEMA；OceanBase 双模式——两模式都走纯 Rust
+//! 交互）；引擎层见 engines.rs（Oracle 双驱动：12c+ 走官方 oracledb
+//!（spawn_blocking 桥接，oracle_official.rs），10g/11g 及官方连接失败
+//! 的降级兜底走 vendor oracle_async——纯 Rust 原生异步驱动，零 C 依赖，
+//! Tokio 全链路异步，版本路由见 engines/connect.rs；PL/SQL 经 sqlsplit
+//! 整段化，自研路径的隐式结果集（Msg 27）由 QueryResult 自动接续，
+//! 服务名/初始 schema 语义不变；OceanBase 双模式——两模式都走纯 Rust
 //! 分叉驱动 vendor/mysql-async-ob（MySQL 模式复用 mysql_async 臂，Oracle
 //! 模式经其 ob_protocol20 路径，database 字段同 Oracle 语义 = 初始
 //! schema）；SQLite 是本地文件库——`password` 字段

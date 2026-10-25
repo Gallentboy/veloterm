@@ -311,6 +311,7 @@ dependencies = [
  "oceanbase_async",
  "once_cell",
  "oracle_async",
+ "oracledb",
  "pdfium-render",
  "portable-pty",
  "prost",
@@ -8703,6 +8704,27 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "oracledb"
+version = "26.0.0-beta.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d729181747bd69ba53cde2956ea9ddc06cf09d0badaf4a9e89944b7c0b7b4397"
+dependencies = [
+ "aes 0.9.3",
+ "base16ct",
+ "base64ct",
+ "cbc",
+ "chrono",
+ "pbkdf2",
+ "pkcs8",
+ "rand 0.10.3",
+ "rustls 0.23.45",
+ "sha2 0.11.1",
+ "uuid 1.28.0",
+ "webpki-roots 1.0.9",
+ "whoami",
 ]
 
 [[package]]

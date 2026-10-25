@@ -1,16 +1,15 @@
 //! Oracle 的表详情。
 
-use oracle_async::Queryable as _;
-
+use super::super::oracle_conn::OracleConn;
 use super::super::{
     apply_index_expr_overlay, oracle_dict_prefix,
 };
 use super::super::{
-    ob_quote_literal, oracle_err, oracle_row_string, TableDetail,
+    ob_quote_literal, oracle_row_string, TableDetail,
 };
 
 pub(crate) async fn detail(
-    conn: &mut oracle_async::Conn,
+    conn: &mut OracleConn,
     schema: &str,
     table: &str,
     kind: &str,
@@ -28,10 +27,10 @@ pub(crate) async fn detail(
         ob_quote_literal(table),
         ob_quote_literal(schema)
     );
-    let ddl = match conn.query(&ddl_sql).await {
-        Ok(mut rs) => match rs.next_row().await {
-            Ok(Some(row)) => oracle_row_string(&row, 0),
-            _ => String::new(),
+    let ddl = match conn.query_rows(&ddl_sql).await {
+        Ok(mut rs) => match rs.next_row() {
+            Some(row) => oracle_row_string(row, 0),
+            None => String::new(),
         },
         Err(_) => String::new(),
     };
@@ -47,26 +46,22 @@ pub(crate) async fn detail(
         ob_quote_literal(table)
     );
     let mut col_rs = conn
-        .query(&col_sql)
+        .query_rows(&col_sql)
         .await
-        .map_err(|e| format!("Oracle 查询列结构失败：{}", oracle_err(e)))?;
+        .map_err(|e| format!("Oracle 查询列结构失败：{e}"))?;
     let mut columns: Vec<Vec<String>> = Vec::new();
-    while let Some(row) = col_rs
-        .next_row()
-        .await
-        .map_err(|e| format!("Oracle 读取列结构失败：{}", oracle_err(e)))?
-    {
-        let nullable = match row.values().get(2).map(|v| v.to_string()) {
+    while let Some(row) = col_rs.next_row() {
+        let nullable = match row.get(2).cloned() {
             Some(s) if s == "Y" => "YES".to_string(),
             Some(s) if s == "N" => "NO".to_string(),
             _ => String::new(),
         };
         columns.push(vec![
-            oracle_row_string(&row, 0),
-            oracle_row_string(&row, 1),
+            oracle_row_string(row, 0),
+            oracle_row_string(row, 1),
             nullable,
             // 列注释（all_col_comments 无行为 NULL）
-            oracle_row_string(&row, 3),
+            oracle_row_string(row, 3),
         ]);
     }
 
@@ -85,12 +80,12 @@ pub(crate) async fn detail(
     );
     let mut idx_exprs: std::collections::HashMap<(String, i64), String> =
         std::collections::HashMap::new();
-    if let Ok(mut expr_rs) = conn.query(&expr_sql).await {
-        while let Ok(Some(row)) = expr_rs.next_row().await {
-            let pos = oracle_row_string(&row, 1).parse::<i64>().unwrap_or(0);
-            let expr = oracle_row_string(&row, 2);
+    if let Ok(mut expr_rs) = conn.query_rows(&expr_sql).await {
+        while let Some(row) = expr_rs.next_row() {
+            let pos = oracle_row_string(row, 1).parse::<i64>().unwrap_or(0);
+            let expr = oracle_row_string(row, 2);
             if pos > 0 && expr != "NULL" {
-                idx_exprs.insert((oracle_row_string(&row, 0), pos), expr);
+                idx_exprs.insert((oracle_row_string(row, 0), pos), expr);
             }
         }
     }
@@ -107,23 +102,19 @@ pub(crate) async fn detail(
         ob_quote_literal(table)
     );
     let mut idx_rs = conn
-        .query(&idx_sql)
+        .query_rows(&idx_sql)
         .await
-        .map_err(|e| format!("Oracle 查询索引失败：{}", oracle_err(e)))?;
+        .map_err(|e| format!("Oracle 查询索引失败：{e}"))?;
     let mut indexes: Vec<Vec<String>> = Vec::new();
-    while let Some(row) = idx_rs
-        .next_row()
-        .await
-        .map_err(|e| format!("Oracle 读取索引失败：{}", oracle_err(e)))?
-    {
-        let name = oracle_row_string(&row, 0);
-        let is_unique = if oracle_row_string(&row, 1) == "UNIQUE" {
+    while let Some(row) = idx_rs.next_row() {
+        let name = oracle_row_string(row, 0);
+        let is_unique = if oracle_row_string(row, 1) == "UNIQUE" {
             "UNIQUE".to_string()
         } else {
             String::new()
         };
         let cols = apply_index_expr_overlay(
-            &oracle_row_string(&row, 2),
+            &oracle_row_string(row, 2),
             &name,
             &idx_exprs,
         );
@@ -184,7 +175,7 @@ pub(crate) async fn detail(
               CONNECT BY PRIOR cc.RN = cc.RN - 1)"
         )
     };
-    let listagg_ok = conn.db_version_major() >= 11;
+    let listagg_ok = conn.version_major() >= 11;
     let cols_agg = if listagg_ok {
         agg_11g("c.OWNER", "c.CONSTRAINT_NAME")
     } else {
@@ -200,20 +191,16 @@ pub(crate) async fn detail(
         ob_quote_literal(table)
     );
     let mut cons_rs = conn
-        .query(&cons_sql)
+        .query_rows(&cons_sql)
         .await
-        .map_err(|e| format!("Oracle 查询约束失败：{}", oracle_err(e)))?;
+        .map_err(|e| format!("Oracle 查询约束失败：{e}"))?;
     let mut constraints: Vec<Vec<String>> = Vec::new();
     // F 约束的（约束名, r_owner.r_constraint_name, delete_rule），
     // 引用目标随后统一反查
     let mut fk_refs: Vec<(String, String, String)> = Vec::new();
-    while let Some(row) = cons_rs
-        .next_row()
-        .await
-        .map_err(|e| format!("Oracle 读取约束失败：{}", oracle_err(e)))?
-    {
-        let name = oracle_row_string(&row, 0);
-        let ctype = match oracle_row_string(&row, 1).as_str() {
+    while let Some(row) = cons_rs.next_row() {
+        let name = oracle_row_string(row, 0);
+        let ctype = match oracle_row_string(row, 1).as_str() {
             "P" => "PK".to_string(),
             "U" => "U".to_string(),
             "R" => "F".to_string(),
@@ -224,13 +211,13 @@ pub(crate) async fn detail(
                 name.clone(),
                 format!(
                     "{}.{}",
-                    oracle_row_string(&row, 2),
-                    oracle_row_string(&row, 3)
+                    oracle_row_string(row, 2),
+                    oracle_row_string(row, 3)
                 ),
-                oracle_row_string(&row, 4),
+                oracle_row_string(row, 4),
             ));
         }
-        constraints.push(vec![name, ctype, oracle_row_string(&row, 5), String::new()]);
+        constraints.push(vec![name, ctype, oracle_row_string(row, 5), String::new()]);
     }
     // 外键目标表名 + 目标列反查（r_constraint_name → 目标约束），
     // DELETE_RULE 非 NO ACTION 拼 "table(cols) ON DELETE CASCADE"
@@ -252,19 +239,16 @@ pub(crate) async fn detail(
              WHERE OWNER = {owner_lit} AND CONSTRAINT_NAME = {cons_lit}"
         );
         let mut ref_rs = conn
-            .query(&ref_sql)
+            .query_rows(&ref_sql)
             .await
-            .map_err(|e| format!("Oracle 查询外键目标失败：{}", oracle_err(e)))?;
-        if let Some(row) = ref_rs
-            .next_row()
-            .await
-            .map_err(|e| format!("Oracle 读取外键目标失败：{}", oracle_err(e)))?
+            .map_err(|e| format!("Oracle 查询外键目标失败：{e}"))?;
+        if let Some(row) = ref_rs.next_row()
             && let Some(cell) = constraints
                 .iter_mut()
                 .find(|c| c.first().map(String::as_str) == Some(fk_name.as_str()))
             && let Some(r) = cell.get_mut(3)
         {
-            *r = oracle_row_string(&row, 0);
+            *r = oracle_row_string(row, 0);
             let rule = del_rule.trim();
             if !rule.is_empty() && rule != "NO ACTION" && rule != "NULL" {
                 r.push_str(" ON DELETE ");
@@ -294,20 +278,16 @@ pub(crate) async fn detail(
         ob_quote_literal(table)
     );
     let mut inc_rs = conn
-        .query(&inc_sql)
+        .query_rows(&inc_sql)
         .await
-        .map_err(|e| format!("Oracle 查询外键引用失败：{}", oracle_err(e)))?;
+        .map_err(|e| format!("Oracle 查询外键引用失败：{e}"))?;
     let mut incoming: Vec<Vec<String>> = Vec::new();
-    while let Some(row) = inc_rs
-        .next_row()
-        .await
-        .map_err(|e| format!("Oracle 读取外键引用失败：{}", oracle_err(e)))?
-    {
+    while let Some(row) = inc_rs.next_row() {
         incoming.push(vec![
-            oracle_row_string(&row, 0),
-            oracle_row_string(&row, 1),
-            oracle_row_string(&row, 2),
-            oracle_row_string(&row, 3),
+            oracle_row_string(row, 0),
+            oracle_row_string(row, 1),
+            oracle_row_string(row, 2),
+            oracle_row_string(row, 3),
         ]);
     }
 
@@ -327,23 +307,19 @@ pub(crate) async fn detail(
         ob_quote_literal(table)
     );
     let mut stat_rs = conn
-        .query(&stat_sql)
+        .query_rows(&stat_sql)
         .await
-        .map_err(|e| format!("Oracle 查询表统计失败：{}", oracle_err(e)))?;
-    let (comment, row_count) = if let Some(row) = stat_rs
-        .next_row()
-        .await
-        .map_err(|e| format!("Oracle 读取表统计失败：{}", oracle_err(e)))?
-    {
+        .map_err(|e| format!("Oracle 查询表统计失败：{e}"))?;
+    let (comment, row_count) = if let Some(row) = stat_rs.next_row() {
         (
             {
                 // 空值渲染为字面 "NULL" 字符串——归一为空串，
                 // 免得表详情注释徽标显示「NULL」
-                let raw = oracle_row_string(&row, 0);
+                let raw = oracle_row_string(row, 0);
                 if raw == "NULL" { String::new() } else { raw }
             },
             {
-                let raw = oracle_row_string(&row, 1);
+                let raw = oracle_row_string(row, 1);
                 if raw.is_empty() || raw == "NULL" {
                     String::new()
                 } else {

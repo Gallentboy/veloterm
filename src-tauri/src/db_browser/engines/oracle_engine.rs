@@ -4,9 +4,9 @@
 //! OceanBase Oracle 模式的辅助函数（`ob_*`）也在此：它与 Oracle 共用
 //! all_users 黑名单口径。
 
-use oracle_async::Queryable;
 use crate::db_browser::oracle_messages;
 
+use super::oracle_conn::OracleConn;
 use super::{ObjectDefinition, TableDetail};
 
 /// 错误码的完整中文解释：优先查 19c 全量译文表（20362 条，含 message/
@@ -84,77 +84,83 @@ fn format_error_text(code: i32, text: &OracleErrorText, args: &str) -> String {
 /// facility=ORA`，go-ora 只是 16 个码的兜底翻译、其余仅回 `ORA-xxxxx`。
 /// 本函数在透传前做一层清理：识别「缺消息文件」形态，剥掉那段英文尾巴，
 /// 用内置中文码表 + arguments 段（如 904 的出错标识符）重组成可读文案。
+/// 与官方驱动的共享拆分见 [`ora_server_text`] / [`ora_text_sniff`]（两驱
+/// 动的 ORA 语义一致）。
 #[inline]
 pub(crate) fn oracle_err(e: oracle_async::Error) -> String {
     match e {
-        oracle_async::Error::Server(ref db) => {
-            let code = db.code;
-            let raw = db.message.as_str();
-            let text = oracle_error_text(code);
-            // 「缺消息文件」形态：服务器文案本身没有信息量，换成内置中文文案
-            if raw.contains("No message file") || raw.contains("not found;") {
-                let args = extract_error_arguments(raw);
-                return match text {
-                    Some(t) => format_error_text(code, &t, &args),
-                    None => format!("ORA-{code:05}：详见 Oracle 官方错误文档{args}"),
-                };
+        oracle_async::Error::Server(ref db) => ora_server_text(db.code, &db.message),
+        other => ora_text_sniff(&other.to_string()),
+    }
+}
+
+/// 服务器错误（ORA 码 + 原文）→ 展示文案。双驱动共用：自研驱动的
+/// Server 变体与官方驱动 ErrorKind::DbError 都归一到此。
+pub(crate) fn ora_server_text(code: i32, raw: &str) -> String {
+    let text = oracle_error_text(code);
+    // 「缺消息文件」形态：服务器文案本身没有信息量，换成内置中文文案
+    if raw.contains("No message file") || raw.contains("not found;") {
+        let args = extract_error_arguments(raw);
+        return match text {
+            Some(t) => format_error_text(code, &t, &args),
+            None => format!("ORA-{code:05}：详见 Oracle 官方错误文档{args}"),
+        };
+    }
+    match text {
+        // 服务器原文可读：原文一行 + 中文解释（避免原文已含该中文时重复）
+        Some(t) if !raw.contains(t.message) => {
+            let mut out = format!("ORA-{code:05}: {raw}");
+            out.push_str("\n中文：");
+            out.push_str(t.message);
+            if !t.cause.is_empty() {
+                out.push_str("\n原因：");
+                out.push_str(t.cause);
             }
-            match text {
-                // 服务器原文可读：原文一行 + 中文解释（避免原文已含该中文时重复）
-                Some(t) if !raw.contains(t.message) => {
-                    let mut out = format!("ORA-{code:05}: {raw}");
-                    out.push_str("\n中文：");
-                    out.push_str(t.message);
-                    if !t.cause.is_empty() {
-                        out.push_str("\n原因：");
-                        out.push_str(t.cause);
-                    }
-                    if !t.action.is_empty() {
-                        out.push_str("\n处理建议：");
-                        out.push_str(t.action);
-                    }
-                    out
-                }
-                _ => {
-                    if raw.is_empty() {
-                        format!("ORA-{code:05}")
-                    } else if raw.starts_with("ORA-") {
-                        raw.to_string()
-                    } else {
-                        format!("ORA-{code:05}: {raw}")
-                    }
-                }
+            if !t.action.is_empty() {
+                out.push_str("\n处理建议：");
+                out.push_str(t.action);
             }
+            out
         }
-        other => {
-            let msg = other.to_string();
-            // 尝试从错误文本中识别 ORA-xxxxx
-            if let Some(pos) = msg.find("ORA-") {
-                let code_str = &msg[pos + 4..];
-                let digits: String = code_str.chars().take_while(|c| c.is_ascii_digit()).collect();
-                if let Some(text) = digits.parse::<i32>().ok().and_then(oracle_error_text) {
-                    let code = digits.parse::<i32>().unwrap_or(0);
-                    if msg.contains("No message file") {
-                        return format_error_text(code, &text, "");
-                    }
-                    // 非 Server 变体的文本通常已含服务器原文：原文一行 + 中文解释
-                    let mut out = msg;
-                    out.push_str("\n中文：");
-                    out.push_str(text.message);
-                    if !text.cause.is_empty() {
-                        out.push_str("\n原因：");
-                        out.push_str(text.cause);
-                    }
-                    if !text.action.is_empty() {
-                        out.push_str("\n处理建议：");
-                        out.push_str(text.action);
-                    }
-                    return out;
-                }
+        _ => {
+            if raw.is_empty() {
+                format!("ORA-{code:05}")
+            } else if raw.starts_with("ORA-") {
+                raw.to_string()
+            } else {
+                format!("ORA-{code:05}: {raw}")
             }
-            msg
         }
     }
+}
+
+/// 无结构化码的错误文本 → 嗅探 ORA-xxxxx 接中文码表；双驱动共用。
+pub(crate) fn ora_text_sniff(msg: &str) -> String {
+    // 尝试从错误文本中识别 ORA-xxxxx
+    if let Some(pos) = msg.find("ORA-") {
+        let code_str = &msg[pos + 4..];
+        let digits: String = code_str.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Some(text) = digits.parse::<i32>().ok().and_then(oracle_error_text) {
+            let code = digits.parse::<i32>().unwrap_or(0);
+            if msg.contains("No message file") {
+                return format_error_text(code, &text, "");
+            }
+            // 非 Server 变体的文本通常已含服务器原文：原文一行 + 中文解释
+            let mut out = msg.to_string();
+            out.push_str("\n中文：");
+            out.push_str(text.message);
+            if !text.cause.is_empty() {
+                out.push_str("\n原因：");
+                out.push_str(text.cause);
+            }
+            if !text.action.is_empty() {
+                out.push_str("\n处理建议：");
+                out.push_str(text.action);
+            }
+            return out;
+        }
+    }
+    msg.to_string()
 }
 
 /// 从 OCI 错误文案里提取 `arguments: ["X"]` 段——缺消息文件时这段仍带
@@ -280,8 +286,9 @@ pub(crate) fn oracle_ora_hint(code: i32) -> Option<&'static str> {
 /// 12.1 才加的（11.2 及更早查询直接 ORA-00904），故 <12 走内置账号黑名单
 /// 加 APEX_/FLOWS_ 前缀排除。主版本取自 0x3B 版本查询（db_version_major，
 /// banner 尾巴不是数字不可用）；版本未知或 12c+ 查询仍报 904 时降级黑名单。
-pub(crate) async fn oracle_usernames(conn: &mut oracle_async::Conn) -> Result<Vec<String>, String> {
-    let mut result = query_usernames(conn, conn.db_version_major()).await;
+pub(crate) async fn oracle_usernames(conn: &mut OracleConn) -> Result<Vec<String>, String> {
+    let major = conn.version_major();
+    let mut result = query_usernames(conn, major).await;
     if result.is_err() {
         result = query_usernames(conn, 0).await;
     }
@@ -289,7 +296,7 @@ pub(crate) async fn oracle_usernames(conn: &mut oracle_async::Conn) -> Result<Ve
 }
 
 async fn query_usernames(
-    conn: &mut oracle_async::Conn,
+    conn: &mut OracleConn,
     major: u32,
 ) -> Result<Vec<String>, String> {
     let sql = if major >= 12 {
@@ -307,13 +314,13 @@ async fn query_usernames(
     };
 
     let mut rs = conn
-        .query(sql)
+        .query_rows(sql)
         .await
-        .map_err(|e| format!("Oracle 查询用户清单失败：{}", oracle_err(e)))?;
+        .map_err(|e| format!("Oracle 查询用户清单失败：{e}"))?;
 
     let mut usernames = Vec::new();
-    while let Some(row) = rs.next_row().await.map_err(|e| format!("Oracle 读取用户清单失败：{}", oracle_err(e)))? {
-        usernames.push(oracle_row_string(&row, 0));
+    while let Some(row) = rs.next_row() {
+        usernames.push(oracle_row_string(row, 0));
     }
     Ok(usernames)
 }
@@ -324,13 +331,10 @@ pub(crate) fn ob_quote_literal(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-/// Row 按列取字符串（OracleValue Display 内置 NULL 处理与各类型形态；越界列回 NULL）
+/// Row 按列取字符串（行集已在驱动层字符串化，NULL 形态为 "NULL"；越界列回 "NULL"）
 #[inline(always)]
-pub(crate) fn oracle_row_string(row: &oracle_async::Row, i: usize) -> String {
-    row.values()
-        .get(i)
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "NULL".to_string())
+pub(crate) fn oracle_row_string(row: &[String], i: usize) -> String {
+    row.get(i).cloned().unwrap_or_else(|| "NULL".to_string())
 }
 
 // ── OceanBase Oracle 租户：表详情与对象定义 ────────────────────────────────

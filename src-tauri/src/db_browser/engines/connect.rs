@@ -7,8 +7,9 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use base64::Engine as _;
-use oracle_async::Queryable as _;
 
+use super::oracle_conn::OracleConn;
+use super::oracle_official::OfficialOracle;
 use super::{
     DbConnectionRecord, DbEngine, RedisConn, RedisExtraOptions, SqliteEngine, dm_server_version, dm_valid_identifier,
     redis_addr, redis_connect_error, redis_connection_info, redis_db_index,
@@ -168,37 +169,109 @@ pub(crate) async fn connect_oracle(record: &DbConnectionRecord) -> Result<(DbEng
     }
 
     let opts = oracle_async::Opts::builder()
-        .host(host)
+        .host(host.clone())
         .port(record.port)
         .service_name(service)
         .username(username)
         .password(password)
         .build();
 
-    let mut conn = oracle_async::Conn::connect(opts)
-        .await
-        .map_err(|e| format!("Oracle 连接失败：{}", oracle_err(e)))?;
+    // 双驱动版本路由（12c+ 走官方 oracledb，10g/11g 走自研 oracle_async）：
+    // ① 缓存快路径——上一轮已确认该记录 12c+ 的，直接官方建连（单登录），
+    //    失败回落完整流程（自研探测），不动缓存下次再试；
+    // ② 完整流程——自研驱动先连（10g/11g 的最终会话），兼作版本探测器；
+    //    探测到 12c+ 再官方建连（首连双登录是已知代价，缓存把每运行期
+    //    压到一次），成功换官方会话并写缓存；官方失败 warn 后保留自研
+    //    会话（零风险降级，行为与单驱动时代完全一致）。
+    if oracle_route_plan(oracle_route_cache_get(record.id), 0) == OracleRoutePlan::OfficialDirect
+        && let Ok(off) = OfficialOracle::connect(&host, record.port, service, username, password)
+            .await
+    {
+        let mut conn = OracleConn::Official(off);
+        oracle_apply_initial_schema(&mut conn, initial_schema.as_deref()).await?;
+        let version = conn.version_display();
+        return Ok((DbEngine::Oracle(conn), version));
+    } else if oracle_route_cache_get(record.id) == Some(true) {
+        log::warn!("[DB] Oracle 官方驱动连接失败（缓存路由），本轮降级自研驱动");
+    }
 
-    // 版本展示与原生 OCI / go-ora 严格一致：用 0x3B 回包的完整 banner
-    // （如 "Oracle Database 11g Enterprise Edition Release …"），
+    let mut conn = OracleConn::Legacy(Box::new(
+        oracle_async::Conn::connect(opts)
+            .await
+            .map_err(|e| format!("Oracle 连接失败：{}", oracle_err(e)))?,
+    ));
+
+    // 版本展示与原生 OCI / go-ora 严格一致：0x3B 回包的完整 banner
+    //（如 "Oracle Database 11g Enterprise Edition Release …"），
     // 兜底数字版本号；TTC 协商串只是平台尾巴不可用
-    let version = {
-        let banner = conn.db_version_banner().trim();
-        if !banner.is_empty() {
-            banner.to_string()
-        } else {
-            let text = conn.db_version().trim();
-            if text.is_empty() {
-                "Oracle".to_string()
-            } else {
-                text.to_string()
-            }
-        }
-    };
+    let version = conn.version_display();
 
-    // 初始 schema（database 字段，可选）：CURRENT_SCHEMA 只改名字解析
-    // 不改权限；标识符字符集校验同 select_database（防注入）
-    if let Some(schema) = initial_schema.as_deref().filter(|s| !s.trim().is_empty()) {
+    if oracle_route_plan(None, conn.version_major()) == OracleRoutePlan::OfficialAfterProbe
+        && let Ok(off) = OfficialOracle::connect(&host, record.port, service, username, password)
+            .await
+    {
+        let mut official = OracleConn::Official(off);
+        // 探测连接上还没动过会话状态，直接丢弃；初始 schema 落到官方连接
+        oracle_apply_initial_schema(&mut official, initial_schema.as_deref()).await?;
+        oracle_route_cache_put(record.id, true);
+        return Ok((DbEngine::Oracle(official), version));
+    } else if conn.version_major() >= ORACLE_OFFICIAL_MIN_MAJOR {
+        // 版本支持但官方连接失败：降级保留自研会话，不写缓存（下次再试）
+        log::warn!("[DB] Oracle 官方驱动连接失败，保留自研驱动会话");
+    }
+
+    oracle_apply_initial_schema(&mut conn, initial_schema.as_deref()).await?;
+    Ok((DbEngine::Oracle(conn), version))
+}
+
+/// 官方驱动的服务端版本下限（Oracle 官方文档：rust-oracledb 连接
+/// Oracle Database 12c 起，19c/21c/26ai 过认证；10g/11g 由自研驱动承接）
+const ORACLE_OFFICIAL_MIN_MAJOR: u32 = 12;
+
+/// 双驱动路由决策（纯函数，单测锁定）。
+#[derive(Debug, PartialEq, Eq)]
+enum OracleRoutePlan {
+    /// 缓存已确认 12c+：跳过探测，直接官方建连
+    OfficialDirect,
+    /// 探测到 12c+：官方建连（探测连接作废）
+    OfficialAfterProbe,
+    /// 10g/11g/版本未知：自研驱动
+    Legacy,
+}
+
+fn oracle_route_plan(cached: Option<bool>, probe_major: u32) -> OracleRoutePlan {
+    if cached == Some(true) {
+        OracleRoutePlan::OfficialDirect
+    } else if probe_major >= ORACLE_OFFICIAL_MIN_MAJOR {
+        OracleRoutePlan::OfficialAfterProbe
+    } else {
+        OracleRoutePlan::Legacy
+    }
+}
+
+/// 路由缓存：connection_record_id → 是否已确认走官方驱动（只存 true
+/// 判定——false 由每次探测的版本自然给出，无需记忆）。进程内生命周期，
+/// 双登录代价被压到每运行期每记录一次。
+static ORACLE_OFFICIAL_ROUTE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<usize, bool>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn oracle_route_cache_get(record_id: usize) -> Option<bool> {
+    ORACLE_OFFICIAL_ROUTE.lock().ok()?.get(&record_id).copied()
+}
+
+fn oracle_route_cache_put(record_id: usize, use_official: bool) {
+    if let Ok(mut cache) = ORACLE_OFFICIAL_ROUTE.lock() {
+        cache.insert(record_id, use_official);
+    }
+}
+
+/// 初始 schema（database 字段，可选）：CURRENT_SCHEMA 只改名字解析
+/// 不改权限；标识符字符集校验同 select_database（防注入）
+async fn oracle_apply_initial_schema(
+    conn: &mut OracleConn,
+    initial_schema: Option<&str>,
+) -> Result<(), String> {
+    if let Some(schema) = initial_schema.filter(|s| !s.trim().is_empty()) {
         if !schema
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '#'))
@@ -208,10 +281,9 @@ pub(crate) async fn connect_oracle(record: &DbConnectionRecord) -> Result<(DbEng
         let sql = format!("ALTER SESSION SET CURRENT_SCHEMA = {schema}");
         conn.exec(&sql)
             .await
-            .map_err(|e| format!("Oracle 设置初始 schema 失败：{}", oracle_err(e)))?;
+            .map_err(|e| format!("Oracle 设置初始 schema 失败：{e}"))?;
     }
-
-    Ok((DbEngine::Oracle(conn), version))
+    Ok(())
 }
 
 /// Redis 建连：按 extra_options.topology 分单机 / 集群 / 哨兵三条路径。
@@ -819,5 +891,39 @@ pub(crate) fn native_roots_pem() -> Result<String, String> {
         return Err("未找到系统根证书（verify-full 模式需要）".to_string());
     }
     Ok(pem)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 双驱动路由决策（纯函数锁定）：
+    /// - 缓存确认 12c+ → 官方直连（跳过探测，免双登录）
+    /// - 未缓存 + 探测 12c+ → 探测后切官方
+    /// - 10g/11g/版本未知（0）→ 自研驱动
+    /// - 缓存只存 true 判定（false 由每次探测自然给出），Some(false)
+    ///   实际不会出现，按未缓存处理
+    #[test]
+    fn oracle_route_plan_decisions() {
+        assert_eq!(
+            oracle_route_plan(Some(true), 0),
+            OracleRoutePlan::OfficialDirect
+        );
+        assert_eq!(
+            oracle_route_plan(Some(true), 11),
+            OracleRoutePlan::OfficialDirect
+        );
+        assert_eq!(
+            oracle_route_plan(None, 12),
+            OracleRoutePlan::OfficialAfterProbe
+        );
+        assert_eq!(
+            oracle_route_plan(None, 19),
+            OracleRoutePlan::OfficialAfterProbe
+        );
+        assert_eq!(oracle_route_plan(None, 11), OracleRoutePlan::Legacy);
+        assert_eq!(oracle_route_plan(None, 0), OracleRoutePlan::Legacy);
+        assert_eq!(oracle_route_plan(Some(false), 19), OracleRoutePlan::OfficialAfterProbe);
+    }
 }
 

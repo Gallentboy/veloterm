@@ -1,12 +1,10 @@
 //! catalog_groups 的引擎分发：分组计数（表/视图/函数/过程/序列 + 各引擎特有组）。
 //! 拆自 engines/mod.rs 的同名方法，行为零变更。
 
-use oracle_async::Queryable as _;
-
 use super::super::{
     CatalogNode, DbEngine, GroupCounts, OB_DICT_PREFIX, ObjectGroup, dm_row_i64, REDIS_VALUE_TYPES, dm_query_rows, dm_row_string,
     group_nodes, ob_mysql_mviews, ob_mysql_sequences, ob_oracle_mviews, ob_oracle_packages,
-    ob_oracle_tables, ob_quote_literal, oracle_count_opt, oracle_dict_prefix, oracle_err,
+    ob_oracle_tables, ob_quote_literal, oracle_count_opt, oracle_dict_prefix,
     oracle_row_string, oracle_scalar_string, parse_redis_db, quote_ident, redis_scan_typed_keys,
     redis_select,
 };
@@ -283,17 +281,13 @@ pub(crate) async fn groups(
                     ob_quote_literal(schema)
                 );
                 let mut rs = conn
-                    .query(&sql)
+                    .query_rows(&sql)
                     .await
-                    .map_err(|e| format!("Oracle 查询对象计数失败：{}", oracle_err(e)))?;
+                    .map_err(|e| format!("Oracle 查询对象计数失败：{e}"))?;
                 let mut counts: Vec<(String, i64)> = Vec::new();
-                while let Some(row) = rs
-                    .next_row()
-                    .await
-                    .map_err(|e| format!("Oracle 读取对象计数失败：{}", oracle_err(e)))?
-                {
-                    let k = oracle_row_string(&row, 0);
-                    let c = row.get::<i64>(1).unwrap_or(0);
+                while let Some(row) = rs.next_row() {
+                    let k = oracle_row_string(row, 0);
+                    let c = oracle_row_string(row, 1).parse::<i64>().unwrap_or(0);
                     counts.push((k, c));
                 }
                 let count_of = |kind: &str| {

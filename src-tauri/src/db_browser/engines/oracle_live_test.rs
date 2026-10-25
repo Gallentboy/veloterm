@@ -387,3 +387,82 @@ async fn oracle_live_connect_and_select() {
         }
     }
 }
+
+/// 双驱动路由真机回归：经完整 DbEngine::connect 管线连接（区别于上一
+/// 个测试的直接驱动调用），断言路由形态与服务端版本一致——11.2 真机
+/// 必须落在 Legacy（自研驱动）；12c+ 机器会尝试官方驱动，失败时合法
+/// 降级 Legacy（打印实际路径供人工核对）。
+#[tokio::test]
+#[ignore = "需要本机 veloterm.db 里有 oracle 连接记录（真机门禁，不入默认套件）"]
+async fn oracle_live_driver_routing() {
+    use super::DbEngine;
+    use super::oracle_conn::OracleConn;
+    use crate::db::DbConnectionRecord;
+
+    let db_path = std::env::var("HOME")
+        .map(|h| format!("{h}/Library/Application Support/com.gallentboy.veloterm.app/veloterm.db"))
+        .unwrap();
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.pragma_update(None, "key", crate::db::DEFAULT_MASTER_KEY).unwrap();
+
+    let (id, host, port, user, pass, service, schema): (i64, String, i64, String, String, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT id, host, port, username, password, service_name, database \
+             FROM db_connections WHERE engine='oracle' ORDER BY id LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+        )
+        .expect("veloterm.db 里没有 oracle 连接记录");
+
+    let record = DbConnectionRecord {
+        id: id as usize,
+        name: "live-routing".to_string(),
+        engine: "oracle".to_string(),
+        host,
+        port: port as u16,
+        database: schema,
+        service_name: service,
+        mode: None,
+        db_path: None,
+        encryption_mode: "none".to_string(),
+        username: Some(user),
+        password: Some(pass),
+        ssl_mode: "disable".to_string(),
+        ssh_host_id: None,
+        env_level: String::new(),
+        readonly: false,
+        color: None,
+        compatible_mode: None,
+        extra_options: None,
+        created_at: 0,
+        updated_at: 0,
+    };
+
+    let (engine, version) = DbEngine::connect(&record)
+        .await
+        .expect("完整管线连接失败");
+    println!("routed version: {version}");
+
+    let DbEngine::Oracle(oc) = &engine else {
+        unreachable!("connect_oracle 只产 Oracle 变体");
+    };
+    let major = oc.version_major();
+    match oc {
+        OracleConn::Legacy(_) => {
+            println!("路由：Legacy（自研驱动），server major = {major}");
+            // 11.2 真机锚定：< 12 的服务端不允许落官方路径
+            assert!(major < 12, "Legacy 路径只允许 <12 的服务端，实际 {major}");
+        }
+        OracleConn::Official(_) => {
+            println!("路由：Official（官方驱动），server major = {major}");
+            assert!(major >= 12, "Official 路径要求 12c+，实际 {major}");
+        }
+    }
+
+    // 切库（CURRENT_SCHEMA）与提交回滚在路由后的会话上冒烟
+    let mut engine = engine;
+    engine.select_database("SYS").await.expect("切 schema 失败");
+    engine.commit().await.expect("commit 失败");
+    engine.rollback().await.expect("rollback 失败");
+    println!("select_database/commit/rollback 冒烟通过");
+}
