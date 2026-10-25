@@ -262,9 +262,34 @@ jobs:
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Add LLVM to PATH (Windows)
+        # lld-link/clang-cl 可用性：rust-lld 链接器随 rustup 自带零依赖；
+        # clang-cl（tauri-action 步骤的 CC/CXX，见下）需要 LLVM 在 PATH——
+        # VS 组件 env（llvmX64/llvmArm64）优先，独立安装兑底。只加 PATH
+        # 不设全局 CC：qalc 的 MSYS2/autotools 与 goffi 的 cgo 段各用各的
+        # MinGW 编译器，被 CC=clang-cl 污染会直接挂
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $llvmBin = @(
+            if ('${{ matrix.msys_arch }}' -eq 'x86_64') { $env:llvmX64 } else { $env:llvmArm64 },
+            'C:\Program Files\LLVM\bin'
+          ) | Where-Object { $_ -and (Test-Path "$_\clang-cl.exe") } | Select-Object -First 1
+          if ($llvmBin) {
+            "$llvmBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            Write-Host "LLVM -> PATH: $llvmBin"
+          } else {
+            Write-Host "clang-cl 未找到（app 的 C 依赖回退 cl.exe）"
+          }
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Windows 腿的 C 依赖（sqlcipher/tree-sitter 等 cc crate）统一
+          # clang-cl（与 rust-lld 链接器配套的 LLVM 工具链化）；mac 腿置
+          # 空串——cc crate 对空 env 视同未设置，不影响 macOS 的 clang
+          CC: ${{ runner.os == 'Windows' && 'clang-cl' || '' }}
+          CXX: ${{ runner.os == 'Windows' && 'clang-cl' || '' }}
         with:
           # Release tag 用 v<version>（GitHub 通用规范；此前是 tauri-action
           # 默认模板 app-v__VERSION__，页面上的 tag 徽标显示成 app-v1.0.3）

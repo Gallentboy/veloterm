@@ -103,10 +103,33 @@ const exeExt = target.includes('windows') ? '.exe' : '';
 // 否则整套依赖会被重编两遍。本地未传 --target 时与本地 `tauri build`（也不带）同样一致
 const cargoTargetArgs = explicitTarget ? `--target ${target} ` : '';
 if (!only || only === 'coreutils') {
-  execSync(
-    `cargo build --release ${cargoTargetArgs}-p ${TOOL} --bin ${TOOL}`,
-    { cwd: srcTauri, stdio: 'inherit' },
-  );
+  // C 编译器统一 clang-cl（与 lld-link 链接器的 LLVM 工具链化配套）：仅注入
+  // 本 cargo 构建（cc crate 家族——jq-app/libsqlite3-sys/tree-sitter 等读 CC），
+  // 不进 process.env——qalc 的 MSYS2/autotools 与 goffi 的 cgo 段各用各的
+  // MinGW 编译器，被 CC=clang-cl 污染会直接挂。clang-cl 缺席（本地 Windows
+  // 未装 LLVM）时静默回退默认 cl.exe，不阻断构建
+  const cargoEnv = { ...process.env };
+  if (target.includes('windows-msvc')) {
+    const llvmDirs = [
+      process.env.LLVM_BIN,
+      'C:\\Program Files\\LLVM\\bin',
+      process.env.libLLVM_X64,
+    ].filter(Boolean);
+    const found = llvmDirs.find((d) => existsSync(join(d, 'clang-cl.exe')));
+    if (found) {
+      cargoEnv.CC = 'clang-cl';
+      cargoEnv.CXX = 'clang-cl';
+      cargoEnv.PATH = `${found};${cargoEnv.PATH ?? ''}`;
+      console.log(`[build-tools] C 编译器：clang-cl（${found}）`);
+    } else {
+      console.log('[build-tools] 未找到 clang-cl，C 依赖回退默认 cl.exe');
+    }
+  }
+  execSync(`cargo build --release ${cargoTargetArgs}-p ${TOOL} --bin ${TOOL}`, {
+    cwd: srcTauri,
+    stdio: 'inherit',
+    env: cargoEnv,
+  });
 }
 
 // 清空并重建 externalBin 目录（--only 局部构建不清空：避免误删其他段的产物）
@@ -603,8 +626,12 @@ if (!only || only === 'vim') {
     process.exit(1);
   }
 
-  cpSync(vimDll, join(outDir, 'vim64.dll'));
-  console.log(`[build-tools] vim64.dll + vim-runtime/ (${vimVersion}) -> ${join(outDir)}`);
+  // 随包改名 vim.dll（去架构后缀，与 lib/ 里其它随包 DLL 同一命名约定；
+  // pdfium 的标准名映射同款手法）：nmake 产物仍叫 vim64.dll（上游官方
+  // 命名），staging 原位改名；运行侧 vim_impl.rs 的候选同步 vim.dll 优先、
+  // vim64.dll 升级兼容兑底
+  cpSync(vimDll, join(outDir, 'vim.dll'));
+  console.log(`[build-tools] vim.dll + vim-runtime/ (${vimVersion}) -> ${join(outDir)}`);
 }
 if (only === 'vim') {
   console.log('[build-tools] 完成');

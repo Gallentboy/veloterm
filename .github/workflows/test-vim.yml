@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build vim64.dll only
+      - name: Build vim.dll only
         run: node scripts/build-tools.mjs --only vim
 
       - name: Upload vim artifact
@@ -30,7 +30,7 @@ jobs:
         with:
           name: vim-windows-x64
           path: |
-            src-tauri/binaries/vim64.dll
+            src-tauri/binaries/vim.dll
             src-tauri/binaries/vim-runtime/
           if-no-files-found: error
           retention-days: 7

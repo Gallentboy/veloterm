@@ -55,9 +55,12 @@ mod imp {
     static VIM_MAIN: OnceLock<Result<VimMainFn, String>> = OnceLock::new();
 
     /// DLL 候选路径（共享约定，见 crate::dll_paths）：
-    /// 本级 lib/ → 上级 lib/ → 同目录平铺兜底。
+    /// 本级 lib/ → 上级 lib/ → 同目录平铺兜底。随包名 vim.dll（与其它随包
+    /// DLL 同一去架构后缀约定）；老版安装位的 vim64.dll 作升级兼容兜底
     fn dll_candidates_for(exe: Option<&Path>) -> Vec<PathBuf> {
-        crate::dll_paths::dll_candidates(exe, "vim64.dll")
+        let mut v = crate::dll_paths::dll_candidates(exe, "vim.dll");
+        v.extend(crate::dll_paths::dll_candidates(exe, "vim64.dll"));
+        v
     }
 
     /// vim 数据目录候选（平铺在安装根，不随 DLL 进 lib/）：

@@ -47,7 +47,7 @@ $expectedLib = @(
     'lib/nmapffi.dll',
     'lib/ncatffi.dll',
     'lib/npingffi.dll',
-    'lib/vim64.dll',
+    'lib/vim.dll',
     'lib/pdfium.dll',
     'lib/jxl.dll',
     'lib/jxl_cms.dll',
@@ -61,7 +61,7 @@ $expectedRoot = @('coreutils.exe', 'nmap-data', 'ca-bundle.crt', 'vim-runtime')
 # 旧的平铺位置不该再出现（DLL 统一进 lib/；pdfium 也不允许残留独立的
 # pdfium/ 子目录布局里的平铺形态）
 $forbiddenRoot = @(
-    'veloterm_goffi.dll', 'qalcffi.dll', 'nmapffi.dll', 'ncatffi.dll', 'npingffi.dll', 'vim64.dll',
+    'veloterm_goffi.dll', 'qalcffi.dll', 'nmapffi.dll', 'ncatffi.dll', 'npingffi.dll', 'vim.dll', 'vim64.dll',
     'pdfium.dll',
     'jxl.dll', 'jxl_cms.dll', 'jxl_threads.dll', 'hwy.dll', 'lcms2-2.dll',
     'brotlicommon.dll', 'brotlidec.dll', 'brotlienc.dll')

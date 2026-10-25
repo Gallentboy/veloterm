@@ -13,5 +13,14 @@ rustflags = ["-C", "target-cpu=apple-m1"]
 # --cap-lints allow 压制全部编译告警：vendor 路径依赖（frawk 等）不像 registry 依赖
 # 那样被 cargo 自动压制，缓存重放的告警会刷屏 CI 日志；自有代码的告警在 macOS
 # 开发构建中仍然可见，不受影响
+# linker=rust-lld：链接器统一 lld-link（rust-lld 即 rustup 随工具链分发的
+# lld-link 本体，link.exe 的 drop-in 替代——不需外部 LLVM 安装；与 CC=clang-cl
+# 的 LLVM 工具链化配套，链接更快且跨平台行为一致）。/MACHINE 等参数由
+# rustc 按 msvc target 自动传
 [target.x86_64-pc-windows-msvc]
+linker = "rust-lld"
+rustflags = ["-C", "target-feature=+crt-static", "--cap-lints", "allow"]
+
+[target.aarch64-pc-windows-msvc]
+linker = "rust-lld"
 rustflags = ["-C", "target-feature=+crt-static", "--cap-lints", "allow"]
