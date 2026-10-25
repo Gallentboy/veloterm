@@ -217,11 +217,14 @@ jobs:
           # .S 汇编器与 cc 同源。clang-cl 是 MSVC 兼容驱动，产物 .lib 与
           # cl.exe 编译的 x264（vcpkg）混合链接完全兼容。LLVM bin 目录由
           # VS 安装提供（环境变量 llvmArm64/llvmX64），独立 LLVM 安装兑底
-          $llvmBin = @(
-            if ('${{ matrix.arch }}' -eq 'arm64') { $env:llvmArm64 } else { $env:llvmX64 },
-            if ('${{ matrix.arch }}' -eq 'arm64') { $env:llvmX64 } else { $env:llvmArm64 },
-            'C:\Program Files\LLVM\bin'
-          ) | Where-Object { $_ -and (Test-Path "$_\clang-cl.exe") } | Select-Object -First 1
+          $llvmCands = @()
+          if ('${{ matrix.arch }}' -eq 'arm64') {
+            $llvmCands += $env:llvmArm64; $llvmCands += $env:llvmX64
+          } else {
+            $llvmCands += $env:llvmX64; $llvmCands += $env:llvmArm64
+          }
+          $llvmCands += 'C:\Program Files\LLVM\bin'
+          $llvmBin = $llvmCands | Where-Object { $_ -and (Test-Path "$_\clang-cl.exe") } | Select-Object -First 1
           if (-not $llvmBin) {
             throw "clang-cl.exe 未找到（llvmArm64=$env:llvmArm64 llvmX64=$env:llvmX64）"
           }

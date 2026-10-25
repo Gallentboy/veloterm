@@ -271,10 +271,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $llvmBin = @(
-            if ('${{ matrix.msys_arch }}' -eq 'x86_64') { $env:llvmX64 } else { $env:llvmArm64 },
-            'C:\Program Files\LLVM\bin'
-          ) | Where-Object { $_ -and (Test-Path "$_\clang-cl.exe") } | Select-Object -First 1
+          # pwsh 注意：@() 里 if 语句后跟逗号是非法表达式（车道实锄的
+          # ParserError），用朴素赋值式收集候选
+          $llvmCands = @()
+          if ('${{ matrix.msys_arch }}' -eq 'x86_64') {
+            $llvmCands += $env:llvmX64; $llvmCands += $env:llvmArm64
+          } else {
+            $llvmCands += $env:llvmArm64; $llvmCands += $env:llvmX64
+          }
+          $llvmCands += 'C:\Program Files\LLVM\bin'
+          $llvmBin = $llvmCands | Where-Object { $_ -and (Test-Path "$_\clang-cl.exe") } | Select-Object -First 1
           if ($llvmBin) {
             "$llvmBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
             Write-Host "LLVM -> PATH: $llvmBin"
