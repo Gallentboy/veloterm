@@ -64,7 +64,7 @@ $coreutils = Get-ChildItem -Path $BinariesDir -Filter 'coreutils-*.exe' |
     Select-Object -First 1
 $requiredDlls = @(
     'veloterm_goffi.dll', 'qalcffi.dll', 'nmapffi.dll',
-    'ncatffi.dll', 'npingffi.dll', 'vim64.dll')
+    'ncatffi.dll', 'npingffi.dll', 'vim.dll')
 $requiredDirs = @('nmap-data', 'vim-runtime')
 $requiredFiles = @('ca-bundle.crt')
 
