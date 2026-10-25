@@ -126,6 +126,8 @@ pub fn run() {
             db_browser::redis_write_key,
             db_browser::redis_slowlog,
             db_browser::redis_bigkeys,
+            db_browser::db_odbc_drivers,
+            db_browser::db_odbc_data_sources,
             db_browser::sqlite_file_pick,
             zk::zk_list,
             zk::zk_get,

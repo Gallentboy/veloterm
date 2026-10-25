@@ -8,6 +8,7 @@
 
 pub(super) mod dameng;
 pub(super) mod mysql;
+pub(super) mod odbc;
 pub(super) mod oracle;
 pub(super) mod postgres;
 pub(super) mod redis;

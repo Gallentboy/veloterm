@@ -1202,6 +1202,28 @@ pub async fn db_rollback(
     Ok(session.get_tx_status())
 }
 
+/// 系统已安装的 ODBC 驱动清单（连接表单的驱动下拉数据源）。驱动管理器
+/// 未安装时返回带平台安装指引的错误（OnceLock 只解析一次）。
+#[tauri::command]
+pub async fn db_odbc_drivers() -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(|| {
+        engines::odbc_engine::odbc_api().and_then(|api| api.driver_descriptions())
+    })
+    .await
+    .map_err(|e| format!("ODBC 任务失败：{e}"))?
+}
+
+/// 系统已配置的 ODBC 数据源（DSN）清单（连接表单的 DSN 下拉数据源），
+/// 条目形如 "name（driver）"。
+#[tauri::command]
+pub async fn db_odbc_data_sources() -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(|| {
+        engines::odbc_engine::odbc_api().and_then(|api| api.data_sources())
+    })
+    .await
+    .map_err(|e| format!("ODBC 任务失败：{e}"))?
+}
+
 /// 用表单草稿参数（编辑态密码留空自动从库补）临时建连拉取可选数据库清单，
 /// 拉完即断——供连接表单的「数据库」下拉选择（也可手输）。SQLite 返回
 /// `PRAGMA database_list` 的附加库名（前端对 SQLite 隐藏该选择器，保留
@@ -1259,6 +1281,10 @@ pub async fn db_use_database(
         DbEngine::Sqlite(_) => {
             // SQLite 无连接级切库：对象树顶层已是 database_list 的附加库，
             // 这里只更新元信息供工具栏展示
+        }
+        DbEngine::Odbc(_) => {
+            // ODBC 无连接级切目录：目录查询按 catalog 参数显式限定（同
+            // SQLite 的 meta-only 语义）
         }
         DbEngine::Redis { .. } => {
             // Redis 切换 = SELECT n（连接级状态，不重连）；元信息里 database

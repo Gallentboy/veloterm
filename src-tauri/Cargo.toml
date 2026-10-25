@@ -64,6 +64,10 @@ regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rig = { package = "rig-core", version = "0.42.0" }
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
+# ODBC 引擎：运行时 dlopen 驱动管理器（odbc32/libodbc），零链接期依赖——
+# 没装驱动管理器的机器应用照常跑（pdfium/libjxl 同款铁律）。已在 tauri 栈
+# 的 lock 里（传递依赖），直接引入零新增编译。
+libloading = "0.8"
 # ZMODEM 协议引擎（终端内 sz/rz 收发；vendor 子集 + 本地修补/增补清单见
 # vendor/rzsz/README.md）
 rzsz = { path = "vendor/rzsz" }

@@ -20,6 +20,7 @@ import {
   Landmark,
   Pencil,
   Play,
+  Plug,
   Plus,
   Trash2,
   Waves,
@@ -47,10 +48,13 @@ import {
   dbConnectionSave,
   dbConnectionTest,
   dbListDatabasesForRecord,
+  dbOdbcDataSources,
+  dbOdbcDrivers,
   sqliteFilePick,
   type DbConnectionRecord,
   type DbConnectionTestResult,
   type DbEngineKind,
+  type OdbcExtraOptions,
   type RedisExtraOptions,
   type SqliteEncryptionMode,
 } from '@/services/dbConnectionsService';
@@ -64,6 +68,7 @@ const ENGINE_DEFAULT_PORTS: Record<DbEngineKind, number> = {
   oceanbase: 2881,
   sqlite: 0,
   dameng: 5236,
+  odbc: 0,
 };
 
 // 引擎名均为产品名（英文界面也保留原厂名），不走 i18n；达梦按产品代号显示 DM8
@@ -75,6 +80,7 @@ const ENGINE_LABELS: Record<DbEngineKind, string> = {
   oceanbase: 'OceanBase',
   sqlite: 'SQLite',
   dameng: 'DM8',
+  odbc: 'ODBC',
 };
 
 /** 各引擎的辨识图标：MySQL/PG/Redis/SQLite 用 simple-icons 的品牌官方
@@ -90,6 +96,7 @@ const ENGINE_ICONS: Record<DbEngineKind, ComponentType<{ className?: string }>> 
   oceanbase: Waves,
   sqlite: SqliteBrandIcon,
   dameng: Landmark,
+  odbc: Plug,
 };
 
 /** 各引擎的图标着色（终端色板，每引擎一色互不重复） */
@@ -101,6 +108,7 @@ const ENGINE_COLORS: Record<DbEngineKind, string> = {
   oceanbase: 'text-terminal-magenta',
   sqlite: 'text-terminal-yellow',
   dameng: 'text-terminal-white',
+  odbc: 'text-terminal-black',
 };
 
 /** 连接条目的引擎显示名：OceanBase 附带租户模式后缀（如「OceanBase · Oracle 模式」） */
@@ -481,6 +489,27 @@ function DatabasePickerField({
   );
 }
 
+/** 解析记录的 ODBC extraOptions（engine 非 odbc / JSON 非法 → DSN 默认） */
+function parseOdbcExtra(node: DbConnectionRecord | null): OdbcExtraOptions {
+  if (node?.engine !== 'odbc' || !node.extraOptions) return { connectionType: 'dsn' };
+  try {
+    const parsed = JSON.parse(node.extraOptions) as Partial<OdbcExtraOptions>;
+    const connectionType =
+      parsed.connectionType === 'driver' || parsed.connectionType === 'raw'
+        ? parsed.connectionType
+        : 'dsn';
+    return {
+      connectionType,
+      dsn: typeof parsed.dsn === 'string' ? parsed.dsn : undefined,
+      driver: typeof parsed.driver === 'string' ? parsed.driver : undefined,
+      connectionString:
+        typeof parsed.connectionString === 'string' ? parsed.connectionString : undefined,
+    };
+  } catch {
+    return { connectionType: 'dsn' };
+  }
+}
+
 /** 解析记录的 Redis extraOptions（engine 非 redis / JSON 非法 → 单机默认） */
 function parseRedisExtra(node: DbConnectionRecord | null): RedisExtraOptions {
   if (node?.engine !== 'redis' || !node.extraOptions) return { topology: 'single' };
@@ -546,6 +575,38 @@ function DbConnectionFormDialog({
   const [redisMasterName, setRedisMasterName] = useState(redisExtraInitial.masterName ?? '');
   const [redisCertPath, setRedisCertPath] = useState(redisExtraInitial.clientCertPath ?? '');
   const [redisKeyPath, setRedisKeyPath] = useState(redisExtraInitial.clientKeyPath ?? '');
+  // ODBC：连接方式三态与扩展配置（extra_options JSON 持久化）；驱动/DSN
+  // 清单在引擎切到 ODBC 时懒拉（管理器缺失时拿到带安装指引的错误文案）
+  const odbcExtraInitial = parseOdbcExtra(node);
+  const [odbcConnType, setOdbcConnType] = useState<'dsn' | 'driver' | 'raw'>(
+    odbcExtraInitial.connectionType,
+  );
+  const [odbcDsn, setOdbcDsn] = useState(odbcExtraInitial.dsn ?? '');
+  const [odbcDriver, setOdbcDriver] = useState(odbcExtraInitial.driver ?? '');
+  const [odbcRaw, setOdbcRaw] = useState(odbcExtraInitial.connectionString ?? '');
+  const [odbcDrivers, setOdbcDrivers] = useState<string[]>([]);
+  const [odbcDataSources, setOdbcDataSources] = useState<string[]>([]);
+  const [odbcListError, setOdbcListError] = useState<string | null>(null);
+  useEffect(() => {
+    if (engine !== 'odbc') return;
+    let cancelled = false;
+    setOdbcListError(null);
+    Promise.all([dbOdbcDrivers(), dbOdbcDataSources()])
+      .then(([drivers, sources]) => {
+        if (cancelled) return;
+        setOdbcDrivers(drivers);
+        setOdbcDataSources(sources);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setOdbcDrivers([]);
+        setOdbcDataSources([]);
+        setOdbcListError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [engine]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -574,9 +635,10 @@ function DbConnectionFormDialog({
 
   const isSqlite = engine === 'sqlite';
   // 不支持 TLS 的引擎：SQLite 无网络链路、Oracle（含 OB Oracle 租户模式）
-  // 的纯 Rust 驱动未实现 TCPS、达梦驱动无 TLS 链路。SSL 选项整体隐藏，
-  // 保存时强制归一为 disable——不让用户选出一个后端会静默忽略的档位。
-  const tlsUnsupported = isSqlite || isOracleSemantics || engine === 'dameng';
+  // 的纯 Rust 驱动未实现 TCPS、达梦驱动无 TLS 链路、ODBC 的加密由
+  // DSN/驱动自带配置决定。SSL 选项整体隐藏，保存时强制归一为 disable——
+  // 不让用户选出一个后端会静默忽略的档位。
+  const tlsUnsupported = isSqlite || isOracleSemantics || engine === 'dameng' || engine === 'odbc';
   // Redis 拓扑扩展校验：集群/哨兵至少一个节点、哨兵必填 master 名、
   // mTLS 证书与私钥成对（两者只填其一直接拒保存）
   const redisNodeLines = redisNodes
@@ -588,6 +650,16 @@ function DbConnectionFormDialog({
     (redisTopology === 'single' || redisNodeLines.length > 0) &&
       (redisTopology !== 'sentinel' || redisMasterName.trim().length > 0) &&
       (redisCertPath.trim().length === 0) === (redisKeyPath.trim().length === 0);
+
+  // ODBC 连接方式校验：DSN 需填数据源名、驱动直连需驱动 + 主机、
+  // 自定义连接串需非空
+  const odbcExtraOk =
+    engine !== 'odbc' ||
+    (odbcConnType === 'dsn'
+      ? odbcDsn.trim().length > 0
+      : odbcConnType === 'driver'
+        ? odbcDriver.trim().length > 0 && host.trim().length > 0
+        : odbcRaw.trim().length > 0);
 
   // SQLite 原始密钥必须 64 位十六进制（前端先挡一层，后端仍会校验）
   const rawKeyOk =
@@ -605,19 +677,26 @@ function DbConnectionFormDialog({
     !saving &&
     name.trim().length > 0 &&
     redisExtraOk &&
+    odbcExtraOk &&
     (isSqlite
       ? rawKeyOk && sqlitePasswordOk
-      : // Redis 集群/哨兵拓扑的地址在节点列表里，host 可留空；单机仍需 host
+      : // Redis 集群/哨兵拓扑的地址在节点列表里，host 可留空；单机仍需 host；
+        // ODBC 仅驱动直连要 host（DSN/连接串自带地址）
         (engine === 'redis' && redisTopology !== 'single'
           ? redisNodeLines.length > 0
-          : host.trim().length > 0) && (engine !== 'oracle' || serviceName.trim().length > 0));
+          : engine === 'odbc'
+            ? odbcConnType !== 'driver' || host.trim().length > 0
+            : host.trim().length > 0) && (engine !== 'oracle' || serviceName.trim().length > 0));
 
-  // 测试连接：SQLite 允许内存库（不加密时 dbPath 可留空），其余引擎仍需主机
+  // 测试连接：SQLite 允许内存库（不加密时 dbPath 可留空）；ODBC 按连接
+  // 方式的完整性判定；其余引擎仍需主机
   const canTest = isSqlite
     ? dbPath.trim().length > 0 || encryptionMode === 'none'
     : engine === 'redis' && redisTopology !== 'single'
       ? redisNodeLines.length > 0
-      : host.trim().length > 0;
+      : engine === 'odbc'
+        ? odbcExtraOk
+        : host.trim().length > 0;
 
   const buildRecord = (): DbConnectionRecord => ({
     id: node?.id ?? 0,
@@ -626,7 +705,7 @@ function DbConnectionFormDialog({
     mode: engine === 'oceanbase' ? (mode === 'oracle' ? 'oracle' : 'mysql') : null,
     host: isSqlite ? '' : host.trim(),
     port: isSqlite ? 0 : Number.parseInt(port, 10) || ENGINE_DEFAULT_PORTS[engine],
-    database: isSqlite ? null : database.trim() || null,
+    database: isSqlite || engine === 'odbc' ? null : database.trim() || null,
     serviceName: engine === 'oracle' ? serviceName.trim() || null : null,
     dbPath: isSqlite ? dbPath.trim() || null : null,
     encryptionMode: isSqlite ? encryptionMode : 'none',
@@ -646,7 +725,14 @@ function DbConnectionFormDialog({
               ? { clientCertPath: redisCertPath.trim(), clientKeyPath: redisKeyPath.trim() }
               : {}),
           })
-        : null,
+        : engine === 'odbc'
+          ? JSON.stringify({
+              connectionType: odbcConnType,
+              ...(odbcConnType === 'dsn' ? { dsn: odbcDsn.trim() } : {}),
+              ...(odbcConnType === 'driver' ? { driver: odbcDriver.trim() } : {}),
+              ...(odbcConnType === 'raw' ? { connectionString: odbcRaw.trim() } : {}),
+            })
+          : null,
     username: isSqlite ? null : username.trim() || null,
     // 留空 = 更新时保留旧值（后端语义）；新建时空值即无密码。
     // 例外：SQLite 从加密改回不加密时必须显式清空——否则库里残留的旧口令
@@ -780,6 +866,7 @@ function DbConnectionFormDialog({
                 'oceanbase',
                 'sqlite',
                 'dameng',
+                'odbc',
               ] as const
             ).map((kind) => {
               const EngineIcon = ENGINE_ICONS[kind];
@@ -790,9 +877,10 @@ function DbConnectionFormDialog({
                   onClick={() => {
                     setEngine(kind);
                     setPort(String(ENGINE_DEFAULT_PORTS[kind]));
-                    // SQLite 无 TLS、Oracle 纯 Rust 驱动未实现 TCPS：切过去时
-                    // 把 SSL 归一为 disable，避免把 require 存进库
-                    if (kind === 'sqlite' || kind === 'oracle') setSslMode('disable');
+                    // SQLite 无 TLS、Oracle 纯 Rust 驱动未实现 TCPS、ODBC
+                    // 加密由 DSN/驱动自带决定：切过去时把 SSL 归一为 disable，
+                    // 避免把 require 存进库
+                    if (kind === 'sqlite' || kind === 'oracle' || kind === 'odbc') setSslMode('disable');
                     // 切到 oceanbase 时归一化租户模式（null → 'mysql'，已选则保留）；
                     // 切离时不清空——buildRecord 按 engine 门控，非 oceanbase 恒 null
                     if (kind === 'oceanbase') {
@@ -919,6 +1007,105 @@ function DbConnectionFormDialog({
           </div>
         ) : null}
 
+        {/* ODBC：连接方式三态（DSN / 驱动直连 / 自定义连接串）；驱动与
+            DSN 清单由驱动管理器运行时枚举（点击条目填入，也支持手输） */}
+        {engine === 'odbc' ? (
+          <div className="flex flex-col gap-1.5">
+            <FormField label={t('dbHosts.odbcConnTypeLabel')} className="w-44">
+              <SelectMenu
+                value={odbcConnType}
+                onChange={(v) => setOdbcConnType(v as 'dsn' | 'driver' | 'raw')}
+                options={[
+                  { value: 'dsn', label: t('dbHosts.odbcTypeDsn') },
+                  { value: 'driver', label: t('dbHosts.odbcTypeDriver') },
+                  { value: 'raw', label: t('dbHosts.odbcTypeRaw') },
+                ]}
+              />
+            </FormField>
+            {odbcListError != null ? (
+              <span className="text-ui-xs text-destructive">{odbcListError}</span>
+            ) : null}
+            {odbcConnType === 'dsn' ? (
+              <>
+                <FormField label={t('dbHosts.odbcDsnLabel')} hint={t('dbHosts.odbcDsnHint')}>
+                  <TextInput
+                    value={odbcDsn}
+                    onChange={(e) => setOdbcDsn(e.target.value)}
+                    placeholder={t('dbHosts.odbcDsnPlaceholder')}
+                    className="font-mono"
+                  />
+                </FormField>
+                {odbcDataSources.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {odbcDataSources.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setOdbcDsn(s)}
+                        className={cn(
+                          'max-w-full truncate rounded border px-1.5 py-0.5 font-mono text-ui-xs transition-colors',
+                          odbcDsn === s
+                            ? 'border-primary/60 bg-primary/10 text-foreground'
+                            : 'border-border/70 text-foreground-subtle hover:bg-hover hover:text-foreground',
+                        )}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : odbcConnType === 'driver' ? (
+              <>
+                <FormField label={t('dbHosts.odbcDriverLabel')} hint={t('dbHosts.odbcDriverHint')}>
+                  <TextInput
+                    value={odbcDriver}
+                    onChange={(e) => setOdbcDriver(e.target.value)}
+                    placeholder="PostgreSQL Unicode"
+                    className="font-mono"
+                  />
+                </FormField>
+                {odbcDrivers.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {odbcDrivers.map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setOdbcDriver(d)}
+                        className={cn(
+                          'max-w-full truncate rounded border px-1.5 py-0.5 font-mono text-ui-xs transition-colors',
+                          odbcDriver === d
+                            ? 'border-primary/60 bg-primary/10 text-foreground'
+                            : 'border-border/70 text-foreground-subtle hover:bg-hover hover:text-foreground',
+                        )}
+                      >
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <FormField label={t('dbHosts.odbcRawLabel')} hint={t('dbHosts.odbcRawHint')}>
+                <textarea
+                  value={odbcRaw}
+                  onChange={(e) => setOdbcRaw(e.target.value)}
+                  placeholder="Driver={PostgreSQL Unicode};Server=10.0.0.5;Port=5432;Database=app"
+                  rows={2}
+                  spellCheck={false}
+                  className="scrollbar-slim w-full resize-y rounded-md border border-border/60 bg-background px-2 py-1.5 font-mono text-ui-xs text-foreground outline-none placeholder:text-foreground-subtlest focus:border-border"
+                />
+              </FormField>
+            )}
+            {!odbcExtraOk ? (
+              <span className="text-ui-xs text-destructive">{t('dbHosts.odbcRequired')}</span>
+            ) : null}
+            <p className="text-ui-xs text-foreground-subtlest select-none">
+              {t('dbHosts.odbcHint')}
+            </p>
+          </div>
+        ) : null}
+
         {isSqlite ? (
           <>
             <FormField label={t('dbHosts.dbPathLabel')} hint={t('dbHosts.dbPathMemoryHint')}>
@@ -1001,6 +1188,7 @@ function DbConnectionFormDialog({
           </>
         ) : (
           <>
+            {engine !== 'odbc' || odbcConnType === 'driver' ? (
             <div className="flex gap-3">
               <div className="min-w-0 flex-[2]">
                 <FormField label={t('dbHosts.hostLabel')}>
@@ -1023,6 +1211,7 @@ function DbConnectionFormDialog({
                 </FormField>
               </div>
             </div>
+            ) : null}
             {/* OceanBase：直连 2881 / 经 obproxy 2883 的端口提示——窄端口列
                 放不下整句，作整行提示置于 host/port 行下方（sqliteFileHint
                 同型） */}
@@ -1051,7 +1240,7 @@ function DbConnectionFormDialog({
           </div>
         ) : null}
 
-        {isSqlite ? null : (
+        {isSqlite || engine === 'odbc' ? null : (
           <div className="flex gap-3">
             <div className="min-w-0 flex-1">
               <FormField label={dbLabel}>

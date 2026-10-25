@@ -4,9 +4,9 @@
 use super::super::{
     CatalogNode, DbEngine, GroupCounts, OB_DICT_PREFIX, ObjectGroup, dm_row_i64, REDIS_VALUE_TYPES, dm_query_rows, dm_row_string,
     group_nodes, ob_mysql_mviews, ob_mysql_sequences, ob_oracle_mviews, ob_oracle_packages,
-    ob_oracle_tables, ob_quote_literal, oracle_count_opt, oracle_dict_prefix,
-    oracle_row_string, oracle_scalar_string, parse_redis_db, quote_ident, redis_scan_typed_keys,
-    redis_select,
+    ob_oracle_tables, ob_quote_literal, odbc_is_view_type, odbc_row_string, oracle_count_opt,
+    oracle_dict_prefix, oracle_row_string, oracle_scalar_string, parse_redis_db, quote_ident,
+    redis_scan_typed_keys, redis_select,
 };
 
 pub(crate) async fn groups(
@@ -578,6 +578,36 @@ pub(crate) async fn groups(
                     ))
                 })
                 .await
+            }
+            DbEngine::Odbc(_) => {
+                // 标准 SQLTables 按 TABLE_TYPE 计数（TABLE/SYSTEM TABLE 归表，
+                // VIEW/SYSTEM VIEW 归视图；函数/过程等分组 ODBC 目录体系没有，
+                // GroupCounts 留 None 由 group_nodes 过滤）
+                let catalog = schema.to_string();
+                engine
+                    .with_odbc(move |eng| {
+                        let api = crate::db_browser::engines::odbc_engine::odbc_api()?;
+                        let (_, rows) = api
+                            .tables(eng.dbc.0, &catalog, "", "", "")
+                            .map_err(|e| format!("ODBC 查询对象计数失败：{e}"))?;
+                        let mut tables: i64 = 0;
+                        let mut views: i64 = 0;
+                        for row in &rows {
+                            let t = odbc_row_string(row, 3);
+                            if t.eq_ignore_ascii_case("TABLE") || t.eq_ignore_ascii_case("SYSTEM TABLE") {
+                                tables += 1;
+                            } else if odbc_is_view_type(&t) {
+                                views += 1;
+                            }
+                        }
+                        Ok(group_nodes(
+                            &catalog,
+                            GroupCounts {
+                                ..GroupCounts::base(tables, views, 0, 0, 0)
+                            },
+                        ))
+                    })
+                    .await
             }
             DbEngine::Closed => Err("连接已关闭".to_string()),
         }
