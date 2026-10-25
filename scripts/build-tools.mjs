@@ -103,34 +103,14 @@ const exeExt = target.includes('windows') ? '.exe' : '';
 // 否则整套依赖会被重编两遍。本地未传 --target 时与本地 `tauri build`（也不带）同样一致
 const cargoTargetArgs = explicitTarget ? `--target ${target} ` : '';
 if (!only || only === 'coreutils') {
-  // C 编译器统一 clang-cl（与 lld-link 链接器的 LLVM 工具链化配套）：仅注入
-  // 本 cargo 构建（cc crate 家族——jq-app/libsqlite3-sys/tree-sitter 等读 CC），
-  // 不进 process.env——qalc 的 MSYS2/autotools 与 goffi 的 cgo 段各用各的
-  // MinGW 编译器，被 CC=clang-cl 污染会直接挂。clang-cl 缺席（本地 Windows
-  // 未装 LLVM）时静默回退默认 cl.exe，不阻断构建
-  const cargoEnv = { ...process.env };
-  if (target.includes('windows-msvc')) {
-    // 用绝对路径而非 PATH 注入：Windows 的 process.env 键名是 Path，
-    // 在 env 对象上另设 PATH 会出双键搞乱 spawn 环境块（车道实锄：
-    // 'cargo' is not recognized）；cc crate 接受绝对路径编译器
-    const llvmDirs = [process.env.LLVM_BIN, 'C:\\Program Files\\LLVM\\bin'].filter(
-      Boolean,
-    );
-    const clangCl = llvmDirs
-      .map((d) => join(d, 'clang-cl.exe'))
-      .find((p) => existsSync(p));
-    if (clangCl) {
-      cargoEnv.CC = clangCl;
-      cargoEnv.CXX = clangCl;
-      console.log(`[build-tools] C 编译器：clang-cl（${clangCl}）`);
-    } else {
-      console.log('[build-tools] 未找到 clang-cl，C 依赖回退默认 cl.exe');
-    }
-  }
+  // 注：cargo 面的 C 依赖（jq-app/bc-app 等）保持默认 cl.exe——vendor 树的
+  // 本地补丁全按 MSVC 语义调优，clang-cl 自带 __GNUC__ 语义会翻转其
+  // #ifdef 矩阵（车道实锄：jq 的 getpid 未声明、bc 打 UCRT 头 __declspec
+  // 报错），换编译器等于重调整棵树。LLVM 化收敛到：链接器 rust-lld
+  // （config.toml）+ ffmpeg 车道的 clang-cl 统一（test_gif2mp4 已验绿）
   execSync(`cargo build --release ${cargoTargetArgs}-p ${TOOL} --bin ${TOOL}`, {
     cwd: srcTauri,
     stdio: 'inherit',
-    env: cargoEnv,
   });
 }
 
