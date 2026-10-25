@@ -38,23 +38,22 @@ jobs:
       contents: read
       # vcpkg 二进制缓存推送/拉取 GitHub Packages（NuGet feed）所需
       packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # 临时只跑 ARM64 腿（x64 与 mac 已验证通过，先集中修 ARM64 交叉编译）
-          # - runner: windows-latest
-          #   triplet: x64-windows-static
-          #   arch: x64
-          #   msvc_arch: x64
-          - runner: windows-11-arm
-            triplet: arm64-windows-static
-            arch: arm64
-            msvc_arch: arm64
-            # MSYS2 是 x64 进程，configure 的自动探测会判成 x86_64 并在
-            # libavfilter/x86/ 下编 x64 汇编（与 cl 的 ARM64 目标冲突：
-            # LNK1112）。显式声明交叉编译目标，ffmpeg 的 arch 名是 aarch64
-            ff_arch: aarch64
+      strategy:
+        fail-fast: false
+        matrix:
+          include:
+            - runner: windows-latest
+              triplet: x64-windows-static
+              arch: x64
+              msvc_arch: x64
+            - runner: windows-11-arm
+              triplet: arm64-windows-static
+              arch: arm64
+              msvc_arch: arm64
+              # MSYS2 是 x64 进程，configure 的自动探测会判成 x86_64 并在
+              # libavfilter/x86/ 下编 x64 汇编（与 cl 的 ARM64 目标冲突：
+              # LNK1112）。显式声明交叉编译目标，ffmpeg 的 arch 名是 aarch64
+              ff_arch: aarch64
     runs-on: ${{ matrix.runner }}
     env:
       USERNAME: Gallentboy
@@ -198,7 +197,9 @@ jobs:
 
           cd src-tauri/vendor/ffmpeg
 
-          # ffmpeg configure 需要 POSIX shell 执行；--toolchain=msvc 让 cc=cl/ar=lib
+          # ffmpeg configure 需要 POSIX shell 执行；--toolchain=msvc 保
+          # ar=lib/ld=mslink/windres 全套 MSVC 工具链，cc/as 由上面
+          # archArgs 统一换成 clang-cl（MSVC 兼容驱动，旗标层同方言）。
           # 不再 --disable-asm：nasm 已装，ffmpeg 自身 x86 SIMD（scale/format）启用
           # --enable-pic：静态库日后可包 DLL
           #
@@ -209,28 +210,38 @@ jobs:
           # configure 的原生探测路径——不用 --arch（避免触发交叉编译分支），
           # 也不用 --enable-cross-compile。
           #
-          # 汇编器：ffmpeg 的 aarch64 汇编文件是 GNU 语法（.S），configure 的
-          # check_gas() 用 GNU 语法探测（.macro ... :vararg），armasm64.exe 不认识
-          # → 必然 die「GNU assembler not found」。解法是用 VS 自带的 clang-cl：
-          # 它的集成汇编器原生支持 GNU 语法 .S，无需 gas-preprocessor.pl，也
-          # 不用 armasm64.exe。产物与 MSVC ABI 100% 兼容（clang-cl 就是 MSVC
-          # 兼容驱动）。LLVM bin 目录由 VS 安装提供（环境变量 llvmArm64/llvmX64）。
+          # clang-cl 统一两架构：编译器（cc）与 ARM64 汇编器（as）都用
+          # clang-cl，不再用 cl.exe——①两腿编译器一致（诊断/优化/旗标行为
+          # 同源）；②免疫 MSVC 传统预处理器的坑（jq 那种 /Zc:preprocessor
+          # 补丁类问题，clang-cl 预处理器本就标准一致）；③ARM64 的 GNU 语法
+          # .S 汇编器与 cc 同源。clang-cl 是 MSVC 兼容驱动，产物 .lib 与
+          # cl.exe 编译的 x264（vcpkg）混合链接完全兼容。LLVM bin 目录由
+          # VS 安装提供（环境变量 llvmArm64/llvmX64），独立 LLVM 安装兑底
+          $llvmBin = @(
+            if ('${{ matrix.arch }}' -eq 'arm64') { $env:llvmArm64 } else { $env:llvmX64 },
+            if ('${{ matrix.arch }}' -eq 'arm64') { $env:llvmX64 } else { $env:llvmArm64 },
+            'C:\Program Files\LLVM\bin'
+          ) | Where-Object { $_ -and (Test-Path "$_\clang-cl.exe") } | Select-Object -First 1
+          if (-not $llvmBin) {
+            throw "clang-cl.exe 未找到（llvmArm64=$env:llvmArm64 llvmX64=$env:llvmX64）"
+          }
+          $env:PATH = "$llvmBin;$env:PATH"
+          Write-Host "clang-cl: $llvmBin\clang-cl.exe"
           if ('${{ matrix.arch }}' -eq 'arm64') {
             $env:MSYSTEM_CARCH = "aarch64"
             Write-Host "MSYSTEM_CARCH 覆盖为 aarch64（绕过 x64 MSYS 的 arch 误判）"
-            $llvmBin = if ($env:llvmArm64 -and (Test-Path "$env:llvmArm64\clang-cl.exe")) {
-              $env:llvmArm64
-            } else { $env:llvmX64 }
-            if (-not $llvmBin -or -not (Test-Path "$llvmBin\clang-cl.exe")) {
-              throw "clang-cl.exe 未找到（llvmArm64=$env:llvmArm64 llvmX64=$env:llvmX64）"
-            }
-            $env:PATH = "$llvmBin;$env:PATH"
-            Write-Host "clang-cl: $llvmBin\clang-cl.exe"
           }
           $archArgs = if ('${{ matrix.arch }}' -eq 'arm64') {
-            # clang-cl 的集成汇编器认 GNU 语法 .S；--target 明确 ARM64 目标
-            '--as="clang-cl --target=aarch64-pc-windows-msvc"'
-          } else { "" }
+            # --as：clang-cl 集成汇编器认 GNU 语法 .S（armasm64 不认）；
+            # --extra-cflags 的 --target：llvmX64 交叉编 ARM64 时必需，
+            # 原生 llvmArm64 时冗余无害
+            '--cc="clang-cl" --as="clang-cl --target=aarch64-pc-windows-msvc" --extra-cflags="--target=aarch64-pc-windows-msvc"'
+          } else {
+            # x64：cc 同样 clang-cl（--target 显式对称，原生时冗余无害）；
+            # x86 SIMD 汇编保持 nasm（configure 默认探测，NASM 语法不归
+            # clang 集成汇编器管）
+            '--cc="clang-cl" --extra-cflags="--target=x86_64-pc-windows-msvc"'
+          }
           Write-Host "arch args: $archArgs"
 
           & sh.exe -c @"
