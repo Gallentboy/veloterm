@@ -110,17 +110,19 @@ if (!only || only === 'coreutils') {
   // 未装 LLVM）时静默回退默认 cl.exe，不阻断构建
   const cargoEnv = { ...process.env };
   if (target.includes('windows-msvc')) {
-    const llvmDirs = [
-      process.env.LLVM_BIN,
-      'C:\\Program Files\\LLVM\\bin',
-      process.env.libLLVM_X64,
-    ].filter(Boolean);
-    const found = llvmDirs.find((d) => existsSync(join(d, 'clang-cl.exe')));
-    if (found) {
-      cargoEnv.CC = 'clang-cl';
-      cargoEnv.CXX = 'clang-cl';
-      cargoEnv.PATH = `${found};${cargoEnv.PATH ?? ''}`;
-      console.log(`[build-tools] C 编译器：clang-cl（${found}）`);
+    // 用绝对路径而非 PATH 注入：Windows 的 process.env 键名是 Path，
+    // 在 env 对象上另设 PATH 会出双键搞乱 spawn 环境块（车道实锄：
+    // 'cargo' is not recognized）；cc crate 接受绝对路径编译器
+    const llvmDirs = [process.env.LLVM_BIN, 'C:\\Program Files\\LLVM\\bin'].filter(
+      Boolean,
+    );
+    const clangCl = llvmDirs
+      .map((d) => join(d, 'clang-cl.exe'))
+      .find((p) => existsSync(p));
+    if (clangCl) {
+      cargoEnv.CC = clangCl;
+      cargoEnv.CXX = clangCl;
+      console.log(`[build-tools] C 编译器：clang-cl（${clangCl}）`);
     } else {
       console.log('[build-tools] 未找到 clang-cl，C 依赖回退默认 cl.exe');
     }
