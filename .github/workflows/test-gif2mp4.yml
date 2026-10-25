@@ -38,22 +38,22 @@ jobs:
       contents: read
       # vcpkg 二进制缓存推送/拉取 GitHub Packages（NuGet feed）所需
       packages: write
-      strategy:
-        fail-fast: false
-        matrix:
-          include:
-            - runner: windows-latest
-              triplet: x64-windows-static
-              arch: x64
-              msvc_arch: x64
-            - runner: windows-11-arm
-              triplet: arm64-windows-static
-              arch: arm64
-              msvc_arch: arm64
-              # MSYS2 是 x64 进程，configure 的自动探测会判成 x86_64 并在
-              # libavfilter/x86/ 下编 x64 汇编（与 cl 的 ARM64 目标冲突：
-              # LNK1112）。显式声明交叉编译目标，ffmpeg 的 arch 名是 aarch64
-              ff_arch: aarch64
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            triplet: x64-windows-static
+            arch: x64
+            msvc_arch: x64
+          - runner: windows-11-arm
+            triplet: arm64-windows-static
+            arch: arm64
+            msvc_arch: arm64
+            # MSYS2 是 x64 进程，configure 的自动探测会判成 x86_64 并在
+            # libavfilter/x86/ 下编 x64 汇编（与 cl 的 ARM64 目标冲突：
+            # LNK1112）。显式声明交叉编译目标，ffmpeg 的 arch 名是 aarch64
+            ff_arch: aarch64
     runs-on: ${{ matrix.runner }}
     env:
       USERNAME: Gallentboy
