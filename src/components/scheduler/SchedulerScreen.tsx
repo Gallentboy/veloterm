@@ -301,17 +301,18 @@ export function SchedulerScreen() {
                 {t('scheduler.noLogs')}
               </p>
             ) : (
-              <div className="flex flex-col gap-1.5 font-mono text-ui-xs">
+              <div className="flex flex-col gap-2">
                 {logs.map((log) => (
-                  <div key={log.id} className="rounded border border-border/40 p-2">
-                    <div className="flex items-center gap-2 text-foreground-subtle">
-                      <span>
+                  <div key={log.id} className="rounded-lg border border-border/40 overflow-hidden">
+                    {/* 状态行 */}
+                    <div className="flex items-center gap-2 border-b border-border/30 bg-surface/30 px-3 py-1.5 text-ui-xs select-none">
+                      <span className="text-foreground-subtle font-medium">
                         {new Date(log.startedAt * 1000).toLocaleString()}
                       </span>
                       {log.exitCode != null ? (
                         <span
                           className={cn(
-                            'rounded px-1 font-medium',
+                            'rounded px-1.5 py-px font-mono font-semibold',
                             log.exitCode === 0
                               ? 'bg-terminal-green/10 text-terminal-green'
                               : 'bg-destructive/10 text-destructive',
@@ -325,17 +326,37 @@ export function SchedulerScreen() {
                           running
                         </span>
                       )}
+                      <span className="flex-1" />
+                      {log.finishedAt != null && log.startedAt != null ? (
+                        <span className="text-foreground-subtlest">
+                          {((log.finishedAt - log.startedAt) * 1000).toFixed(0)}ms
+                        </span>
+                      ) : null}
                     </div>
-                    {log.stdoutTail ? (
-                      <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-foreground-subtle">
-                        {log.stdoutTail}
-                      </pre>
-                    ) : null}
-                    {log.stderrTail ? (
-                      <pre className="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-destructive">
-                        {log.stderrTail}
-                      </pre>
-                    ) : null}
+                    {/* 输出区：终端风格——统一固定高度容器，超出滚动，不足也不塌陷 */}
+                    {(log.stdoutTail || log.stderrTail) ? (
+                      <div className="max-h-48 overflow-y-auto bg-[#1a1a1a] px-3 py-2 scrollbar-slim">
+                        {log.stdoutTail ? (
+                          <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-[1.5] text-[#c8c8c8]">
+                            {log.stdoutTail}
+                          </pre>
+                        ) : null}
+                        {log.stderrTail ? (
+                          <pre
+                            className={cn(
+                              'whitespace-pre-wrap break-all font-mono text-[11px] leading-[1.5] text-[#ff6b6b]',
+                              log.stdoutTail && 'mt-1.5',
+                            )}
+                          >
+                            {log.stderrTail}
+                          </pre>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="bg-[#1a1a1a] px-3 py-2 text-[11px] text-[#666] font-mono select-none">
+                        (no output)
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
