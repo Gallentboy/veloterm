@@ -39,8 +39,10 @@ use std::time::{Duration, Instant};
 use oxc_sourcemap::SourceMap;
 use serde::Serialize;
 
+mod crypto_impl;
 mod fetch_impl;
 mod fs_impl;
+mod sys_impl;
 mod ts_transpile;
 
 /// TS sourcemap 的共享形态：isolate 槽（console 回映）与错误路径（异常回映）
@@ -385,6 +387,18 @@ fn execute_job(job: Job) {
         {
             let _ = global.set(scope, name_key.into(), fs_obj.into());
         }
+
+        // crypto 宿主桥（全局 crypto）
+        let crypto_tmpl = v8::ObjectTemplate::new(scope);
+        crypto_impl::register_crypto_methods(scope, &crypto_tmpl);
+        if let (Some(crypto_obj), Some(name_key)) =
+            (crypto_tmpl.new_instance(scope), v8::String::new(scope, "crypto"))
+        {
+            let _ = global.set(scope, name_key.into(), crypto_obj.into());
+        }
+
+        // sys 系统信息与资源监控宿主桥（全局 sys）
+        sys_impl::inject_sys_object(scope, &global);
 
         let Some(source_str) = v8::String::new(scope, js_source.as_str()) else {
             break 'run Err(JsRunError::Script {
@@ -1301,5 +1315,251 @@ mod tests {
         );
         let out = run_script(&script, &JsRunOptions::default()).unwrap();
         assert_eq!(out.result_json.as_deref(), Some(r#"["item.txt"]"#));
+    }
+
+    #[test]
+    fn js_crypto_hashes_and_hmac() {
+        let script = r#"
+        const m = crypto.md5("hello world");
+        const s1 = crypto.sha1("hello world");
+        const s256 = crypto.sha256("hello world");
+        const h_md5 = crypto.hmac("md5", "key", "data");
+        const h_sha1 = crypto.hmac("sha1", "key", "data");
+        const h_sha256 = crypto.hmac("sha256", "key", "data");
+        [m, s1, s256, h_md5, h_sha1, h_sha256];
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        let expected_json = serde_json::to_string(&[
+            "5eb63bbbe01eeed093cb22bb8f5acdc3",
+            "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed",
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9",
+            "9d5c73ef85594d34ec4438b7c97e51d8",
+            "104152c5bfdca07bc633eebd46199f0255c9f49d",
+            "5031fe3d989c6d1537a013fa6e739da23463fdaec3b70137d828e36ace221bd0",
+        ])
+        .unwrap();
+        assert_eq!(out.result_json.as_deref(), Some(expected_json.as_str()));
+    }
+
+    #[test]
+    fn js_crypto_aes128_cbc_roundtrip() {
+        let script = r#"
+        const key = "1234567890123456"; // 16 字节
+        const iv  = "abcdef9876543210"; // 16 字节
+        const plain = "Hello VeloTerm AES-128-CBC!";
+        const encrypted = crypto.aes128CbcEncrypt(key, iv, plain, "hex");
+        const decrypted = crypto.aes128CbcDecrypt(key, iv, encrypted);
+        decrypted === plain;
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        assert_eq!(out.result_json.as_deref(), Some("true"));
+
+        // 验证篡改密文解密失败抛错
+        let tampered_script = r#"
+        const key = "1234567890123456";
+        const iv  = "abcdef9876543210";
+        crypto.aes128CbcDecrypt(key, iv, "ffffffffffffffffffffffffffffffff");
+        "#;
+        let err = run_script(tampered_script, &JsRunOptions::default()).unwrap_err();
+        let JsRunError::Script { message } = err else {
+            panic!("期望 Script 错误");
+        };
+        assert!(message.contains("解密失败"), "message: {message}");
+    }
+
+    #[test]
+    fn js_crypto_aes256_gcm_roundtrip_and_tamper_detection() {
+        let script = r#"
+        const key = "0123456789abcdef0123456789abcdef"; // 32 字节
+        const nonce = "123456789012";                    // 12 字节
+        const plain = "Confidential Payload with AES-256-GCM";
+        const aad = "context-metadata";
+
+        const res = crypto.aes256GcmEncrypt(key, nonce, plain, aad, "hex");
+        const decrypted = crypto.aes256GcmDecrypt(key, nonce, res.ciphertext, res.tag, aad);
+        decrypted === plain;
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        assert_eq!(out.result_json.as_deref(), Some("true"));
+
+        // 验证篡改 tag 导致认证解密失败
+        let tampered_script = r#"
+        const key = "0123456789abcdef0123456789abcdef";
+        const nonce = "123456789012";
+        const plain = "Test";
+        const res = crypto.aes256GcmEncrypt(key, nonce, plain);
+        // 篡改 tag 最后一个字符
+        const badTag = res.tag.slice(0, -1) + (res.tag.slice(-1) === "0" ? "1" : "0");
+        crypto.aes256GcmDecrypt(key, nonce, res.ciphertext, badTag);
+        "#;
+        let err = run_script(tampered_script, &JsRunOptions::default()).unwrap_err();
+        let JsRunError::Script { message } = err else {
+            panic!("期望 Script 错误");
+        };
+        assert!(message.contains("认证解密失败"), "message: {message}");
+    }
+
+    #[test]
+    fn js_crypto_random_uuid_and_bytes() {
+        let script = r#"
+        const id = crypto.randomUUID();
+        const b = crypto.randomBytes(16);
+        [id.length === 36, b.length === 16];
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        assert_eq!(out.result_json.as_deref(), Some("[true,true]"));
+    }
+
+    #[test]
+    fn js_crypto_extended_hashes_and_crc32() {
+        let script = r#"
+        const s384 = crypto.sha384("hello world");
+        const s512 = crypto.sha512("hello world");
+        const s3_256 = crypto.sha3("hello world");
+        const crcNum = crypto.crc32("hello world");
+        const crcHex = crypto.crc32("hello world", "hex");
+        const h_sha384 = crypto.hmac("sha384", "key", "data");
+        const h_sha512 = crypto.hmac("sha512", "key", "data");
+        const h_sha3 = crypto.hmac("sha3", "key", "data");
+        ({
+            s384Len: s384.length,
+            s512Len: s512.length,
+            s3Len: s3_256.length,
+            crcNum,
+            crcHex,
+            h384Len: h_sha384.length,
+            h512Len: h_sha512.length,
+            h3Len: h_sha3.length,
+        });
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&out.result_json.unwrap()).unwrap();
+        assert_eq!(val["s384Len"], 96);
+        assert_eq!(val["s512Len"], 128);
+        assert_eq!(val["s3Len"], 64);
+        assert_eq!(val["crcHex"], "0d4a1185"); // crc32fast of "hello world"
+        assert_eq!(val["crcNum"], 222957957);
+        assert_eq!(val["h384Len"], 96);
+        assert_eq!(val["h512Len"], 128);
+        assert_eq!(val["h3Len"], 64);
+    }
+
+    #[test]
+    fn js_crypto_pbkdf2_and_hkdf() {
+        let script = r#"
+        const pbkdf2_res = crypto.pbkdf2("password123", "salt_value", 1000, 32, "sha256", "hex");
+        const hkdf_res = crypto.hkdf("sha256", "ikm_material", "salt", "app_info", 32, "hex");
+        ({
+            pbkdf2Len: pbkdf2_res.length,
+            hkdfLen: hkdf_res.length,
+        });
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&out.result_json.unwrap()).unwrap();
+        assert_eq!(val["pbkdf2Len"], 64); // 32 bytes in hex
+        assert_eq!(val["hkdfLen"], 64);
+    }
+
+    #[test]
+    fn js_crypto_ed25519_sign_and_verify() {
+        let script = r#"
+        const kp = crypto.generateEd25519KeyPair();
+        const msg = "Sign this Ed25519 message";
+        const sig = crypto.ed25519Sign(kp.privateKey, msg, "hex");
+        const verifyOk = crypto.ed25519Verify(kp.publicKey, msg, sig);
+        const verifyBad = crypto.ed25519Verify(kp.publicKey, "Tampered message", sig);
+        [kp.publicKey.length === 64, kp.privateKey.length === 64, verifyOk, verifyBad];
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        assert_eq!(out.result_json.as_deref(), Some("[true,true,true,false]"));
+    }
+
+    #[test]
+    fn js_crypto_x25519_diffie_hellman() {
+        let script = r#"
+        const alice = crypto.generateX25519KeyPair();
+        const bob = crypto.generateX25519KeyPair();
+        const sharedAlice = crypto.x25519ComputeSharedSecret(alice.privateKey, bob.publicKey, "hex");
+        const sharedBob = crypto.x25519ComputeSharedSecret(bob.privateKey, alice.publicKey, "hex");
+        sharedAlice === sharedBob && sharedAlice.length === 64;
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        assert_eq!(out.result_json.as_deref(), Some("true"));
+    }
+
+    #[test]
+    fn js_crypto_p256_ecdsa_and_ecdh() {
+        let script = r#"
+        const alice = crypto.generateP256KeyPair();
+        const bob = crypto.generateP256KeyPair();
+
+        // ECDSA 签名验签
+        const msg = "ECDSA message for P-256";
+        const sig = crypto.p256Sign(alice.privateKey, msg, "hex");
+        const verifyOk = crypto.p256Verify(alice.publicKey, msg, sig);
+        const verifyBad = crypto.p256Verify(alice.publicKey, "tampered", sig);
+
+        // ECDH 共享密钥交换
+        const sharedAlice = crypto.p256ComputeSharedSecret(alice.privateKey, bob.publicKey, "hex");
+        const sharedBob = crypto.p256ComputeSharedSecret(bob.privateKey, alice.publicKey, "hex");
+        const ecdhOk = (sharedAlice === sharedBob && sharedAlice.length === 64);
+
+        [verifyOk, verifyBad, ecdhOk];
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        assert_eq!(out.result_json.as_deref(), Some("[true,false,true]"));
+    }
+
+    #[test]
+    fn js_crypto_rsa_full_suite() {
+        let script = r#"
+        // 生成 1024 位 RSA 密钥对快速跑单测
+        const kp = crypto.generateRsaKeyPair(1024);
+
+        // RSA-OAEP 加解密
+        const plain = "Top secret RSA-OAEP payload!";
+        const encrypted = crypto.rsaEncrypt(kp.publicKey, plain, { padding: "oaep", hash: "sha256" }, "hex");
+        const decrypted = crypto.rsaDecrypt(kp.privateKey, encrypted, { padding: "oaep", hash: "sha256" }, "utf8");
+        const encOk = (decrypted === plain);
+
+        // RSA-PSS 签名验签
+        const pssSig = crypto.rsaSign(kp.privateKey, plain, { padding: "pss", hash: "sha256" }, "hex");
+        const pssOk = crypto.rsaVerify(kp.publicKey, plain, pssSig, { padding: "pss", hash: "sha256" });
+        const pssBad = crypto.rsaVerify(kp.publicKey, "tampered", pssSig, { padding: "pss", hash: "sha256" });
+
+        // RSA-PKCS1 签名验签
+        const pkcsSig = crypto.rsaSign(kp.privateKey, plain, { padding: "pkcs1", hash: "sha256" }, "hex");
+        const pkcsOk = crypto.rsaVerify(kp.publicKey, plain, pkcsSig, { padding: "pkcs1", hash: "sha256" });
+        const pkcsBad = crypto.rsaVerify(kp.publicKey, "tampered", pkcsSig, { padding: "pkcs1", hash: "sha256" });
+
+        [encOk, pssOk, pssBad, pkcsOk, pkcsBad];
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        assert_eq!(out.result_json.as_deref(), Some("[true,true,false,true,false]"));
+    }
+
+    #[test]
+    fn js_sys_object_metadata_and_memory() {
+        let script = r#"
+        const mem = sys.memory();
+        ({
+            hasVersion: typeof sys.version === "string" && sys.version.length > 0,
+            hasSystem: typeof sys.system === "string" && sys.system.length > 0,
+            hasArch: typeof sys.arch === "string" && (sys.arch === "arm64" || sys.arch === "x64"),
+            hasPlatform: typeof sys.platform === "string" && (sys.platform === "darwin" || sys.platform === "win32" || sys.platform === "linux"),
+            usedPositive: typeof mem.used === "number" && mem.used > 0,
+            totalPositive: typeof mem.total === "number" && mem.total >= mem.used,
+            limitPositive: typeof mem.limit === "number" && mem.limit >= mem.total,
+        });
+        "#;
+        let out = run_script(script, &JsRunOptions::default()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&out.result_json.unwrap()).unwrap();
+        assert_eq!(val["hasVersion"], true);
+        assert_eq!(val["hasSystem"], true);
+        assert_eq!(val["hasArch"], true);
+        assert_eq!(val["hasPlatform"], true);
+        assert_eq!(val["usedPositive"], true);
+        assert_eq!(val["totalPositive"], true);
+        assert_eq!(val["limitPositive"], true);
     }
 }

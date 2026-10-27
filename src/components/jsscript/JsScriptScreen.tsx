@@ -150,6 +150,85 @@ const FS_DTS = [
   '};',
 ].join('\n');
 
+/** 同步 crypto 加密模块的精确声明 */
+const CRYPTO_DTS = [
+  'interface AesGcmResult {',
+  '  ciphertext: string;',
+  '  tag: string;',
+  '}',
+  'interface KeyPairHex {',
+  '  publicKey: string;',
+  '  privateKey: string;',
+  '}',
+  'interface KeyPairPem {',
+  '  publicKey: string;',
+  '  privateKey: string;',
+  '}',
+  'interface RsaEncryptOptions {',
+  '  padding?: "oaep";',
+  '  hash?: "sha256" | "sha1" | "sha512";',
+  '}',
+  'interface RsaSignOptions {',
+  '  padding?: "pss" | "pkcs1";',
+  '  hash?: "sha256" | "sha384" | "sha512" | "sha1";',
+  '}',
+  'declare const crypto: {',
+  '  // 哈希与校验',
+  '  md5(data: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  sha1(data: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  sha256(data: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  sha384(data: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  sha512(data: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  sha3(data: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  crc32(data: string | Uint8Array | ArrayBuffer, encoding?: "number" | "hex"): number | string;',
+  '  hmac(algorithm: "md5" | "sha1" | "sha256" | "sha384" | "sha512" | "sha3" | string, key: string | Uint8Array | ArrayBuffer, data: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  // 对称加密',
+  '  aes128CbcEncrypt(key: string | Uint8Array | ArrayBuffer, iv: string | Uint8Array | ArrayBuffer, data: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  aes128CbcDecrypt(key: string | Uint8Array | ArrayBuffer, iv: string | Uint8Array | ArrayBuffer, ciphertext: string | Uint8Array | ArrayBuffer, outputEncoding?: "utf8" | "bytes"): string | Uint8Array;',
+  '  aes256GcmEncrypt(key: string | Uint8Array | ArrayBuffer, nonce: string | Uint8Array | ArrayBuffer, plaintext: string | Uint8Array | ArrayBuffer, aad?: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64"): AesGcmResult;',
+  '  aes256GcmDecrypt(key: string | Uint8Array | ArrayBuffer, nonce: string | Uint8Array | ArrayBuffer, ciphertext: string | Uint8Array | ArrayBuffer, tag: string | Uint8Array | ArrayBuffer, aad?: string | Uint8Array | ArrayBuffer, outputEncoding?: "utf8" | "bytes"): string | Uint8Array;',
+  '  // KDF 密钥派生',
+  '  pbkdf2(password: string | Uint8Array | ArrayBuffer, salt: string | Uint8Array | ArrayBuffer, iterations: number, keylen: number, digest?: "sha1" | "sha256" | "sha384" | "sha512", encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  hkdf(digest: "sha1" | "sha256" | "sha384" | "sha512", ikm: string | Uint8Array | ArrayBuffer, salt: string | Uint8Array | ArrayBuffer | null | undefined, info: string | Uint8Array | ArrayBuffer, length: number, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  // 现代椭圆曲线（Curve25519）',
+  '  generateEd25519KeyPair(): KeyPairHex;',
+  '  ed25519Sign(privateKey: string | Uint8Array | ArrayBuffer, message: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  ed25519Verify(publicKey: string | Uint8Array | ArrayBuffer, message: string | Uint8Array | ArrayBuffer, signature: string | Uint8Array | ArrayBuffer): boolean;',
+  '  generateX25519KeyPair(): KeyPairHex;',
+  '  x25519ComputeSharedSecret(privateKey: string | Uint8Array | ArrayBuffer, peerPublicKey: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  // NIST P-256 椭圆曲线',
+  '  generateP256KeyPair(): KeyPairPem;',
+  '  p256Sign(privateKey: string | Uint8Array | ArrayBuffer, message: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  p256Verify(publicKey: string | Uint8Array | ArrayBuffer, message: string | Uint8Array | ArrayBuffer, signature: string | Uint8Array | ArrayBuffer): boolean;',
+  '  p256ComputeSharedSecret(privateKey: string | Uint8Array | ArrayBuffer, peerPublicKey: string | Uint8Array | ArrayBuffer, encoding?: "hex" | "base64" | "bytes"): string | Uint8Array;',
+  '  // RSA 系列',
+  '  generateRsaKeyPair(bits?: 1024 | 2048 | 3072 | 4096 | number): KeyPairPem;',
+  '  rsaEncrypt(publicKey: string | Uint8Array | ArrayBuffer, data: string | Uint8Array | ArrayBuffer, options?: RsaEncryptOptions, encoding?: "hex" | "base64"): string;',
+  '  rsaDecrypt(privateKey: string | Uint8Array | ArrayBuffer, ciphertext: string | Uint8Array | ArrayBuffer, options?: RsaEncryptOptions, outputEncoding?: "utf8" | "bytes"): string | Uint8Array;',
+  '  rsaSign(privateKey: string | Uint8Array | ArrayBuffer, data: string | Uint8Array | ArrayBuffer, options?: RsaSignOptions, encoding?: "hex" | "base64"): string;',
+  '  rsaVerify(publicKey: string | Uint8Array | ArrayBuffer, data: string | Uint8Array | ArrayBuffer, signature: string | Uint8Array | ArrayBuffer, options?: RsaSignOptions): boolean;',
+  '  // 随机辅助',
+  '  randomUUID(): string;',
+  '  randomBytes(size?: number): Uint8Array;',
+  '};',
+].join('\n');
+
+/** 同步 sys 系统信息与资源监控模块的精确声明 */
+const SYS_DTS = [
+  'interface SysMemoryInfo {',
+  '  used: number;',
+  '  total: number;',
+  '  limit: number;',
+  '}',
+  'declare const sys: {',
+  '  readonly version: string;',
+  '  readonly system: string;',
+  '  readonly arch: "x64" | "arm64" | string;',
+  '  readonly platform: "darwin" | "win32" | "linux" | string;',
+  '  memory(): SysMemoryInfo;',
+  '};',
+].join('\n');
+
 interface Draft {
   lang: JsScriptLanguage;
   source: string;
@@ -315,6 +394,10 @@ export function JsScriptScreen() {
     const d4 = ts.typescriptDefaults.addExtraLib(FETCH_DTS, 'veloterm-fetch.d.ts');
     const d5 = ts.javascriptDefaults.addExtraLib(FS_DTS, 'veloterm-fs.d.ts');
     const d6 = ts.typescriptDefaults.addExtraLib(FS_DTS, 'veloterm-fs.d.ts');
+    const d7 = ts.javascriptDefaults.addExtraLib(CRYPTO_DTS, 'veloterm-crypto.d.ts');
+    const d8 = ts.typescriptDefaults.addExtraLib(CRYPTO_DTS, 'veloterm-crypto.d.ts');
+    const d9 = ts.javascriptDefaults.addExtraLib(SYS_DTS, 'veloterm-sys.d.ts');
+    const d10 = ts.typescriptDefaults.addExtraLib(SYS_DTS, 'veloterm-sys.d.ts');
     ts.javascriptDefaults.setCompilerOptions({ ...jsPrevious, ...tuned });
     ts.typescriptDefaults.setCompilerOptions({ ...tsPrevious, ...tuned });
     return () => {
@@ -324,6 +407,10 @@ export function JsScriptScreen() {
       d4.dispose();
       d5.dispose();
       d6.dispose();
+      d7.dispose();
+      d8.dispose();
+      d9.dispose();
+      d10.dispose();
       ts.javascriptDefaults.setCompilerOptions(jsPrevious);
       ts.typescriptDefaults.setCompilerOptions(tsPrevious);
     };
