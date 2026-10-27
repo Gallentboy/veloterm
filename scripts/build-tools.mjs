@@ -392,32 +392,8 @@ QALIB=libqalculate/.libs/libqalculate.a
 # libxml2 的传递依赖（zlib/lzma/iconv…）由 pkg-config --static 补齐
 DEPS=$(sed -n "s/^dependency_libs='\(.*\)'$/\1/p" libqalculate/libqalculate.la \
   | tr ' ' '\n' | grep -v -e '^-R' -e '^-rpath' | tr '\n' ' ')
-# mingw-w64 CRT r532（2026-10-24 runner 滚动，r495 正常）回归兜底：
-# libmingwex.a 的 fesetenv.o 引用 __mingw_fe_dfl_env，新版 CRT 下
-# -static 的跨档案扫描顺序解析不到（undefined reference）。显式提供
-# 强定义：零值 fenv_t 即默认环境，fesetenv 对 FE_DFL_ENV 走指针恒等
-# 判定（内容不参与）；命令行对象先于档案成员解析，旧 CRT 下也无
-# 重定义风险。仅 x86_64 MinGW 需要（CLANGARM64 的 arm64 fenv 无此符号）
-FE_SHIM=
-# 架构判定用 g++ -dumpmachine 而非 uname -m：MSYS2 核心运行时（msys-2.0.dll）
-# 恒为 x86_64，uname 在 CLANGARM64 环境下也报 x86_64——曾据此误在 arm64 腿
-# 编出 shim，撞上档案内既有定义报 duplicate symbol（v1.0.10 二跑实锤）
-case "$(g++ -dumpmachine 2>/dev/null)" in
-  x86_64-*)
-    cat > fe_shim.cpp <<'SHIM'
-#include <fenv.h>
-// namespace 作用域的 const 默认内部链接，必须显式 extern 才是给链接器
-// 的外部强定义（fesetenv.o 的 refptr 要绑到它）
-extern "C" {
-extern const fenv_t __mingw_fe_dfl_env = {};
-}
-SHIM
-    g++ -c -O2 fe_shim.cpp -o fe_shim.o
-    FE_SHIM=fe_shim.o
-    ;;
-esac
 g++ -shared -static -static-libgcc -static-libstdc++ -o qalcffi.dll \
-  "$SRC/veloterm_ffi.cc" qalc_main.o $FE_SHIM "$QALIB" \
+  "$SRC/veloterm_ffi.cc" qalc_main.o "$QALIB" \
   $DEPS $(pkg-config --static --libs libxml-2.0)
 # 自包含断言：objdump 列出 DLL 依赖（ldd 在 MSYS2 基础包不保证存在，
 # objdump 随 binutils 必在），除 Windows 系统库外不得有 MinGW/MSYS 动态库
