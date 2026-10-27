@@ -361,7 +361,7 @@ export default {
     fieldName: '任务名称',
     fieldNamePlaceholder: '例：每日清理日志',
     fieldCron: 'cron 表达式',
-    cronInvalid: '格式：5 个空格分隔的字段（分 时 日 月 周），如 */5 * * * *',
+    cronInvalid: '支持 5 字段（分 时 日 月 周）或 6 字段（秒 分 时 日 月 周）；5 字段自动补秒位 0。如 */5 * * * * 或 0 0 9,14,19 * * *',
     fieldType: '任务类型',
     typeLocal: '本地命令',
     typeSsh: 'SSH 远程命令',

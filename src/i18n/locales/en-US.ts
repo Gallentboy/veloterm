@@ -362,7 +362,7 @@ export default {
     fieldName: 'Task name',
     fieldNamePlaceholder: 'e.g. Daily log cleanup',
     fieldCron: 'Cron expression',
-    cronInvalid: 'Format: 5 space-separated fields (min hour dom month dow), e.g. */5 * * * *',
+    cronInvalid: 'Accepts 5 fields (min hour dom month dow) or 6 fields (sec min hour dom month dow); 5-field is auto-prefixed with 0 seconds. E.g. */5 * * * * or 0 0 9,14,19 * * *',
     fieldType: 'Task type',
     typeLocal: 'Local command',
     typeSsh: 'SSH remote command',

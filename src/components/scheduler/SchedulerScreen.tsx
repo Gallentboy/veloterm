@@ -35,10 +35,18 @@ import {
 } from '@/services/schedulerService';
 import { cn } from '@/lib/utils';
 
-/** cron 表达式的简单格式校验（后端 tokio-cron-scheduler 做完整校验） */
+/** cron 表达式格式适配：后端 tokio-cron-scheduler 的 croner 配置为
+ * Seconds::Required（必须 6 字段：秒 分 时 日 月 周），但用户习惯写 5 字段
+ * 的标准 vixie cron——这里接受 5 或 6 字段，保存时 5 字段自动补前导 0 */
+function normalizeCron(expr: string): string {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length === 5) return `0 ${parts.join(' ')}`;
+  return expr.trim();
+}
+
 function isValidCron(expr: string): boolean {
   const parts = expr.trim().split(/\s+/);
-  return parts.length === 5 && parts.every((p) => p.length > 0);
+  return (parts.length === 5 || parts.length === 6) && parts.every((p) => p.length > 0);
 }
 
 export function SchedulerScreen() {
@@ -382,7 +390,7 @@ function TaskForm({
     const task: ScheduledTask = {
       id: initial?.id ?? crypto.randomUUID(),
       name: name.trim(),
-      cronExpr: cronExpr.trim(),
+      cronExpr: normalizeCron(cronExpr),
       taskType,
       command: command.trim(),
       workingDir: workingDir.trim() || null,
