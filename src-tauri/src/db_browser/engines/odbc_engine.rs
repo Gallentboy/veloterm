@@ -338,7 +338,15 @@ fn load() -> Result<OdbcApi, String> {
         let num_result_cols: SqlNumResultColsFn = resolve(&library, b"SQLNumResultCols\0")?;
         let describe_col: SqlDescribeColWFn = resolve(&library, b"SQLDescribeColW\0")?;
         let fetch: SqlFetchFn = resolve(&library, b"SQLFetch\0")?;
-        let get_data: SqlGetDataWFn = resolve(&library, b"SQLGetDataW\0")?;
+        // unixODBC/iODBC 不导出 SQLGetDataW（其宽字符模型经 SQLGetData +
+        // SQL_C_WCHAR 目标类型在驱动管理器层转换；Windows odbc32 才有
+        // 专门的 W 入口）——入口名无关紧要，TargetType 决定缓冲语义，
+        // 故缺失时回落 ANSI 入口（签名相同）。brew unixodbc 2.3.14 实测
+        // 导出其余 20 个 W 符号、唯独没有 SQLGetDataW。
+        let get_data: SqlGetDataWFn = match resolve(&library, b"SQLGetDataW\0") {
+            Ok(f) => f,
+            Err(_) => resolve(&library, b"SQLGetData\0")?,
+        };
         let row_count: SqlRowCountFn = resolve(&library, b"SQLRowCount\0")?;
         let get_diag_rec: SqlGetDiagRecWFn = resolve(&library, b"SQLGetDiagRecW\0")?;
         let drivers: SqlDriversWFn = resolve(&library, b"SQLDriversW\0")?;
