@@ -1,7 +1,6 @@
 # JS 脚本运行时（V8 / rusty_v8）调研方案
 
-> 状态：**调研文档，能力未落地**。所有「已核实」事实附来源；所有体积/耗时数字除注明外均为 PoC 待实测项。
-> 结论若与后续源码不符，以源码为准并回改本文。
+> 状态：**调研文档 + P0/P1/P1.5 已落地**（2026-10-27）。P0：`src-tauri/src/js_runtime.rs`、`v8 = "=152.2.0"`、`src-tauri/vendor/rusty_v8/` 四平台静态库 vendor（零下载构建，SHA-256 清单见其 README；例外一处：**静态库 vendor 进工程而非构建期下载**，`RUSTY_V8_ARCHIVE` 目录权威源模式）。P1：`js_run`/`js_run_cancel` 命令（console 流式 + 取消）+ 侧栏「JS 脚本」页。**P1.5 TypeScript（需求恢复，oxc 后端转译已落地）**：`js_runtime/ts_transpile.rs`（transpile-only，oxc 0.156 系 + oxc_sourcemap 9.x）+ 全链路 sourcemap——异常消息带「TS 第 L 行第 C 列」（V8 Message 行列 → `SourceMap::lookup_token` 回映）、console 行带调用者位置（`StackTrace::current_stack_trace` 栈顶帧回映，"L:C"）；前端 JS/TS 分段切换（模型语言热切，ts.worker 诊断白拿）。单测 20 项全绿（含禁用项拦截：async 全禁、事件循环/网络/Node API 名单拒绝）。另：**禁用项预拦截已落地**——`detect_forbidden`（模块语义解析 + AST 遍历，源码交给 V8 之前）把 async/await、setTimeout/setInterval/setImmediate/requestAnimationFrame/requestIdleCallback/queueMicrotask、fetch/XMLHttpRequest/WebSocket、process/Buffer/require 统一换成带位置与原因的中文报错（纯 V8 同步沙箱里这些能力要么不存在、要么永不触发）；Promise 链不受影响。脚本库 DB 实体与 P2 宿主桥（ssh.exec/http.fetch）未启动；未实测项：Windows 双腿链接。结论若与源码不符，以源码为准并回改本文。
 
 ## 0. 结论速览（TL;DR）
 

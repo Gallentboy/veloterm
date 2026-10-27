@@ -5,6 +5,15 @@
 # 编译期炸掉（本机真机探测齐全不触发——同版本 rustc/ring 本机全绿 CI 失败的
 # 根因）。固定 apple-m1 基线不做任何运行时探测，CI/本地行为恒定；相比
 # v8.0-a 默认基线保留 crypto/crc 等绝大部分收益（M 系芯片全覆盖）。
+# rusty_v8（JS 脚本运行时，crate 名 v8）静态库零下载：构建期不从 GitHub
+# Releases 下载，一律取 vendor/rusty_v8/ 内的档案（四平台 release 静态库
+# .gz + src_binding 绑定文件，tag v152.2.0）。rusty_v8 的 build.rs 对
+# 「目录」形态将目录视为档案与绑定文件的唯一权威来源，不回落上游网络。
+# [env] 对 build script 生效（Cargo 手册：应用于 build scripts、rustc、
+# cargo run/build）；relative 相对 .cargo 父目录（即本 src-tauri/）解析。
+[env]
+RUSTY_V8_ARCHIVE = { value = "vendor/rusty_v8", relative = true }
+
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "target-cpu=apple-m1"]
 

@@ -1,3 +1,10 @@
+// macOS：V8 静态库（rusty_v8）与静态链接的 pdfium 都内嵌 Abseil
+//（raw_hash_set 等符号），新版 Apple 链接器对两份强符号容忍并取其一、
+// 打 "duplicate symbol" 警告——链接成功且行为正确（两者同为 Chromium
+// 系构建），压掉这条噪音；结构性消除需把 JS 运行时拆成运行期加载的
+// 独立 dylib（pdfium 动态平台先例），待链接器升级为硬错误时再启用。
+#![cfg_attr(target_os = "macos", allow(linker_messages))]
+
 pub mod about;
 pub mod ai;
 pub mod ai_agent;
@@ -15,6 +22,7 @@ pub mod grpc_client;
 pub mod grpc_describe;
 pub mod grpc_tls;
 pub mod host_password_history;
+pub mod js_runtime;
 pub mod lifecycle;
 pub mod logging;
 pub mod pdf;
@@ -70,6 +78,8 @@ pub fn run() {
             terminal_recording::export_text_file,
             fleet_exec::fleet_exec_run,
             fleet_exec::fleet_exec_cancel,
+            js_runtime::js_run,
+            js_runtime::js_run_cancel,
             terminal_recording::export_recording_gif,
             logging::set_log_level,
             logging::get_current_log_level,
