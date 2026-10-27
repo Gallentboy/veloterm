@@ -65,7 +65,9 @@ export function WorkspaceHeader({
                   ? t('db.title')
                   : page === 'batchExec'
                     ? t('batchExec.title')
-                    : t('app.name');
+                    : page === 'jsScript'
+                      ? t('jsScript.title')
+                      : t('app.name');
 
   return (
     <header

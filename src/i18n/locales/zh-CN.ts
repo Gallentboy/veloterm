@@ -407,6 +407,8 @@ export default {
   },
   jsScript: {
     title: 'JS 脚本',
+    langJs: 'JavaScript',
+    langTs: 'TypeScript',
     run: '运行',
     cancel: '取消',
     clear: '清空输出',

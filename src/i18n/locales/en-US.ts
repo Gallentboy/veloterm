@@ -408,6 +408,8 @@ export default {
   },
   jsScript: {
     title: 'JS Scripts',
+    langJs: 'JavaScript',
+    langTs: 'TypeScript',
     run: 'Run',
     cancel: 'Cancel',
     clear: 'Clear Output',
