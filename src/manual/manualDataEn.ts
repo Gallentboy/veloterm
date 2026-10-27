@@ -90,6 +90,27 @@ Sends what you type to several terminals at the same time, from one input box �
 - Double-check you are in the right folder with the right permissions before sending a risky command, especially on production servers.`,
       },
       {
+        id: 'terminal-batchexec',
+        title: 'Running a command on many hosts',
+        badge: 'Batch',
+        keywords: ['batch', 'fleet', 'multiple hosts', 'run', 'command', 'parallel', 'csv'],
+        content: `### What it does
+Runs the same command on many servers at once and shows the results side by side — no more opening a terminal per machine to spot the odd one out.
+
+### Where to find it
+- The "Batch Exec" page on the sidebar.
+
+### How to use it
+1. Tick the target hosts on the left (search, environment filter, and whole-group selection are supported).
+2. Type the command (or pick one from the command library), adjust timeout and concurrency if needed, then click "Run".
+3. Results stream in per host: a green check means success, a red cross means failure — click a row to read the full output. The toolbar searches across all outputs, filters to failures only, and exports CSV.
+
+### Tips
+- When the selection includes production/staging hosts, dangerous commands trigger the same safety confirmation used in terminals.
+- Each host runs over its own temporary connection — open terminals are not affected; a long batch can be cancelled at any time.
+- Output over 256 KB is truncated; redirect the command to a file and fetch it if you need everything.`,
+      },
+      {
         id: 'terminal-monitor',
         title: 'Server health at a glance',
         badge: 'Monitor',

@@ -24,7 +24,7 @@ use super::channel_direct_tcpip::DirectTCPIPChannel;
 use super::channel_session::SessionChannel;
 use super::common::{
     ChannelOperation, DirectTCPIPParams, ForwardedStreamlocalParams, ForwardedTcpIpParams,
-    SSHTargetAuth, TargetSSHOptions,
+    SSHTargetAuth, SshHostKeyVerificationMode, TargetSSHOptions,
 };
 use super::error::{ConnectionError, SshClientError};
 use super::handler::{ClientHandler, ClientHandlerError, ClientHandlerEvent};
@@ -202,6 +202,30 @@ pub async fn connect_ssh_chain(
     chain: Vec<TargetSSHOptions>,
     known_hosts: KnownHosts,
 ) -> Result<Connection, ConnectionError> {
+    connect_ssh_chain_inner(session_id, chain, known_hosts, false).await
+}
+
+/// 无头建连（批量执行等无终端 UI 的调用方）：与 [`connect_ssh_chain`]
+/// 同构，但两个交互点改为内联决策——①未知主机公钥不再发 HostKeyUnknown
+/// 等终端代答（那边无人消费会挂到超时），按 host_key_verification 内联
+/// 代答（Ignore/AutoAccept/Prompt→信任、AutoReject→拒绝，决策表与终端
+/// 路径 ssh/mod.rs 的 HostKeyUnknown 分支完全一致，不落库 trust 同终端
+/// 行为）；②认证失败（密码错/过期）不进 ask_in_terminal 的 180s 问答轮，
+/// 直接以认证错误返回。跳板链逐跳生效（wait_for_connection 逐跳调用）。
+pub async fn connect_ssh_chain_headless(
+    session_id: usize,
+    chain: Vec<TargetSSHOptions>,
+    known_hosts: KnownHosts,
+) -> Result<Connection, ConnectionError> {
+    connect_ssh_chain_inner(session_id, chain, known_hosts, true).await
+}
+
+async fn connect_ssh_chain_inner(
+    session_id: usize,
+    chain: Vec<TargetSSHOptions>,
+    known_hosts: KnownHosts,
+    headless: bool,
+) -> Result<Connection, ConnectionError> {
     let (tx, _rx) = channel(64);
     let connector = Connector {
         id: session_id,
@@ -209,6 +233,7 @@ pub async fn connect_ssh_chain(
         host_id: None,
         tx,
         known_hosts,
+        headless,
     };
     connector.connect_chain(chain).await
 }
@@ -222,6 +247,10 @@ struct Connector {
     host_id: Option<usize>,
     tx: Sender<RCEvent>,
     known_hosts: KnownHosts,
+    /// 无头模式（批量执行等无终端 UI 的调用方）：未知主机公钥按
+    /// host_key_verification 内联代答（决策表同终端路径）、认证失败
+    /// 不进终端问答轮快速失败。见 connect_ssh_chain_headless。
+    headless: bool,
 }
 
 
@@ -526,6 +555,7 @@ impl RemoteClient {
                     host_id: self.host_id,
                     tx: self.tx.clone(),
                     known_hosts: self.known_hosts.clone(),
+                    headless: false,
                 };
                 let inner_event_tx = self.inner_event_tx.clone();
                 let attempt = tokio::spawn(async move {
@@ -1021,6 +1051,18 @@ impl Connector {
                       .map_err(|_| ConnectionError::Internal)?;
                   }
                   ClientHandlerEvent::HostKeyUnknown(key, reply) => {
+                    // 无头模式：HostKeyUnknown 发出去无人代答（会挂到超时），
+                    // 按策略内联回复——决策表与终端路径 ssh/mod.rs 的分支一致
+                    //（Ignore/AutoAccept/Prompt→信任，AutoReject→拒绝；
+                    // 不落库 trust，同终端行为：下次终端连接仍会提示）
+                    if self.headless {
+                        let accept = !matches!(
+                            ssh_options.host_key_verification,
+                            SshHostKeyVerificationMode::AutoReject
+                        );
+                        let _ = reply.send(accept);
+                        continue;
+                    }
                     self.tx
                       .send(RCEvent::HostKeyUnknown(
                         key,
@@ -1068,6 +1110,11 @@ impl Connector {
     /// `echo = false`：密码类输入，不回显；`echo = true`：回显用户输入
     /// （用户名/验证码等，OpenSSH 用 RP_ECHO）。
     async fn ask_in_terminal(&self, prompt: &str, echo: bool) -> Option<String> {
+        // 无头模式（批量执行）：没有终端可问，直接无应答（调用方按认证
+        // 失败快速出错，不走 180s 问答轮）
+        if self.headless {
+            return None;
+        }
         // 提示显示到终端。OpenSSH 的 read_passphrase 在开屏前先写一个 '\r'
         // （readpass.c:160 "ensure that show the prompt at the beginning of the
         // line"），随后 readpassphrase 写 prompt 原文。这里保持同序：\r + prompt。

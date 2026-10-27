@@ -63,7 +63,9 @@ export function WorkspaceHeader({
                 ? t('dbHosts.title')
                 : page === 'db'
                   ? t('db.title')
-                  : t('app.name');
+                  : page === 'batchExec'
+                    ? t('batchExec.title')
+                    : t('app.name');
 
   return (
     <header

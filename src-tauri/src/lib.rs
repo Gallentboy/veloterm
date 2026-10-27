@@ -30,6 +30,8 @@ pub mod tools;
 pub mod window_state;
 pub mod zk;
 pub mod zk_hosts;
+/// 批量执行（fleet exec）：多主机并行执行 + per-host 事件流
+pub mod fleet_exec;
 
 #[tauri::command]
 fn is_apple_silicon() -> bool {
@@ -60,10 +62,13 @@ pub fn run() {
         .manage(sftp::types::SftpState::new())
         .manage(zk::ZkState::new())
         .manage(db_browser::DbState::new())
+        .manage(fleet_exec::FleetExecState::default())
         .invoke_handler(tauri::generate_handler![
             is_apple_silicon,
             about::show_about_window,
             terminal_recording::export_text_file,
+            fleet_exec::fleet_exec_run,
+            fleet_exec::fleet_exec_cancel,
             terminal_recording::export_recording_gif,
             logging::set_log_level,
             logging::get_current_log_level,
