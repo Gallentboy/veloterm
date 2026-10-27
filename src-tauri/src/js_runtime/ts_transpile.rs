@@ -118,8 +118,8 @@ const FORBIDDEN_TIMER: &[&str] = &[
     "requestIdleCallback",
     "queueMicrotask",
 ];
-/// 网络类：纯 V8 沙箱无网络能力
-const FORBIDDEN_NETWORK: &[&str] = &["fetch", "XMLHttpRequest", "WebSocket"];
+/// 网络类：纯 V8 沙箱无浏览器 DOM 网络能力（fetch 已由宿主提供同步版本）
+const FORBIDDEN_NETWORK: &[&str] = &["XMLHttpRequest", "WebSocket"];
 /// Node.js 运行时专属
 const FORBIDDEN_NODE: &[&str] = &["process", "Buffer", "require"];
 
@@ -129,7 +129,7 @@ pub enum ForbiddenKind {
     AsyncSyntax,
     /// setTimeout 等：注册了也永不触发
     TimerApi,
-    /// fetch/XHR/WebSocket：无网络能力
+    /// XHR/WebSocket：无浏览器 DOM 网络能力（fetch 已由宿主提供同步实现）
     NetworkApi,
     /// process/Buffer/require：非 Node 运行时
     NodeApi,
@@ -160,8 +160,8 @@ impl ForbiddenUse {
                 self.name, self.line, self.col
             ),
             ForbiddenKind::NetworkApi => format!(
-                "「{}」不可用（第 {} 行第 {} 列）：纯 V8 沙箱无网络能力\
-                 （fetch/XMLHttpRequest/WebSocket）；需要时等待后续阶段的宿主桥",
+                "「{}」不可用（第 {} 行第 {} 列）：纯 V8 沙箱无浏览器 DOM 网络能力\
+                 （XMLHttpRequest/WebSocket）；HTTP 请求请直接使用同步 fetch",
                 self.name, self.line, self.col
             ),
             ForbiddenKind::NodeApi => format!(

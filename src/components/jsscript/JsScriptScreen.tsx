@@ -81,6 +81,75 @@ const CONSOLE_DTS = [
   '};',
 ].join('\n');
 
+/** 同步 fetch 与 http 宿主桥的精确声明 */
+const FETCH_DTS = [
+  'interface SyncResponse {',
+  '  readonly ok: boolean;',
+  '  readonly status: number;',
+  '  readonly statusText: string;',
+  '  readonly headers: Record<string, string>;',
+  '  readonly url: string;',
+  '  text(): string;',
+  '  json(): any;',
+  '  bytes(): Uint8Array;',
+  '}',
+  'interface FetchOptions {',
+  '  method?: string;',
+  '  headers?: Record<string, string>;',
+  '  body?: string | ArrayBuffer | Uint8Array;',
+  '  timeout?: number;',
+  '}',
+  'declare function fetch(url: string, options?: FetchOptions): SyncResponse;',
+  'declare const http: {',
+  '  fetch(url: string, options?: FetchOptions): SyncResponse;',
+  '};',
+].join('\n');
+
+/** 同步 fs 沙盒文件操作的精确声明 */
+const FS_DTS = [
+  'interface DirEntry {',
+  '  name: string;',
+  '  isDirectory: boolean;',
+  '  isFile: boolean;',
+  '  size: number;',
+  '}',
+  'interface FileStat {',
+  '  isDirectory: boolean;',
+  '  isFile: boolean;',
+  '  size: number;',
+  '  modifiedMs: number;',
+  '}',
+  'declare const fs: {',
+  '  readTextFile(path: string): string;',
+  '  readFileSync(path: string): string;',
+  '  readFile(path: string): Uint8Array;',
+  '  readBytes(path: string): Uint8Array;',
+  '  writeTextFile(path: string, content: string): void;',
+  '  writeFileSync(path: string, content: string): void;',
+  '  writeFile(path: string, data: string | Uint8Array | ArrayBuffer): void;',
+  '  appendFile(path: string, data: string | Uint8Array | ArrayBuffer): void;',
+  '  appendFileSync(path: string, data: string | Uint8Array | ArrayBuffer): void;',
+  '  exists(path: string): boolean;',
+  '  existsSync(path: string): boolean;',
+  '  mkdir(path: string, recursive?: boolean): void;',
+  '  mkdirSync(path: string, recursive?: boolean): void;',
+  '  readDir(path?: string): DirEntry[];',
+  '  readdirSync(path?: string): DirEntry[];',
+  '  remove(path: string, recursive?: boolean): void;',
+  '  removeSync(path: string, recursive?: boolean): void;',
+  '  unlinkSync(path: string): void;',
+  '  rmdirSync(path: string): void;',
+  '  stat(path: string): FileStat;',
+  '  statSync(path: string): FileStat;',
+  '  copyFile(from: string, to: string): void;',
+  '  copyFileSync(from: string, to: string): void;',
+  '  rename(from: string, to: string): void;',
+  '  renameSync(from: string, to: string): void;',
+  '  getWorkspaceDir(): string;',
+  '  getTempDir(): string;',
+  '};',
+].join('\n');
+
 interface Draft {
   lang: JsScriptLanguage;
   source: string;
@@ -242,11 +311,19 @@ export function JsScriptScreen() {
     };
     const d1 = ts.javascriptDefaults.addExtraLib(CONSOLE_DTS, 'veloterm-console.d.ts');
     const d2 = ts.typescriptDefaults.addExtraLib(CONSOLE_DTS, 'veloterm-console.d.ts');
+    const d3 = ts.javascriptDefaults.addExtraLib(FETCH_DTS, 'veloterm-fetch.d.ts');
+    const d4 = ts.typescriptDefaults.addExtraLib(FETCH_DTS, 'veloterm-fetch.d.ts');
+    const d5 = ts.javascriptDefaults.addExtraLib(FS_DTS, 'veloterm-fs.d.ts');
+    const d6 = ts.typescriptDefaults.addExtraLib(FS_DTS, 'veloterm-fs.d.ts');
     ts.javascriptDefaults.setCompilerOptions({ ...jsPrevious, ...tuned });
     ts.typescriptDefaults.setCompilerOptions({ ...tsPrevious, ...tuned });
     return () => {
       d1.dispose();
       d2.dispose();
+      d3.dispose();
+      d4.dispose();
+      d5.dispose();
+      d6.dispose();
       ts.javascriptDefaults.setCompilerOptions(jsPrevious);
       ts.typescriptDefaults.setCompilerOptions(tsPrevious);
     };

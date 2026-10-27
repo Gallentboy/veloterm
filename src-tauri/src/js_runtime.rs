@@ -39,6 +39,8 @@ use std::time::{Duration, Instant};
 use oxc_sourcemap::SourceMap;
 use serde::Serialize;
 
+mod fetch_impl;
+mod fs_impl;
 mod ts_transpile;
 
 /// TS sourcemap 的共享形态：isolate 槽（console 回映）与错误路径（异常回映）
@@ -160,10 +162,12 @@ pub fn run_script_with_sink(
         .send(Job {
             source: source.to_string(),
             heap_limit_mb: options.heap_limit_mb,
+            timeout: options.timeout,
             language: options.language,
             reply: reply_tx,
             handle_slot: handle_slot.clone(),
             sink,
+            cancel: cancel.clone(),
         })
         .map_err(|_| JsRunError::HostUnavailable("JS 宿主通道已关闭".into()))?;
 
@@ -226,12 +230,14 @@ pub fn run_script_with_sink(
 struct Job {
     source: String,
     heap_limit_mb: usize,
+    timeout: Duration,
     language: JsLanguage,
     reply: Sender<Result<JsRunOutcome, JsRunError>>,
     /// 调用方看门狗跨线程终止用的句柄槽（isolate 建好后由宿主填充）
     handle_slot: Arc<Mutex<Option<v8::IsolateHandle>>>,
     /// console 流式出口（逐行转发给 UI 的 Channel 适配器）
     sink: Option<ConsoleSink>,
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 struct Host {
@@ -319,6 +325,11 @@ fn execute_job(job: Job) {
         sink: job.sink.clone(),
         ts_map: ts_map.clone(),
     });
+    isolate.set_slot(fetch_impl::FetchContext {
+        cancel: job.cancel.clone(),
+        started,
+        timeout: job.timeout,
+    });
 
     let reply: Result<JsRunOutcome, JsRunError> = 'run: {
         v8::scope!(let scope, &mut isolate);
@@ -347,6 +358,32 @@ fn execute_job(job: Job) {
             (console_tmpl.new_instance(scope), v8::String::new(scope, "console"))
         {
             let _ = global.set(scope, name_key.into(), console_obj.into());
+        }
+
+        // fetch 宿主桥（全局 fetch 与 http.fetch 别名）
+        let fetch_tmpl = v8::FunctionTemplate::new(scope, fetch_impl::sync_fetch_cb);
+        if let (Some(fetch_fn), Some(name_key)) =
+            (fetch_tmpl.get_function(scope), v8::String::new(scope, "fetch"))
+        {
+            let _ = global.set(scope, name_key.into(), fetch_fn.into());
+        }
+        let http_tmpl = v8::ObjectTemplate::new(scope);
+        if let Some(k) = v8::String::new(scope, "fetch") {
+            http_tmpl.set(k.into(), fetch_tmpl.into());
+        }
+        if let (Some(http_obj), Some(name_key)) =
+            (http_tmpl.new_instance(scope), v8::String::new(scope, "http"))
+        {
+            let _ = global.set(scope, name_key.into(), http_obj.into());
+        }
+
+        // fs 沙盒宿主桥（全局 fs）
+        let fs_tmpl = v8::ObjectTemplate::new(scope);
+        fs_impl::register_fs_methods(scope, &fs_tmpl);
+        if let (Some(fs_obj), Some(name_key)) =
+            (fs_tmpl.new_instance(scope), v8::String::new(scope, "fs"))
+        {
+            let _ = global.set(scope, name_key.into(), fs_obj.into());
         }
 
         let Some(source_str) = v8::String::new(scope, js_source.as_str()) else {
@@ -949,7 +986,6 @@ mod tests {
     #[test]
     fn js_network_and_node_apis_rejected() {
         for (src, name) in [
-            ("fetch('http://x')", "fetch"),
             ("new WebSocket('ws://x')", "WebSocket"),
             ("process.env.PATH", "process"),
             ("Buffer.from('x')", "Buffer"),
@@ -1017,5 +1053,253 @@ mod tests {
             out.console.first().map(|l| l.text.as_str()),
             Some("micro 1")
         );
+    }
+
+    #[test]
+    fn js_fetch_invalid_protocol_rejected() {
+        let err = run_script("fetch('ftp://127.0.0.1')", &JsRunOptions::default()).unwrap_err();
+        let JsRunError::Script { message } = err else {
+            panic!("期望 Script 错误");
+        };
+        assert!(message.contains("仅支持 http:// 与 https:// 协议"), "message: {message}");
+    }
+
+    #[test]
+    fn js_fetch_missing_url_rejected() {
+        let err = run_script("fetch()", &JsRunOptions::default()).unwrap_err();
+        let JsRunError::Script { message } = err else {
+            panic!("期望 Script 错误");
+        };
+        assert!(message.contains("需要至少 1 个 URL 参数"), "message: {message}");
+    }
+
+    #[test]
+    fn js_fetch_sync_get_and_post_and_json() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = channel::<()>();
+
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if rx.try_recv().is_ok() {
+                    break;
+                }
+                let mut stream = match stream {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req_text = String::from_utf8_lossy(&buf[..n]);
+
+                if req_text.starts_with("GET /hello") {
+                    let body = r#"{"name":"veloterm","status":"ok"}"#;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                } else if req_text.starts_with("POST /echo") {
+                    let body_idx = req_text.find("\r\n\r\n").map(|i| i + 4).unwrap_or(n);
+                    let body_content = &req_text[body_idx..];
+                    let resp_body = format!("echoed: {body_content}");
+                    let resp = format!(
+                        "HTTP/1.1 201 Created\r\nContent-Type: text/plain\r\nX-Echo: yes\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        resp_body.len(),
+                        resp_body
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                } else if req_text.starts_with("GET /404") {
+                    let resp = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+
+        // 1. GET 请求与 json() 解析
+        let get_script = format!(
+            r#"
+            const res = fetch("http://127.0.0.1:{port}/hello");
+            console.log("ok=" + res.ok, "status=" + res.status);
+            const data = res.json();
+            data.name
+            "#
+        );
+        let out = run_script(&get_script, &JsRunOptions::default()).unwrap();
+        assert_eq!(out.result_json.as_deref(), Some("\"veloterm\""));
+        assert_eq!(
+            out.console.first().map(|l| l.text.as_str()),
+            Some("ok=true status=200")
+        );
+
+        // 2. POST 请求携带 header、body 与 text() 获取
+        let post_script = format!(
+            r#"
+            const res = http.fetch("http://127.0.0.1:{port}/echo", {{
+                method: "POST",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify({{ ping: "pong" }})
+            }});
+            console.log("status=" + res.status, "header=" + res.headers["x-echo"]);
+            res.text()
+            "#
+        );
+        let out_post = run_script(&post_script, &JsRunOptions::default()).unwrap();
+        assert_eq!(
+            out_post.result_json.as_deref(),
+            Some(r#""echoed: {\"ping\":\"pong\"}""#)
+        );
+        assert_eq!(
+            out_post.console.first().map(|l| l.text.as_str()),
+            Some("status=201 header=yes")
+        );
+
+        // 3. 404 返回：ok 为 false，不抛异常
+        let not_found_script = format!(
+            r#"
+            const res = fetch("http://127.0.0.1:{port}/404");
+            [res.ok, res.status]
+            "#
+        );
+        let out_404 = run_script(&not_found_script, &JsRunOptions::default()).unwrap();
+        assert_eq!(out_404.result_json.as_deref(), Some("[false,404]"));
+
+        // 4. TS 模式下的同步 fetch 执行
+        let ts_script = format!(
+            r#"
+            interface Resp {{ name: string; status: string; }}
+            const res = fetch("http://127.0.0.1:{port}/hello");
+            const data: Resp = res.json();
+            data.status
+            "#
+        );
+        let opts = JsRunOptions {
+            language: JsLanguage::Typescript,
+            ..JsRunOptions::default()
+        };
+        let out_ts = run_script(&ts_script, &opts).unwrap();
+        assert_eq!(out_ts.result_json.as_deref(), Some("\"ok\""));
+
+        let _ = tx.send(());
+    }
+
+    #[test]
+    fn js_fetch_timeout_interrupted() {
+        use std::io::Read;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        // 服务端接收请求后故意睡眠不响应
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 512];
+                let _ = stream.read(&mut buf);
+                std::thread::sleep(Duration::from_millis(800));
+            }
+        });
+
+        let script = format!(
+            r#"
+            fetch("http://127.0.0.1:{port}/hang", {{ timeout: 100 }});
+            "#
+        );
+        let err = run_script(&script, &JsRunOptions::default()).unwrap_err();
+        let JsRunError::Script { message } = err else {
+            panic!("期望 Script 错误");
+        };
+        assert!(message.contains("请求超时"), "message: {message}");
+    }
+
+    #[test]
+    fn js_fs_sandbox_escape_rejected() {
+        // 1. 尝试绝对路径越界读取系统敏感目录
+        let script = r#"fs.readTextFile("/etc/passwd")"#;
+        let err = run_script(script, &JsRunOptions::default()).unwrap_err();
+        let JsRunError::Script { message } = err else {
+            panic!("期望 Script 错误");
+        };
+        assert!(message.contains("沙盒越界"), "message: {message}");
+
+        // 2. 尝试使用 ../.. 目录遍历逃逸工作区
+        let script_traversal = r#"fs.writeTextFile("../../test_escape.txt", "escaped")"#;
+        let err = run_script(script_traversal, &JsRunOptions::default()).unwrap_err();
+        let JsRunError::Script { message } = err else {
+            panic!("期望 Script 错误");
+        };
+        assert!(message.contains("沙盒越界"), "message: {message}");
+    }
+
+    #[test]
+    fn js_fs_sync_crud_and_temp_dir() {
+        let test_fn = format!("test_{}.txt", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+        let script = format!(
+            r#"
+            const fn = "{test_fn}";
+            // 1. 写入文本文件
+            fs.writeTextFile(fn, "hello veloterm fs");
+            if (!fs.exists(fn)) throw new Error("文件应该存在");
+
+            // 2. 读取文本文件
+            const content = fs.readTextFile(fn);
+            if (content !== "hello veloterm fs") throw new Error("内容不匹配: " + content);
+
+            // 3. 追加内容
+            fs.appendFile(fn, "\nappended");
+            const newContent = fs.readTextFile(fn);
+
+            // 4. stat 元数据
+            const st = fs.stat(fn);
+            if (!st.isFile || st.size === 0) throw new Error("stat 异常");
+
+            // 5. 复制与重命名
+            const fnCopied = fn + ".bak";
+            fs.copyFile(fn, fnCopied);
+            const fnRenamed = fn + ".renamed";
+            fs.rename(fnCopied, fnRenamed);
+            if (!fs.exists(fnRenamed)) throw new Error("重命名后文件应存在");
+
+            // 6. 临时目录写入与读取
+            const tempDir = fs.getTempDir();
+            const tempFile = tempDir + "/" + fn;
+            fs.writeTextFile(tempFile, "temp-data");
+            const readTemp = fs.readTextFile(tempFile);
+            fs.remove(tempFile);
+
+            // 7. 清理工作空间测试文件
+            fs.remove(fn);
+            fs.remove(fnRenamed);
+
+            newContent;
+            "#
+        );
+
+        let out = run_script(&script, &JsRunOptions::default()).unwrap();
+        assert_eq!(
+            out.result_json.as_deref(),
+            Some(r#""hello veloterm fs\nappended""#)
+        );
+    }
+
+    #[test]
+    fn js_fs_mkdir_and_readdir() {
+        let dir_name = format!("sub_dir_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+        let script = format!(
+            r#"
+            const d = "{dir_name}";
+            fs.mkdir(d + "/nested", true);
+            fs.writeTextFile(d + "/nested/item.txt", "abc");
+            const entries = fs.readDir(d + "/nested");
+            fs.remove(d, true);
+            entries.map(e => e.name);
+            "#
+        );
+        let out = run_script(&script, &JsRunOptions::default()).unwrap();
+        assert_eq!(out.result_json.as_deref(), Some(r#"["item.txt"]"#));
     }
 }
