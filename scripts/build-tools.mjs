@@ -371,6 +371,13 @@ if [ ! -f Makefile ] || [ "$(cat .veloterm-configure-stamp 2>/dev/null || true)"
   if [ -z "$CXXFLAGS" ]; then CXXFLAGS="-g -O2"; fi
   CFLAGS="$CFLAGS -DLIBXML_STATIC"
   CXXFLAGS="$CXXFLAGS -DLIBXML_STATIC"
+  # ARM64（CLANGARM64）：gcc-compat 包装器在 MSYS2 滚动更新后可能损坏
+  #（v1.0.12 实锤：configure 第一个 C compiler cannot create executables），
+  # 显式设 CC/CXX=clang/clang++ 绕过；x86_64（MINGW64）原生 gcc 不需要
+  if [ "$MSYSTEM" = "CLANGARM64" ]; then
+    export CC=clang
+    export CXX=clang++
+  fi
   export CFLAGS CXXFLAGS
   sh "$SRC/configure" --disable-shared --enable-static --enable-compiled-definitions \
     --without-libcurl --without-icu --disable-nls --disable-unittests
