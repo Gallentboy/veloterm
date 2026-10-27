@@ -12,6 +12,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  SquarePen,
   Terminal,
   Trash2,
   X,
@@ -252,7 +253,7 @@ export function SchedulerScreen() {
                     onClick={() => setEditing(task)}
                     title={t('scheduler.edit')}
                   >
-                    <Clock className="size-3.5" />
+                    <SquarePen className="size-3.5" />
                   </Button>
                   <Button
                     variant="ghost"
@@ -379,12 +380,22 @@ function TaskForm({
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [touched, setTouched] = useState(false); // 提交尝试过一次后各字段标红
 
-  const cronValid = isValidCron(cronExpr);
-  const canSave = name.trim() && cronValid && command.trim();
+  // 严格校验：任何一个不对就不能保存（前端拦死，后端兜底）
+  const nameError = !name.trim() ? t('scheduler.errNameRequired') : null;
+  const cronError = !isValidCron(cronExpr) ? t('scheduler.cronInvalid') : null;
+  const commandError = !command.trim() ? t('scheduler.errCommandRequired') : null;
+  const sshHostError =
+    taskType === 'ssh_command' && (!hostId || Number.isNaN(Number(hostId)) || Number(hostId) <= 0)
+      ? t('scheduler.errHostIdRequired')
+      : null;
+  const hasError = Boolean(nameError || cronError || commandError || sshHostError);
+  const canSave = !hasError && !saving;
 
   const handleSave = async () => {
-    if (!canSave || saving) return;
+    setTouched(true); // 触发各字段的红色提示
+    if (hasError || saving) return; // 前端拦死：任何一个字段不对就不发请求
     setSaving(true);
     setFormError(null);
     const task: ScheduledTask = {
@@ -439,11 +450,14 @@ function TaskForm({
           <div>
             <label className={labelCls}>{t('scheduler.fieldName')}</label>
             <input
-              className={inputCls}
+              className={cn(inputCls, touched && nameError && 'border-destructive/50')}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={t('scheduler.fieldNamePlaceholder')}
             />
+            {touched && nameError ? (
+              <p className="mt-1 text-ui-xs text-destructive">{nameError}</p>
+            ) : null}
           </div>
           <div>
             <label className={labelCls}>
@@ -451,15 +465,13 @@ function TaskForm({
               <span className="font-mono text-foreground-subtlest">* * * * *</span>
             </label>
             <input
-              className={cn(inputCls, 'font-mono', !cronValid && 'border-destructive/50')}
+              className={cn(inputCls, 'font-mono', touched && cronError && 'border-destructive/50')}
               value={cronExpr}
               onChange={(e) => setCronExpr(e.target.value)}
               placeholder="*/5 * * * *"
             />
-            {!cronValid ? (
-              <p className="mt-1 text-ui-xs text-destructive">
-                {t('scheduler.cronInvalid')}
-              </p>
+            {touched && cronError ? (
+              <p className="mt-1 text-ui-xs text-destructive">{cronError}</p>
             ) : null}
           </div>
           <div>
@@ -490,11 +502,14 @@ function TaskForm({
           <div>
             <label className={labelCls}>{t('scheduler.fieldCommand')}</label>
             <textarea
-              className={cn(inputCls, 'h-20 resize-none py-2 font-mono')}
+              className={cn(inputCls, 'h-20 resize-none py-2 font-mono', touched && commandError && 'border-destructive/50')}
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               placeholder={t('scheduler.fieldCommandPlaceholder')}
             />
+            {touched && commandError ? (
+              <p className="mt-1 text-ui-xs text-destructive">{commandError}</p>
+            ) : null}
           </div>
           {taskType === 'local_command' ? (
             <div>
@@ -510,12 +525,15 @@ function TaskForm({
             <div>
               <label className={labelCls}>{t('scheduler.fieldHostId')}</label>
               <input
-                className={cn(inputCls, 'font-mono')}
+                className={cn(inputCls, 'font-mono', touched && sshHostError && 'border-destructive/50')}
                 type="number"
                 value={hostId}
                 onChange={(e) => setHostId(e.target.value)}
                 placeholder="1（主机列表的 id）"
               />
+              {touched && sshHostError ? (
+                <p className="mt-1 text-ui-xs text-destructive">{sshHostError}</p>
+              ) : null}
               <p className="mt-1 text-ui-xs text-foreground-subtlest">
                 {t('scheduler.fieldHostIdHint')}
               </p>
@@ -542,12 +560,13 @@ function TaskForm({
           </Button>
           <Button
             size="sm"
-            disabled={!canSave || saving}
+            disabled={!canSave}
             onClick={() => void handleSave()}
-            className="flex items-center gap-1.5"
+            className={cn('flex items-center gap-1.5', touched && hasError && 'opacity-40')}
+            title={touched && hasError ? t('scheduler.errFormInvalid') : undefined}
           >
             {saving ? <Spinner className="size-3.5" /> : null}
-            {t('scheduler.save')}
+            {touched && hasError ? t('scheduler.errFormInvalid') : t('scheduler.save')}
           </Button>
         </div>
       </div>
