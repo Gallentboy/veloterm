@@ -21,6 +21,7 @@ pub mod pdf;
 pub mod port_forward;
 pub mod relays;
 pub mod safety_guard;
+pub mod scheduler;
 pub mod sftp;
 pub mod sqlite_viewer;
 pub mod terminal;
@@ -131,6 +132,13 @@ pub fn run() {
             db_browser::redis_write_key,
             db_browser::redis_slowlog,
             db_browser::redis_bigkeys,
+            scheduler::scheduler_task_create,
+            scheduler::scheduler_task_update,
+            scheduler::scheduler_task_delete,
+            scheduler::scheduler_task_toggle,
+            scheduler::scheduler_task_list,
+            scheduler::scheduler_task_logs,
+            scheduler::scheduler_run_now,
             db_browser::db_odbc_drivers,
             db_browser::db_odbc_data_sources,
             db_browser::sqlite_file_pick,
@@ -255,6 +263,7 @@ pub fn run() {
                 .filter(|k| !k.trim().is_empty())
                 .unwrap_or_else(|| db::DEFAULT_MASTER_KEY.to_string());
             let db_pool = db::init_db(app.handle(), &master_key)?;
+            let db_pool_for_manage = db_pool.clone();
 
             // Windows：启动时幂等确保 tools/ 下 coreutils 硬链接短名入口就绪
             // （ls.exe/grep.exe/… → 同级目录 coreutils.exe；缺失创建、存在跳过）
@@ -268,7 +277,32 @@ pub fn run() {
                 logging::apply_log_level_filter(logging::current_level_filter());
             }
 
-            app.manage(db_pool);
+            app.manage(db_pool_for_manage);
+
+            // 定时任务引擎：建表 → 创建调度器 → 加载 enabled 任务。
+            // setup 闭包不是 async——调度器创建/加载用 tauri::async_runtime::spawn
+            {
+                if let Ok(conn) = db_pool.get() {
+                    if let Err(e) = scheduler::store::ensure_tables(&conn) {
+                        log::warn!("[scheduler] 建表失败：{e}");
+                    }
+                }
+                let pool = db_pool.clone();
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    use scheduler::SCHEDULER_ENGINE;
+                    match scheduler::engine::SchedulerEngine::new(pool.clone(), handle).await {
+                        Ok(engine) => {
+                            if let Err(e) = engine.load_all().await {
+                                log::warn!("[scheduler] 加载任务失败：{e}");
+                            }
+                            log::info!("[scheduler] 引擎就绪");
+                            let _ = SCHEDULER_ENGINE.set(engine);
+                        }
+                        Err(e) => log::warn!("[scheduler] 引擎启动失败（定时任务不可用）：{e}"),
+                    }
+                });
+            }
 
             // 注入 AppHandle 到 SftpState，供 SFTP 生命周期事件发射
             if let Some(sftp_state) = app.try_state::<sftp::types::SftpState>() {

@@ -15,6 +15,7 @@ import { GroupsScreen } from '@/components/hosts/GroupsScreen';
 import { HostsScreen } from '@/components/hosts/HostsScreen';
 import { CommandHistoryScreen } from '@/components/history/CommandHistoryScreen';
 import { BatchExecScreen } from '@/components/batchexec/BatchExecScreen';
+import { SchedulerScreen } from '@/components/scheduler/SchedulerScreen';
 import { RelaysScreen } from '@/components/relays/RelaysScreen';
 import { ZkScreen } from '@/components/zk/ZkScreen';
 import { ZkHostsScreen } from '@/components/zkhosts/ZkHostsScreen';
@@ -593,6 +594,8 @@ export function AppShell() {
                   <CommandHistoryScreen />
                 ) : page === 'batchExec' ? (
                   <BatchExecScreen />
+                ) : page === 'scheduler' ? (
+                  <SchedulerScreen />
                 ) : page === 'zkhosts' ? (
                   <ZkHostsScreen
                     onConnectHost={(host) => {

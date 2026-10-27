@@ -1,4 +1,4 @@
-import { Boxes, Command, Cylinder, Database, FileCode, FolderSync, FolderTree, History, House, ListChecks, Network, Server, Settings, TableProperties, Terminal, Waypoints } from 'lucide-react';
+import { Boxes, CalendarClock, Command, Cylinder, Database, FileCode, FolderSync, FolderTree, History, House, ListChecks, Network, Server, Settings, TableProperties, Terminal, Waypoints } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -12,7 +12,7 @@ import {
   SIDEBAR_VISIBILITY_EVENT,
 } from '@/services/sidebarVisibility';
 
-export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'commands' | 'dbhosts' | 'db' | 'zk' | 'zkhosts' | 'relays' | 'history' | 'batchExec' | 'grpc' | 'settings';
+export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'commands' | 'dbhosts' | 'db' | 'zk' | 'zkhosts' | 'relays' | 'history' | 'batchExec' | 'scheduler' | 'grpc' | 'settings';
 
 /** 侧栏导航项（settings 固定展示，不参与可见性配置）。设置页的菜单展示
  *  区块与此清单同源（同一导出），勾选状态经 kv + 事件实时联动。 */
@@ -25,6 +25,7 @@ export const SIDEBAR_NAV_ITEMS: Array<{ page: Page; icon: LucideIcon; navKey: st
   { page: 'relays', icon: Waypoints, navKey: 'nav.relays' },
   { page: 'history', icon: History, navKey: 'nav.history' },
   { page: 'batchExec', icon: ListChecks, navKey: 'nav.batchExec' },
+  { page: 'scheduler', icon: CalendarClock, navKey: 'nav.scheduler' },
   { page: 'grpc', icon: Network, navKey: 'nav.grpc' },
   { page: 'groups', icon: FolderTree, navKey: 'nav.groups' },
   { page: 'commands', icon: Command, navKey: 'nav.commands' },
