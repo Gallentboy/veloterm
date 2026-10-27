@@ -9,8 +9,8 @@ export interface ScheduledTask {
   id: string;
   name: string;
   cronExpr: string;
-  /** 'local_command' | 'ssh_command' */
-  taskType: string;
+  /** 'local_command' | 'ssh_command' | 'js_script' */
+  taskType: 'local_command' | 'ssh_command' | 'js_script' | string;
   command: string;
   workingDir?: string | null;
   hostId?: number | null;
@@ -29,6 +29,33 @@ export interface TaskLog {
   exitCode?: number | null;
   stdoutTail?: string | null;
   stderrTail?: string | null;
+}
+
+export interface TaskHistoryQuery {
+  taskId?: string | null;
+  status?: 'all' | 'success' | 'failed' | 'running' | string | null;
+  limit?: number | null;
+  offset?: number | null;
+}
+
+export interface TaskHistoryItem {
+  id: number;
+  taskId: string;
+  taskName: string;
+  taskType?: string | null;
+  command?: string | null;
+  startedAt: number;
+  finishedAt?: number | null;
+  durationMs?: number | null;
+  exitCode?: number | null;
+  status: 'success' | 'failed' | 'running' | string;
+  stdoutTail?: string | null;
+  stderrTail?: string | null;
+}
+
+export interface TaskHistoryResponse {
+  items: TaskHistoryItem[];
+  total: number;
 }
 
 export interface TaskEvent {
@@ -63,6 +90,14 @@ export function schedulerTaskToggle(id: string, enabled: boolean): Promise<Sched
 
 export function schedulerTaskLogs(taskId: string, limit?: number): Promise<TaskLog[]> {
   return invoke('scheduler_task_logs', { taskId, limit });
+}
+
+export function schedulerTaskHistory(query?: TaskHistoryQuery): Promise<TaskHistoryResponse> {
+  return invoke('scheduler_task_history', { query });
+}
+
+export function schedulerHistoryClear(taskId?: string | null): Promise<void> {
+  return invoke('scheduler_history_clear', { taskId });
 }
 
 export function schedulerRunNow(id: string): Promise<void> {

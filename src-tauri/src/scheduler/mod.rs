@@ -69,6 +69,42 @@ pub struct TaskLog {
     pub stderr_tail: Option<String>,
 }
 
+/// 执行历史查询参数
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskHistoryQuery {
+    pub task_id: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+/// 执行历史条目（含任务关联信息及格式化结果）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskHistoryItem {
+    pub id: i64,
+    pub task_id: String,
+    pub task_name: String,
+    pub task_type: Option<String>,
+    pub command: Option<String>,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub exit_code: Option<i32>,
+    pub status: String,
+    pub stdout_tail: Option<String>,
+    pub stderr_tail: Option<String>,
+}
+
+/// 执行历史分页响应
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskHistoryResponse {
+    pub items: Vec<TaskHistoryItem>,
+    pub total: usize,
+}
+
 /// 前端事件载荷（`scheduler-task-event`）
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -155,6 +191,23 @@ pub fn scheduler_task_logs(
     limit: Option<usize>,
 ) -> Result<Vec<TaskLog>, String> {
     store::list_logs(&pool, &task_id, limit.unwrap_or(20).min(100))
+}
+
+#[tauri::command]
+pub fn scheduler_task_history(
+    pool: State<'_, DbPool>,
+    query: Option<TaskHistoryQuery>,
+) -> Result<TaskHistoryResponse, String> {
+    let q = query.unwrap_or_default();
+    store::query_history(&pool, &q)
+}
+
+#[tauri::command]
+pub fn scheduler_history_clear(
+    pool: State<'_, DbPool>,
+    task_id: Option<String>,
+) -> Result<(), String> {
+    store::clear_history(&pool, task_id.as_deref())
 }
 
 /// 立即执行一次（不等 cron 触发；不影响 cron 调度）

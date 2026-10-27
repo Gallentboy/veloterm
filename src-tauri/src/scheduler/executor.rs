@@ -28,6 +28,7 @@ pub async fn execute(task: &ScheduledTask, pool: &crate::db::DbPool) -> ExecResu
     let result = match task.task_type.as_str() {
         "local_command" => exec_local(task).await,
         "ssh_command" => exec_ssh(task, pool).await,
+        "js_script" => exec_js(task).await,
         other => Err(format!("未知任务类型：{other}")),
     };
     match result {
@@ -161,7 +162,7 @@ async fn exec_ssh(task: &ScheduledTask, pool: &crate::db::DbPool) -> Result<Exec
 
     let mut stream = channel.into_stream();
     let mut stdout_buf = String::new();
-    let mut stderr_buf = String::new();
+    let stderr_buf = String::new();
 
     // 主输出读完后，stderr 经 ExtendedData 混在同一流——russh 的
     // read_to_string 只收 Data 分量；ExtendedData 用 wait() 消费
@@ -184,6 +185,62 @@ async fn exec_ssh(task: &ScheduledTask, pool: &crate::db::DbPool) -> Result<Exec
         stdout_tail: tail(&stdout_buf),
         stderr_tail: tail(&stderr_buf),
     })
+}
+
+/// JS 脚本执行器（内嵌 V8 引擎执行，支持 fetch/fs/crypto/sys 等能力）
+async fn exec_js(task: &ScheduledTask) -> Result<ExecResult, String> {
+    let source = task.command.clone();
+    let is_ts = source.contains("interface ")
+        || source.contains("type ")
+        || source.contains("enum ")
+        || source.contains(": number")
+        || source.contains(": string")
+        || source.contains(": boolean");
+    let language = if is_ts {
+        crate::js_runtime::JsLanguage::Typescript
+    } else {
+        crate::js_runtime::JsLanguage::Javascript
+    };
+
+    tokio::task::spawn_blocking(move || {
+        let options = crate::js_runtime::JsRunOptions {
+            timeout: EXEC_TIMEOUT,
+            heap_limit_mb: crate::js_runtime::DEFAULT_HEAP_LIMIT_MB,
+            language,
+        };
+        match crate::js_runtime::run_script(&source, &options) {
+            Ok(outcome) => {
+                let mut stdout_lines = Vec::new();
+                let mut stderr_lines = Vec::new();
+                for line in outcome.console {
+                    match line.level {
+                        crate::js_runtime::ConsoleLevel::Error => stderr_lines.push(line.text),
+                        _ => stdout_lines.push(line.text),
+                    }
+                }
+                if let Some(res) = outcome.result_json {
+                    if !res.is_empty() && res != "null" {
+                        stdout_lines.push(format!("[return] {res}"));
+                    }
+                }
+                Ok(ExecResult {
+                    exit_code: Some(0),
+                    stdout_tail: tail(&stdout_lines.join("\n")),
+                    stderr_tail: tail(&stderr_lines.join("\n")),
+                })
+            }
+            Err(e) => {
+                let err_msg = format!("{e}");
+                Ok(ExecResult {
+                    exit_code: Some(1),
+                    stdout_tail: String::new(),
+                    stderr_tail: tail(&err_msg),
+                })
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("JS 任务调度失败：{e}"))?
 }
 
 /// 便捷：构造 started 事件
@@ -215,5 +272,45 @@ pub fn finished_event(
         finished_at: Some(finished_ts),
         exit_code,
         message: if stderr.is_empty() { None } else { Some(tail(stderr)) },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_task(command: &str) -> ScheduledTask {
+        ScheduledTask {
+            id: "js-test-1".to_string(),
+            name: "JS测试任务".to_string(),
+            cron_expr: "* * * * *".to_string(),
+            task_type: "js_script".to_string(),
+            command: command.to_string(),
+            working_dir: None,
+            host_id: None,
+            enabled: true,
+            created_at: 0,
+            updated_at: 0,
+            last_run_at: None,
+            last_status: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_exec_js_success() {
+        let task = dummy_task("console.log('hello from scheduler'); 1 + 2;");
+        let res = exec_js(&task).await.unwrap();
+        assert_eq!(res.exit_code, Some(0));
+        assert!(res.stdout_tail.contains("hello from scheduler"));
+        assert!(res.stdout_tail.contains("[return] 3"));
+        assert!(res.stderr_tail.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_exec_js_error() {
+        let task = dummy_task("throw new Error('boom');");
+        let res = exec_js(&task).await.unwrap();
+        assert_eq!(res.exit_code, Some(1));
+        assert!(res.stderr_tail.contains("boom"));
     }
 }

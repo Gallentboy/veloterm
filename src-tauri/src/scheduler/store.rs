@@ -3,7 +3,7 @@
 
 use rusqlite::Connection;
 
-use super::{ScheduledTask, TaskLog};
+use super::{ScheduledTask, TaskHistoryItem, TaskHistoryQuery, TaskHistoryResponse, TaskLog};
 use crate::db::DbPool;
 
 /// 幂等建表（应用启动时调用）
@@ -244,6 +244,132 @@ pub fn record_run_extra(
     Ok(())
 }
 
+/// 执行历史查询（支持多维度过滤、分页、任务元信息关联）
+pub fn query_history(
+    pool: &DbPool,
+    query: &TaskHistoryQuery,
+) -> Result<TaskHistoryResponse, String> {
+    let conn = pool.get().map_err(|e| format!("取数据库连接失败：{e}"))?;
+
+    let mut where_clauses = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+    if let Some(ref tid) = query.task_id {
+        let trimmed = tid.trim();
+        if !trimmed.is_empty() && trimmed != "all" {
+            where_clauses.push(format!("l.task_id = ?{}", params.len() + 1));
+            params.push(Box::new(trimmed.to_string()));
+        }
+    }
+
+    if let Some(ref status) = query.status {
+        match status.as_str() {
+            "success" => {
+                where_clauses.push("l.finished_at IS NOT NULL AND l.exit_code = 0".to_string());
+            }
+            "failed" => {
+                where_clauses.push(
+                    "l.finished_at IS NOT NULL AND (l.exit_code != 0 OR l.exit_code IS NULL)"
+                        .to_string(),
+                );
+            }
+            "running" => {
+                where_clauses.push("l.finished_at IS NULL".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    let where_sql = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_clauses.join(" AND "))
+    };
+
+    // 查总数
+    let count_sql = format!("SELECT COUNT(*) FROM scheduled_task_logs l {where_sql}");
+    let mut count_stmt = conn
+        .prepare(&count_sql)
+        .map_err(|e| format!("准备统计查询失败：{e}"))?;
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let total: usize = count_stmt
+        .query_row(param_refs.as_slice(), |r| r.get(0))
+        .map_err(|e| format!("统计历史记录数失败：{e}"))?;
+
+    // 查记录
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let offset = query.offset.unwrap_or(0);
+    let limit_param_idx = params.len() + 1;
+    let offset_param_idx = params.len() + 2;
+
+    let data_sql = format!(
+        "SELECT l.id, l.task_id, COALESCE(t.name, '已删除任务') AS task_name, \
+         t.task_type, t.command, l.started_at, l.finished_at, l.exit_code, \
+         l.stdout_tail, l.stderr_tail \
+         FROM scheduled_task_logs l \
+         LEFT JOIN scheduled_tasks t ON l.task_id = t.id \
+         {where_sql} \
+         ORDER BY l.started_at DESC, l.id DESC \
+         LIMIT ?{limit_param_idx} OFFSET ?{offset_param_idx}"
+    );
+
+    params.push(Box::new(limit as i64));
+    params.push(Box::new(offset as i64));
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    let mut stmt = conn
+        .prepare(&data_sql)
+        .map_err(|e| format!("准备历史查询失败：{e}"))?;
+    let rows = stmt
+        .query_map(param_refs.as_slice(), |row| {
+            let started_at: i64 = row.get("started_at")?;
+            let finished_at: Option<i64> = row.get("finished_at")?;
+            let exit_code: Option<i32> = row.get("exit_code")?;
+            let duration_ms = finished_at.map(|fin| (fin - started_at).max(0) * 1000);
+            let status = match (finished_at, exit_code) {
+                (None, _) => "running".to_string(),
+                (Some(_), Some(0)) => "success".to_string(),
+                (Some(_), _) => "failed".to_string(),
+            };
+            Ok(TaskHistoryItem {
+                id: row.get("id")?,
+                task_id: row.get("task_id")?,
+                task_name: row.get("task_name")?,
+                task_type: row.get("task_type")?,
+                command: row.get("command")?,
+                started_at,
+                finished_at,
+                duration_ms,
+                exit_code,
+                status,
+                stdout_tail: row.get("stdout_tail")?,
+                stderr_tail: row.get("stderr_tail")?,
+            })
+        })
+        .map_err(|e| format!("查询历史记录失败：{e}"))?;
+
+    let items = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("读取历史记录行失败：{e}"))?;
+    Ok(TaskHistoryResponse { items, total })
+}
+
+/// 清空历史记录（可按 task_id 或清空全部）
+pub fn clear_history(pool: &DbPool, task_id: Option<&str>) -> Result<(), String> {
+    let conn = pool.get().map_err(|e| format!("取数据库连接失败：{e}"))?;
+    if let Some(tid) = task_id {
+        let trimmed = tid.trim();
+        if !trimmed.is_empty() && trimmed != "all" {
+            conn.execute("DELETE FROM scheduled_task_logs WHERE task_id = ?1", [trimmed])
+                .map_err(|e| format!("清空任务日志失败：{e}"))?;
+            return Ok(());
+        }
+    }
+    conn.execute("DELETE FROM scheduled_task_logs", [])
+        .map_err(|e| format!("清空全部日志失败：{e}"))?;
+    Ok(())
+}
+
 fn now_ts() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -335,5 +461,64 @@ mod tests {
         delete_task(&pool, "uuid-1").unwrap();
         assert!(get_task(&pool, "uuid-1").is_err());
         assert!(list_logs(&pool, "uuid-1", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_history_query_and_clear() {
+        let pool = test_pool();
+        {
+            let conn = pool.get().unwrap();
+            ensure_tables(&conn).unwrap();
+        }
+
+        let t1 = sample("task-a", "local_command", true);
+        let t2 = sample("task-b", "ssh_command", true);
+        create_task(&pool, &t1).unwrap();
+        create_task(&pool, &t2).unwrap();
+
+        // 插入若干条日志
+        record_run(&pool, "task-a", 1000, Some(1010), Some(0), Some("ok a"), None).unwrap();
+        record_run(&pool, "task-a", 1020, Some(1025), Some(1), None, Some("err a")).unwrap();
+        record_run(&pool, "task-b", 1030, None, None, None, None).unwrap(); // running
+
+        // 1. 全局查
+        let q_all = TaskHistoryQuery::default();
+        let resp = query_history(&pool, &q_all).unwrap();
+        assert_eq!(resp.total, 3);
+        assert_eq!(resp.items.len(), 3);
+        assert_eq!(resp.items[0].started_at, 1030);
+        assert_eq!(resp.items[0].status, "running");
+        assert_eq!(resp.items[0].task_name, "测试任务 task-b");
+
+        // 2. 按任务查
+        let q_task_a = TaskHistoryQuery {
+            task_id: Some("task-a".to_string()),
+            ..Default::default()
+        };
+        let resp_a = query_history(&pool, &q_task_a).unwrap();
+        assert_eq!(resp_a.total, 2);
+        assert_eq!(resp_a.items[0].started_at, 1020);
+        assert_eq!(resp_a.items[0].status, "failed");
+
+        // 3. 按状态查
+        let q_success = TaskHistoryQuery {
+            status: Some("success".to_string()),
+            ..Default::default()
+        };
+        let resp_s = query_history(&pool, &q_success).unwrap();
+        assert_eq!(resp_s.total, 1);
+        assert_eq!(resp_s.items[0].task_id, "task-a");
+        assert_eq!(resp_s.items[0].exit_code, Some(0));
+
+        // 4. 清理特定任务历史
+        clear_history(&pool, Some("task-a")).unwrap();
+        let resp_after_clear_a = query_history(&pool, &q_all).unwrap();
+        assert_eq!(resp_after_clear_a.total, 1);
+        assert_eq!(resp_after_clear_a.items[0].task_id, "task-b");
+
+        // 5. 清理全部历史
+        clear_history(&pool, None).unwrap();
+        let resp_empty = query_history(&pool, &q_all).unwrap();
+        assert_eq!(resp_empty.total, 0);
     }
 }

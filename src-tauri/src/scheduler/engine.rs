@@ -59,7 +59,7 @@ impl SchedulerEngine {
     }
 
     /// 单条任务注册 Job（CRUD create/update/toggle 后调用）
-    pub async fn add_job(&self, pool: &DbPool, task: &ScheduledTask) -> Result<(), String> {
+    pub async fn add_job(&self, _pool: &DbPool, task: &ScheduledTask) -> Result<(), String> {
         let mut active = self.active_jobs.lock().await;
         self.add_job_inner(&mut active, task).await
     }
@@ -74,7 +74,6 @@ impl SchedulerEngine {
             let _ = self.scheduler.remove(&old).await;
         }
 
-        let task_id = task.id.clone();
         let cron = task.cron_expr.clone();
         let pool = self.pool.clone();
         let app = self.app.clone();

@@ -9,9 +9,10 @@
  */
 
 import * as monaco from 'monaco-editor';
-import { CircleStop, Eraser, Play } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Check, CircleStop, Copy, Eraser, Play } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import YAML from 'yaml';
 
 import { Button } from '@/components/ui/button';
 import { SelectMenu } from '@/components/ui/SelectMenu';
@@ -229,6 +230,96 @@ const SYS_DTS = [
   '};',
 ].join('\n');
 
+interface FormattedResult {
+  text: string;
+  format?: 'json' | 'yaml';
+}
+
+/** 启发式判断字符串是否可能为 YAML，避免对纯单行纯文本误判为 YAML */
+function isLikelyYaml(s: string): boolean {
+  if (s.startsWith('---')) return true;
+  const lines = s.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return false;
+  // 必须有多行，或包含典型的 key: value 或 - item 语法
+  return lines.some((l) => /^[a-zA-Z0-9_-]+:\s*.*/.test(l) || /^-\s+.+/.test(l));
+}
+
+/** 格式化返回值：识别 JSON 或 YAML 并美化输出 */
+function formatResult(raw: string | null): FormattedResult | null {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return { text: '' };
+
+  // 1. 尝试以 JSON 解析
+  try {
+    const parsed = JSON.parse(trimmed);
+    // 1.1 对象或数组：直接以 2 空格缩进格式化
+    if (parsed !== null && typeof parsed === 'object') {
+      return {
+        text: JSON.stringify(parsed, null, 2),
+        format: 'json',
+      };
+    }
+    // 1.2 字符串：可能内层包了 JSON 字符串或 YAML 文本
+    if (typeof parsed === 'string') {
+      const inner = parsed.trim();
+      if (
+        (inner.startsWith('{') && inner.endsWith('}')) ||
+        (inner.startsWith('[') && inner.endsWith(']'))
+      ) {
+        try {
+          const innerParsed = JSON.parse(inner);
+          if (innerParsed !== null && typeof innerParsed === 'object') {
+            return {
+              text: JSON.stringify(innerParsed, null, 2),
+              format: 'json',
+            };
+          }
+        } catch {
+          // 不是合法内层 JSON，继续
+        }
+      }
+
+      if (isLikelyYaml(inner)) {
+        try {
+          const yamlParsed = YAML.parse(inner);
+          if (yamlParsed !== null && typeof yamlParsed === 'object') {
+            return {
+              text: YAML.stringify(yamlParsed, { indent: 2 }).trimEnd(),
+              format: 'yaml',
+            };
+          }
+        } catch {
+          // 不是合法 YAML，继续
+        }
+      }
+
+      return { text: parsed };
+    }
+
+    return { text: String(parsed) };
+  } catch {
+    // raw 不是合法 JSON
+  }
+
+  // 2. 尝试作为纯 YAML 文本解析
+  if (isLikelyYaml(trimmed)) {
+    try {
+      const yamlParsed = YAML.parse(trimmed);
+      if (yamlParsed !== null && typeof yamlParsed === 'object') {
+        return {
+          text: YAML.stringify(yamlParsed, { indent: 2 }).trimEnd(),
+          format: 'yaml',
+        };
+      }
+    } catch {
+      // 不是合法 YAML
+    }
+  }
+
+  return { text: trimmed };
+}
+
 interface Draft {
   lang: JsScriptLanguage;
   source: string;
@@ -271,6 +362,22 @@ export function JsScriptScreen() {
   const [running, setRunning] = useState(false);
   const [lines, setLines] = useState<ConsoleLine[]>([]);
   const [finish, setFinish] = useState<JsRunFinish | null>(null);
+  const [copiedResult, setCopiedResult] = useState(false);
+
+  const formattedResult = useMemo(() => {
+    return finish?.ok ? formatResult(finish.resultJson) : null;
+  }, [finish]);
+
+  const handleCopyResult = async () => {
+    if (!formattedResult?.text) return;
+    try {
+      await navigator.clipboard.writeText(formattedResult.text);
+      setCopiedResult(true);
+      setTimeout(() => setCopiedResult(false), 2000);
+    } catch {
+      // 忽略
+    }
+  };
 
   // 草稿持久化（300ms 防抖；JSON 形态携带语言）
   useEffect(() => {
@@ -556,21 +663,47 @@ export function JsScriptScreen() {
             </div>
           ) : null}
           {lines.map((line, i) => (
-            <div key={i} className={cn('whitespace-pre-wrap break-all', LEVEL_CLASS[line.level])}>
-              {/* 位置列固定宽度右对齐（无位置时同样占位），正文起始列对齐 */}
-              <span className="mr-2 inline-block w-14 shrink-0 select-none text-right text-foreground-subtlest">
+            <div key={i} className={cn('flex items-start gap-2 py-0.5', LEVEL_CLASS[line.level])}>
+              {/* 位置列固定宽度右对齐（无位置时同样占位），正文起始列始终在右侧对齐 */}
+              <span className="w-14 shrink-0 select-none text-right font-mono text-foreground-subtlest">
                 {line.position ?? ''}
               </span>
-              {line.text}
+              <div className="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono">
+                {line.text}
+              </div>
             </div>
           ))}
           {finish?.ok ? (
-            <div className="mt-2 rounded border border-border/60 bg-hover/40 p-2">
-              <div className="mb-1 font-sans text-ui-xs font-medium text-foreground-subtle">
-                {t('jsScript.result')}
+            <div className="mt-2 rounded-lg border border-border/60 bg-hover/40 p-2.5">
+              <div className="mb-1.5 flex items-center justify-between font-sans">
+                <div className="flex items-center gap-2">
+                  <span className="text-ui-xs font-semibold text-foreground-subtle">
+                    {t('jsScript.result')}
+                  </span>
+                  {formattedResult?.format ? (
+                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold font-mono uppercase text-primary border border-primary/20">
+                      {formattedResult.format}
+                    </span>
+                  ) : null}
+                </div>
+                {formattedResult?.text ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyResult()}
+                    className="flex items-center gap-1 text-[11px] text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
+                    title={t('jsScript.copyResult')}
+                  >
+                    {copiedResult ? (
+                      <Check className="size-3 text-terminal-green" />
+                    ) : (
+                      <Copy className="size-3" />
+                    )}
+                    <span>{copiedResult ? t('jsScript.copied') : t('jsScript.copy')}</span>
+                  </button>
+                ) : null}
               </div>
-              <div className="whitespace-pre-wrap break-all text-terminal-green">
-                {finish.resultJson ?? t('jsScript.resultUndefined')}
+              <div className="whitespace-pre-wrap break-all font-mono text-terminal-green text-ui-xs leading-relaxed">
+                {formattedResult?.text || t('jsScript.resultUndefined')}
               </div>
             </div>
           ) : null}

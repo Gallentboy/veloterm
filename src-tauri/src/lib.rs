@@ -148,6 +148,8 @@ pub fn run() {
             scheduler::scheduler_task_toggle,
             scheduler::scheduler_task_list,
             scheduler::scheduler_task_logs,
+            scheduler::scheduler_task_history,
+            scheduler::scheduler_history_clear,
             scheduler::scheduler_run_now,
             db_browser::db_odbc_drivers,
             db_browser::db_odbc_data_sources,
