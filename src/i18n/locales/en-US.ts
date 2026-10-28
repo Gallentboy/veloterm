@@ -384,6 +384,7 @@ export default {
     envApplyBatch: 'Parse and Apply',
     noEnvHint: 'No environment variables set. Click to add or paste .env content directly',
     envBadge: 'Environment variables configured',
+    envKeyHint: '💡 Tip: Key name should not include $; use $KEY or ${KEY} in commands',
     fieldEnabled: 'Enable immediately after creation',
     cancel: 'Cancel',
     save: 'Save',

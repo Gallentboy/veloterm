@@ -980,7 +980,10 @@ function parseEnvText(text: string): { key: string; value: string }[] {
     }
     const eqIdx = line.indexOf('=');
     if (eqIdx > 0) {
-      const key = line.slice(0, eqIdx).trim();
+      let key = line.slice(0, eqIdx).trim();
+      while (key.startsWith('$')) {
+        key = key.slice(1);
+      }
       let val = line.slice(eqIdx + 1).trim();
       if (
         (val.startsWith('"') && val.endsWith('"') && val.length >= 2) ||
@@ -994,7 +997,13 @@ function parseEnvText(text: string): { key: string; value: string }[] {
     } else {
       const parts = line.split('\t');
       if (parts.length >= 2 && parts[0].trim()) {
-        result.push({ key: parts[0].trim(), value: parts.slice(1).join('\t').trim() });
+        let key = parts[0].trim();
+        while (key.startsWith('$')) {
+          key = key.slice(1);
+        }
+        if (key) {
+          result.push({ key, value: parts.slice(1).join('\t').trim() });
+        }
       }
     }
   }
@@ -1324,7 +1333,10 @@ function TaskForm({
                       className={cn(inputCls, 'font-mono text-ui-xs w-4/10 shrink-0')}
                       value={env.key}
                       onChange={(e) => {
-                        const val = e.target.value;
+                        let val = e.target.value;
+                        if (val.startsWith('$')) {
+                          val = val.replace(/^\$+/, '');
+                        }
                         setEnvList((prev) => {
                           const next = [...prev];
                           next[idx] = { ...next[idx], key: val };
@@ -1332,7 +1344,7 @@ function TaskForm({
                         });
                       }}
                       onPaste={(e) => handleKeyPaste(e, idx)}
-                      placeholder="KEY (可粘贴 .env)"
+                      placeholder="KEY (无需带 $)"
                     />
                     <input
                       className={cn(inputCls, 'font-mono text-ui-xs flex-1 min-w-0')}
@@ -1368,6 +1380,9 @@ function TaskForm({
                 {t('scheduler.noEnvHint')}
               </div>
             ) : null}
+            <p className="mt-0.5 text-[11px] text-foreground-subtlest font-mono select-none">
+              {t('scheduler.envKeyHint')}
+            </p>
           </div>
           {taskType === 'local_command' ? (
             <div>

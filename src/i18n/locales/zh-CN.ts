@@ -383,6 +383,7 @@ export default {
     envApplyBatch: '解析并应用',
     noEnvHint: '未配置环境变量，点击添加或直接在输入框粘贴 .env 内容',
     envBadge: '已配置环境变量',
+    envKeyHint: '💡 提示：变量名无需带 $；在命令中可直接使用 $KEY 或 ${KEY} 引用',
     fieldEnabled: '创建后立即启用',
     cancel: '取消',
     save: '保存',

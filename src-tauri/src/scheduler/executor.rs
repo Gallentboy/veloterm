@@ -17,12 +17,77 @@ fn task_timeout(task: &ScheduledTask) -> Duration {
     Duration::from_secs(task.timeout_secs.unwrap_or(600))
 }
 
-/// 解析环境变量 JSON
+/// 解析环境变量 JSON（自动清理前导 $ 与两端空白，容错用户误填 $VAR）
 fn parse_env_vars(task: &ScheduledTask) -> std::collections::HashMap<String, String> {
-    task.env_vars
+    let raw: std::collections::HashMap<String, String> = task
+        .env_vars
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    let mut clean = std::collections::HashMap::with_capacity(raw.len());
+    for (mut k, v) in raw {
+        while k.starts_with('$') {
+            k.remove(0);
+        }
+        let k = k.trim().to_string();
+        if !k.is_empty() {
+            clean.insert(k, v);
+        }
+    }
+    clean
+}
+
+/// 为 shell 命令准备执行文本：
+/// 1. 模板插值：将命令文本中的 $KEY、${KEY} 原地替换为对应值（按 Key 长度降序避免前缀冲突，
+///    确保中文变量名、Windows cmd.exe 等场景 100% 兑现，绝不为空）；
+/// 2. Unix / SSH 模式：前置 export KEY='VAL'; 注入，保证子命令或未被直接替换的环境也能读取。
+fn prepare_shell_command(
+    raw_command: &str,
+    env_map: &std::collections::HashMap<String, String>,
+    is_windows: bool,
+) -> String {
+    if env_map.is_empty() {
+        return raw_command.to_string();
+    }
+
+    let mut final_cmd = raw_command.to_string();
+
+    // 1. 文本插值替换：将 ${KEY} 和 $KEY 替换为真实值（按 key 长度降序排序）
+    let mut sorted_keys: Vec<&String> = env_map.keys().collect();
+    sorted_keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
+
+    for k in sorted_keys {
+        if let Some(v) = env_map.get(k) {
+            // 替换 ${KEY}
+            let brace_pattern = format!("${{{k}}}");
+            final_cmd = final_cmd.replace(&brace_pattern, v);
+            // 替换 $KEY
+            let raw_pattern = format!("${k}");
+            final_cmd = final_cmd.replace(&raw_pattern, v);
+            // 如果是在 Windows cmd，也顺便支持 %KEY%
+            if is_windows {
+                let win_pattern = format!("%{k}%");
+                final_cmd = final_cmd.replace(&win_pattern, v);
+            }
+        }
+    }
+
+    // 2. 如果是 Unix / SSH，前置 export KEY='VAL'; 双保险注入
+    if !is_windows {
+        let mut prefix = String::new();
+        for (k, v) in env_map {
+            if k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !k.is_empty() {
+                let escaped_v = v.replace('\'', "'\\''");
+                prefix.push_str(&format!("export {}='{}'; ", k, escaped_v));
+            }
+        }
+        if !prefix.is_empty() {
+            final_cmd = format!("{}{}", prefix, final_cmd);
+        }
+    }
+
+    final_cmd
 }
 
 /// stdout / stderr 各保留的尾部字节数（入库截取）
@@ -126,14 +191,15 @@ async fn exec_local(task: &ScheduledTask) -> Result<ExecResult, String> {
     if !cfg!(windows) {
         cmd.arg("-l");
     }
-    cmd.arg(flag).arg(&task.command);
-    if let Some(dir) = task.working_dir.as_deref() {
-        cmd.current_dir(dir);
-    }
-    // 注入自定义环境变量
+    // 注入自定义环境变量到进程环境块
     let env_map = parse_env_vars(task);
     if !env_map.is_empty() {
-        cmd.envs(env_map);
+        cmd.envs(&env_map);
+    }
+    let command_to_run = prepare_shell_command(&task.command, &env_map, cfg!(windows));
+    cmd.arg(flag).arg(command_to_run);
+    if let Some(dir) = task.working_dir.as_deref() {
+        cmd.current_dir(dir);
     }
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -225,20 +291,9 @@ async fn exec_ssh(task: &ScheduledTask, pool: &crate::db::DbPool) -> Result<Exec
         .map_err(|_| format!("SSH 通道超时（>{}s）", timeout.as_secs()))?
         .map_err(|e| format!("打开 SSH 通道失败：{e}"))?;
 
-    // 组装 SSH 执行命令（若配置了环境变量，前置 export 注入）
+    // 组装 SSH 执行命令（模板插值 + export 环境变量前置）
     let env_map = parse_env_vars(task);
-    let command_to_run = if !env_map.is_empty() {
-        let mut prefix = String::new();
-        for (k, v) in env_map {
-            if k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !k.is_empty() {
-                let escaped_v = v.replace('\'', "'\\''");
-                prefix.push_str(&format!("export {}='{}'; ", k, escaped_v));
-            }
-        }
-        format!("{}{}", prefix, task.command)
-    } else {
-        task.command.clone()
-    };
+    let command_to_run = prepare_shell_command(&task.command, &env_map, false);
 
     channel
         .exec(true, command_to_run.as_str())
@@ -410,5 +465,17 @@ mod tests {
         let res = exec_js(&task).await.unwrap();
         assert_eq!(res.exit_code, Some(1));
         assert!(res.stderr_tail.contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn test_exec_local_env() {
+        let mut task = dummy_task("echo $MY_TEST_VAR and $测试变量 and $FOO");
+        task.task_type = "local_command".to_string();
+        task.env_vars = Some(r#"{"MY_TEST_VAR":"val123", "测试变量":"中文值456", "$FOO":"bar789"}"#.to_string());
+        let res = exec_local(&task).await.unwrap();
+        assert_eq!(res.exit_code, Some(0));
+        assert!(res.stdout_tail.contains("val123"), "stdout_tail: {}", res.stdout_tail);
+        assert!(res.stdout_tail.contains("中文值456"), "stdout_tail: {}", res.stdout_tail);
+        assert!(res.stdout_tail.contains("bar789"), "stdout_tail: {}", res.stdout_tail);
     }
 }
