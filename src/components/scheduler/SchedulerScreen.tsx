@@ -36,6 +36,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { Spinner } from '@/components/ui/spinner';
 import {
@@ -275,17 +276,19 @@ export function SchedulerScreen() {
               </button>
             </div>
 
-            <Button
-              variant="outline"
-              size="icon-sm"
-              onClick={() => {
-                void reloadTasks();
-                if (activeTab === 'history') void reloadHistory();
-              }}
-              title={t('scheduler.refresh')}
-            >
-              <RefreshCw className={cn('size-4', historyLoading && 'animate-spin')} />
-            </Button>
+            <ControlHintTooltip title={t('scheduler.refresh')} side="bottom">
+              <Button
+                variant="outline"
+                size="icon-sm"
+                onClick={() => {
+                  void reloadTasks();
+                  if (activeTab === 'history') void reloadHistory();
+                }}
+                aria-label={t('scheduler.refresh')}
+              >
+                <RefreshCw className={cn('size-4', historyLoading && 'animate-spin')} />
+              </Button>
+            </ControlHintTooltip>
 
             {activeTab === 'tasks' ? (
               <Button
@@ -368,29 +371,32 @@ export function SchedulerScreen() {
                           </span>
                         )}
                         {task.notifyOn && task.notifyOn !== 'none' ? (
-                          <span
-                            className="shrink-0 rounded bg-terminal-cyan/10 px-1.5 py-0.5 font-mono text-[10px] text-terminal-cyan border border-terminal-cyan/20 flex items-center gap-0.5"
+                          <ControlHintTooltip
                             title={task.webhookUrl ? `Webhook: ${task.webhookUrl}` : t('scheduler.badgeNotify')}
+                            side="top"
                           >
-                            <Bell className="size-2.5" />
-                            {t('scheduler.badgeNotify')}
-                          </span>
+                            <span className="shrink-0 rounded bg-terminal-cyan/10 px-1.5 py-0.5 font-mono text-[10px] text-terminal-cyan border border-terminal-cyan/20 flex items-center gap-0.5 cursor-default">
+                              <Bell className="size-2.5" />
+                              {t('scheduler.badgeNotify')}
+                            </span>
+                          </ControlHintTooltip>
                         ) : null}
                         {task.maxRetries && task.maxRetries > 0 ? (
-                          <span
-                            className="shrink-0 rounded bg-surface/80 px-1.5 py-0.5 font-mono text-[10px] text-foreground-subtle border border-border/40"
+                          <ControlHintTooltip
                             title={t('scheduler.badgeRetry', { count: task.maxRetries })}
+                            side="top"
                           >
-                            {t('scheduler.badgeRetry', { count: task.maxRetries })}
-                          </span>
+                            <span className="shrink-0 rounded bg-surface/80 px-1.5 py-0.5 font-mono text-[10px] text-foreground-subtle border border-border/40 cursor-default">
+                              {t('scheduler.badgeRetry', { count: task.maxRetries })}
+                            </span>
+                          </ControlHintTooltip>
                         ) : null}
                         {task.envVars ? (
-                          <span
-                            className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary border border-primary/20"
-                            title={t('scheduler.envBadge')}
-                          >
-                            ENV
-                          </span>
+                          <ControlHintTooltip title={t('scheduler.envBadge')} side="top">
+                            <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary border border-primary/20 cursor-default">
+                              ENV
+                            </span>
+                          </ControlHintTooltip>
                         ) : null}
                         {task.lastStatus ? (
                           <span
@@ -426,59 +432,71 @@ export function SchedulerScreen() {
 
                     {/* 操作动作 */}
                     <div className="flex shrink-0 items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => void handleRunNow(task.id)}
-                        title={t('scheduler.runNow')}
-                      >
-                        <Play className="size-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => void handleToggle(task)}
-                        title={task.enabled ? t('scheduler.pause') : t('scheduler.resume')}
-                      >
-                        {task.enabled ? (
-                          <CircleSlash className="size-3.5" />
-                        ) : (
-                          <CheckCircle2 className="size-3.5" />
-                        )}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => setEditing(task)}
-                        title={t('scheduler.edit')}
-                      >
-                        <SquarePen className="size-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => handleGoTaskHistory(task.id)}
-                        title={t('scheduler.viewTaskHistory')}
-                      >
-                        <History className="size-3.5 text-foreground-subtle" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => setLogTaskId(logTaskId === task.id ? null : task.id)}
-                        title={t('scheduler.logs')}
-                      >
-                        <CalendarClock className="size-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => void handleDelete(task.id)}
-                        title={t('scheduler.delete')}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                      <ControlHintTooltip title={t('scheduler.runNow')} side="top">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => void handleRunNow(task.id)}
+                          aria-label={t('scheduler.runNow')}
+                        >
+                          <Play className="size-3.5" />
+                        </Button>
+                      </ControlHintTooltip>
+                      <ControlHintTooltip title={task.enabled ? t('scheduler.pause') : t('scheduler.resume')} side="top">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => void handleToggle(task)}
+                          aria-label={task.enabled ? t('scheduler.pause') : t('scheduler.resume')}
+                        >
+                          {task.enabled ? (
+                            <CircleSlash className="size-3.5" />
+                          ) : (
+                            <CheckCircle2 className="size-3.5" />
+                          )}
+                        </Button>
+                      </ControlHintTooltip>
+                      <ControlHintTooltip title={t('scheduler.edit')} side="top">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setEditing(task)}
+                          aria-label={t('scheduler.edit')}
+                        >
+                          <SquarePen className="size-3.5" />
+                        </Button>
+                      </ControlHintTooltip>
+                      <ControlHintTooltip title={t('scheduler.viewTaskHistory')} side="top">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => handleGoTaskHistory(task.id)}
+                          aria-label={t('scheduler.viewTaskHistory')}
+                        >
+                          <History className="size-3.5 text-foreground-subtle" />
+                        </Button>
+                      </ControlHintTooltip>
+                      <ControlHintTooltip title={t('scheduler.logs')} side="top">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setLogTaskId(logTaskId === task.id ? null : task.id)}
+                          aria-label={t('scheduler.logs')}
+                        >
+                          <CalendarClock className="size-3.5" />
+                        </Button>
+                      </ControlHintTooltip>
+                      <ControlHintTooltip title={t('scheduler.delete')} side="top">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => void handleDelete(task.id)}
+                          aria-label={t('scheduler.delete')}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </ControlHintTooltip>
                     </div>
                   </div>
                 ))}
@@ -891,19 +909,21 @@ function HistoryDetailModal({
                   {isJs ? t('scheduler.fieldScript') : t('scheduler.commandLabel')}
                 </span>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handleCopyCommand()}
-                    className="flex items-center gap-1 text-[11px] text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
-                    title={t('scheduler.copyCode')}
-                  >
-                    {copiedCommand ? (
-                      <Check className="size-3 text-terminal-green" />
-                    ) : (
-                      <Copy className="size-3" />
-                    )}
-                    <span>{copiedCommand ? t('scheduler.copied') : t('scheduler.copy')}</span>
-                  </button>
+                  <ControlHintTooltip title={t('scheduler.copyCode')} side="bottom">
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyCommand()}
+                      className="flex items-center gap-1 text-[11px] text-foreground-subtle hover:text-foreground transition-colors cursor-pointer"
+                      aria-label={t('scheduler.copyCode')}
+                    >
+                      {copiedCommand ? (
+                        <Check className="size-3 text-terminal-green" />
+                      ) : (
+                        <Copy className="size-3" />
+                      )}
+                      <span>{copiedCommand ? t('scheduler.copied') : t('scheduler.copy')}</span>
+                    </button>
+                  </ControlHintTooltip>
                   {isCommandMultiLine ? (
                     <button
                       type="button"
@@ -1595,14 +1615,16 @@ function TaskForm({
                       }}
                       placeholder="VALUE"
                     />
-                    <button
-                      type="button"
-                      onClick={() => setEnvList((prev) => prev.filter((_, i) => i !== idx))}
-                      className="size-7 shrink-0 flex items-center justify-center rounded text-foreground-subtlest hover:text-destructive hover:bg-destructive/10 cursor-pointer"
-                      title={t('scheduler.removeEnv')}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
+                    <ControlHintTooltip title={t('scheduler.removeEnv')} side="top">
+                      <button
+                        type="button"
+                        onClick={() => setEnvList((prev) => prev.filter((_, i) => i !== idx))}
+                        className="size-7 shrink-0 flex items-center justify-center rounded text-foreground-subtlest hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                        aria-label={t('scheduler.removeEnv')}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </ControlHintTooltip>
                   </div>
                 ))}
               </div>
@@ -1787,7 +1809,6 @@ function TaskForm({
             disabled={!canSave}
             onClick={() => void handleSave()}
             className={cn('flex items-center gap-1.5', touched && hasError && 'opacity-40')}
-            title={touched && hasError ? t('scheduler.errFormInvalid') : undefined}
           >
             {saving ? <Spinner className="size-3.5" /> : null}
             {touched && hasError ? t('scheduler.errFormInvalid') : t('scheduler.save')}
