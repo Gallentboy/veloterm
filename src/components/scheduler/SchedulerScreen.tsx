@@ -8,7 +8,6 @@
 
 import {
   Bell,
-  Braces,
   CalendarClock,
   Check,
   CheckCircle2,
@@ -38,6 +37,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { SelectMenu } from '@/components/ui/SelectMenu';
+import { JsScriptIcon } from '@/components/common/BrandIcons';
 import { Spinner } from '@/components/ui/spinner';
 import {
   listenTaskEvent,
@@ -347,7 +347,7 @@ export function SchedulerScreen() {
                     {/* 类型图标 */}
                     <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-surface border border-border/40">
                       {task.taskType === 'js_script' ? (
-                        <Braces className="size-4 text-terminal-yellow" />
+                        <JsScriptIcon className="size-4" />
                       ) : task.taskType === 'ssh_command' ? (
                         <Terminal className="size-4 text-terminal-green" />
                       ) : (
@@ -895,8 +895,17 @@ function HistoryDetailModal({
             </div>
             <div>
               <span className="text-foreground-subtlest block mb-0.5">{t('scheduler.fieldType')}</span>
-              <span className="font-mono text-foreground uppercase">
-                {item.taskType === 'js_script' ? 'JS' : item.taskType === 'ssh_command' ? 'SSH' : 'LOCAL'}
+              <span className="font-mono text-foreground uppercase inline-flex items-center gap-1.5">
+                {item.taskType === 'js_script' ? (
+                  <>
+                    <JsScriptIcon className="size-3.5" />
+                    <span>JS</span>
+                  </>
+                ) : item.taskType === 'ssh_command' ? (
+                  'SSH'
+                ) : (
+                  'LOCAL'
+                )}
               </span>
             </div>
           </div>
@@ -1490,12 +1499,19 @@ function TaskForm({
                   type="button"
                   onClick={() => setTaskType(value)}
                   className={cn(
-                    'flex-1 rounded-md border px-2.5 py-1.5 text-ui-xs font-medium transition-colors',
+                    'flex flex-1 items-center justify-center gap-1.5 rounded-md border px-2.5 py-1.5 text-ui-xs font-medium transition-colors',
                     taskType === value
                       ? 'border-primary/40 bg-primary/10 font-semibold text-primary'
                       : 'border-border/60 text-foreground-subtle hover:bg-hover',
                   )}
                 >
+                  {value === 'js_script' ? (
+                    <JsScriptIcon className="size-3.5" />
+                  ) : value === 'ssh_command' ? (
+                    <Terminal className="size-3.5" />
+                  ) : (
+                    <Clock className="size-3.5" />
+                  )}
                   {label}
                 </button>
               ))}

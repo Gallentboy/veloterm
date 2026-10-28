@@ -1,9 +1,10 @@
+import type { ComponentType } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 interface SidebarMenuButtonProps {
-  icon: LucideIcon;
+  icon: ComponentType<{ className?: string }> | LucideIcon;
   label: string;
   active?: boolean;
   onClick?: () => void;

@@ -16,6 +16,7 @@ import YAML from 'yaml';
 
 import { Button } from '@/components/ui/button';
 import { SelectMenu } from '@/components/ui/SelectMenu';
+import { JsScriptIcon } from '@/components/common/BrandIcons';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
 import { cn } from '@/lib/utils';
@@ -591,6 +592,9 @@ export function JsScriptScreen() {
     <div className="flex h-full min-w-0 flex-col">
       {/* 工具栏 */}
       <div className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5">
+        <div className="flex items-center gap-2 pr-1 border-r border-border/40">
+          <JsScriptIcon className="size-4 shrink-0" />
+        </div>
         <div className="flex overflow-hidden rounded border border-border/60">
           {(['javascript', 'typescript'] as const).map((l) => (
             <button

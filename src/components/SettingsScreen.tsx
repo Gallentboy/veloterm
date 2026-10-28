@@ -1,5 +1,6 @@
 import { Monitor, Moon, Sun, Trash2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import type { ComponentType } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/hosts/formFields';
@@ -384,7 +385,7 @@ function MenuGrid({
   onToggle,
   onReorder,
 }: {
-  items: Array<{ page: string; icon: LucideIcon; label: string }>;
+  items: Array<{ page: string; icon: LucideIcon | ComponentType<{ className?: string }>; label: string }>;
   hidden: string[];
   onToggle: (page: string, visible: boolean) => void;
   onReorder: (source: string, target: string) => void;
