@@ -267,8 +267,18 @@ pub fn run() {
                 tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => {
                     window_state::observe(window)
                 }
-                // 关闭时实时读窗口几何落库，保证「刚拖完就退出」也不会丢
-                tauri::WindowEvent::CloseRequested { .. } => window_state::persist(window),
+                // 关闭时实时读窗口几何落库，保证「刚拖完就退出」也不会丢。
+                // macOS 下对齐系统规范与保活机制：关闭主窗口不退出整个应用
+                //（Dock 图标常驻、后台定时任务继续调度），仅隐藏主屏幕；
+                // 真正退出通过 ⌘Q 或应用菜单「退出 VeloTerm」执行
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    window_state::persist(window);
+                    #[cfg(target_os = "macos")]
+                    {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                }
                 _ => {}
             }
         })
@@ -376,6 +386,17 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
+        // macOS 点击 Dock 图标重新激活主窗口（窗口 hide / minimize 后恢复显示并获取焦点）
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = event {
+            use tauri::Manager;
+            if let Some(main) = app_handle.get_webview_window("main") {
+                let _ = main.unminimize();
+                let _ = main.show();
+                let _ = main.set_focus();
+            }
+        }
+
         // 兜底落库：macOS ⌘Q / 应用菜单退出等路径不经过窗口 CloseRequested
         if let tauri::RunEvent::ExitRequested { .. } = event {
             window_state::persist_from_handle(app_handle);
