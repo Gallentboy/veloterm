@@ -974,6 +974,18 @@ function TaskForm({
   const [formError, setFormError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
 
+  // 严格模态：拦截 Escape 键（不走 onClose——只能通过按钮关闭）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
+
   const nameError = !name.trim() ? t('scheduler.errNameRequired') : null;
   const cronError = !isValidCron(cronExpr) ? t('scheduler.cronInvalid') : null;
   const commandError = !command.trim() ? t('scheduler.errCommandRequired') : null;
@@ -1022,15 +1034,15 @@ function TaskForm({
   const labelCls = 'mb-1 block text-ui-xs font-medium text-foreground-subtle';
 
   return (
+    // 严格模态：遮罩层不关（点外面不关闭），只走保存/取消按钮——
+    // 用户反馈编辑中的表单不能被误触关闭丢数据
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs"
-      onClick={onClose}
       role="dialog"
       aria-modal="true"
     >
       <div
         className="flex w-[480px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="border-b border-border/50 px-5 py-3.5">
           <span className="text-ui-base font-semibold text-foreground">
