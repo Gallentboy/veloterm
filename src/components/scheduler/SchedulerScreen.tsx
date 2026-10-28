@@ -33,6 +33,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
+import { SelectMenu } from '@/components/ui/SelectMenu';
 import { Spinner } from '@/components/ui/spinner';
 import {
   listenTaskEvent,
@@ -546,26 +547,24 @@ export function SchedulerScreen() {
             {/* 筛选与查询栏 */}
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-surface/30 p-3.5">
               <div className="flex flex-wrap items-center gap-3">
-                {/* 任务筛选 */}
+                {/* 任务筛选（项目自绘 SelectMenu——原生 select 弹层系统绘制，观感割裂不可控） */}
                 <div className="flex items-center gap-1.5">
                   <span className="text-ui-xs text-foreground-subtle font-medium">
                     {t('scheduler.colTask')}:
                   </span>
-                  <select
-                    className="h-8 rounded-md border border-border/60 bg-background px-2.5 text-ui-xs text-foreground outline-none transition-colors focus:border-border"
+                  <SelectMenu
                     value={filterTaskId}
-                    onChange={(e) => {
-                      setFilterTaskId(e.target.value);
+                    options={[
+                      { value: 'all', label: t('scheduler.historyFilterTask') },
+                      ...tasks.map((task) => ({ value: task.id, label: task.name })),
+                    ]}
+                    onChange={(v) => {
+                      setFilterTaskId(v);
                       setPage(0);
                     }}
-                  >
-                    <option value="all">{t('scheduler.historyFilterTask')}</option>
-                    {tasks.map((task) => (
-                      <option key={task.id} value={task.id}>
-                        {task.name}
-                      </option>
-                    ))}
-                  </select>
+                    className="w-48"
+                    triggerClassName="h-8 rounded-md border-border/60 bg-background px-2.5 text-ui-xs hover:border-border"
+                  />
                 </div>
 
                 {/* 状态筛选 */}
@@ -573,19 +572,21 @@ export function SchedulerScreen() {
                   <span className="text-ui-xs text-foreground-subtle font-medium">
                     {t('scheduler.colStatus')}:
                   </span>
-                  <select
-                    className="h-8 rounded-md border border-border/60 bg-background px-2.5 text-ui-xs text-foreground outline-none transition-colors focus:border-border"
+                  <SelectMenu
                     value={filterStatus}
-                    onChange={(e) => {
-                      setFilterStatus(e.target.value);
+                    options={[
+                      { value: 'all', label: t('scheduler.historyFilterStatus') },
+                      { value: 'success', label: t('scheduler.statusSuccess') },
+                      { value: 'failed', label: t('scheduler.statusFailed') },
+                      { value: 'running', label: t('scheduler.statusRunning') },
+                    ]}
+                    onChange={(v) => {
+                      setFilterStatus(v);
                       setPage(0);
                     }}
-                  >
-                    <option value="all">{t('scheduler.historyFilterStatus')}</option>
-                    <option value="success">{t('scheduler.statusSuccess')}</option>
-                    <option value="failed">{t('scheduler.statusFailed')}</option>
-                    <option value="running">{t('scheduler.statusRunning')}</option>
-                  </select>
+                    className="w-32"
+                    triggerClassName="h-8 rounded-md border-border/60 bg-background px-2.5 text-ui-xs hover:border-border"
+                  />
                 </div>
               </div>
 
