@@ -110,6 +110,14 @@ async fn exec_local(task: &ScheduledTask) -> Result<ExecResult, String> {
     let flag = if cfg!(windows) { "/C" } else { "-c" };
 
     let mut cmd = tokio::process::Command::new(shell);
+    // Unix 下加 -l 走登录 shell：macOS GUI 应用的 PATH 只有
+    // /usr/bin:/bin:/usr/sbin:/sbin（launchd 继承），homebrew/npm/cargo/
+    // ~/.local/bin 装的命令全部找不到（用户实锄 surge: command not found）。
+    // -l 让 sh source /etc/profile + ~/.profile，用户完整 PATH 生效；
+    // Windows 的 cmd /C 天然继承系统环境变量，不需要
+    if !cfg!(windows) {
+        cmd.arg("-l");
+    }
     cmd.arg(flag).arg(&task.command);
     if let Some(dir) = task.working_dir.as_deref() {
         cmd.current_dir(dir);
