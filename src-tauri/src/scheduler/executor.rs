@@ -118,23 +118,23 @@ pub async fn send_notification(task: &ScheduledTask, exit_code: Option<i32>, std
     let _ = app.notification().builder().title(&title).body(&body).show();
 
     // Webhook（POST JSON）
-    if let Some(url) = task.webhook_url.as_deref() {
-        if !url.is_empty() {
-            let payload = serde_json::json!({
-                "task": task.name,
-                "taskId": task.id,
-                "status": if is_failure { "failed" } else { "success" },
-                "exitCode": exit_code,
-                "stderrTail": stderr,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-            });
-            let _ = reqwest::Client::new()
-                .post(url)
-                .json(&payload)
-                .timeout(Duration::from_secs(10))
-                .send()
-                .await;
-        }
+    if let Some(url) = task.webhook_url.as_deref()
+        && !url.is_empty()
+    {
+        let payload = serde_json::json!({
+            "task": task.name,
+            "taskId": task.id,
+            "status": if is_failure { "failed" } else { "success" },
+            "exitCode": exit_code,
+            "stderrTail": stderr,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+        let _ = reqwest::Client::new()
+            .post(url)
+            .json(&payload)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await;
     }
 }
 
@@ -363,10 +363,11 @@ async fn exec_js(task: &ScheduledTask) -> Result<ExecResult, String> {
                         _ => stdout_lines.push(line.text),
                     }
                 }
-                if let Some(res) = outcome.result_json {
-                    if !res.is_empty() && res != "null" {
-                        stdout_lines.push(format!("[return] {res}"));
-                    }
+                if let Some(res) = outcome.result_json
+                    && !res.is_empty()
+                    && res != "null"
+                {
+                    stdout_lines.push(format!("[return] {res}"));
                 }
                 Ok(ExecResult {
                     exit_code: Some(0),

@@ -203,7 +203,7 @@ pub fn get_task(pool: &DbPool, id: &str) -> Result<ScheduledTask, String> {
         [id],
         row_to_task,
     )
-    .map_err(|e| format!("读取定时任务失败：{e}").into())
+    .map_err(|e| format!("读取定时任务失败：{e}"))
 }
 
 pub fn list_tasks(pool: &DbPool) -> Result<Vec<ScheduledTask>, String> {
@@ -215,7 +215,7 @@ pub fn list_tasks(pool: &DbPool) -> Result<Vec<ScheduledTask>, String> {
         .query_map([], row_to_task)
         .map_err(|e| format!("查询定时任务失败：{e}"))?;
     rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("读取定时任务行失败：{e}").into())
+        .map_err(|e| format!("读取定时任务行失败：{e}"))
 }
 
 pub fn list_logs(pool: &DbPool, task_id: &str, limit: usize) -> Result<Vec<TaskLog>, String> {
@@ -230,7 +230,7 @@ pub fn list_logs(pool: &DbPool, task_id: &str, limit: usize) -> Result<Vec<TaskL
         .query_map(rusqlite::params![task_id, limit as i64], row_to_log)
         .map_err(|e| format!("查询任务日志失败：{e}"))?;
     rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("读取任务日志行失败：{e}").into())
+        .map_err(|e| format!("读取任务日志行失败：{e}"))
 }
 
 /// 记录一次执行（插入日志 + 更新任务的 last_run_at / last_status）

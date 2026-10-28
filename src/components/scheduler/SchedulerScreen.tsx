@@ -7,6 +7,7 @@
  */
 
 import {
+  Bell,
   Braces,
   CalendarClock,
   Check,
@@ -24,6 +25,8 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Sliders,
+  Sparkles,
   SquarePen,
   Terminal,
   Trash2,
@@ -37,7 +40,9 @@ import { SelectMenu } from '@/components/ui/SelectMenu';
 import { Spinner } from '@/components/ui/spinner';
 import {
   listenTaskEvent,
+  schedulerDescribeCron,
   schedulerHistoryClear,
+  schedulerPreviewNext,
   schedulerRunNow,
   schedulerTaskCreate,
   schedulerTaskDelete,
@@ -353,9 +358,32 @@ export function SchedulerScreen() {
                         <span className="truncate text-ui-sm font-semibold text-foreground">
                           {task.name}
                         </span>
-                        <span className="shrink-0 rounded bg-surface/80 px-2 py-0.5 font-mono text-ui-xs text-foreground-subtle border border-border/40">
-                          {task.cronExpr}
-                        </span>
+                        {task.runAt ? (
+                          <span className="shrink-0 rounded bg-terminal-yellow/10 px-2 py-0.5 font-mono text-ui-xs text-terminal-yellow border border-terminal-yellow/20">
+                            {t('scheduler.badgeOnce')} · {formatTimestamp(task.runAt)}
+                          </span>
+                        ) : (
+                          <span className="shrink-0 rounded bg-surface/80 px-2 py-0.5 font-mono text-ui-xs text-foreground-subtle border border-border/40">
+                            {task.cronExpr}
+                          </span>
+                        )}
+                        {task.notifyOn && task.notifyOn !== 'none' ? (
+                          <span
+                            className="shrink-0 rounded bg-terminal-cyan/10 px-1.5 py-0.5 font-mono text-[10px] text-terminal-cyan border border-terminal-cyan/20 flex items-center gap-0.5"
+                            title={task.webhookUrl ? `Webhook: ${task.webhookUrl}` : t('scheduler.badgeNotify')}
+                          >
+                            <Bell className="size-2.5" />
+                            {t('scheduler.badgeNotify')}
+                          </span>
+                        ) : null}
+                        {task.maxRetries && task.maxRetries > 0 ? (
+                          <span
+                            className="shrink-0 rounded bg-surface/80 px-1.5 py-0.5 font-mono text-[10px] text-foreground-subtle border border-border/40"
+                            title={t('scheduler.badgeRetry', { count: task.maxRetries })}
+                          >
+                            {t('scheduler.badgeRetry', { count: task.maxRetries })}
+                          </span>
+                        ) : null}
                         {task.envVars ? (
                           <span
                             className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary border border-primary/20"
@@ -1021,7 +1049,80 @@ function TaskForm({
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState(initial?.name ?? '');
+
+  // 调度方式：周期 Cron 还是 一次性任务 (run_at)
+  const [scheduleMode, setScheduleMode] = useState<'cron' | 'once'>(
+    initial?.runAt ? 'once' : 'cron',
+  );
   const [cronExpr, setCronExpr] = useState(initial?.cronExpr ?? '*/5 * * * *');
+
+  const toLocalIso = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const [runAtStr, setRunAtStr] = useState<string>(() => {
+    if (initial?.runAt) {
+      return toLocalIso(new Date(initial.runAt * 1000));
+    }
+    return toLocalIso(new Date(Date.now() + 10 * 60 * 1000));
+  });
+
+  const setQuickRunAt = (mins: number) => {
+    setRunAtStr(toLocalIso(new Date(Date.now() + mins * 60 * 1000)));
+  };
+
+  const setTonightRunAt = () => {
+    const d = new Date();
+    d.setHours(23, 0, 0, 0);
+    if (d.getTime() <= Date.now()) {
+      d.setDate(d.getDate() + 1);
+    }
+    setRunAtStr(toLocalIso(d));
+  };
+
+  const setTomorrowRunAt = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0, 0, 0);
+    setRunAtStr(toLocalIso(d));
+  };
+
+  // D3 Cron 实时人话翻译与未来触发预测
+  const [cronDescription, setCronDescription] = useState<string | null>(null);
+  const [nextRuns, setNextRuns] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (scheduleMode !== 'cron' || !isValidCron(cronExpr)) {
+      setCronDescription(null);
+      setNextRuns([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void schedulerDescribeCron(cronExpr)
+        .then((desc) => {
+          if (!cancelled) setCronDescription(desc);
+        })
+        .catch(() => {
+          if (!cancelled) setCronDescription(null);
+        });
+
+      void schedulerPreviewNext(cronExpr, 3)
+        .then((runs) => {
+          if (!cancelled) setNextRuns(runs);
+        })
+        .catch(() => {
+          if (!cancelled) setNextRuns([]);
+        });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [cronExpr, scheduleMode]);
+
   const [taskType, setTaskType] = useState(initial?.taskType ?? 'local_command');
   const [command, setCommand] = useState(initial?.command ?? '');
   const [workingDir, setWorkingDir] = useState(initial?.workingDir ?? '');
@@ -1030,6 +1131,33 @@ function TaskForm({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
+
+  // 高级配置（通知、超时重试、日志保留）
+  const [notifyOn, setNotifyOn] = useState<'none' | 'failure' | 'always'>(
+    (initial?.notifyOn as 'failure' | 'always') ?? 'none',
+  );
+  const [webhookUrl, setWebhookUrl] = useState(initial?.webhookUrl ?? '');
+  const [timeoutSecs, setTimeoutSecs] = useState<string>(
+    initial?.timeoutSecs ? String(initial.timeoutSecs) : '600',
+  );
+  const [maxRetries, setMaxRetries] = useState<string>(
+    initial?.maxRetries != null ? String(initial.maxRetries) : '0',
+  );
+  const [retryBackoffSecs, setRetryBackoffSecs] = useState<string>(
+    initial?.retryBackoffSecs ? String(initial.retryBackoffSecs) : '30',
+  );
+  const [retentionDays, setRetentionDays] = useState<string>(
+    initial?.retentionDays != null ? String(initial.retentionDays) : '30',
+  );
+
+  const hasAdvanced = Boolean(
+    (initial?.notifyOn && initial.notifyOn !== 'none') ||
+    initial?.webhookUrl ||
+    (initial?.timeoutSecs && initial.timeoutSecs !== 600) ||
+    (initial?.maxRetries && initial.maxRetries > 0) ||
+    (initial?.retentionDays && initial.retentionDays !== 30),
+  );
+  const [showAdvanced, setShowAdvanced] = useState(hasAdvanced);
 
   // 环境变量列表（Vercel 风格交互：单项增删 + 粘贴 .env 智能拆解）
   const [envList, setEnvList] = useState<EnvRow[]>(() => {
@@ -1061,13 +1189,20 @@ function TaskForm({
   }, []);
 
   const nameError = !name.trim() ? t('scheduler.errNameRequired') : null;
-  const cronError = !isValidCron(cronExpr) ? t('scheduler.cronInvalid') : null;
+  const cronError =
+    scheduleMode === 'cron' && !isValidCron(cronExpr) ? t('scheduler.cronInvalid') : null;
+  const runAtError =
+    scheduleMode === 'once' && (!runAtStr || new Date(runAtStr).getTime() <= Date.now())
+      ? t('scheduler.errRunAtFuture')
+      : null;
   const commandError = !command.trim() ? t('scheduler.errCommandRequired') : null;
   const sshHostError =
     taskType === 'ssh_command' && (!hostId || Number.isNaN(Number(hostId)) || Number(hostId) <= 0)
       ? t('scheduler.errHostIdRequired')
       : null;
-  const hasError = Boolean(nameError || cronError || commandError || sshHostError);
+  const hasError = Boolean(
+    nameError || cronError || runAtError || commandError || sshHostError,
+  );
   const canSave = !hasError && !saving;
 
   const handleSave = async () => {
@@ -1086,10 +1221,13 @@ function TaskForm({
     }
     const envVars = Object.keys(envObj).length > 0 ? JSON.stringify(envObj) : null;
 
+    const runAt =
+      scheduleMode === 'once' ? Math.floor(new Date(runAtStr).getTime() / 1000) : null;
+
     const task: ScheduledTask = {
       id: initial?.id ?? crypto.randomUUID(),
       name: name.trim(),
-      cronExpr: normalizeCron(cronExpr),
+      cronExpr: scheduleMode === 'cron' ? normalizeCron(cronExpr) : '* * * * *',
       taskType,
       command: command.trim(),
       workingDir: workingDir.trim() || null,
@@ -1099,13 +1237,13 @@ function TaskForm({
       updatedAt: initial?.updatedAt ?? 0,
       lastRunAt: initial?.lastRunAt ?? null,
       lastStatus: initial?.lastStatus ?? null,
-      notifyOn: initial?.notifyOn ?? null,
-      webhookUrl: initial?.webhookUrl ?? null,
-      timeoutSecs: initial?.timeoutSecs ?? null,
-      maxRetries: initial?.maxRetries ?? null,
-      retryBackoffSecs: initial?.retryBackoffSecs ?? null,
-      runAt: initial?.runAt ?? null,
-      retentionDays: initial?.retentionDays ?? null,
+      notifyOn: notifyOn === 'none' ? null : notifyOn,
+      webhookUrl: notifyOn === 'none' ? null : (webhookUrl.trim() || null),
+      timeoutSecs: timeoutSecs ? Math.max(1, Number(timeoutSecs)) : 600,
+      maxRetries: maxRetries ? Math.max(0, Number(maxRetries)) : 0,
+      retryBackoffSecs: retryBackoffSecs ? Math.max(1, Number(retryBackoffSecs)) : 30,
+      runAt,
+      retentionDays: retentionDays ? Math.max(0, Number(retentionDays)) : 30,
       envVars,
     };
     try {
@@ -1204,20 +1342,118 @@ function TaskForm({
               <p className="mt-1 text-ui-xs text-destructive">{nameError}</p>
             ) : null}
           </div>
+          {/* 调度方式切换 */}
           <div>
-            <label className={labelCls}>
-              {t('scheduler.fieldCron')}{' '}
-              <span className="font-mono text-foreground-subtlest">* * * * *</span>
-            </label>
-            <input
-              className={cn(inputCls, 'font-mono', touched && cronError && 'border-destructive/50')}
-              value={cronExpr}
-              onChange={(e) => setCronExpr(e.target.value)}
-              placeholder="*/5 * * * *"
-            />
-            {touched && cronError ? (
-              <p className="mt-1 text-ui-xs text-destructive">{cronError}</p>
-            ) : null}
+            <div className="flex items-center justify-between mb-1.5">
+              <label className={labelCls}>{t('scheduler.fieldScheduleMode')}</label>
+              <div className="flex rounded-md border border-border/60 bg-surface/30 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setScheduleMode('cron')}
+                  className={cn(
+                    'rounded px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer',
+                    scheduleMode === 'cron'
+                      ? 'bg-surface text-primary shadow-xs'
+                      : 'text-foreground-subtle hover:text-foreground',
+                  )}
+                >
+                  {t('scheduler.modeCron')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScheduleMode('once')}
+                  className={cn(
+                    'rounded px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer',
+                    scheduleMode === 'once'
+                      ? 'bg-surface text-primary shadow-xs'
+                      : 'text-foreground-subtle hover:text-foreground',
+                  )}
+                >
+                  {t('scheduler.modeOnce')}
+                </button>
+              </div>
+            </div>
+
+            {scheduleMode === 'cron' ? (
+              <div>
+                <input
+                  className={cn(inputCls, 'font-mono', touched && cronError && 'border-destructive/50')}
+                  value={cronExpr}
+                  onChange={(e) => setCronExpr(e.target.value)}
+                  placeholder="*/5 * * * *"
+                />
+                {/* D3 Cron 人话翻译与触发预测 */}
+                {cronDescription ? (
+                  <div className="mt-1.5 flex flex-col gap-1 rounded-md bg-surface/40 p-2 text-ui-xs border border-border/40">
+                    <div className="flex items-center gap-1.5 text-terminal-green font-medium">
+                      <Sparkles className="size-3.5 shrink-0" />
+                      <span>{cronDescription}</span>
+                    </div>
+                    {nextRuns.length > 0 ? (
+                      <div className="flex flex-col gap-0.5 mt-0.5 font-mono text-[11px] text-foreground-subtlest">
+                        <span className="text-foreground-subtle font-sans">{t('scheduler.cronNextRuns')}:</span>
+                        {nextRuns.map((ts, idx) => (
+                          <span key={idx}>▸ {formatTimestamp(ts)}</span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {touched && cronError ? (
+                  <p className="mt-1 text-ui-xs text-destructive">{cronError}</p>
+                ) : null}
+              </div>
+            ) : (
+              /* D4 一次性执行时间 */
+              <div className="flex flex-col gap-1.5">
+                <input
+                  type="datetime-local"
+                  className={cn(inputCls, 'font-mono', touched && runAtError && 'border-destructive/50')}
+                  value={runAtStr}
+                  onChange={(e) => setRunAtStr(e.target.value)}
+                />
+                <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setQuickRunAt(5)}
+                    className="rounded border border-border/50 bg-surface/50 px-2 py-0.5 text-[11px] text-foreground-subtle hover:text-foreground cursor-pointer"
+                  >
+                    {t('scheduler.quickIn5m')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuickRunAt(30)}
+                    className="rounded border border-border/50 bg-surface/50 px-2 py-0.5 text-[11px] text-foreground-subtle hover:text-foreground cursor-pointer"
+                  >
+                    {t('scheduler.quickIn30m')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuickRunAt(60)}
+                    className="rounded border border-border/50 bg-surface/50 px-2 py-0.5 text-[11px] text-foreground-subtle hover:text-foreground cursor-pointer"
+                  >
+                    {t('scheduler.quickIn1h')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={setTonightRunAt}
+                    className="rounded border border-border/50 bg-surface/50 px-2 py-0.5 text-[11px] text-foreground-subtle hover:text-foreground cursor-pointer"
+                  >
+                    {t('scheduler.quickTonight')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={setTomorrowRunAt}
+                    className="rounded border border-border/50 bg-surface/50 px-2 py-0.5 text-[11px] text-foreground-subtle hover:text-foreground cursor-pointer"
+                  >
+                    {t('scheduler.quickTomorrow')}
+                  </button>
+                </div>
+                {touched && runAtError ? (
+                  <p className="mt-1 text-ui-xs text-destructive">{runAtError}</p>
+                ) : null}
+              </div>
+            )}
           </div>
           <div>
             <label className={labelCls}>{t('scheduler.fieldType')}</label>
@@ -1412,6 +1648,121 @@ function TaskForm({
               </p>
             </div>
           ) : null}
+          {/* 高级配置（通知、超时重试、日志保留） */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="flex items-center gap-1.5 text-ui-xs text-foreground-subtle hover:text-foreground cursor-pointer select-none"
+            >
+              <Sliders className="size-3.5" />
+              <span>{t('scheduler.advancedSettings')}</span>
+              {showAdvanced ? (
+                <ChevronUp className="size-3" />
+              ) : (
+                <ChevronDown className="size-3" />
+              )}
+            </button>
+
+            {showAdvanced ? (
+              <div className="mt-2.5 flex flex-col gap-3 rounded-lg border border-border/50 bg-surface/20 p-3">
+                {/* D1 失败通知策略 */}
+                <div>
+                  <label className={labelCls}>{t('scheduler.fieldNotifyOn')}</label>
+                  <div className="flex gap-1.5">
+                    {(
+                      [
+                        ['none', t('scheduler.notifyNone')],
+                        ['failure', t('scheduler.notifyFailure')],
+                        ['always', t('scheduler.notifyAlways')],
+                      ] as const
+                    ).map(([val, label]) => (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => setNotifyOn(val)}
+                        className={cn(
+                          'flex-1 rounded-md border px-2 py-1 text-ui-xs transition-colors cursor-pointer',
+                          notifyOn === val
+                            ? 'border-primary/40 bg-primary/10 font-medium text-primary'
+                            : 'border-border/60 text-foreground-subtle hover:bg-hover',
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {notifyOn !== 'none' ? (
+                  <div>
+                    <label className={labelCls}>{t('scheduler.fieldWebhookUrl')}</label>
+                    <input
+                      className={cn(inputCls, 'font-mono text-ui-xs')}
+                      value={webhookUrl}
+                      onChange={(e) => setWebhookUrl(e.target.value)}
+                      placeholder={t('scheduler.fieldWebhookPlaceholder')}
+                    />
+                  </div>
+                ) : null}
+
+                {/* D2 超时与重试 */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className={labelCls}>{t('scheduler.fieldTimeout')}</label>
+                    <input
+                      type="number"
+                      min="1"
+                      className={cn(inputCls, 'font-mono')}
+                      value={timeoutSecs}
+                      onChange={(e) => setTimeoutSecs(e.target.value)}
+                      placeholder="600"
+                    />
+                  </div>
+                  <div>
+                    <label className={labelCls}>{t('scheduler.fieldMaxRetries')}</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="10"
+                      className={cn(inputCls, 'font-mono')}
+                      value={maxRetries}
+                      onChange={(e) => setMaxRetries(e.target.value)}
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+
+                {Number(maxRetries) > 0 ? (
+                  <div>
+                    <label className={labelCls}>{t('scheduler.fieldRetryBackoff')}</label>
+                    <input
+                      type="number"
+                      min="1"
+                      className={cn(inputCls, 'font-mono')}
+                      value={retryBackoffSecs}
+                      onChange={(e) => setRetryBackoffSecs(e.target.value)}
+                      placeholder="30"
+                    />
+                  </div>
+                ) : null}
+
+                {/* D5 日志保留天数 */}
+                <div>
+                  <label className={labelCls}>{t('scheduler.fieldRetentionDays')}</label>
+                  <input
+                    type="number"
+                    min="0"
+                    className={cn(inputCls, 'font-mono')}
+                    value={retentionDays}
+                    onChange={(e) => setRetentionDays(e.target.value)}
+                    placeholder="30"
+                  />
+                </div>
+              </div>
+            ) : null}
+          </div>
+
           <label className="flex items-center gap-2 text-ui-sm text-foreground-subtle select-none cursor-pointer">
             <input
               type="checkbox"

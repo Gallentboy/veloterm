@@ -254,7 +254,7 @@ pub fn scheduler_preview_next(
 ) -> Result<Vec<i64>, String> {
     use croner::parser::CronParser;
 
-    let expr = if cron_expr.trim().split_whitespace().count() == 5 {
+    let expr = if cron_expr.split_whitespace().count() == 5 {
         format!("0 {}", cron_expr.trim())
     } else {
         cron_expr.trim().to_string()
@@ -285,7 +285,7 @@ pub fn scheduler_preview_next(
 /// Cron 表达式的人话翻译（D3）：`0 0 9 * * 1-5` → `每工作日 09:00`
 #[tauri::command]
 pub fn scheduler_describe_cron(cron_expr: String) -> Result<String, String> {
-    let parts: Vec<&str> = cron_expr.trim().split_whitespace().collect();
+    let parts: Vec<&str> = cron_expr.split_whitespace().collect();
     if parts.len() != 5 && parts.len() != 6 {
         return Err("cron 表达式需要 5 或 6 个字段".to_string());
     }
