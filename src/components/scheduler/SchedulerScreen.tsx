@@ -356,6 +356,14 @@ export function SchedulerScreen() {
                         <span className="shrink-0 rounded bg-surface/80 px-2 py-0.5 font-mono text-ui-xs text-foreground-subtle border border-border/40">
                           {task.cronExpr}
                         </span>
+                        {task.envVars ? (
+                          <span
+                            className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary border border-primary/20"
+                            title={t('scheduler.envBadge')}
+                          >
+                            ENV
+                          </span>
+                        ) : null}
                         {task.lastStatus ? (
                           <span
                             className={cn(
@@ -954,6 +962,45 @@ function HistoryDetailModal({
 
 // ── 任务表单 ────────────────────────────────────────────────────────────────
 
+interface EnvRow {
+  id: string;
+  key: string;
+  value: string;
+}
+
+/** 智能解析类 Vercel 的 .env / 键值对文本（支持 KEY=VAL、带引号、export 前缀、制表符分隔、# 注释） */
+function parseEnvText(text: string): { key: string; value: string }[] {
+  const lines = text.split(/\r?\n/);
+  const result: { key: string; value: string }[] = [];
+  for (let rawLine of lines) {
+    let line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (line.startsWith('export ')) {
+      line = line.slice(7).trim();
+    }
+    const eqIdx = line.indexOf('=');
+    if (eqIdx > 0) {
+      const key = line.slice(0, eqIdx).trim();
+      let val = line.slice(eqIdx + 1).trim();
+      if (
+        (val.startsWith('"') && val.endsWith('"') && val.length >= 2) ||
+        (val.startsWith("'") && val.endsWith("'") && val.length >= 2)
+      ) {
+        val = val.slice(1, -1);
+      }
+      if (key) {
+        result.push({ key, value: val });
+      }
+    } else {
+      const parts = line.split('\t');
+      if (parts.length >= 2 && parts[0].trim()) {
+        result.push({ key: parts[0].trim(), value: parts.slice(1).join('\t').trim() });
+      }
+    }
+  }
+  return result;
+}
+
 function TaskForm({
   initial,
   onClose,
@@ -974,6 +1021,23 @@ function TaskForm({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
+
+  // 环境变量列表（Vercel 风格交互：单项增删 + 粘贴 .env 智能拆解）
+  const [envList, setEnvList] = useState<EnvRow[]>(() => {
+    if (!initial?.envVars) return [];
+    try {
+      const map = JSON.parse(initial.envVars);
+      return Object.entries(map).map(([k, v]) => ({
+        id: crypto.randomUUID(),
+        key: k,
+        value: String(v),
+      }));
+    } catch {
+      return [];
+    }
+  });
+  const [showBatchEnv, setShowBatchEnv] = useState(false);
+  const [rawEnvText, setRawEnvText] = useState('');
 
   // 严格模态：拦截 Escape 键（不走 onClose——只能通过按钮关闭）
   useEffect(() => {
@@ -1002,6 +1066,17 @@ function TaskForm({
     if (hasError || saving) return;
     setSaving(true);
     setFormError(null);
+
+    // 序列化环境变量：过滤空 key
+    const envObj: Record<string, string> = {};
+    for (const item of envList) {
+      const k = item.key.trim();
+      if (k) {
+        envObj[k] = item.value;
+      }
+    }
+    const envVars = Object.keys(envObj).length > 0 ? JSON.stringify(envObj) : null;
+
     const task: ScheduledTask = {
       id: initial?.id ?? crypto.randomUUID(),
       name: name.trim(),
@@ -1015,6 +1090,14 @@ function TaskForm({
       updatedAt: initial?.updatedAt ?? 0,
       lastRunAt: initial?.lastRunAt ?? null,
       lastStatus: initial?.lastStatus ?? null,
+      notifyOn: initial?.notifyOn ?? null,
+      webhookUrl: initial?.webhookUrl ?? null,
+      timeoutSecs: initial?.timeoutSecs ?? null,
+      maxRetries: initial?.maxRetries ?? null,
+      retryBackoffSecs: initial?.retryBackoffSecs ?? null,
+      runAt: initial?.runAt ?? null,
+      retentionDays: initial?.retentionDays ?? null,
+      envVars,
     };
     try {
       if (initial) {
@@ -1027,6 +1110,48 @@ function TaskForm({
       setFormError(String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Vercel 核心：在 Key 输入框直接粘贴多行或 KEY=VAL 文本时自动智能拆分
+  const handleKeyPaste = (e: React.ClipboardEvent<HTMLInputElement>, index: number) => {
+    const text = e.clipboardData.getData('text');
+    if (text && (text.includes('\n') || text.includes('='))) {
+      e.preventDefault();
+      const parsed = parseEnvText(text);
+      if (parsed.length > 0) {
+        setEnvList((prev) => {
+          const next = [...prev];
+          const curr = next[index];
+          let startIdx = 0;
+          let insertAt = index;
+          if (curr && !curr.key.trim() && !curr.value) {
+            next[index] = { id: curr.id, key: parsed[0].key, value: parsed[0].value };
+            startIdx = 1;
+            insertAt = index + 1;
+          }
+          const added = parsed.slice(startIdx).map((p) => ({
+            id: crypto.randomUUID(),
+            key: p.key,
+            value: p.value,
+          }));
+          next.splice(insertAt, 0, ...added);
+          return next;
+        });
+      }
+    }
+  };
+
+  const handleBatchImport = () => {
+    if (!rawEnvText.trim()) return;
+    const parsed = parseEnvText(rawEnvText);
+    if (parsed.length > 0) {
+      setEnvList((prev) => [
+        ...prev.filter((item) => item.key.trim() || item.value.trim()),
+        ...parsed.map((p) => ({ id: crypto.randomUUID(), key: p.key, value: p.value })),
+      ]);
+      setRawEnvText('');
+      setShowBatchEnv(false);
     }
   };
 
@@ -1043,14 +1168,21 @@ function TaskForm({
       aria-modal="true"
     >
       <div
-        className="flex w-[480px] max-w-full flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl"
+        className="flex w-[560px] max-w-full max-h-[88vh] flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl"
       >
-        <div className="border-b border-border/50 px-5 py-3.5">
+        <div className="border-b border-border/50 px-5 py-3.5 shrink-0 flex items-center justify-between">
           <span className="text-ui-base font-semibold text-foreground">
             {initial ? t('scheduler.editTitle') : t('scheduler.newTitle')}
           </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 text-foreground-subtle hover:text-foreground cursor-pointer"
+          >
+            <X className="size-4" />
+          </button>
         </div>
-        <div className="flex flex-col gap-3 px-5 py-4">
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-slim flex flex-col gap-3 px-5 py-4">
           <div>
             <label className={labelCls}>{t('scheduler.fieldName')}</label>
             <input
@@ -1126,6 +1258,117 @@ function TaskForm({
               <p className="mt-1 text-ui-xs text-destructive">{commandError}</p>
             ) : null}
           </div>
+
+          {/* 环境变量（参考 Vercel 体验：支持行增删 + 任意 Key 框直接粘贴 .env 智能拆解 + 批量模式） */}
+          <div className="flex flex-col gap-1.5 pt-1">
+            <div className="flex items-center justify-between">
+              <label className={labelCls}>{t('scheduler.fieldEnvVars')}</label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBatchEnv((v) => !v)}
+                  className="text-[11px] text-primary hover:underline cursor-pointer"
+                >
+                  {showBatchEnv ? t('scheduler.envModeTable') : t('scheduler.envModeBatch')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEnvList((prev) => [...prev, { id: crypto.randomUUID(), key: '', value: '' }])
+                  }
+                  className="flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-[11px] text-foreground-subtle hover:text-foreground cursor-pointer border border-border/50"
+                >
+                  <Plus className="size-3" />
+                  {t('scheduler.addEnv')}
+                </button>
+              </div>
+            </div>
+
+            {showBatchEnv ? (
+              <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-surface/20 p-2.5">
+                <div className="text-[11px] text-foreground-subtlest">
+                  {t('scheduler.envBatchHint')}
+                </div>
+                <textarea
+                  className={cn(inputCls, 'h-24 resize-none py-1.5 font-mono text-ui-xs')}
+                  value={rawEnvText}
+                  onChange={(e) => setRawEnvText(e.target.value)}
+                  placeholder={'API_KEY="secret-token"\nPORT=8080\nDATABASE_URL=postgres://...'}
+                />
+                <div className="flex justify-end gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-ui-xs"
+                    onClick={() => setShowBatchEnv(false)}
+                  >
+                    {t('scheduler.cancel')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="h-6 px-2 text-ui-xs"
+                    onClick={handleBatchImport}
+                    disabled={!rawEnvText.trim()}
+                  >
+                    {t('scheduler.envApplyBatch')}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {envList.length > 0 ? (
+              <div className="flex flex-col gap-1.5 max-h-44 overflow-y-auto pr-1 scrollbar-slim">
+                {envList.map((env, idx) => (
+                  <div key={env.id} className="flex items-center gap-1.5">
+                    <input
+                      className={cn(inputCls, 'font-mono text-ui-xs w-4/10 shrink-0')}
+                      value={env.key}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEnvList((prev) => {
+                          const next = [...prev];
+                          next[idx] = { ...next[idx], key: val };
+                          return next;
+                        });
+                      }}
+                      onPaste={(e) => handleKeyPaste(e, idx)}
+                      placeholder="KEY (可粘贴 .env)"
+                    />
+                    <input
+                      className={cn(inputCls, 'font-mono text-ui-xs flex-1 min-w-0')}
+                      value={env.value}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEnvList((prev) => {
+                          const next = [...prev];
+                          next[idx] = { ...next[idx], value: val };
+                          return next;
+                        });
+                      }}
+                      placeholder="VALUE"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setEnvList((prev) => prev.filter((_, i) => i !== idx))}
+                      className="size-7 shrink-0 flex items-center justify-center rounded text-foreground-subtlest hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                      title={t('scheduler.removeEnv')}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : !showBatchEnv ? (
+              <div
+                onClick={() =>
+                  setEnvList([{ id: crypto.randomUUID(), key: '', value: '' }])
+                }
+                className="rounded-lg border border-dashed border-border/60 py-2.5 text-center text-ui-xs text-foreground-subtlest hover:border-border hover:text-foreground-subtle cursor-pointer transition-colors"
+              >
+                {t('scheduler.noEnvHint')}
+              </div>
+            ) : null}
+          </div>
           {taskType === 'local_command' ? (
             <div>
               <label className={labelCls}>{t('scheduler.fieldWorkDir')}</label>
@@ -1169,7 +1412,7 @@ function TaskForm({
             </div>
           ) : null}
         </div>
-        <div className="flex justify-end gap-2 border-t border-border/50 px-5 py-3.5">
+        <div className="flex justify-end gap-2 border-t border-border/50 px-5 py-3.5 shrink-0 bg-surface/20">
           <Button variant="ghost" onClick={onClose}>
             {t('scheduler.cancel')}
           </Button>

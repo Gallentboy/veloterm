@@ -30,6 +30,8 @@ export interface ScheduledTask {
   runAt?: number | null;
   // D5 历史保留
   retentionDays?: number | null;
+  // 环境变量配置（JSON 格式字符串，如 {"PORT":"8080"}）
+  envVars?: string | null;
 }
 
 export interface TaskLog {

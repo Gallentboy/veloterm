@@ -17,6 +17,14 @@ fn task_timeout(task: &ScheduledTask) -> Duration {
     Duration::from_secs(task.timeout_secs.unwrap_or(600))
 }
 
+/// 解析环境变量 JSON
+fn parse_env_vars(task: &ScheduledTask) -> std::collections::HashMap<String, String> {
+    task.env_vars
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default()
+}
+
 /// stdout / stderr 各保留的尾部字节数（入库截取）
 const OUTPUT_TAIL_BYTES: usize = 2048;
 
@@ -122,6 +130,11 @@ async fn exec_local(task: &ScheduledTask) -> Result<ExecResult, String> {
     if let Some(dir) = task.working_dir.as_deref() {
         cmd.current_dir(dir);
     }
+    // 注入自定义环境变量
+    let env_map = parse_env_vars(task);
+    if !env_map.is_empty() {
+        cmd.envs(env_map);
+    }
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -212,8 +225,23 @@ async fn exec_ssh(task: &ScheduledTask, pool: &crate::db::DbPool) -> Result<Exec
         .map_err(|_| format!("SSH 通道超时（>{}s）", timeout.as_secs()))?
         .map_err(|e| format!("打开 SSH 通道失败：{e}"))?;
 
+    // 组装 SSH 执行命令（若配置了环境变量，前置 export 注入）
+    let env_map = parse_env_vars(task);
+    let command_to_run = if !env_map.is_empty() {
+        let mut prefix = String::new();
+        for (k, v) in env_map {
+            if k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !k.is_empty() {
+                let escaped_v = v.replace('\'', "'\\''");
+                prefix.push_str(&format!("export {}='{}'; ", k, escaped_v));
+            }
+        }
+        format!("{}{}", prefix, task.command)
+    } else {
+        task.command.clone()
+    };
+
     channel
-        .exec(true, task.command.as_str())
+        .exec(true, command_to_run.as_str())
         .await
         .map_err(|e| format!("发送命令失败：{e}"))?;
 
@@ -247,7 +275,11 @@ async fn exec_ssh(task: &ScheduledTask, pool: &crate::db::DbPool) -> Result<Exec
 /// JS 脚本执行器（内嵌 V8 引擎执行，支持 fetch/fs/crypto/sys 等能力）
 async fn exec_js(task: &ScheduledTask) -> Result<ExecResult, String> {
     let timeout = task_timeout(task);
-    let source = task.command.clone();
+    let source = if let Some(ref env_json) = task.env_vars {
+        format!("const env = Object.freeze({});\n{}", env_json, task.command)
+    } else {
+        task.command.clone()
+    };
     let is_ts = source.contains("interface ")
         || source.contains("type ")
         || source.contains("enum ")
@@ -358,6 +390,7 @@ mod tests {
             retry_backoff_secs: None,
             run_at: None,
             retention_days: None,
+            env_vars: None,
         }
     }
 

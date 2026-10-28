@@ -79,6 +79,10 @@ pub struct ScheduledTask {
     /// 日志保留天数（默认 30；0 = 永久保留）
     #[serde(default)]
     pub retention_days: Option<u32>,
+    // ── 环境变量 ──
+    /// 环境变量配置（JSON 字符串，格式如 {"KEY":"VALUE"}）
+    #[serde(default)]
+    pub env_vars: Option<String>,
 }
 
 /// 执行日志条目
