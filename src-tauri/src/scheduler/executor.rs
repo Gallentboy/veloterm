@@ -12,11 +12,58 @@ use std::time::Duration;
 
 use super::{ScheduledTask, TaskEvent};
 
-/// 本地/SSH 共用的执行超时
-const EXEC_TIMEOUT: Duration = Duration::from_secs(600);
+/// D2 按任务读取超时（默认 600s）
+fn task_timeout(task: &ScheduledTask) -> Duration {
+    Duration::from_secs(task.timeout_secs.unwrap_or(600))
+}
 
 /// stdout / stderr 各保留的尾部字节数（入库截取）
 const OUTPUT_TAIL_BYTES: usize = 2048;
+
+/// D1 失败通知：系统通知 + webhook
+pub async fn send_notification(task: &ScheduledTask, exit_code: Option<i32>, stderr: &str, app: &tauri::AppHandle) {
+    let is_failure = exit_code != Some(0);
+    let should_notify = match task.notify_on.as_deref() {
+        Some("always") => true,
+        Some("failure") => is_failure,
+        _ => false,
+    };
+    if !should_notify {
+        return;
+    }
+
+    let status = if is_failure { "失败" } else { "成功" };
+    let title = format!("定时任务 {}：{}", task.name, status);
+    let body = if is_failure && !stderr.is_empty() {
+        format!("退出码 {:?}：{}", exit_code, &stderr[..stderr.len().min(200)])
+    } else {
+        format!("任务「{}」执行{}", task.name, status)
+    };
+
+    // 系统通知（跨平台：macOS 通知中心 / Windows Toast / Linux libnotify）
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app.notification().builder().title(&title).body(&body).show();
+
+    // Webhook（POST JSON）
+    if let Some(url) = task.webhook_url.as_deref() {
+        if !url.is_empty() {
+            let payload = serde_json::json!({
+                "task": task.name,
+                "taskId": task.id,
+                "status": if is_failure { "failed" } else { "success" },
+                "exitCode": exit_code,
+                "stderrTail": stderr,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            let _ = reqwest::Client::new()
+                .post(url)
+                .json(&payload)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await;
+        }
+    }
+}
 
 pub struct ExecResult {
     pub exit_code: Option<i32>,
@@ -98,9 +145,10 @@ async fn exec_local(task: &ScheduledTask) -> Result<ExecResult, String> {
         child.wait().await
     };
 
-    let status = tokio::time::timeout(EXEC_TIMEOUT, read_and_wait)
+    let timeout = task_timeout(task);
+    let status = tokio::time::timeout(timeout, read_and_wait)
         .await
-        .map_err(|_| format!("执行超时（>{}s），已终止", EXEC_TIMEOUT.as_secs()))?
+        .map_err(|_| format!("执行超时（>{}s），已终止", timeout.as_secs()))?
         .map_err(|e| format!("等待命令退出失败：{e}"))?;
 
     Ok(ExecResult {
@@ -150,9 +198,10 @@ async fn exec_ssh(task: &ScheduledTask, pool: &crate::db::DbPool) -> Result<Exec
 
     // 与 resource_monitor 的 ExecCapture 同型：channel → exec → read_to_string
     use tokio::io::AsyncReadExt;
-    let channel = tokio::time::timeout(EXEC_TIMEOUT, conn.0.channel_open_session())
+    let timeout = task_timeout(task);
+    let channel = tokio::time::timeout(timeout, conn.0.channel_open_session())
         .await
-        .map_err(|_| format!("SSH 通道超时（>{}s）", EXEC_TIMEOUT.as_secs()))?
+        .map_err(|_| format!("SSH 通道超时（>{}s）", timeout.as_secs()))?
         .map_err(|e| format!("打开 SSH 通道失败：{e}"))?;
 
     channel
@@ -166,9 +215,9 @@ async fn exec_ssh(task: &ScheduledTask, pool: &crate::db::DbPool) -> Result<Exec
 
     // 主输出读完后，stderr 经 ExtendedData 混在同一流——russh 的
     // read_to_string 只收 Data 分量；ExtendedData 用 wait() 消费
-    tokio::time::timeout(EXEC_TIMEOUT, stream.read_to_string(&mut stdout_buf))
+    tokio::time::timeout(timeout, stream.read_to_string(&mut stdout_buf))
         .await
-        .map_err(|_| format!("SSH 执行超时（>{}s）", EXEC_TIMEOUT.as_secs()))?
+        .map_err(|_| format!("SSH 执行超时（>{}s）", timeout.as_secs()))?
         .map_err(|e| format!("读取输出失败：{e}"))?;
 
     // 通道已关；退出码不在此路径取（russh 0.63 的 ChannelStream 无
@@ -189,6 +238,7 @@ async fn exec_ssh(task: &ScheduledTask, pool: &crate::db::DbPool) -> Result<Exec
 
 /// JS 脚本执行器（内嵌 V8 引擎执行，支持 fetch/fs/crypto/sys 等能力）
 async fn exec_js(task: &ScheduledTask) -> Result<ExecResult, String> {
+    let timeout = task_timeout(task);
     let source = task.command.clone();
     let is_ts = source.contains("interface ")
         || source.contains("type ")
@@ -204,7 +254,7 @@ async fn exec_js(task: &ScheduledTask) -> Result<ExecResult, String> {
 
     tokio::task::spawn_blocking(move || {
         let options = crate::js_runtime::JsRunOptions {
-            timeout: EXEC_TIMEOUT,
+            timeout,
             heap_limit_mb: crate::js_runtime::DEFAULT_HEAP_LIMIT_MB,
             language,
         };
@@ -293,6 +343,13 @@ mod tests {
             updated_at: 0,
             last_run_at: None,
             last_status: None,
+            notify_on: None,
+            webhook_url: None,
+            timeout_secs: None,
+            max_retries: None,
+            retry_backoff_secs: None,
+            run_at: None,
+            retention_days: None,
         }
     }
 

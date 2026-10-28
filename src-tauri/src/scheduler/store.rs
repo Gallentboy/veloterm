@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use super::{ScheduledTask, TaskHistoryItem, TaskHistoryQuery, TaskHistoryResponse, TaskLog};
 use crate::db::DbPool;
 
-/// 幂等建表（应用启动时调用）
+/// 幂等建表（应用启动时调用）+ 老表迁移（v1.0.12 之前建的表缺新列）
 pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -21,7 +21,14 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
             created_at  INTEGER NOT NULL,
             updated_at  INTEGER NOT NULL,
             last_run_at INTEGER,
-            last_status TEXT
+            last_status TEXT,
+            notify_on   TEXT,
+            webhook_url TEXT,
+            timeout_secs INTEGER DEFAULT 600,
+            max_retries INTEGER DEFAULT 0,
+            retry_backoff_secs INTEGER DEFAULT 30,
+            run_at      INTEGER,
+            retention_days INTEGER DEFAULT 30
         );
         CREATE TABLE IF NOT EXISTS scheduled_task_logs (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,6 +43,20 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
             ON scheduled_task_logs(task_id, started_at DESC);",
     )
     .map_err(|e| format!("建定时任务表失败：{e}"))?;
+
+    // 老表迁移：v1.0.12 之前的表缺新列（幂等——列已存在时报错忽略）
+    let migrations = [
+        "ALTER TABLE scheduled_tasks ADD COLUMN notify_on TEXT",
+        "ALTER TABLE scheduled_tasks ADD COLUMN webhook_url TEXT",
+        "ALTER TABLE scheduled_tasks ADD COLUMN timeout_secs INTEGER DEFAULT 600",
+        "ALTER TABLE scheduled_tasks ADD COLUMN max_retries INTEGER DEFAULT 0",
+        "ALTER TABLE scheduled_tasks ADD COLUMN retry_backoff_secs INTEGER DEFAULT 30",
+        "ALTER TABLE scheduled_tasks ADD COLUMN run_at INTEGER",
+        "ALTER TABLE scheduled_tasks ADD COLUMN retention_days INTEGER DEFAULT 30",
+    ];
+    for sql in migrations {
+        let _ = conn.execute(sql, []);
+    }
     Ok(())
 }
 
@@ -53,6 +74,13 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledTask> {
         updated_at: row.get("updated_at")?,
         last_run_at: row.get("last_run_at")?,
         last_status: row.get("last_status")?,
+        notify_on: row.get("notify_on")?,
+        webhook_url: row.get("webhook_url")?,
+        timeout_secs: row.get("timeout_secs")?,
+        max_retries: row.get::<_, Option<i32>>("max_retries")?.map(|v| v as u32),
+        retry_backoff_secs: row.get("retry_backoff_secs")?,
+        run_at: row.get("run_at")?,
+        retention_days: row.get::<_, Option<i32>>("retention_days")?.map(|v| v as u32),
     })
 }
 
@@ -76,8 +104,10 @@ pub fn create_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
     conn.execute(
         "INSERT INTO scheduled_tasks \
          (id, name, cron_expr, task_type, command, working_dir, host_id, enabled, \
-          created_at, updated_at, last_run_at, last_status) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+          created_at, updated_at, last_run_at, last_status, \
+          notify_on, webhook_url, timeout_secs, max_retries, retry_backoff_secs, \
+          run_at, retention_days) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
         rusqlite::params![
             created.id,
             created.name,
@@ -91,6 +121,13 @@ pub fn create_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
             created.updated_at,
             created.last_run_at,
             created.last_status,
+            created.notify_on,
+            created.webhook_url,
+            created.timeout_secs.unwrap_or(600),
+            created.max_retries.map(|v| v as i32).unwrap_or(0),
+            created.retry_backoff_secs.unwrap_or(30),
+            created.run_at,
+            created.retention_days.map(|v| v as i32).unwrap_or(30),
         ],
     )
     .map_err(|e| format!("插入定时任务失败：{e}"))?;
@@ -104,8 +141,10 @@ pub fn update_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
     let n = conn
         .execute(
             "UPDATE scheduled_tasks SET \
-             name = ?2, cron_expr = ?3, task_type = ?4, command = ?5, \
-             working_dir = ?6, host_id = ?7, enabled = ?8, updated_at = ?9 \
+             name=?2, cron_expr=?3, task_type=?4, command=?5, \
+             working_dir=?6, host_id=?7, enabled=?8, updated_at=?9, \
+             notify_on=?10, webhook_url=?11, timeout_secs=?12, max_retries=?13, \
+             retry_backoff_secs=?14, run_at=?15, retention_days=?16 \
              WHERE id = ?1",
             rusqlite::params![
                 updated.id,
@@ -117,6 +156,13 @@ pub fn update_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
                 updated.host_id,
                 i32::from(updated.enabled),
                 updated.updated_at,
+                updated.notify_on,
+                updated.webhook_url,
+                updated.timeout_secs.unwrap_or(600),
+                updated.max_retries.map(|v| v as i32).unwrap_or(0),
+                updated.retry_backoff_secs.unwrap_or(30),
+                updated.run_at,
+                updated.retention_days.map(|v| v as i32).unwrap_or(30),
             ],
         )
         .map_err(|e| format!("更新定时任务失败：{e}"))?;
@@ -370,6 +416,31 @@ pub fn clear_history(pool: &DbPool, task_id: Option<&str>) -> Result<(), String>
     Ok(())
 }
 
+/// D5 历史保留策略清理：按各任务的 retention_days 删除超期日志。
+/// retention_days = 0 表示永久保留（跳过）；null 用默认 30 天。
+/// 引擎 load_all 后调用
+pub fn cleanup_expired_logs(pool: &DbPool) -> Result<usize, String> {
+    let conn = pool.get().map_err(|e| format!("取数据库连接失败：{e}"))?;
+    let now = now_ts();
+    // 按任务的 retention_days 逐个清理（每个任务可以有不同保留期）
+    let sql = "
+        DELETE FROM scheduled_task_logs
+        WHERE task_id IN (
+            SELECT id FROM scheduled_tasks WHERE COALESCE(retention_days, 30) > 0
+        )
+        AND started_at < (
+            SELECT ?1 - COALESCE(retention_days, 30) * 86400
+            FROM scheduled_tasks WHERE id = task_id
+        )";
+    let n = conn
+        .execute(sql, [now])
+        .map_err(|e| format!("清理超期日志失败：{e}"))?;
+    if n > 0 {
+        log::info!("[scheduler] 清理了 {n} 条超期执行日志");
+    }
+    Ok(n)
+}
+
 fn now_ts() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -402,6 +473,13 @@ mod tests {
             updated_at: 0,
             last_run_at: None,
             last_status: None,
+            notify_on: None,
+            webhook_url: None,
+            timeout_secs: None,
+            max_retries: None,
+            retry_backoff_secs: None,
+            run_at: None,
+            retention_days: None,
         }
     }
 
@@ -486,9 +564,9 @@ mod tests {
         let resp = query_history(&pool, &q_all).unwrap();
         assert_eq!(resp.total, 3);
         assert_eq!(resp.items.len(), 3);
-        assert_eq!(resp.items[0].started_at, 1030);
-        assert_eq!(resp.items[0].status, "running");
-        assert_eq!(resp.items[0].task_name, "测试任务 task-b");
+        assert_eq!(resp.items.first().unwrap().started_at, 1030);
+        assert_eq!(resp.items.first().unwrap().status, "running");
+        assert_eq!(resp.items.first().unwrap().task_name, "测试任务 task-b");
 
         // 2. 按任务查
         let q_task_a = TaskHistoryQuery {
@@ -497,8 +575,8 @@ mod tests {
         };
         let resp_a = query_history(&pool, &q_task_a).unwrap();
         assert_eq!(resp_a.total, 2);
-        assert_eq!(resp_a.items[0].started_at, 1020);
-        assert_eq!(resp_a.items[0].status, "failed");
+        assert_eq!(resp_a.items.first().unwrap().started_at, 1020);
+        assert_eq!(resp_a.items.first().unwrap().status, "failed");
 
         // 3. 按状态查
         let q_success = TaskHistoryQuery {
@@ -507,14 +585,14 @@ mod tests {
         };
         let resp_s = query_history(&pool, &q_success).unwrap();
         assert_eq!(resp_s.total, 1);
-        assert_eq!(resp_s.items[0].task_id, "task-a");
-        assert_eq!(resp_s.items[0].exit_code, Some(0));
+        assert_eq!(resp_s.items.first().unwrap().task_id, "task-a");
+        assert_eq!(resp_s.items.first().unwrap().exit_code, Some(0));
 
         // 4. 清理特定任务历史
         clear_history(&pool, Some("task-a")).unwrap();
         let resp_after_clear_a = query_history(&pool, &q_all).unwrap();
         assert_eq!(resp_after_clear_a.total, 1);
-        assert_eq!(resp_after_clear_a.items[0].task_id, "task-b");
+        assert_eq!(resp_after_clear_a.items.first().unwrap().task_id, "task-b");
 
         // 5. 清理全部历史
         clear_history(&pool, None).unwrap();

@@ -41,7 +41,7 @@ pub struct ScheduledTask {
     pub id: String,
     pub name: String,
     pub cron_expr: String,
-    /// 'local_command' | 'ssh_command'
+    /// 'local_command' | 'ssh_command' | 'js_script'
     pub task_type: String,
     /// 命令或脚本路径
     pub command: String,
@@ -54,6 +54,31 @@ pub struct ScheduledTask {
     pub updated_at: i64,
     pub last_run_at: Option<i64>,
     pub last_status: Option<String>,
+    // ── D1 失败通知 ──
+    /// 'failure' | 'always' | null（不发通知）
+    #[serde(default)]
+    pub notify_on: Option<String>,
+    /// webhook URL（POST {task, exitCode, stderrTail}）
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+    // ── D2 超时与重试 ──
+    /// 执行超时秒数（默认 600）
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// 最大重试次数（默认 0）
+    #[serde(default)]
+    pub max_retries: Option<u32>,
+    /// 重试间隔秒数（默认 30）
+    #[serde(default)]
+    pub retry_backoff_secs: Option<u64>,
+    // ── D4 一次性任务 ──
+    /// 一次性触发时间戳（秒）；有值时 cron_expr 忽略，触发后自动 disable
+    #[serde(default)]
+    pub run_at: Option<i64>,
+    // ── D5 历史保留 ──
+    /// 日志保留天数（默认 30；0 = 永久保留）
+    #[serde(default)]
+    pub retention_days: Option<u32>,
 }
 
 /// 执行日志条目
@@ -214,4 +239,93 @@ pub fn scheduler_history_clear(
 #[tauri::command]
 pub async fn scheduler_run_now(id: String) -> Result<(), String> {
     engine()?.run_now(&id).await
+}
+
+/// Cron 表达式的未来触发预览（D3）：返回接下来 N 次运行时间的 Unix 秒时间戳。
+/// 用 croner（tokio-cron-scheduler 内部依赖）解析，与引擎行为一致
+#[tauri::command]
+pub fn scheduler_preview_next(
+    cron_expr: String,
+    count: Option<usize>,
+) -> Result<Vec<i64>, String> {
+    use croner::parser::CronParser;
+
+    let expr = if cron_expr.trim().split_whitespace().count() == 5 {
+        format!("0 {}", cron_expr.trim())
+    } else {
+        cron_expr.trim().to_string()
+    };
+
+    let schedule = CronParser::builder()
+        .seconds(croner::parser::Seconds::Required)
+        .dom_and_dow(true)
+        .build()
+        .parse(&expr)
+        .map_err(|e| format!("cron 表达式无效：{e}"))?;
+
+    let n = count.unwrap_or(5).min(20);
+    let mut times = Vec::with_capacity(n);
+    let mut cursor = chrono::Local::now();
+    for _ in 0..n {
+        match schedule.find_next_occurrence(&cursor, false) {
+            Ok(next) => {
+                times.push(next.timestamp());
+                cursor = next;
+            }
+            Err(_) => break,
+        }
+    }
+    Ok(times)
+}
+
+/// Cron 表达式的人话翻译（D3）：`0 0 9 * * 1-5` → `每工作日 09:00`
+#[tauri::command]
+pub fn scheduler_describe_cron(cron_expr: String) -> Result<String, String> {
+    let parts: Vec<&str> = cron_expr.trim().split_whitespace().collect();
+    if parts.len() != 5 && parts.len() != 6 {
+        return Err("cron 表达式需要 5 或 6 个字段".to_string());
+    }
+    // 5 字段时字段序为 分 时 日 月 周；6 字段时为 秒 分 时 日 月 周
+    let (min, hour, dom, mon, dow) = if parts.len() == 5 {
+        (
+            parts.first().unwrap_or(&"*"),
+            parts.get(1).unwrap_or(&"*"),
+            parts.get(2).unwrap_or(&"*"),
+            parts.get(3).unwrap_or(&"*"),
+            parts.get(4).unwrap_or(&"*"),
+        )
+    } else {
+        (
+            parts.get(1).unwrap_or(&"*"),
+            parts.get(2).unwrap_or(&"*"),
+            parts.get(3).unwrap_or(&"*"),
+            parts.get(4).unwrap_or(&"*"),
+            parts.get(5).unwrap_or(&"*"),
+        )
+    };
+
+    // 快速人话模板（覆盖高频模式）
+    let pad2 = |s: &str| -> String {
+        if s.len() < 2 { format!("0{s}") } else { s.to_string() }
+    };
+    let hm = format!("{}:{}", pad2(hour), pad2(min));
+
+    let desc = if min == &"*" && hour == &"*" && dom == &"*" && mon == &"*" && dow == &"*" {
+        "每分钟".to_string()
+    } else if min.starts_with("*/") && hour == &"*" && dom == &"*" && mon == &"*" && dow == &"*" {
+        format!("每 {} 分钟", &min[2..])
+    } else if hour.starts_with("*/") && min == &"0" && dom == &"*" && mon == &"*" && dow == &"*" {
+        format!("每 {} 小时", &hour[2..])
+    } else if min != &"*" && hour != &"*" && dom == &"*" && mon == &"*" && dow == &"*" {
+        format!("每天 {hm}")
+    } else if min != &"*" && hour != &"*" && dom == &"*" && mon == &"*" && dow == &"1-5" {
+        format!("工作日 {hm}")
+    } else if min != &"*" && hour != &"*" && dom == &"*" && mon == &"*" && (dow == &"0" || dow == &"7" || dow == &"6,0" || dow == &"0,6") {
+        format!("周末 {hm}")
+    } else if min != &"*" && hour != &"*" && dom == &"1" && mon == &"*" && dow == &"*" {
+        format!("每月 1 日 {hm}")
+    } else {
+        format!("cron: {cron_expr}")
+    };
+    Ok(desc)
 }

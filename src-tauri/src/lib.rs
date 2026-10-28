@@ -61,6 +61,9 @@ pub fn run() {
         // 原生剪贴板插件：终端 Cmd+C/V 经由 Rust 侧读写系统剪贴板，
         // 绕开 WKWebView navigator.clipboard 的粘贴授权弹层（原生「粘贴」按钮）
         .plugin(tauri_plugin_clipboard_manager::init())
+        // 系统通知（跨平台：macOS 通知中心 / Windows Toast / Linux libnotify）
+        // — 定时任务失败/成功告警用
+        .plugin(tauri_plugin_notification::init())
         .manage(terminal::manager::TerminalManager::new())
         // 联动组内 ZMODEM 请求聚合（一次交互，N 路扇出）；Arc 形态与
         // TerminalManager 的 try_state 取值类型一致
@@ -151,6 +154,8 @@ pub fn run() {
             scheduler::scheduler_task_history,
             scheduler::scheduler_history_clear,
             scheduler::scheduler_run_now,
+            scheduler::scheduler_preview_next,
+            scheduler::scheduler_describe_cron,
             db_browser::db_odbc_drivers,
             db_browser::db_odbc_data_sources,
             db_browser::sqlite_file_pick,

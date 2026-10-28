@@ -19,6 +19,17 @@ export interface ScheduledTask {
   updatedAt: number;
   lastRunAt?: number | null;
   lastStatus?: string | null;
+  // D1 失败通知
+  notifyOn?: string | null;
+  webhookUrl?: string | null;
+  // D2 超时与重试
+  timeoutSecs?: number | null;
+  maxRetries?: number | null;
+  retryBackoffSecs?: number | null;
+  // D4 一次性任务
+  runAt?: number | null;
+  // D5 历史保留
+  retentionDays?: number | null;
 }
 
 export interface TaskLog {
@@ -102,6 +113,16 @@ export function schedulerHistoryClear(taskId?: string | null): Promise<void> {
 
 export function schedulerRunNow(id: string): Promise<void> {
   return invoke('scheduler_run_now', { id });
+}
+
+/** D3: Cron 表达式的未来触发预览（返回接下来 N 次 Unix 秒时间戳） */
+export function schedulerPreviewNext(cronExpr: string, count?: number): Promise<number[]> {
+  return invoke('scheduler_preview_next', { cronExpr, count });
+}
+
+/** D3: Cron 表达式的人话翻译 */
+export function schedulerDescribeCron(cronExpr: string): Promise<string> {
+  return invoke('scheduler_describe_cron', { cronExpr });
 }
 
 export function listenTaskEvent(cb: (event: TaskEvent) => void): Promise<UnlistenFn> {

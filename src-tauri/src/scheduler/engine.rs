@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::Mutex;
 use tokio_cron_scheduler::{Job, JobScheduler};
@@ -55,7 +56,37 @@ impl SchedulerEngine {
             }
         }
         log::info!("[scheduler] 已加载 {}/{} 个定时任务", active.len(), tasks.len());
+
+        // D5 历史保留策略清理（load_all 后执行一次）
+        let _ = store::cleanup_expired_logs(&self.pool);
+
+        // D4 一次性任务（run_at）：到期触发，不用 cron
+        self.spawn_run_at_tasks(&tasks);
+
         Ok(())
+    }
+
+    /// D4 一次性延时任务：为每个有 run_at 且已到期的任务 spawn 执行
+    /// （run_at 在未来的任务等到达后触发；引擎生命周期内有效）
+    fn spawn_run_at_tasks(&self, tasks: &[ScheduledTask]) {
+        for task in tasks.iter().filter(|t| t.enabled && t.run_at.is_some()) {
+            let Some(run_at) = task.run_at else { continue };
+            let now = chrono::Utc::now().timestamp();
+            let delay = (run_at - now).max(0);
+            let pool = self.pool.clone();
+            let app = self.app.clone();
+            let task_name = task.name.clone();
+            let task = task.clone();
+            tokio::spawn(async move {
+                if delay > 0 {
+                    tokio::time::sleep(Duration::from_secs(delay as u64)).await;
+                }
+                super::engine::run_task_internal(&task, &pool, &app).await;
+            });
+            log::info!(
+                "[scheduler] 一次性任务「{task_name}」将在 {delay}s 后触发"
+            );
+        }
     }
 
     /// 单条任务注册 Job（CRUD create/update/toggle 后调用）
@@ -119,33 +150,68 @@ impl SchedulerEngine {
     }
 }
 
-/// 执行一个任务并记录结果 + 推送事件
+/// 执行一个任务（pub(crate) 供 spawn_run_at_tasks 调用）
+pub(crate) async fn run_task_internal(task: &ScheduledTask, pool: &DbPool, app: &AppHandle) {
+    run_task(task, pool, app).await;
+}
+
+/// 执行一个任务并记录结果 + 推送事件 + D1 通知 + D2 重试 + D4 一次性自动停用
 async fn run_task(task: &ScheduledTask, pool: &DbPool, app: &AppHandle) {
-    let started_ts = chrono::Utc::now().timestamp();
+    let max_retries = task.max_retries.unwrap_or(0);
+    let backoff = task.retry_backoff_secs.unwrap_or(30);
+    let mut attempt: u32 = 0;
+    let final_result;
 
-    // 推送 started 事件
-    let _ = app.emit("scheduler-task-event", executor::started_event(task, started_ts));
+    loop {
+        let started_ts = chrono::Utc::now().timestamp();
 
-    // 记录 running 状态
-    let _ = store::record_run(pool, &task.id, started_ts, None, None, None, None);
+        // 推送 started 事件
+        let _ = app.emit("scheduler-task-event", executor::started_event(task, started_ts));
 
-    let result = executor::execute(task, pool).await;
-    let finished_ts = chrono::Utc::now().timestamp();
+        // 记录 running 状态
+        let _ = store::record_run(pool, &task.id, started_ts, None, None, None, None);
 
-    // 更新日志 + 任务状态
-    let _ = store::record_run_extra(
-        pool,
-        &task.id,
-        started_ts,
-        finished_ts,
-        result.exit_code,
-        Some(&result.stdout_tail),
-        Some(&result.stderr_tail),
-    );
+        let result = executor::execute(task, pool).await;
+        let finished_ts = chrono::Utc::now().timestamp();
 
-    // 推送 finished 事件
-    let _ = app.emit(
-        "scheduler-task-event",
-        executor::finished_event(task, started_ts, finished_ts, result.exit_code, &result.stderr_tail),
-    );
+        // 更新日志 + 任务状态
+        let _ = store::record_run_extra(
+            pool,
+            &task.id,
+            started_ts,
+            finished_ts,
+            result.exit_code,
+            Some(&result.stdout_tail),
+            Some(&result.stderr_tail),
+        );
+
+        // 推送 finished 事件
+        let _ = app.emit(
+            "scheduler-task-event",
+            executor::finished_event(task, started_ts, finished_ts, result.exit_code, &result.stderr_tail),
+        );
+
+        let is_failure = result.exit_code != Some(0);
+        if !is_failure || attempt >= max_retries {
+            final_result = result;
+            break;
+        }
+
+        // D2 失败重试：等待 backoff 后重跑（最后一次重试的结果为最终结果）
+        attempt += 1;
+        log::info!(
+            "[scheduler] 任务「{}」失败（attempt {}/{}），{}s 后重试",
+            task.name, attempt, max_retries, backoff
+        );
+        tokio::time::sleep(Duration::from_secs(backoff)).await;
+    }
+
+    // D1 失败/成功通知
+    executor::send_notification(task, final_result.exit_code, &final_result.stderr_tail, app).await;
+
+    // D4 一次性任务触发后自动停用
+    if task.run_at.is_some() {
+        let _ = store::set_enabled(pool, &task.id, false);
+        log::info!("[scheduler] 一次性任务「{}」已执行完毕，自动停用", task.name);
+    }
 }
