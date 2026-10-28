@@ -39,7 +39,7 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.7.2", features = [] }
+tauri-build = { version = "2.7.4", features = [] }
 # build.rs 解析 assets/oracle-errors/zh-CN.json 生成嵌入表（与主依赖同一份
 # 版本，不引入新 crate）
 serde_json = "1.0"
@@ -103,7 +103,7 @@ ed25519-dalek = { version = "3", features = ["rand_core"] }
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 rand = "0.10"
 # protocol-asset：PDF 预览经 convertFileSrc 把临时 PNG 转为 asset:// URL
-tauri = { version = "2.12.3", features = ["macos-private-api", "protocol-asset"] }
+tauri = { version = "2.12.5", features = ["macos-private-api", "protocol-asset"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-log = "2"
 thiserror = "2"
