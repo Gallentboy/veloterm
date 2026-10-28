@@ -225,7 +225,10 @@ jobs:
           } else {
             'make gettext mingw-w64-clang-aarch64-gcc-compat mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-pkg-config mingw-w64-clang-aarch64-libxml2 mingw-w64-clang-aarch64-gmp mingw-w64-clang-aarch64-mpfr'
           }
-          C:\msys64\usr\bin\bash.exe -l -c "pacman -Sy --needed --noconfirm $pkgs"
+          # -Syuu：双同步允许降级，确保 runner 镜像里的旧包与 repo 最新版
+          # 一致（-Sy --needed 只装缺失不升级旧包——v1.0.12 实锤：镜像旧 crt
+          # 与新 gcc 混搭导致 C compiler cannot create executables）
+          C:\msys64\usr\bin\bash.exe -l -c "pacman -Syuu --needed --noconfirm $pkgs"
 
       - name: Snapshot MSYS2 toolchain for pinning (cache miss)
         # 缓存未命中：把刚装好的整套工具链打包，job 成功后由 actions/cache
