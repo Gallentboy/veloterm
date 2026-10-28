@@ -13,7 +13,7 @@ import { AiProviderDialog } from '@/components/ai/AiProviderDialog';
 import { deleteAiProvider, listAiProviders, type AiProvider } from '@/services/aiService';
 import { SUPPORTED_LOCALES, type Locale } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { useThemeContext, type Theme } from '@/theme/ThemeProvider';
+import { useThemeContext, type Theme, type ThemePreset } from '@/theme/ThemeProvider';
 import { SIDEBAR_NAV_ITEMS } from '@/components/WorkspaceSidebar';
 import {
   getSidebarMenuConfig,
@@ -43,6 +43,18 @@ const THEME_OPTIONS: Array<{ value: Theme; icon: LucideIcon; labelKey: string }>
   { value: 'dark', icon: Moon, labelKey: 'theme.dark' },
 ];
 
+const THEME_PRESET_OPTIONS: Array<{
+  value: ThemePreset;
+  label: string;
+  dotColor: string;
+}> = [
+  { value: 'default', label: 'Default (Zinc)', dotColor: '#71717a' },
+  { value: 'catppuccin', label: 'Catppuccin Mocha', dotColor: '#cba6f7' },
+  { value: 'tokyo-night', label: 'Tokyo Night', dotColor: '#7aa2f7' },
+  { value: 'nord', label: 'Nord', dotColor: '#88c0d0' },
+  { value: 'github-dark', label: 'GitHub Dark', dotColor: '#2f81f7' },
+];
+
 const LOCALE_LABELS: Record<Locale, string> = {
   'zh-CN': '简体中文',
   'en-US': 'English',
@@ -58,7 +70,7 @@ const LOG_LEVEL_OPTIONS: Array<{ value: LogLevel; label: string }> = [
 
 export function SettingsScreen() {
   const { t, i18n } = useTranslation();
-  const { theme, setTheme } = useThemeContext();
+  const { theme, setTheme, themePreset, setThemePreset } = useThemeContext();
   const { version } = useAppVersion();
   const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
   const [aiDialog, setAiDialog] = useState<{ mode: 'create' } | { mode: 'edit'; node: AiProvider } | null>(null);
@@ -161,6 +173,32 @@ export function SettingsScreen() {
                 label: t(labelKey),
               }))}
             />
+          </SettingRow>
+          <SettingRow
+            title={t('settings.themePreset', '色彩预设')}
+            desc={t('settings.themePresetDesc', '针对深色模式的主题光谱与终端高亮配色')}
+          >
+            <div className="flex flex-wrap items-center gap-1.5">
+              {THEME_PRESET_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setThemePreset(opt.value)}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-ui-xs font-medium transition-all select-none',
+                    themePreset === opt.value
+                      ? 'border-primary bg-selected text-foreground shadow-2xs font-semibold'
+                      : 'border-border/60 bg-surface/40 text-foreground-subtle hover:bg-surface hover:text-foreground',
+                  )}
+                >
+                  <span
+                    className="size-2 rounded-full shrink-0"
+                    style={{ backgroundColor: opt.dotColor }}
+                  />
+                  <span>{opt.label}</span>
+                </button>
+              ))}
+            </div>
           </SettingRow>
           <SettingRow title={t('language.label')} desc={t('settings.languageDesc')}>
             <SettingOptionGroup

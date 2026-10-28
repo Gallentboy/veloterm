@@ -48,6 +48,7 @@ import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 interface ManualModalProps {
   open: boolean;
   onClose: () => void;
+  initialSectionId?: string | null;
 }
 
 const DEFAULT_SIDEBAR_WIDTH = 280;
@@ -134,7 +135,11 @@ function ManualCodeBlock({
 }
 
 /** 电子书式使用说明全景大弹窗 */
-export const ManualModal = memo(function ManualModal({ open, onClose }: ManualModalProps) {
+export const ManualModal = memo(function ManualModal({
+  open,
+  onClose,
+  initialSectionId,
+}: ManualModalProps) {
   const { t, i18n } = useTranslation();
   const chapters = useMemo(() => getManualChapters(i18n.language), [i18n.language]);
   const flatSections = useMemo(() => flattenManualSections(chapters), [chapters]);
@@ -165,6 +170,13 @@ export const ManualModal = memo(function ManualModal({ open, onClose }: ManualMo
 
   // 正文视口容器 ref，切换小节自动滚顶
   const contentScrollRef = useRef<HTMLDivElement>(null);
+
+  // 外部通过 initialSectionId 指定激活小节时联动切换
+  useEffect(() => {
+    if (open && initialSectionId && flatSections.some((item) => item.section.id === initialSectionId)) {
+      setActiveSectionId(initialSectionId);
+    }
+  }, [open, initialSectionId, flatSections]);
 
   // 确保当前激活小节在有效列表内
   useEffect(() => {

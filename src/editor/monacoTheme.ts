@@ -199,13 +199,19 @@ export function ensureMonacoThemeAutoSwitch(): void {
     return;
   }
   themeObserver = new MutationObserver((mutations) => {
-    if (mutations.some((m) => m.type === 'attributes' && m.attributeName === 'class')) {
+    if (
+      mutations.some(
+        (m) =>
+          m.type === 'attributes' &&
+          (m.attributeName === 'class' || m.attributeName === 'data-theme-preset'),
+      )
+    ) {
       scheduleThemeSwitch();
     }
   });
   themeObserver.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ['class'],
+    attributeFilter: ['class', 'data-theme-preset'],
   });
 }
 

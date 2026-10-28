@@ -1,18 +1,24 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import { useTheme, type Theme } from './useTheme';
+import { useTheme, type Theme, type ThemePreset } from './useTheme';
 
-export type { Theme };
+export type { Theme, ThemePreset };
 
 interface ThemeContextValue {
   theme: Theme;
   setTheme: (theme: Theme) => void;
+  themePreset: ThemePreset;
+  setThemePreset: (preset: ThemePreset) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const { theme, setTheme } = useTheme();
-  return <ThemeContext value={{ theme, setTheme }}>{children}</ThemeContext>;
+  const { theme, setTheme, themePreset, setThemePreset } = useTheme();
+  return (
+    <ThemeContext value={{ theme, setTheme, themePreset, setThemePreset }}>
+      {children}
+    </ThemeContext>
+  );
 }
 
 export function useThemeContext(): ThemeContextValue {

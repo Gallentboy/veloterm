@@ -72,6 +72,56 @@ function compareCells(a: string, b: string): number {
   return valA.localeCompare(valB, undefined, { numeric: true });
 }
 
+/** 智能类型感知渲染单元格内容（NULL 胶囊、布尔圆点、JSON 标记、数值等宽） */
+function renderCellContent(cell: string): React.ReactNode {
+  if (cell === 'NULL') {
+    return (
+      <span className="inline-flex items-center rounded bg-foreground-subtle/10 px-1.5 py-0.5 font-mono text-[10px] tracking-tight text-foreground-subtlest border border-border/30 select-none">
+        NULL
+      </span>
+    );
+  }
+  const lower = cell.toLowerCase();
+  if (lower === 'true') {
+    return (
+      <span className="inline-flex items-center gap-1 font-mono text-ui-xs text-terminal-green">
+        <span className="size-1.5 rounded-full bg-terminal-green shrink-0" />
+        true
+      </span>
+    );
+  }
+  if (lower === 'false') {
+    return (
+      <span className="inline-flex items-center gap-1 font-mono text-ui-xs text-foreground-subtle">
+        <span className="size-1.5 rounded-full bg-foreground-subtle/40 shrink-0" />
+        false
+      </span>
+    );
+  }
+  const trimmed = cell.trim();
+  if (
+    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'))
+  ) {
+    if (trimmed.length > 2) {
+      return (
+        <span className="inline-flex items-center gap-1 font-mono text-ui-xs">
+          <span className="rounded bg-terminal-cyan/15 px-1 py-0.2 text-[9px] font-bold text-terminal-cyan border border-terminal-cyan/20 select-none">
+            JSON
+          </span>
+          <span className="truncate">{cell}</span>
+        </span>
+      );
+    }
+  }
+  const isNumber = !Number.isNaN(Number(trimmed)) && trimmed !== '';
+  return (
+    <span className={cn('truncate', isNumber && 'font-mono tabular-nums text-foreground')}>
+      {cell}
+    </span>
+  );
+}
+
 export const DataTable = memo(function DataTable({
   columns,
   rows,
@@ -314,12 +364,9 @@ export const DataTable = memo(function DataTable({
                           span select-text 重新开启选中，高亮只盖文本本身 */}
                       <span
                         data-cell-text
-                        className={cn(
-                          'inline-block max-w-xs truncate select-text',
-                          cell === 'NULL' ? 'text-foreground-subtlest italic' : '',
-                        )}
+                        className="inline-flex max-w-xs items-center truncate select-text"
                       >
-                        {cell}
+                        {renderCellContent(cell)}
                       </span>
                     </td>
                   ))}
@@ -343,13 +390,17 @@ export const DataTable = memo(function DataTable({
         ) : null}
       </div>
 
-      <div className="flex shrink-0 items-center justify-between border-t border-border/60 bg-surface/40 px-3 py-1 text-foreground-subtle select-none">
+      <div className="flex shrink-0 items-center justify-between border-t border-border/60 bg-surface/40 px-3 py-1.5 text-foreground-subtle select-none">
         {statusFooter ?? (
-          <span>
-            {deferredFilter
-              ? t('files.matchedRows', { count: processedRows.length, total: rows.length })
-              : `${rows.length} 行 · ${columns.length} 列`}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded bg-surface/80 px-1.5 py-0.5 font-mono text-[11px] text-foreground-subtle border border-border/40">
+              <span className="font-semibold text-foreground">{processedRows.length}</span>
+              {deferredFilter ? `/${rows.length}` : ''} {t('dataTable.rows', '行')}
+            </span>
+            <span className="inline-flex items-center gap-1 rounded bg-surface/80 px-1.5 py-0.5 font-mono text-[11px] text-foreground-subtle border border-border/40">
+              <span className="font-semibold text-foreground">{columns.length}</span> {t('dataTable.columns', '列')}
+            </span>
+          </div>
         )}
       </div>
 

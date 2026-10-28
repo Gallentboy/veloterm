@@ -1988,9 +1988,9 @@ export function DbSessionView({
                         setActiveObjectKey(null);
                       }}
                       className={cn(
-                        'flex shrink-0 items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-ui-xs transition-colors',
+                        'flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-ui-xs transition-colors',
                         activeObjectKey === null && i === activeResult
-                          ? 'border-border bg-surface font-semibold text-foreground'
+                          ? 'border-border bg-surface font-semibold text-foreground shadow-xs'
                           : 'border-transparent text-foreground-subtle hover:bg-hover hover:text-foreground',
                       )}
                     >
@@ -2001,7 +2001,19 @@ export function DbSessionView({
                       ) : (
                         <Square className="size-2.5 fill-foreground-subtlest text-foreground-subtlest" />
                       )}
-                      #{result.index + 1}
+                      <span>#{result.index + 1}</span>
+                      {result.columns.length > 0 ? (
+                        <span className="rounded bg-surface/80 px-1 py-0.2 font-mono text-[9px] text-foreground-subtle border border-border/30">
+                          {result.rows.length}
+                        </span>
+                      ) : result.affected !== null ? (
+                        <span className="rounded bg-surface/80 px-1 py-0.2 font-mono text-[9px] text-terminal-cyan border border-border/30">
+                          {result.affected}
+                        </span>
+                      ) : null}
+                      <span className="font-mono text-[9px] text-foreground-subtlest">
+                        {result.elapsedMs}ms
+                      </span>
                     </button>
                   ))}
                   {objectPages.map((page) => (

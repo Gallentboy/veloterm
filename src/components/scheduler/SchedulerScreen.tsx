@@ -337,9 +337,9 @@ export function SchedulerScreen() {
                   <div
                     key={task.id}
                     className={cn(
-                      'flex items-center gap-3.5 rounded-xl border px-4 py-3 transition-colors',
+                      'flex items-center gap-3.5 rounded-xl border px-4 py-3 transition-all',
                       task.enabled
-                        ? 'border-border/60 bg-surface/30 hover:border-border'
+                        ? 'border-border/60 bg-surface/30 hover:border-border card-glossy'
                         : 'border-border/40 bg-surface/10 opacity-60',
                       logTaskId === task.id && 'border-primary/50 ring-1 ring-primary/20',
                     )}
@@ -358,7 +358,12 @@ export function SchedulerScreen() {
                     {/* 任务核心信息 */}
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="truncate text-ui-sm font-semibold text-foreground">
+                        <span className="flex items-center gap-1.5 truncate text-ui-sm font-semibold text-foreground">
+                          {task.enabled ? (
+                            <span className="size-2 rounded-full bg-terminal-green status-pulse-emerald shrink-0" />
+                          ) : (
+                            <span className="size-2 rounded-full bg-foreground-subtlest/60 shrink-0" />
+                          )}
                           {task.name}
                         </span>
                         {task.runAt ? (

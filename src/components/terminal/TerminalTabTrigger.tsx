@@ -115,11 +115,13 @@ export function TerminalTabTrigger({
         <SquareTerminal className="size-3.5 shrink-0 text-foreground-subtle" />
       )}
       {envLevel === 'prod' ? (
-        <span className="shrink-0 px-1 py-0.2 rounded font-mono text-[9px] font-bold uppercase bg-red-500/20 text-red-500 border border-red-500/30">
+        <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider bg-red-500/15 text-red-500 border border-red-500/30 shadow-[0_0_8px_rgba(239,68,68,0.2)]">
+          <span className="size-1.5 rounded-full bg-red-500 status-pulse-rose" />
           PROD
         </span>
       ) : envLevel === 'staging' ? (
-        <span className="shrink-0 px-1 py-0.2 rounded font-mono text-[9px] font-bold uppercase bg-amber-500/20 text-amber-500 border border-amber-500/30">
+        <span className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-500 border border-amber-500/30 shadow-[0_0_8px_rgba(245,158,11,0.2)]">
+          <span className="size-1.5 rounded-full bg-amber-500 status-pulse-amber" />
           STAGE
         </span>
       ) : null}

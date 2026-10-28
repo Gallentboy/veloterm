@@ -186,6 +186,210 @@ html[data-platform]:not([data-platform="macos"]):not([data-platform="ios"]) {
   --color-terminal-bright-white: #f8f8f8;
 }
 
+/* ===== Catppuccin Mocha 主题预置 ===== */
+.dark[data-theme-preset="catppuccin"],
+.theme-dark[data-theme-preset="catppuccin"] {
+  --color-background: #1e1e2e;
+  --color-background-alt: color-mix(in oklab, #181825 70%, transparent);
+  --color-background-win-alt: #181825;
+  --color-header: #181825;
+  --color-panel: #181825;
+  --color-sidebar: #11111b;
+  --color-surface: rgba(205, 214, 244, 0.05);
+  --color-surface-hover: rgba(205, 214, 244, 0.08);
+  --color-hover: rgba(205, 214, 244, 0.06);
+  --color-selected: rgba(203, 166, 247, 0.15);
+  --color-border: rgba(205, 214, 244, 0.12);
+  --color-border-hover: rgba(205, 214, 244, 0.2);
+  --color-card: #181825;
+  --color-popover: #181825;
+  --color-input: #313244;
+  --color-menu: #181825;
+  --color-menu-hover: #313244;
+  --color-primary: #cba6f7;
+  --color-primary-foreground: #11111b;
+  --color-secondary: #313244;
+  --color-accent: #45475a;
+  --color-foreground: #cdd6f4;
+  --color-success: #a6e3a1;
+  --color-warning: #f9e2af;
+  --color-destructive: #f38ba8;
+
+  --color-terminal-bg: #1e1e2e;
+  --color-terminal-fg: #cdd6f4;
+  --color-terminal-cursor: #f5e0dc;
+  --color-terminal-selection: rgba(203, 166, 247, 0.3);
+  --color-terminal-black: #45475a;
+  --color-terminal-red: #f38ba8;
+  --color-terminal-green: #a6e3a1;
+  --color-terminal-yellow: #f9e2af;
+  --color-terminal-blue: #89b4fa;
+  --color-terminal-magenta: #cba6f7;
+  --color-terminal-cyan: #94e2d5;
+  --color-terminal-white: #bac2de;
+  --color-terminal-bright-black: #585b70;
+  --color-terminal-bright-red: #f38ba8;
+  --color-terminal-bright-green: #a6e3a1;
+  --color-terminal-bright-yellow: #f9e2af;
+  --color-terminal-bright-blue: #89b4fa;
+  --color-terminal-bright-magenta: #cba6f7;
+  --color-terminal-bright-cyan: #94e2d5;
+  --color-terminal-bright-white: #a6adc8;
+}
+
+/* ===== Tokyo Night 主题预置 ===== */
+.dark[data-theme-preset="tokyo-night"],
+.theme-dark[data-theme-preset="tokyo-night"] {
+  --color-background: #1a1b26;
+  --color-background-alt: color-mix(in oklab, #16161e 70%, transparent);
+  --color-background-win-alt: #16161e;
+  --color-header: #16161e;
+  --color-panel: #16161e;
+  --color-sidebar: #13141c;
+  --color-surface: rgba(192, 202, 245, 0.05);
+  --color-surface-hover: rgba(192, 202, 245, 0.08);
+  --color-hover: rgba(192, 202, 245, 0.06);
+  --color-selected: rgba(122, 162, 247, 0.16);
+  --color-border: rgba(192, 202, 245, 0.12);
+  --color-border-hover: rgba(122, 162, 247, 0.25);
+  --color-card: #16161e;
+  --color-popover: #1f2335;
+  --color-input: #24283b;
+  --color-menu: #1f2335;
+  --color-menu-hover: #292e42;
+  --color-primary: #7aa2f7;
+  --color-primary-foreground: #15161e;
+  --color-secondary: #24283b;
+  --color-accent: #283457;
+  --color-foreground: #c0caf5;
+  --color-success: #9ece6a;
+  --color-warning: #e0af68;
+  --color-destructive: #f7768e;
+
+  --color-terminal-bg: #1a1b26;
+  --color-terminal-fg: #c0caf5;
+  --color-terminal-cursor: #c0caf5;
+  --color-terminal-selection: rgba(122, 162, 247, 0.3);
+  --color-terminal-black: #15161e;
+  --color-terminal-red: #f7768e;
+  --color-terminal-green: #9ece6a;
+  --color-terminal-yellow: #e0af68;
+  --color-terminal-blue: #7aa2f7;
+  --color-terminal-magenta: #bb9af7;
+  --color-terminal-cyan: #7dcfff;
+  --color-terminal-white: #a9b1d6;
+  --color-terminal-bright-black: #414868;
+  --color-terminal-bright-red: #f7768e;
+  --color-terminal-bright-green: #9ece6a;
+  --color-terminal-bright-yellow: #e0af68;
+  --color-terminal-bright-blue: #7aa2f7;
+  --color-terminal-bright-magenta: #bb9af7;
+  --color-terminal-bright-cyan: #7dcfff;
+  --color-terminal-bright-white: #c0caf5;
+}
+
+/* ===== Nord 主题预置 ===== */
+.dark[data-theme-preset="nord"],
+.theme-dark[data-theme-preset="nord"] {
+  --color-background: #2e3440;
+  --color-background-alt: color-mix(in oklab, #242933 70%, transparent);
+  --color-background-win-alt: #242933;
+  --color-header: #242933;
+  --color-panel: #242933;
+  --color-sidebar: #1e222a;
+  --color-surface: rgba(236, 239, 244, 0.05);
+  --color-surface-hover: rgba(236, 239, 244, 0.08);
+  --color-hover: rgba(236, 239, 244, 0.06);
+  --color-selected: rgba(136, 192, 208, 0.16);
+  --color-border: rgba(236, 239, 244, 0.12);
+  --color-border-hover: rgba(136, 192, 208, 0.25);
+  --color-card: #242933;
+  --color-popover: #3b4252;
+  --color-input: #3b4252;
+  --color-menu: #3b4252;
+  --color-menu-hover: #434c5e;
+  --color-primary: #88c0d0;
+  --color-primary-foreground: #2e3440;
+  --color-secondary: #3b4252;
+  --color-accent: #4c566a;
+  --color-foreground: #eceff4;
+  --color-success: #a3be8c;
+  --color-warning: #ebcb8b;
+  --color-destructive: #bf616a;
+
+  --color-terminal-bg: #2e3440;
+  --color-terminal-fg: #d8dee9;
+  --color-terminal-cursor: #d8dee9;
+  --color-terminal-selection: rgba(136, 192, 208, 0.3);
+  --color-terminal-black: #3b4252;
+  --color-terminal-red: #bf616a;
+  --color-terminal-green: #a3be8c;
+  --color-terminal-yellow: #ebcb8b;
+  --color-terminal-blue: #81a1c1;
+  --color-terminal-magenta: #b48ead;
+  --color-terminal-cyan: #88c0d0;
+  --color-terminal-white: #e5e9f0;
+  --color-terminal-bright-black: #4c566a;
+  --color-terminal-bright-red: #bf616a;
+  --color-terminal-bright-green: #a3be8c;
+  --color-terminal-bright-yellow: #ebcb8b;
+  --color-terminal-bright-blue: #81a1c1;
+  --color-terminal-bright-magenta: #b48ead;
+  --color-terminal-bright-cyan: #8fbcbb;
+  --color-terminal-bright-white: #eceff4;
+}
+
+/* ===== GitHub Dark 主题预置 ===== */
+.dark[data-theme-preset="github-dark"],
+.theme-dark[data-theme-preset="github-dark"] {
+  --color-background: #0d1117;
+  --color-background-alt: color-mix(in oklab, #010409 70%, transparent);
+  --color-background-win-alt: #010409;
+  --color-header: #010409;
+  --color-panel: #010409;
+  --color-sidebar: #010409;
+  --color-surface: rgba(230, 237, 243, 0.05);
+  --color-surface-hover: rgba(230, 237, 243, 0.08);
+  --color-hover: rgba(230, 237, 243, 0.06);
+  --color-selected: rgba(47, 129, 247, 0.16);
+  --color-border: rgba(230, 237, 243, 0.12);
+  --color-border-hover: rgba(47, 129, 247, 0.25);
+  --color-card: #161b22;
+  --color-popover: #161b22;
+  --color-input: #21262d;
+  --color-menu: #161b22;
+  --color-menu-hover: #21262d;
+  --color-primary: #2f81f7;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #21262d;
+  --color-accent: #1f6feb;
+  --color-foreground: #e6edf3;
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-destructive: #ff7b72;
+
+  --color-terminal-bg: #0d1117;
+  --color-terminal-fg: #e6edf3;
+  --color-terminal-cursor: #2f81f7;
+  --color-terminal-selection: rgba(47, 129, 247, 0.3);
+  --color-terminal-black: #484f58;
+  --color-terminal-red: #ff7b72;
+  --color-terminal-green: #3fb950;
+  --color-terminal-yellow: #d29922;
+  --color-terminal-blue: #58a6ff;
+  --color-terminal-magenta: #bc8cff;
+  --color-terminal-cyan: #39c5cf;
+  --color-terminal-white: #b1bac4;
+  --color-terminal-bright-black: #6e7681;
+  --color-terminal-bright-red: #ffa198;
+  --color-terminal-bright-green: #56d364;
+  --color-terminal-bright-yellow: #e3b341;
+  --color-terminal-bright-blue: #79c0ff;
+  --color-terminal-bright-magenta: #d2a8ff;
+  --color-terminal-bright-cyan: #56d4dd;
+  --color-terminal-bright-white: #f0f6fc;
+}
+
 html,
 body,
 #root {
@@ -612,6 +816,56 @@ body {
   font-weight: 700;
 }
 
+/*
+ * 视觉微动效与材质增强：状态脉冲呼吸光环 & 卡片暗部内高光
+ */
+@keyframes status-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 var(--pulse-color, rgba(70, 191, 114, 0.6));
+  }
+  70% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.status-pulse-emerald {
+  --pulse-color: rgba(70, 191, 114, 0.6);
+  animation: status-pulse-ring 2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+.status-pulse-rose {
+  --pulse-color: rgba(244, 63, 94, 0.6);
+  animation: status-pulse-ring 1.8s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+.status-pulse-amber {
+  --pulse-color: rgba(245, 158, 11, 0.6);
+  animation: status-pulse-ring 2.2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+.status-pulse-sky {
+  --pulse-color: rgba(56, 189, 248, 0.6);
+  animation: status-pulse-ring 2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+/* 具有顶部 1px 细微高光与柔和层次的卡片质感 */
+.card-glossy {
+  position: relative;
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.08), 0 4px 16px -3px rgba(0, 0, 0, 0.3);
+}
+
+:not(.dark):not(.theme-dark) .card-glossy {
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.9), 0 2px 8px -2px rgba(0, 0, 0, 0.06);
+}
+
+/* 编程连字（Ligatures）支持 */
+.font-ligatures {
+  font-variant-ligatures: normal;
+  font-feature-settings: "liga" 1, "calt" 1;
+}
 
 /* 页内指针拖拽进行中（设置页菜单宫格排序等）：全局强制抓取手光标。
    !important 压过一切元素级 cursor（类级 cursor-pointer 等） */

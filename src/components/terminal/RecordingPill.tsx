@@ -13,7 +13,7 @@
  * 「回放上次录制」进入。
  */
 
-import { Circle, CircleStop, Eye, FileDown, FileText, Film, Play, Video } from 'lucide-react';
+import { CircleStop, Eye, FileDown, FileText, Film, Play, Video } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -194,7 +194,10 @@ export function RecordingPill({
         >
           {active ? (
             <>
-              <Circle className="size-2.5 animate-pulse fill-red-500 text-red-500" />
+              <span className="relative flex size-2.5 items-center justify-center">
+                <span className="absolute inline-flex size-full rounded-full bg-red-500 status-pulse-rose opacity-90" />
+                <span className="relative inline-flex size-2 rounded-full bg-red-500" />
+              </span>
               <span>
                 {t('terminal.recording.pillRecording')}
                 {formatRecordElapsed(elapsedMs)}

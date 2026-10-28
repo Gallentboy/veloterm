@@ -666,7 +666,7 @@ export function TerminalSession({
       });
       reuseThemeObserver.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ['class'],
+        attributeFilter: ['class', 'data-theme-preset'],
       });
 
       const reuseResizeObserver = new ResizeObserver(() => {
@@ -1160,7 +1160,7 @@ export function TerminalSession({
     });
     themeObserver.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['class'],
+      attributeFilter: ['class', 'data-theme-preset'],
     });
 
     // 建立接收后端 `Channel<Vec<u8>>` 输出的字节通道，直接将 `Uint8Array` 写入 xterm。

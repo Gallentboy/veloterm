@@ -248,6 +248,8 @@ export function SqlEditor({
       model,
       theme: VELOTERM_MONACO_THEME,
       automaticLayout: true,
+      fontFamily: 'var(--font-mono)',
+      fontLigatures: true,
       fontSize: 13,
       lineHeight: 20,
       minimap: { enabled: false },

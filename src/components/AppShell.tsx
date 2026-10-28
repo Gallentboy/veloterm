@@ -135,6 +135,7 @@ export function AppShell() {
   /** Windows/Linux 的「关于」纯前端弹层开关（macOS 走 Rust 独立窗口） */
   const [isAboutOverlayOpen, setIsAboutOverlayOpen] = useState(false);
   const [isManualOpen, setIsManualOpen] = useState(false);
+  const [manualInitialSectionId, setManualInitialSectionId] = useState<string | null>(null);
   useEffect(() => {
     const unlisten = listen<boolean>('about-visibility', ({ payload }) => {
       setIsAboutOpen(Boolean(payload));
@@ -669,7 +670,15 @@ export function AppShell() {
 
           <DesktopTopOverlay isSidebarVisible={isSidebarVisible} onToggleSidebar={toggleSidebar} />
 
-          <CommandPalette open={isPaletteOpen} onClose={() => setPaletteOpen(false)} />
+          <CommandPalette
+            open={isPaletteOpen}
+            onClose={() => setPaletteOpen(false)}
+            onNavigate={(p) => setPage(p)}
+            onOpenManual={(secId) => {
+              setManualInitialSectionId(secId ?? null);
+              setIsManualOpen(true);
+            }}
+          />
 
           {/* 「关于」窗口打开时主窗遮罩：淡化下层 + 阻断交互。点击遮罩不关闭——
               对话框只能由 OK 按钮（或 Esc/Enter 键盘）收尾。常驻挂载、以透明度
@@ -693,6 +702,7 @@ export function AppShell() {
           <ManualModal
             open={isManualOpen}
             onClose={() => setIsManualOpen(false)}
+            initialSectionId={manualInitialSectionId}
           />
         </div>
       </div>

@@ -46,6 +46,7 @@ const MONACO_EDITOR_OPTIONS = {
   theme: VELOTERM_MONACO_THEME,
   automaticLayout: true,
   fontFamily: 'var(--font-mono)',
+  fontLigatures: true,
   fontSize: 13,
   minimap: { enabled: false },
   scrollBeyondLastLine: false,
