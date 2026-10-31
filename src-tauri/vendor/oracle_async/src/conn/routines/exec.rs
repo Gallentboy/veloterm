@@ -28,6 +28,8 @@ pub struct ExecResponse {
     pub implicit: Vec<ImplicitCursor>,
     /// 出参回读值（下标与传入的 params 对齐；Input 位置为 Null）
     pub output_values: Vec<crate::queryable::OracleValue>,
+    /// 最后一行的解出值（用于分批 Fetch 时跨批次继承未重发的列值）
+    pub last_row: Vec<crate::queryable::OracleValue>,
 }
 
 pub struct ExecRoutine<'a> {
@@ -205,6 +207,7 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
         let mut rows: Vec<Row> = Vec::new();
         let mut has_more_rows = true;
         let mut bit_vector: Vec<bool> = Vec::new();
+        let mut last_row: Vec<crate::queryable::OracleValue> = Vec::new();
         let mut implicit: Vec<ImplicitCursor> = Vec::new();
         // Msg 8 的前两个 int4 = 快照 SCN（LOB 预取轮的 al8i4[5]/[6] 需回放）
         let mut scn: [u64; 2] = [0; 2];
@@ -222,18 +225,14 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                     columns = super::row_common::read_describe(conn).await?;
                     debug!("Describe returned {} columns: {:?}", columns.len(), columns.iter().map(|c| &c.name).collect::<Vec<_>>());
                     bit_vector = vec![true; columns.len()];
+                    last_row = vec![crate::queryable::OracleValue::Null; columns.len()];
                 }
                 21 => {
                     // BitVector (indicating which columns are present in current row)
                     bit_vector = super::row_common::read_bitvector(conn, columns.len()).await?;
                 }
                 6 => {
-                    // Resultset row chunk header：位图非空时更新（v2 语义）
-                    if let Some(bv) =
-                        super::row_common::read_row_header(conn, columns.len()).await?
-                    {
-                        bit_vector = bv;
-                    }
+                    bit_vector = super::row_common::read_row_header(conn, columns.len()).await?;
                 }
                 7 => {
                     // 行数据到达。有出参（OUT/INOUT）时本消息体是「出参值区」
@@ -267,7 +266,7 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                     }
                     // Row data row arrival
                     let cols_arc = Arc::new(columns.clone());
-                    let row = super::row_common::read_row(conn, &cols_arc, &bit_vector).await?;
+                    let row = super::row_common::read_row(conn, &cols_arc, &bit_vector, &mut last_row).await?;
                     rows.push(row);
                 }
                 8 => {
@@ -506,12 +505,7 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                 trace!("LOB prefetch MsgCode: {}", msg);
                 match msg {
                     6 => {
-                        // 位图非空时更新（v2 语义）
-                        if let Some(bv) =
-                            super::row_common::read_row_header(conn, columns.len()).await?
-                        {
-                            bit_vector = bv;
-                        }
+                        bit_vector = super::row_common::read_row_header(conn, columns.len()).await?;
                     }
                     21 => {
                         bit_vector = super::row_common::read_bitvector(conn, columns.len()).await?;
@@ -519,7 +513,7 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                     7 => {
                         let cols_arc = Arc::new(columns.clone());
                         let row =
-                            super::row_common::read_row(conn, &cols_arc, &bit_vector).await?;
+                            super::row_common::read_row(conn, &cols_arc, &bit_vector, &mut last_row).await?;
                         rows.push(row);
                     }
                     8 => {
@@ -579,6 +573,7 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
             has_more_rows,
             implicit,
             output_values,
+            last_row,
         })
     }
 }

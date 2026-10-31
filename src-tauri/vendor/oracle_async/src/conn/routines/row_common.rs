@@ -261,13 +261,7 @@ pub async fn read_column_meta(conn: &mut Conn) -> Result<ColumnMeta> {
 }
 
 /// Msg 6：行块头（go-ora resultSet.load）
-pub async fn read_row_header(conn: &mut Conn, column_count: usize) -> Result<Option<Vec<bool>>> {
-    // v2 case 6 = ResultSet.load：跳 1 + i2 列数 + i4 高段 + i4 行数 + i2 UAC
-    // + DLC 存在位图 + DLC。位图非空时即本批行的列存在标记（v2 setBitVector
-    // 据此置每列 getDataFromServer，位序与 Msg 21 相同：列 n → 字节 n/8 位
-    // n%8）——服务端省略 NULL 单元格时缺了它就会按全存在去读，流直接错位
-    //（真机 PLAN_TABLE 大量可空列以 invalid int size 暴露）。空/NULL 位图
-    // 返回 None = 沿用现值
+pub async fn read_row_header(conn: &mut Conn, column_count: usize) -> Result<Vec<bool>> {
     conn.ensure_in_buffer(2).await?;
     let mut r = TtcReader::new(&mut conn.in_buffer);
     let _ = r.get_byte()?;
@@ -277,16 +271,20 @@ pub async fn read_row_header(conn: &mut Conn, column_count: usize) -> Result<Opt
     let _ = r.get_int(2, true, true)?;
     let bv = r.get_dlc()?;
     let _ = r.get_dlc()?;
-    Ok(bv.filter(|b| !b.is_empty()).map(|bytes| {
-        (0..column_count)
-            .map(|i| {
-                bytes
-                    .get(i / 8)
-                    .map(|byte| byte & (1 << (i % 8)) != 0)
-                    .unwrap_or(false)
-            })
-            .collect()
-    }))
+    match bv {
+        Some(bytes) if !bytes.is_empty() => {
+            Ok((0..column_count)
+                .map(|i| {
+                    bytes
+                        .get(i / 8)
+                        .map(|byte| byte & (1 << (i % 8)) != 0)
+                        .unwrap_or(false)
+                })
+                .collect())
+        }
+        // go-ora resultSet.setBitVector：当 bitVector 为空时，所有列必须从服务端读取 (getDataFromServer = true)
+        _ => Ok(vec![true; column_count]),
+    }
 }
 
 /// Msg 21：列存在位图（true = 本行该列有数据）
@@ -395,17 +393,20 @@ async fn read_lob_inline(conn: &mut Conn, clob: bool) -> Result<OracleValue> {
 }
 
 /// 读一行（Msg 7 体）：按位图逐列分派（LOB 列走内联形态，其余 CLR）；
-/// 位图缺省视为全存在
+/// 位图为 false 的列复用 last_row 中的历史值（Oracle 传输去重 RLE 压缩特性）。
 pub async fn read_row(
     conn: &mut Conn,
     columns: &Arc<Vec<ColumnMeta>>,
     bit_vector: &[bool],
+    last_row: &mut [OracleValue],
 ) -> Result<crate::queryable::Row> {
     let mut row_values = Vec::with_capacity(columns.len());
     for (i, col) in columns.iter().enumerate() {
         let present = bit_vector.get(i).copied().unwrap_or(true);
         if !present {
-            row_values.push(OracleValue::Null);
+            // 列被服务端重复值去重（RLE 压缩）：复用上一行的值！
+            let val = last_row.get(i).cloned().unwrap_or(OracleValue::Null);
+            row_values.push(val);
             continue;
         }
         let val = match col.data_type {
@@ -423,6 +424,9 @@ pub async fn read_row(
         ) {
             let _ = conn.read_ci(4).await?;
             let _ = conn.read_ci(4).await?;
+        }
+        if i < last_row.len() {
+            last_row[i] = val.clone();
         }
         row_values.push(val);
     }

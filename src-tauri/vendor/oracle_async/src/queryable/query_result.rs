@@ -14,6 +14,7 @@ pub struct QueryResult<'a> {
     pub(crate) rows_affected: u64,
     pub(crate) has_more_rows: bool,
     pub(crate) prefetch_count: u32,
+    pub(crate) last_row: Vec<crate::queryable::OracleValue>,
     /// 待接续的隐式结果集（Msg 27）：主游标取尽后逐个链入（PLSQL 匿名块
     /// 的 dbms_sql.return_result / 多结果集）
     pub(crate) implicit: VecDeque<(Arc<Vec<ColumnMeta>>, u16)>,
@@ -27,6 +28,7 @@ impl<'a> QueryResult<'a> {
         cursor_id: u16,
         rows_affected: u64,
         has_more_rows: bool,
+        last_row: Vec<crate::queryable::OracleValue>,
     ) -> Self {
         Self {
             conn,
@@ -36,6 +38,7 @@ impl<'a> QueryResult<'a> {
             rows_affected,
             has_more_rows,
             prefetch_count: 100,
+            last_row,
             implicit: VecDeque::new(),
         }
     }
@@ -86,11 +89,16 @@ impl<'a> QueryResult<'a> {
 
             if self.has_more_rows && self.cursor_id != 0 {
                 // Fetch next batch from Oracle
-                let mut routine =
-                    FetchRoutine::new(self.cursor_id, self.columns.clone(), self.prefetch_count);
+                let mut routine = FetchRoutine::new(
+                    self.cursor_id,
+                    self.columns.clone(),
+                    self.prefetch_count,
+                    self.last_row.clone(),
+                );
                 let resp = routine.call(self.conn).await?;
 
                 self.has_more_rows = resp.has_more_rows;
+                self.last_row = resp.last_row;
                 // exec 未内联返回列时，首个 fetch 才带 describe——更新列集供后续分批复用
                 if let Some(cols) = resp.columns {
                     self.columns = cols;
@@ -109,6 +117,7 @@ impl<'a> QueryResult<'a> {
                     self.columns = cols;
                     self.cursor_id = cid;
                     self.has_more_rows = true;
+                    self.last_row = Vec::new();
                     continue;
                 }
                 None => return Ok(None),

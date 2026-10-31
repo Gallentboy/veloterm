@@ -18,20 +18,28 @@ pub struct FetchResponse {
     pub has_more_rows: bool,
     /// fetch 途中收到 describe（exec 未内联返回列时的首个 fetch）时的列集
     pub columns: Option<Arc<Vec<ColumnMeta>>>,
+    pub last_row: Vec<crate::queryable::OracleValue>,
 }
 
 pub struct FetchRoutine {
     pub cursor_id: u16,
     pub columns: Arc<Vec<ColumnMeta>>,
     pub count: u32,
+    pub last_row: Vec<crate::queryable::OracleValue>,
 }
 
 impl FetchRoutine {
-    pub fn new(cursor_id: u16, columns: Arc<Vec<ColumnMeta>>, count: u32) -> Self {
+    pub fn new(
+        cursor_id: u16,
+        columns: Arc<Vec<ColumnMeta>>,
+        count: u32,
+        last_row: Vec<crate::queryable::OracleValue>,
+    ) -> Self {
         Self {
             cursor_id,
             columns,
             count,
+            last_row,
         }
     }
 }
@@ -54,6 +62,11 @@ impl Routine<FetchResponse> for FetchRoutine {
         let mut bit_vector: Vec<bool> = Vec::new();
         let mut described: Option<Arc<Vec<ColumnMeta>>> = None;
         let mut columns = self.columns.clone();
+        let mut last_row = if self.last_row.is_empty() {
+            vec![crate::queryable::OracleValue::Null; columns.len()]
+        } else {
+            self.last_row.clone()
+        };
 
         loop {
             let msg = conn.get_byte().await?;
@@ -68,22 +81,18 @@ impl Routine<FetchResponse> for FetchRoutine {
                         new_cols.iter().map(|c| &c.name).collect::<Vec<_>>()
                     );
                     bit_vector = vec![true; new_cols.len()];
+                    last_row = vec![crate::queryable::OracleValue::Null; new_cols.len()];
                     described = Some(new_cols.clone());
                     columns = new_cols;
                 }
                 6 => {
-                    // 位图非空时更新（v2 语义）
-                    if let Some(bv) =
-                        super::row_common::read_row_header(conn, columns.len()).await?
-                    {
-                        bit_vector = bv;
-                    }
+                    bit_vector = super::row_common::read_row_header(conn, columns.len()).await?;
                 }
                 21 => {
                     bit_vector = super::row_common::read_bitvector(conn, columns.len()).await?;
                 }
                 7 => {
-                    let row = super::row_common::read_row(conn, &columns, &bit_vector).await?;
+                    let row = super::row_common::read_row(conn, &columns, &bit_vector, &mut last_row).await?;
                     rows.push(row);
                 }
                 8 => {
@@ -150,6 +159,7 @@ impl Routine<FetchResponse> for FetchRoutine {
             rows,
             has_more_rows,
             columns: described,
+            last_row,
         })
     }
 }

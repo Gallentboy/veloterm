@@ -731,14 +731,11 @@ mod tests {
 #[cfg(test)]
 mod size_probe {
     use super::*;
-    /// Conn 体积守卫：DbEngine enum 直接持有 Conn（不套 Box），体积须与
-    /// 其他引擎臂同量级——Opts 等大字段已 box 化；超限说明又有大字段
-    /// 被内联进来了（历史：Opts 248B 内联时 Conn=688B 触发 clippy
-    /// large_enum_variant，曾误用 enum 级 Box 绕过）
+    /// Conn 体积守卫：Opts 等大字段采用 Box 隔离，确保 Conn 结构体整体
+    /// 栈内存占用控制在 512 字节以内，避免大枚举变体内存膨胀。
     #[test]
     fn conn_stays_compact() {
         let size = std::mem::size_of::<Conn>();
-        println!("Conn = {size}");
         assert!(size <= 512, "Conn 体积 {size}B 超过 512B 预算");
     }
 }

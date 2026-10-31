@@ -49,6 +49,7 @@ impl Queryable for Conn {
             resp.cursor_id,
             resp.rows_affected,
             resp.has_more_rows,
+            resp.last_row,
         );
         // 隐式结果集（Msg 27）排队待链：主游标取尽后逐个接续
         qr.implicit = resp
@@ -85,6 +86,7 @@ impl Queryable for Conn {
             resp.cursor_id,
             resp.rows_affected,
             resp.has_more_rows,
+            resp.last_row,
         );
         qr.implicit = resp
             .implicit

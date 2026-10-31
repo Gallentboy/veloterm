@@ -64,3 +64,54 @@ impl Row {
         self.values
     }
 }
+
+impl ColumnMeta {
+    /// 返回面向用户的标准 Oracle 数据库类型名（如 VARCHAR2, NUMBER, DATE, CLOB 等）
+    pub fn oracle_type_name(&self) -> &'static str {
+        match self.data_type {
+            TnsType::NChar | TnsType::Varchar => {
+                if self.charset_form == 2 {
+                    "NVARCHAR2"
+                } else {
+                    "VARCHAR2"
+                }
+            }
+            TnsType::Char => {
+                if self.charset_form == 2 {
+                    "NCHAR"
+                } else {
+                    "CHAR"
+                }
+            }
+            TnsType::Number | TnsType::VarNum | TnsType::Pdn => "NUMBER",
+            TnsType::Float | TnsType::IBFloat => "BINARY_FLOAT",
+            TnsType::BDouble | TnsType::IBDouble => "BINARY_DOUBLE",
+            TnsType::BInteger => "BINARY_INTEGER",
+            TnsType::Date => "DATE",
+            TnsType::Timestamp | TnsType::TimeStampDty => "TIMESTAMP",
+            TnsType::TimestampTz | TnsType::TimeStampTzDty => "TIMESTAMP WITH TIME ZONE",
+            TnsType::IntervalYm | TnsType::IntervalYmDty => "INTERVAL YEAR TO MONTH",
+            TnsType::IntervalDs | TnsType::IntervalDsDty => "INTERVAL DAY TO SECOND",
+            TnsType::Raw | TnsType::VarRaw => "RAW",
+            TnsType::Long => "LONG",
+            TnsType::LongRaw => "LONG RAW",
+            TnsType::LongVarChar => "LONG VARCHAR",
+            TnsType::Rowid | TnsType::URowid => "ROWID",
+            TnsType::Clob => {
+                if self.charset_form == 2 {
+                    "NCLOB"
+                } else {
+                    "CLOB"
+                }
+            }
+            TnsType::Blob => "BLOB",
+            TnsType::BFile => "BFILE",
+            TnsType::RefCursor | TnsType::ResultSet => "REF CURSOR",
+            TnsType::OciXmlType | TnsType::XmlType => "XMLTYPE",
+            TnsType::Json => "JSON",
+            TnsType::Vector => "VECTOR",
+            TnsType::Boolean => "BOOLEAN",
+            _ => "OTHER",
+        }
+    }
+}
