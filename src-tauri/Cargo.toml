@@ -62,7 +62,21 @@ r2d2 = "0.8"
 r2d2_sqlite = "0.25"
 rfd = "0.15"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Maven 仓库助手：http2/流式/解压特性（maven 模块的多仓下载与上传）；
+# rustls-tls 与全局 TLS provider 策略一致
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+  "gzip",
+  "brotli",
+  "deflate",
+  "http2",
+  "stream",
+] }
+# Maven 模块：POM/settings/metadata 的 XML 解析（宽容 DOM 式）
+roxmltree = "0.20"
+# Maven 模块：~/.m2 定位（home_dir）
+home = "0.5"
 rig = { package = "rig-core", version = "0.42.0" }
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher"] }
 # ODBC 引擎：运行时 dlopen 驱动管理器（odbc32/libodbc），零链接期依赖——
@@ -127,6 +141,8 @@ fast-socks5 = "1.0.0"
 veloterm-relay-proto = { path = "../relay/crates/veloterm-relay-proto" }
 tokio-tungstenite = { version = "0.29", features = ["connect", "handshake"] }
 futures-util = "0.3"
+# Maven 模块：>5MB 大文件流式上传（ReaderStream 256KB chunk）
+tokio-util = { version = "0.7", features = ["io"] }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs", "log"] }
 rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std"] }
 # ZooKeeper 客户端（纯 Rust/tokio，支持 ACL 与认证）；sha1+base64 计算 digest scheme id

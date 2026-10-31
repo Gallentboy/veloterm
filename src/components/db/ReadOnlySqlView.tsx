@@ -89,7 +89,15 @@ export function ReadOnlySqlView({
       overviewRulerLanes: 0,
       hideCursorInOverviewRuler: true,
       overviewRulerBorder: false,
-      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
+      scrollbar: {
+        vertical: 'auto',
+        horizontal: 'auto',
+        verticalScrollbarSize: 8,
+        horizontalScrollbarSize: 8,
+        useShadows: false,
+        verticalHasArrows: false,
+        horizontalHasArrows: false,
+      },
       padding: { top: 8, bottom: 8 },
       readOnly: true,
       // 只读场景禁掉一切输入态交互：无补全、无右键、选中文本仍可复制

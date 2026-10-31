@@ -76,10 +76,19 @@ function formatDuration(ms?: number | null): string {
   return `${(ms / 1000).toFixed(2)}s`;
 }
 
-function formatTimestamp(ts: number): string {
+function formatTimestamp(ts?: number | null): string {
   if (!ts) return '-';
-  const d = new Date(ts * 1000);
-  return d.toLocaleString();
+  const ms = ts > 1e11 ? ts : ts * 1000;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '-';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const YYYY = d.getFullYear();
+  const MM = pad(d.getMonth() + 1);
+  const DD = pad(d.getDate());
+  const HH = pad(d.getHours());
+  const mm = pad(d.getMinutes());
+  const ss = pad(d.getSeconds());
+  return `${YYYY}-${MM}-${DD} ${HH}:${mm}:${ss}`;
 }
 
 export function SchedulerScreen() {
@@ -432,6 +441,13 @@ export function SchedulerScreen() {
                         </span>
                         <span>·</span>
                         <span className="truncate">{task.command}</span>
+                      </div>
+                      {/* 下方：上次执行时间 */}
+                      <div className="mt-1.5 flex items-center gap-1.5 font-mono text-[11px] text-foreground-subtle">
+                        <span className="text-foreground-subtlest">{t('scheduler.lastRunTime', '上次执行')}:</span>
+                        <span className={cn('tabular-nums', task.lastRunAt ? 'text-foreground font-medium' : 'text-foreground-subtlest')}>
+                          {formatTimestamp(task.lastRunAt)}
+                        </span>
                       </div>
                     </div>
 

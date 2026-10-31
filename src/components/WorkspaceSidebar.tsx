@@ -1,4 +1,4 @@
-import { Boxes, Command, Cylinder, Database, FileCode, FolderSync, FolderTree, History, House, ListChecks, Network, Server, Settings, TableProperties, Terminal, Waypoints } from 'lucide-react';
+import { Boxes, Command, Cylinder, Database, FileCode, FolderSync, FolderTree, History, House, ListChecks, Network, Package, Server, Settings, TableProperties, Terminal, Waypoints } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ComponentType } from 'react';
 import { useEffect, useState } from 'react';
@@ -14,7 +14,7 @@ import {
   SIDEBAR_VISIBILITY_EVENT,
 } from '@/services/sidebarVisibility';
 
-export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'commands' | 'dbhosts' | 'db' | 'zk' | 'zkhosts' | 'relays' | 'history' | 'batchExec' | 'jsScript' | 'scheduler' | 'grpc' | 'settings';
+export type Page = 'home' | 'terminal' | 'editor' | 'files' | 'hosts' | 'groups' | 'commands' | 'dbhosts' | 'db' | 'zk' | 'zkhosts' | 'relays' | 'history' | 'batchExec' | 'jsScript' | 'scheduler' | 'maven' | 'grpc' | 'settings';
 
 /** 侧栏导航项（settings 固定展示，不参与可见性配置）。设置页的菜单展示
  *  区块与此清单同源（同一导出），勾选状态经 kv + 事件实时联动。 */
@@ -33,6 +33,7 @@ export const SIDEBAR_NAV_ITEMS: Array<{
   { page: 'batchExec', icon: ListChecks, navKey: 'nav.batchExec' },
   { page: 'jsScript', icon: JsScriptIcon, navKey: 'nav.jsScript' },
   { page: 'scheduler', icon: SchedulerBrandIcon, navKey: 'nav.scheduler' },
+  { page: 'maven', icon: Package, navKey: 'nav.maven' },
   { page: 'grpc', icon: Network, navKey: 'nav.grpc' },
   { page: 'groups', icon: FolderTree, navKey: 'nav.groups' },
   { page: 'commands', icon: Command, navKey: 'nav.commands' },

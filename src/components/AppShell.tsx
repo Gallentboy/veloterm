@@ -23,6 +23,7 @@ import { ZkHostsScreen } from '@/components/zkhosts/ZkHostsScreen';
 import { DbHostsScreen } from '@/components/dbhosts/DbHostsScreen';
 import { DbScreen } from '@/components/db/DbScreen';
 import { GrpcScreen } from '@/components/grpc/GrpcScreen';
+import { MavenScreen } from '@/components/maven/MavenScreen';
 import { SettingsScreen } from '@/components/SettingsScreen';
 import { TerminalScreen } from '@/components/terminal';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
@@ -208,11 +209,24 @@ export function AppShell() {
         setIsManualOpen(true);
         return;
       }
+      if (event.key === 'F5') {
+        // 阻止桌面端 F5 刷新白屏
+        event.preventDefault();
+        return;
+      }
       if (!hasPrimaryModifier(event) || event.altKey) {
         return;
       }
       const key = event.key.toLowerCase();
-      if (key === 'b') {
+      if (key === 'r' && !event.shiftKey) {
+        // 防止 WebView 默认刷新页面导致工作区丢失。
+        // 若焦点在终端内（xterm 助手文本域），放行给 bash/zsh 历史反向搜索；其余场景阻止原生刷新
+        const target = event.target as HTMLElement | null;
+        const isTerminalActive = target?.closest('.xterm-helper-textarea') != null;
+        if (!isTerminalActive) {
+          event.preventDefault();
+        }
+      } else if (key === 'b') {
         event.preventDefault();
         toggleSidebar();
       } else if (key === 'k') {
@@ -557,6 +571,10 @@ export function AppShell() {
                 <div className={cn('h-full min-h-0 w-full', page !== 'db' && 'hidden')}>
                   <DbScreen isVisible={page === 'db'} />
                 </div>
+                {/* Maven 仓库助手持久挂载（同上）：下载/上传进行中切页不丢实时进度 */}
+                <div className={cn('h-full min-h-0 w-full', page !== 'maven' && 'hidden')}>
+                  <MavenScreen />
+                </div>
                 {page === 'home' ? (
                   <WelcomeScreen
                     onNewTerminal={handleOpenNewTerminal}
@@ -575,7 +593,7 @@ export function AppShell() {
                   />
                 ) : page === 'editor' ? (
                   <EditorScreen />
-                ) : page === 'files' || page === 'zk' || page === 'grpc' || page === 'db' ? null : page === 'hosts' ? (
+                ) : page === 'files' || page === 'zk' || page === 'grpc' || page === 'db' || page === 'maven' ? null : page === 'hosts' ? (
                   <HostsScreen
                     onConnectHost={(host) => {
                       createSession({ hostId: host.id, customTitle: host.name });

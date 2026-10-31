@@ -5,6 +5,7 @@ import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { ensureExtendedLanguages } from '@/editor/languages';
 import { ensureBashCompletion, registerBashHostModel } from '@/editor/bashLanguage';
 import { attachHtmlAutoInsert } from '@/editor/htmlAutoInsert';
+import { attachFindReplaceCommands, handleEditorKeyDownCapture } from '@/editor/findReplace';
 import type { EditorFileDescriptor, MonacoDocumentCardProps } from '@/editor/types';
 import { Spinner } from '@/components/ui/spinner';
 
@@ -113,6 +114,69 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
     [],
   );
 
+  /** 格式化当前文档（SQL/JSON 增强兜底 + Monaco 内置 DocumentFormattingEditProvider） */
+  const formatDocument = useCallback(async () => {
+    const editor = codeEditorRef.current;
+    if (!editor || readOnly || isDiff) return;
+    const model = editor.getModel();
+    if (!model || model.isDisposed()) return;
+    const original = model.getValue();
+    const lang = model.getLanguageId();
+
+    // 1. 对于 SQL 文件，优先使用强大的 formatSqlText
+    if (lang === 'sql' || file.fileName.toLowerCase().endsWith('.sql')) {
+      try {
+        const { formatSqlText } = await import('@/components/db/sqlFormat');
+        const formatted = await formatSqlText(original);
+        if (formatted && formatted !== original && !model.isDisposed()) {
+          editor.executeEdits('format-sql', [
+            { range: model.getFullModelRange(), text: formatted, forceMoveMarkers: false },
+          ]);
+          latestPropsRef.current.onContentChange(formatted);
+        }
+        return;
+      } catch (e) {
+        console.warn('SQL format failed, fallback to Monaco action', e);
+      }
+    }
+
+    // 2. 对于 JSON 文件，若 Monaco 未能格式化或语法健全，尝试 JSON 格式化兜底
+    if (lang === 'json' || file.fileName.toLowerCase().endsWith('.json')) {
+      try {
+        const parsed = JSON.parse(original);
+        const formatted = JSON.stringify(parsed, null, 2);
+        if (formatted && formatted !== original && !model.isDisposed()) {
+          editor.executeEdits('format-json', [
+            { range: model.getFullModelRange(), text: formatted, forceMoveMarkers: false },
+          ]);
+          latestPropsRef.current.onContentChange(formatted);
+          return;
+        }
+      } catch {
+        // 语法错误跳过兜底，由 Monaco action 尝试
+      }
+    }
+
+    // 3. 通用语言：触发 Monaco 自带的 formatDocument Action
+    const action = editor.getAction('editor.action.formatDocument');
+    if (action && action.isSupported()) {
+      await action.run();
+      const updated = model.getValue();
+      if (updated !== original) {
+        latestPropsRef.current.onContentChange(updated);
+      }
+    }
+  }, [file.fileName, isDiff, readOnly]);
+
+  useEffect(() => {
+    if (latestPropsRef.current.onRegisterFormat) {
+      latestPropsRef.current.onRegisterFormat(formatDocument);
+    }
+    return () => {
+      latestPropsRef.current.onRegisterFormat?.(null);
+    };
+  }, [formatDocument]);
+
   /* —— 编辑器生命周期（普通 / diff 换装；容器与 mode 变化时重建） —— */
 
   useEffect(() => {
@@ -152,6 +216,12 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       latestPropsRef.current.onSaveRequest();
     });
+    // Alt+Shift+F 格式化文档（VS Code 习惯）
+    editor.addCommand(monaco.KeyMod.Alt | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => {
+      void formatDocument();
+    });
+    // 跨平台查找 (Ctrl+F / ⌘F) 与替换 (Ctrl+R / ⌘R / Ctrl+H)
+    attachFindReplaceCommands(editor);
     // HTML 键入辅助（`>` 闭合标签 / `</` 补名 / `=` 补引号），仅 html 模型生效
     attachHtmlAutoInsert(editor);
     editor.onDidChangeModelContent(() => {
@@ -254,7 +324,10 @@ export function MonacoDocumentCard(props: MonacoDocumentCardProps) {
   }, [readOnly, isDiff]);
 
   return (
-    <div className="h-full w-full overflow-hidden bg-background p-2">
+    <div
+      className="h-full w-full overflow-hidden bg-background p-2"
+      onKeyDownCapture={(e) => handleEditorKeyDownCapture(e, codeEditorRef.current)}
+    >
       <div className="relative h-full min-h-full overflow-hidden rounded-xl border border-border">
         <div ref={containerRef} className="h-full w-full" />
         {content === null && (

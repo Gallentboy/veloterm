@@ -1,5 +1,5 @@
 import { AlertTriangle, FileCode, RotateCw } from 'lucide-react';
-import { lazy, memo, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { EditorTabBar } from '@/components/editor/EditorTabBar';
 import { Button } from '@/components/ui/button';
@@ -81,6 +81,24 @@ export function EditorScreen() {
   } = useEditorStore();
 
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
+  const formatRef = useRef<(() => Promise<void>) | null>(null);
+  const [isFormatting, setIsFormatting] = useState(false);
+
+  const handleFormat = useCallback(async () => {
+    if (!formatRef.current || isFormatting) return;
+    setIsFormatting(true);
+    try {
+      await formatRef.current();
+    } catch (err) {
+      console.warn('Format failed', err);
+    } finally {
+      setIsFormatting(false);
+    }
+  }, [isFormatting]);
+
+  const handleRegisterFormat = useCallback((fn: (() => Promise<void>) | null) => {
+    formatRef.current = fn;
+  }, []);
 
   // 切换文件时重置光标显示（真实位置由 Monaco 恢复 viewState 后回报）
   useEffect(() => {
@@ -156,6 +174,9 @@ export function EditorScreen() {
         activeFileId={activeFileId}
         onActivate={activateFile}
         onClose={closeFile}
+        onFormat={handleFormat}
+        isFormatting={isFormatting}
+        canFormat={!readOnly && content !== null && loadError === null}
       />
 
       {content === null && loadError !== null ? (
@@ -196,6 +217,7 @@ export function EditorScreen() {
               onSaveRequest={handleSaveRequestForActive}
               onViewStateChange={handleViewStateChangeById}
               onCursorChange={handleCursorChange}
+              onRegisterFormat={handleRegisterFormat}
             />
           </Suspense>
         </div>

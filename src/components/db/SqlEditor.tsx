@@ -26,6 +26,7 @@ import { dbSqlCompletions } from '@/services/dbConnectionsService';
 import { formatSqlText } from '@/components/db/sqlFormat';
 import { readClipboardText, writeClipboardText } from '@/lib/clipboard';
 import { useDismissOnOutsidePointer } from '@/hooks/useDismissOnOutsidePointer';
+import { attachFindReplaceCommands, handleEditorKeyDownCapture } from '@/editor/findReplace';
 import { cn } from '@/lib/utils';
 
 // 模块级幂等注册（伞入口内部各 ensure 亦幂等）
@@ -262,7 +263,15 @@ export function SqlEditor({
       overviewRulerLanes: 0,
       hideCursorInOverviewRuler: true,
       overviewRulerBorder: false,
-      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
+      scrollbar: {
+        vertical: 'auto',
+        horizontal: 'auto',
+        verticalScrollbarSize: 8,
+        horizontalScrollbarSize: 8,
+        useShadows: false,
+        verticalHasArrows: false,
+        horizontalHasArrows: false,
+      },
       padding: { top: 8, bottom: 8 },
       quickSuggestions: { other: true, comments: false, strings: false },
       // 关掉文档词建议：schema 感知补全（表/列）已覆盖，文档里其它词在此
@@ -285,6 +294,8 @@ export function SqlEditor({
         runSelRef.current?.();
       },
     );
+    // 跨平台查找 (Ctrl+F / ⌘F) 与替换 (Ctrl+R / ⌘R / Ctrl+H)
+    attachFindReplaceCommands(editor);
 
     // 选区跟踪：空选区/纯空白上报空串（调用方据此禁用「执行选中」）
     editor.onDidChangeCursorSelection(() => {
@@ -318,6 +329,7 @@ export function SqlEditor({
     <div
       ref={containerRef}
       onContextMenu={openContextMenu}
+      onKeyDownCapture={(e) => handleEditorKeyDownCapture(e, editorRef.current)}
       className={cn('h-full w-full overflow-hidden', className)}
     >
       {menu

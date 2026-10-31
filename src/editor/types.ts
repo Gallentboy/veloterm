@@ -59,6 +59,8 @@ export interface MonacoDocumentCardProps {
   /** viewState 上报携带 fileId：切文件瞬间上报的是旧文件的 viewState，按 id 归档不会错位 */
   onViewStateChange(fileId: number, viewState: unknown): void;
   onCursorChange(line: number, column: number): void;
+  /** 注册当前激活编辑器的格式化动作句柄 */
+  onRegisterFormat?(formatFn: (() => Promise<void>) | null): void;
 }
 
 /** 编辑器持久化契约（实现 agent 替换桩件）。

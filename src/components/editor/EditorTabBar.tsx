@@ -1,4 +1,4 @@
-import { RefreshCw, TriangleAlert, X } from 'lucide-react';
+import { RefreshCw, TriangleAlert, WandSparkles, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,9 @@ export interface EditorTabBarProps {
   activeFileId: number | null;
   onActivate: (id: number) => void;
   onClose: (id: number) => void;
+  onFormat?: () => void;
+  isFormatting?: boolean;
+  canFormat?: boolean;
 }
 
 /**
@@ -118,11 +121,19 @@ function EditorTabStatusMark({ status, label }: { status: EditorFileStatus; labe
 }
 
 /** 编辑器顶部标签栏：结构对齐 TerminalScreen 顶栏（横向滚动、隐藏滚动条） */
-export function EditorTabBar({ files, activeFileId, onActivate, onClose }: EditorTabBarProps) {
+export function EditorTabBar({
+  files,
+  activeFileId,
+  onActivate,
+  onClose,
+  onFormat,
+  isFormatting = false,
+  canFormat = true,
+}: EditorTabBarProps) {
   const { t } = useTranslation();
 
   return (
-    <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5">
+    <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5 bg-surface/20">
       <div className="scrollbar-hair flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden">
         <div role="tablist" aria-label={t('editor.title')} className="flex h-7 w-max items-center gap-1">
           {files.map((file) => (
@@ -138,6 +149,34 @@ export function EditorTabBar({ files, activeFileId, onActivate, onClose }: Edito
           ))}
         </div>
       </div>
+
+      {/* 右侧动作区：格式化按钮 */}
+      {activeFileId !== null && onFormat ? (
+        <div className="flex shrink-0 items-center gap-1 pl-1">
+          <ControlHintTooltip
+            title={`${t('editor.formatDocument', '格式化文件')} (Alt+Shift+F)`}
+            side="bottom"
+            align="end"
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={!canFormat || isFormatting}
+              onClick={onFormat}
+              aria-label={t('editor.formatDocument', '格式化文件')}
+              className="h-7 gap-1.5 px-2 text-ui-xs text-foreground-subtle hover:bg-hover hover:text-foreground disabled:opacity-40"
+            >
+              {isFormatting ? (
+                <Spinner className="size-3.5" />
+              ) : (
+                <WandSparkles className="size-3.5" />
+              )}
+              <span className="hidden sm:inline font-medium">{t('editor.format', '格式化')}</span>
+            </Button>
+          </ControlHintTooltip>
+        </div>
+      ) : null}
     </div>
   );
 }

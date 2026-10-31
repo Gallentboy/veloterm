@@ -541,6 +541,114 @@ body {
 }
 
 /*
+ * Monaco Editor 自绘滚动条（.monaco-scrollable-element > .scrollbar）：
+ * 形状与微交互完全适配 VeloTerm 的细胶囊悬浮风格（对齐全局 scrollbar-slim 与 xterm 自绘滑块）。
+ * 默认 5px 细胶囊并靠边缘内缩 2px，悬停在滑轨上微涨至 6px，彻底消除 Monaco 原生方头粗块。
+ */
+.monaco-editor .monaco-scrollable-element > .scrollbar,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar {
+  background: transparent !important;
+}
+
+.monaco-editor .monaco-scrollable-element > .scrollbar > .slider,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar > .slider {
+  border-radius: 9999px !important;
+  background: var(--color-terminal-scrollbar, var(--color-border)) !important;
+  transition: background 0.15s ease, width 0.15s ease, height 0.15s ease;
+}
+
+.monaco-editor .monaco-scrollable-element > .scrollbar.vertical,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar.vertical {
+  width: 8px !important;
+}
+
+.monaco-editor .monaco-scrollable-element > .scrollbar.vertical > .slider,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar.vertical > .slider {
+  width: 5px !important;
+  left: auto !important;
+  right: 2px !important;
+}
+
+.monaco-editor .monaco-scrollable-element > .scrollbar.horizontal,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar.horizontal {
+  height: 8px !important;
+}
+
+.monaco-editor .monaco-scrollable-element > .scrollbar.horizontal > .slider,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar.horizontal > .slider {
+  height: 5px !important;
+  top: auto !important;
+  bottom: 2px !important;
+}
+
+.monaco-editor .monaco-scrollable-element > .scrollbar:hover > .slider,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar:hover > .slider,
+.monaco-editor .monaco-scrollable-element > .scrollbar > .slider:hover,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar > .slider:hover,
+.monaco-editor .monaco-scrollable-element > .scrollbar > .slider.active,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar > .slider.active {
+  background: var(--color-terminal-scrollbar-hover, var(--color-border-hover)) !important;
+}
+
+.monaco-editor .monaco-scrollable-element > .scrollbar.vertical:hover > .slider,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar.vertical:hover > .slider,
+.monaco-editor .monaco-scrollable-element > .scrollbar.vertical > .slider.active,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar.vertical > .slider.active {
+  width: 6px !important;
+  right: 1px !important;
+}
+
+.monaco-editor .monaco-scrollable-element > .scrollbar.horizontal:hover > .slider,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar.horizontal:hover > .slider,
+.monaco-editor .monaco-scrollable-element > .scrollbar.horizontal > .slider.active,
+.monaco-diff-editor .monaco-scrollable-element > .scrollbar.horizontal > .slider.active {
+  height: 6px !important;
+  bottom: 1px !important;
+}
+
+.monaco-editor .monaco-scrollable-element > .shadow,
+.monaco-diff-editor .monaco-scrollable-element > .shadow {
+  display: none !important;
+}
+
+/*
+ * Monaco Editor 查找与替换面板（.find-widget）：
+ * 适配 VeloTerm 的卡片质感、圆角、背景与按钮微交互，
+ * 消除 VS Code 默认突兀阴影与直角输入框。
+ */
+.monaco-editor .find-widget {
+  border-radius: 10px !important;
+  border: 1px solid var(--color-border) !important;
+  background-color: var(--color-popover) !important;
+  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.08) !important;
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), opacity 180ms ease !important;
+}
+
+:not(.dark):not(.theme-dark) .monaco-editor .find-widget {
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.12), inset 0 1px 0 0 rgba(255, 255, 255, 0.8) !important;
+}
+
+.monaco-editor .find-widget .monaco-inputbox {
+  border-radius: 6px !important;
+  border: 1px solid var(--color-border) !important;
+  background-color: var(--color-input) !important;
+}
+
+.monaco-editor .find-widget .monaco-inputbox.synthetic-focus {
+  border-color: var(--color-primary) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 1px var(--color-primary) !important;
+}
+
+.monaco-editor .find-widget .button {
+  border-radius: 4px !important;
+}
+
+.monaco-editor .find-widget .button:hover {
+  background-color: var(--color-surface-hover) !important;
+}
+
+/*
  * 走马灯文本（MarqueeText）：平时省略号截断，悬停溢出时滚动展示全文。
  * 滚动距离/时长由组件悬停时测量后写入 CSS 变量；起止各留 12% 停顿便于阅读。
  */

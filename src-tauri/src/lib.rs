@@ -25,6 +25,7 @@ pub mod host_password_history;
 pub mod js_runtime;
 pub mod lifecycle;
 pub mod logging;
+pub mod maven;
 pub mod pdf;
 pub mod port_forward;
 pub mod relays;
@@ -81,6 +82,13 @@ pub fn run() {
             terminal_recording::export_text_file,
             fleet_exec::fleet_exec_run,
             fleet_exec::fleet_exec_cancel,
+            maven::maven_resolve,
+            maven::maven_get_run,
+            maven::maven_cancel_run,
+            maven::maven_search,
+            maven::maven_put_plan,
+            maven::maven_put_run,
+            maven::maven_env_info,
             js_runtime::js_run,
             js_runtime::js_run_cancel,
             terminal_recording::export_recording_gif,

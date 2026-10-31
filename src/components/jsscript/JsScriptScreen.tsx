@@ -19,6 +19,7 @@ import { SelectMenu } from '@/components/ui/SelectMenu';
 import { JsScriptIcon } from '@/components/common/BrandIcons';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
 import { initMonacoTheme, VELOTERM_MONACO_THEME } from '@/editor/monacoTheme';
+import { attachFindReplaceCommands, handleEditorKeyDownCapture } from '@/editor/findReplace';
 import { cn } from '@/lib/utils';
 import { jsRun, jsRunCancel, type JsConsoleLevel, type JsRunFinish, type JsScriptLanguage } from '@/services/jsScriptService';
 
@@ -554,7 +555,15 @@ export function JsScriptScreen() {
       overviewRulerLanes: 0,
       hideCursorInOverviewRuler: true,
       overviewRulerBorder: false,
-      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8, useShadows: false },
+      scrollbar: {
+        vertical: 'auto',
+        horizontal: 'auto',
+        verticalScrollbarSize: 8,
+        horizontalScrollbarSize: 8,
+        useShadows: false,
+        verticalHasArrows: false,
+        horizontalHasArrows: false,
+      },
       padding: { top: 8, bottom: 8 },
       tabSize: 2,
       suggestSelection: 'first',
@@ -567,6 +576,8 @@ export function JsScriptScreen() {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       runRef.current();
     });
+    // 跨平台查找 (Ctrl+F / ⌘F) 与替换 (Ctrl+R / ⌘R / Ctrl+H)
+    attachFindReplaceCommands(editor);
 
     return () => {
       editor.dispose();
@@ -650,7 +661,11 @@ export function JsScriptScreen() {
       </div>
 
       {/* 编辑器 */}
-      <div ref={containerRef} className="min-h-0 flex-1" />
+      <div
+        ref={containerRef}
+        onKeyDownCapture={(e) => handleEditorKeyDownCapture(e, editorRef.current)}
+        className="min-h-0 flex-1"
+      />
 
       {/* 输出面板 */}
       <div className="flex h-64 shrink-0 flex-col border-t border-border/60">
