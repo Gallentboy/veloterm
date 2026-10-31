@@ -140,8 +140,8 @@ html[data-platform]:not([data-platform="macos"]):not([data-platform="ios"]) {
   --color-input: #2b2b2b;
   --color-menu: #2b2b2b;
   --color-menu-hover: #363636;
-  --color-primary: #ffffff;
-  --color-primary-foreground: #000000;
+  --color-primary: #4099ff;
+  --color-primary-foreground: #0d1117;
   --color-secondary: #363636;
   --color-accent: #001d3d;
   --color-foreground: #bdbdbd;

@@ -35,6 +35,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { JsScriptIcon } from '@/components/common/BrandIcons';
@@ -97,6 +98,10 @@ export function SchedulerScreen() {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<ScheduledTask | 'new' | null>(null);
+  const [deletingTask, setDeletingTask] = useState<ScheduledTask | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
+  const [historyClearBusy, setHistoryClearBusy] = useState(false);
   const [logTaskId, setLogTaskId] = useState<string | null>(null);
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -177,14 +182,19 @@ export function SchedulerScreen() {
       .catch(() => setLogs([]));
   }, [logTaskId]);
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (task: ScheduledTask) => {
+    if (deleteBusy) return;
+    setDeleteBusy(true);
     try {
-      await schedulerTaskDelete(id);
-      if (logTaskId === id) setLogTaskId(null);
+      await schedulerTaskDelete(task.id);
+      setDeletingTask(null);
+      if (logTaskId === task.id) setLogTaskId(null);
       void reloadTasks();
       void reloadHistory();
     } catch (e) {
       setError(String(e));
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -206,13 +216,17 @@ export function SchedulerScreen() {
   };
 
   const handleClearHistory = async () => {
-    if (!window.confirm(t('scheduler.historyClearConfirm'))) return;
+    if (historyClearBusy) return;
+    setHistoryClearBusy(true);
     try {
       await schedulerHistoryClear(filterTaskId === 'all' ? undefined : filterTaskId);
       setPage(0);
+      setClearingHistory(false);
       void reloadHistory();
     } catch (e) {
       setError(String(e));
+    } finally {
+      setHistoryClearBusy(false);
     }
   };
 
@@ -312,7 +326,7 @@ export function SchedulerScreen() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => void handleClearHistory()}
+                onClick={() => setClearingHistory(true)}
                 className="flex items-center gap-1.5 text-destructive hover:text-destructive"
               >
                 <Trash2 className="size-3.5" />
@@ -380,7 +394,7 @@ export function SchedulerScreen() {
                             {t('scheduler.badgeOnce')} · {formatTimestamp(task.runAt)}
                           </span>
                         ) : (
-                          <span className="shrink-0 rounded bg-surface/80 px-2 py-0.5 font-mono text-ui-xs text-foreground-subtle border border-border/40">
+                          <span className="shrink-0 rounded bg-primary/10 px-2 py-0.5 font-mono text-ui-xs text-primary border border-primary/20">
                             {task.cronExpr}
                           </span>
                         )}
@@ -512,7 +526,7 @@ export function SchedulerScreen() {
                           variant="ghost"
                           size="icon-sm"
                           className="text-destructive hover:text-destructive"
-                          onClick={() => void handleDelete(task.id)}
+                          onClick={() => setDeletingTask(task)}
                           aria-label={t('scheduler.delete')}
                         >
                           <Trash2 className="size-3.5" />
@@ -791,6 +805,25 @@ export function SchedulerScreen() {
             </div>
           </div>
         )}
+
+        {/* 删除任务 / 清空历史确认弹窗 */}
+        <ConfirmDialog
+          open={deletingTask !== null}
+          title={t('scheduler.deleteTitle')}
+          description={t('scheduler.deleteDesc')}
+          detail={deletingTask?.name}
+          busy={deleteBusy}
+          onConfirm={() => deletingTask && void handleDelete(deletingTask)}
+          onCancel={() => setDeletingTask(null)}
+        />
+        <ConfirmDialog
+          open={clearingHistory}
+          title={t('scheduler.historyClear')}
+          description={t('scheduler.historyClearConfirm')}
+          busy={historyClearBusy}
+          onConfirm={() => void handleClearHistory()}
+          onCancel={() => setClearingHistory(false)}
+        />
 
         {/* 新建/编辑任务弹窗 */}
         {editing ? (

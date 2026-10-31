@@ -428,6 +428,8 @@ export default {
     historyFilterStatus: 'All Status',
     historyClear: 'Clear History',
     historyClearConfirm: 'Are you sure you want to clear execution history?',
+    deleteTitle: 'Delete task',
+    deleteDesc: 'All execution history of this task will also be removed. This cannot be undone.',
     historyEmpty: 'No execution history yet',
     colTask: 'Task',
     colTime: 'Execution Time',

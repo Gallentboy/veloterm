@@ -427,6 +427,8 @@ export default {
     historyFilterStatus: '全部状态',
     historyClear: '清空历史',
     historyClearConfirm: '确定要清空执行历史记录吗？',
+    deleteTitle: '删除任务',
+    deleteDesc: '删除后该任务的全部执行历史将一并清除，且不可恢复。',
     historyEmpty: '暂无执行历史记录',
     colTask: '任务名称',
     colTime: '执行时间',
