@@ -102,6 +102,69 @@ pub fn detect_stmt_type(sql: &str) -> StmtType {
     }
 }
 
+/// 判断一段 SQL 是否属于 PL/SQL 结构（其末尾分号不可剥除）
+pub fn is_plsql_text(sql: &str) -> bool {
+    let mut words = sql
+        .lines()
+        .map(|l| {
+            let line = l.trim();
+            if let Some(idx) = line.find("--") {
+                &line[..idx]
+            } else {
+                line
+            }
+        })
+        .flat_map(|l| l.split_whitespace());
+
+    let first = match words.next() {
+        Some(w) => w.to_ascii_uppercase(),
+        None => return false,
+    };
+
+    if first == "DECLARE" || first == "BEGIN" {
+        return true;
+    }
+
+    if first == "CREATE" {
+        let mut second = words.next().map(|w| w.to_ascii_uppercase());
+        if second.as_deref() == Some("OR") {
+            let _ = words.next(); // "REPLACE"
+            second = words.next().map(|w| w.to_ascii_uppercase());
+        } else if second.as_deref() == Some("EDITIONABLE") || second.as_deref() == Some("NONEDITIONABLE") {
+            let next_word = words.next().map(|w| w.to_ascii_uppercase());
+            if next_word.as_deref() == Some("OR") {
+                let _ = words.next(); // "REPLACE"
+                second = words.next().map(|w| w.to_ascii_uppercase());
+            } else {
+                second = next_word;
+            }
+        }
+
+        if let Some(sec) = second {
+            return matches!(
+                sec.as_str(),
+                "PROCEDURE" | "FUNCTION" | "PACKAGE" | "TRIGGER" | "TYPE"
+            );
+        }
+    }
+
+    false
+}
+
+/// 规范化发往服务端的 SQL 文本：
+/// 1. 若末尾带客户端特有的独立行 `/`（如存储过程结束符），剥除它（Oracle 服务端不认 `/`）
+/// 2. 若是非 PL/SQL 语句且末尾带 `;`，剥除末尾分号（防止 ORA-00911 字符无效）
+pub fn sanitize_sql_for_wire(sql: &str) -> String {
+    let mut s = sql.trim();
+    if s.ends_with('/') {
+        s = s[..s.len() - 1].trim();
+    }
+    if !is_plsql_text(s) && s.ends_with(';') {
+        s = s[..s.len() - 1].trim();
+    }
+    s.to_string()
+}
+
 /// Msg 15：服务端 Warning（go-ora NewWarningObject）
 pub async fn read_warning(conn: &mut Conn) -> Result<()> {
     let ret_code = conn.read_ci(2).await? as i32;

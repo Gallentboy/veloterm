@@ -113,9 +113,10 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
         writer.put_uint(0, 2, true, true); // cursorID = 0 (new cursor)
         writer.put_byte(1); // new cursor flag
 
-        // Parse length & flag——SQL 按服务器字符集编码（852=ZHS16GBK 库上
-        // 中文字面量/标识符必需；ASCII 恒无损）
-        let sql_bytes = crate::proto::charset::encode(self.sql, conn.server_charset as u32);
+        // Parse length & flag——规范化后按服务器字符集编码（自动去除普通 DDL/DML 末尾的 ;
+        // 与存储过程末尾的 /，防止 ORA-00911: 无效字符）
+        let sql_for_wire = row_common::sanitize_sql_for_wire(self.sql);
+        let sql_bytes = crate::proto::charset::encode(&sql_for_wire, conn.server_charset as u32);
         writer.put_uint(sql_bytes.len() as u64, 4, true, true);
         writer.put_byte(1);
 
