@@ -35,6 +35,7 @@ import {
   type SftpItemEntry,
 } from '@/services/dragDropService';
 import {
+  closeSftp,
   dirSizeRemote,
   execAvailableRemote,
   listRemoteDirectory,
@@ -765,6 +766,25 @@ export function SftpSessionView({
     [sessionId],
   );
 
+  // 重新连接：显式关闭后端可能残留的失效连接，并重新拉取当前目录
+  const handleReconnect = useCallback(async () => {
+    if (!sessionId) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      await closeSftp(sessionId).catch(() => {});
+      const files = await listRemoteDirectory(sessionId, currentPath);
+      setItems(files);
+      setCurrentPath(currentPath);
+      setPathInput(currentPath);
+      onPathChangeRef.current?.(currentPath);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentPath, sessionId]);
+
   // 仅挂载（会话实例首次出现）时按初始路径加载一次：
   // initialPath 的后续变化都是本组件 onPathChange 回写到 store 的回声，不应触发重新拉取
   useEffect(() => {
@@ -1244,6 +1264,21 @@ export function SftpSessionView({
             </Button>
           </ControlHintTooltip>
 
+          {/* 重新连接 */}
+          <ControlHintTooltip title={t('files.reconnect')} side="bottom">
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              onClick={handleReconnect}
+              disabled={isLoading}
+              className="size-7 rounded-lg text-foreground-subtle hover:text-foreground hover:bg-hover"
+              aria-label={t('files.reconnect')}
+            >
+              <RotateCw className={cn('size-3.5', isLoading && 'animate-spin')} />
+            </Button>
+          </ControlHintTooltip>
+
           {/* 多选操作（内联在刷新右侧）：选中非空时显示（批量下载 / 清除；
               多选互拷无需按钮，直接拖选区即可） */}
           {selectedPaths.size > 0 ? (
@@ -1345,13 +1380,26 @@ export function SftpSessionView({
       {/* 错误提示条 */}
       {error && (
         <div className="flex items-center justify-between gap-2 border-b border-destructive/20 bg-destructive/10 px-3 py-1.5 text-ui-xs text-destructive">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             <AlertCircle className="size-4 shrink-0" />
-            <span>{error}</span>
+            <span className="truncate">{error}</span>
           </div>
-          <button type="button" onClick={() => setError(null)} className="opacity-70 hover:opacity-100">
-            <X className="size-3.5" />
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={handleReconnect}
+              disabled={isLoading}
+              className="h-6 gap-1 rounded px-1.5 text-ui-xs text-destructive hover:bg-destructive/20 hover:text-destructive"
+            >
+              <RotateCw className={cn('size-3', isLoading && 'animate-spin')} />
+              <span>{t('files.reconnect')}</span>
+            </Button>
+            <button type="button" onClick={() => setError(null)} className="opacity-70 hover:opacity-100 p-0.5">
+              <X className="size-3.5" />
+            </button>
+          </div>
         </div>
       )}
 

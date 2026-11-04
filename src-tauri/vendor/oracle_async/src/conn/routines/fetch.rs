@@ -127,7 +127,7 @@ impl Routine<FetchResponse> for FetchRoutine {
                         conn.close_cursor(self.cursor_id).await?;
                     } else if s.ret_code != 0 {
                         let err_str =
-                            String::from_utf8_lossy(&s.error_message.unwrap_or_default()).to_string();
+                            crate::proto::charset::decode(&s.error_message.unwrap_or_default(), conn.server_charset as u32);
                         error!("Fetch failed with ORA-{:05}: {}", s.ret_code, err_str);
                         return Err(Error::Server(OracleError {
                             code: s.ret_code,

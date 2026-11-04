@@ -429,8 +429,10 @@ impl Conn {
             if msg == 4 {
                 let s = routines::summary::read_summary(self).await?;
                 if s.ret_code != 0 {
-                    let msg_str = String::from_utf8_lossy(&s.error_message.unwrap_or_default())
-                        .to_string();
+                    let msg_str = crate::proto::charset::decode(
+                        &s.error_message.unwrap_or_default(),
+                        self.server_charset as u32,
+                    );
                     return Err(Error::Server(crate::error::OracleError {
                         code: s.ret_code,
                         message: msg_str,

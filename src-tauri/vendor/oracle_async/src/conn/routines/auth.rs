@@ -92,7 +92,7 @@ impl Routine<()> for AuthRoutine {
                     let ret_code = s.ret_code;
                     if ret_code != 0 {
                         let err_msg = s.error_message.unwrap_or_default();
-                        let err_str = String::from_utf8_lossy(&err_msg).to_string();
+                        let err_str = crate::proto::charset::decode(&err_msg, conn.server_charset as u32);
                         error!("Authentication challenge failed with ORA-{:05}: {}", ret_code, err_str);
                         return Err(Error::Server(OracleError {
                             code: ret_code,
@@ -339,7 +339,7 @@ impl Routine<()> for AuthRoutine {
                     let s = super::summary::read_summary(conn).await?;
                     let ret_code = s.ret_code;
                     if ret_code != 0 {
-                        let err_str = String::from_utf8_lossy(&s.error_message.unwrap_or_default()).to_string();
+                        let err_str = crate::proto::charset::decode(&s.error_message.unwrap_or_default(), conn.server_charset as u32);
                         error!("Authentication rejected by server with ORA-{:05}: {}", ret_code, err_str);
                         return Err(Error::Server(OracleError {
                             code: ret_code,

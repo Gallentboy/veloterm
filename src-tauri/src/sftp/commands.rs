@@ -4,9 +4,9 @@ use tauri::State;
 use tauri::ipc::Channel;
 use tokio::io::AsyncSeekExt;
 
-use super::file_ops::{commit_temp_file, dedup_sftp_status_text, remote_dir_of, sftp_error_message, sibling_temp_path};
+use super::file_ops::{commit_temp_file, dedup_sftp_status_text, is_sftp_connection_error, remote_dir_of, sftp_error_message, sibling_temp_path};
 use super::manager::{
-    close_sftp, connect_sftp, evict_sftp_session, get_or_connect_sftp, get_sftp_ssh_handle,
+    close_sftp, connect_sftp_with_state, evict_sftp_session, get_or_connect_sftp, get_sftp_ssh_handle,
     register_temp_dir, resolve_host_chain, sftp_exec_capture, sftp_exec_capture_status,
 };
 use super::transfer::{
@@ -93,7 +93,7 @@ pub async fn sftp_connect(
     state: State<'_, SftpState>,
 ) -> Result<(), String> {
     let chain = resolve_host_chain(host_id)?;
-    let (client, ssh) = connect_sftp(chain).await?;
+    let (client, ssh) = connect_sftp_with_state(&state, &session_id, chain).await?;
     let mut clients = state.clients.lock().await;
     clients.insert(session_id.clone(), client);
     state.ssh_handles.lock().await.insert(session_id, ssh);
@@ -120,15 +120,21 @@ pub async fn sftp_list_dir(
         raw_path.replace('\\', "/")
     };
 
-    let entries = client
-        .read_dir(&normalized_path)
-        .await
-        .map_err(|e| {
-            format!(
+    let entries = match client.read_dir(&normalized_path).await {
+        Ok(entries) => entries,
+        Err(e) => {
+            if is_sftp_connection_error(&e) {
+                log::warn!(
+                    "[SFTP] read_dir failed with connection error in session '{session_id}', evicting session: {e:?}"
+                );
+                evict_sftp_session(&state, &session_id).await;
+            }
+            return Err(format!(
                 "Failed to read remote directory '{normalized_path}': {}",
                 sftp_error_message(e)
-            )
-        })?;
+            ));
+        }
+    };
 
     let mut items = Vec::new();
     for entry in entries {

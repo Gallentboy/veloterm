@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::types::{SftpClient, SftpSshHandle, SftpState};
 use tokio::io::AsyncReadExt as _;
+use crate::terminal::ssh::handler::ClientHandlerEvent;
 use crate::terminal::ssh::{KnownHosts, TargetSSHOptions, connect_ssh_chain};
 
 fn record_to_ssh_options(record: &crate::db::HostRecord) -> TargetSSHOptions {
@@ -62,17 +63,54 @@ pub fn resolve_host_chain(host_id: usize) -> Result<Vec<TargetSSHOptions>, Strin
 }
 
 pub async fn connect_sftp(chain: Vec<TargetSSHOptions>) -> Result<(SftpClient, std::sync::Arc<SftpSshHandle>), String> {
+    connect_sftp_inner(None, None, chain).await
+}
+
+pub async fn connect_sftp_with_state(
+    state: &SftpState,
+    session_id: &str,
+    chain: Vec<TargetSSHOptions>,
+) -> Result<(SftpClient, std::sync::Arc<SftpSshHandle>), String> {
+    connect_sftp_inner(Some(state), Some(session_id), chain).await
+}
+
+async fn connect_sftp_inner(
+    state: Option<&SftpState>,
+    session_id: Option<&str>,
+    chain: Vec<TargetSSHOptions>,
+) -> Result<(SftpClient, std::sync::Arc<SftpSshHandle>), String> {
     let known_hosts = KnownHosts::global();
-    let session_id = 0; // 内部连接序号
-    let connection = connect_ssh_chain(session_id, chain, known_hosts)
+    let internal_id = 0; // 内部连接序号
+    let connection = connect_ssh_chain(internal_id, chain, known_hosts)
         .await
         .map_err(|e| format!("SSH connection failed: {e}"))?;
 
     let session = Arc::new(connection.0);
     let mut active_rx = connection.1;
 
-    // 保持连接事件接收协程，防止未消费事件阻塞 SSH 状态机
-    tokio::spawn(async move { while let Some(_event) = active_rx.recv().await {} });
+    // 保持连接事件接收协程；若提供了 state 与 session_id，则在连接断开或收到 Disconnect 时自动清理缓存并广播断开
+    let state_opt = state.cloned();
+    let session_id_opt = session_id.map(|s| s.to_string());
+    tokio::spawn(async move {
+        while let Some(event) = active_rx.recv().await {
+            if matches!(event, ClientHandlerEvent::Disconnect) {
+                if let Some(ref sid) = session_id_opt {
+                    log::info!("[SFTP] Received disconnect event for session '{sid}'");
+                }
+                break;
+            }
+        }
+        if let (Some(state), Some(sid)) = (state_opt, session_id_opt) {
+            log::info!("[SFTP] Underlying SSH connection closed for session '{sid}', cleaning up cache");
+            evict_sftp_session(&state, &sid).await;
+            state.emit_sftp(
+                crate::lifecycle::LifecycleKind::Disconnected,
+                &sid,
+                "",
+                None,
+            );
+        }
+    });
 
     let channel = session
         .channel_open_session()
@@ -297,14 +335,34 @@ async fn cleanup_stale_temp_files_for(state: &SftpState, session_id: &str, clien
     });
 }
 
+/// 检查会话底层 SSH 连接是否存活（句柄存在且未被标记为 closed）
+pub async fn is_session_alive(state: &SftpState, session_id: &str) -> bool {
+    let handles = state.ssh_handles.lock().await;
+    if let Some(ssh) = handles.get(session_id) {
+        !ssh.is_closed()
+    } else {
+        false
+    }
+}
+
 pub async fn get_or_connect_sftp(
     state: &SftpState,
     session_id: &str,
 ) -> Result<SftpClient, String> {
     {
-        let clients = state.clients.lock().await;
-        if let Some(client) = clients.get(session_id) {
-            return Ok(Arc::clone(client));
+        // 快速健康检查：若底层 SSH 已经标记为 closed，立即驱逐坏连接，避免盲目命中死缓存
+        let is_dead = {
+            let handles = state.ssh_handles.lock().await;
+            handles.get(session_id).map(|h| h.is_closed()).unwrap_or(false)
+        };
+        if is_dead {
+            log::info!("[SFTP] Detected dead session '{session_id}', evicting before reuse");
+            evict_sftp_session(state, session_id).await;
+        } else {
+            let clients = state.clients.lock().await;
+            if let Some(client) = clients.get(session_id) {
+                return Ok(Arc::clone(client));
+            }
         }
     }
 
@@ -314,9 +372,17 @@ pub async fn get_or_connect_sftp(
     if let Ok(host_id) = session_id.parse::<usize>() {
         let _connect_guard = state.connect_lock.lock().await;
         {
-            let clients = state.clients.lock().await;
-            if let Some(client) = clients.get(session_id) {
-                return Ok(Arc::clone(client));
+            let is_dead = {
+                let handles = state.ssh_handles.lock().await;
+                handles.get(session_id).map(|h| h.is_closed()).unwrap_or(false)
+            };
+            if is_dead {
+                evict_sftp_session(state, session_id).await;
+            } else {
+                let clients = state.clients.lock().await;
+                if let Some(client) = clients.get(session_id) {
+                    return Ok(Arc::clone(client));
+                }
             }
         }
         log::info!("[SFTP] Connecting on-demand for host_id={host_id} (session_id={session_id})");
@@ -328,7 +394,7 @@ pub async fn get_or_connect_sftp(
         );
         let started = std::time::Instant::now();
         let chain = resolve_host_chain(host_id)?;
-        let (client, ssh) = match connect_sftp(chain).await {
+        let (client, ssh) = match connect_sftp_with_state(state, session_id, chain).await {
             Ok(c) => c,
             Err(e) => {
                 state.emit_sftp(

@@ -29,7 +29,7 @@ impl Routine<()> for PingRoutine {
                 let s = super::summary::read_summary(conn).await?;
                 if s.ret_code != 0 {
                     let err_str =
-                        String::from_utf8_lossy(&s.error_message.unwrap_or_default()).to_string();
+                        crate::proto::charset::decode(&s.error_message.unwrap_or_default(), conn.server_charset as u32);
                     return Err(Error::Server(OracleError {
                         code: s.ret_code,
                         message: err_str,

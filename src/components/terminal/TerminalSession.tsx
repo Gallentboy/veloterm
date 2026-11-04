@@ -922,6 +922,12 @@ export function TerminalSession({
       const targets = broadcastTargetsRef.current;
       if (targets.length > 1 && targets.includes(sessionId)) {
         void mirrorInputToSessions(transport, targets, sessionId, bytes);
+        // 输入镜像：其余联动目标终端同步滚回底部，消除分屏查看历史时的视口滞后
+        for (const sid of targets) {
+          if (sid !== sessionId) {
+            terminalSessionRegistry.get(sid)?.term.scrollToBottom();
+          }
+        }
       }
     };
 
@@ -1061,6 +1067,8 @@ export function TerminalSession({
           });
         } else {
           term.clearSelection();
+          // 用户通过 Ctrl+C 发出中断信号：显式滚回最新行，对齐 xterm 原生 scrollOnUserInput 语义
+          term.scrollToBottom();
           // 经 writeInputAndMirror：联动开启时 0x03 同步发往其余勾选终端
           writeInputAndMirror(new Uint8Array([3]));
         }

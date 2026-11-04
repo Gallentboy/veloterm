@@ -200,7 +200,7 @@ async fn read_lob_response(conn: &mut Conn, lob: &mut LobRef, out: &mut Vec<u8>)
             4 => {
                 let s = crate::conn::routines::summary::read_summary(conn).await?;
                 if s.ret_code != 0 && s.ret_code != 1403 {
-                    let m = String::from_utf8_lossy(&s.error_message.unwrap_or_default()).to_string();
+                    let m = crate::proto::charset::decode(&s.error_message.unwrap_or_default(), conn.server_charset as u32);
                     return Err(Error::Server(OracleError {
                         code: s.ret_code,
                         message: m,

@@ -84,6 +84,7 @@ pub type UserGroupCache = HashMap<String, (Vec<RemoteIdName>, Vec<RemoteIdName>)
 /// sudo 密码与登录密码是两回事，持久化属独立安全决策；应用退出即清）
 pub type SudoPasswordCache = HashMap<i64, String>;
 
+#[derive(Clone)]
 pub struct SftpState {
     pub clients: Arc<Mutex<HashMap<String, SftpClient>>>,
     /// SFTP 连接的 SSH 句柄（与 clients 同生共死：旁路 exec 通道用）
@@ -101,14 +102,14 @@ pub struct SftpState {
     /// sudo 提权密码缓存（验证通过后按主机记存，同主机后续提权零重复弹窗）
     pub sudo_passwords: Arc<Mutex<SudoPasswordCache>>,
     pub cancel_tokens: Arc<Mutex<HashMap<usize, oneshot::Sender<()>>>>,
-    pub next_task_id: AtomicUsize,
+    pub next_task_id: Arc<AtomicUsize>,
     /// 串行化动态建连：并发请求共享一次握手，避免重复建 SSH 连接
     pub connect_lock: Arc<Mutex<()>>,
     /// 会话写过的临时断点文件目录（session_id → 目录集合）：
     /// 重连时用于扫描并清理超过 1 天的 `.veloterm.tmp.*` 遗留孤儿断点
     pub temp_dirs: Arc<Mutex<HashMap<String, HashSet<String>>>>,
     /// AppHandle（setup 后注入）：SFTP 生命周期事件发射用
-    pub app: std::sync::Mutex<Option<tauri::AppHandle>>,
+    pub app: Arc<std::sync::Mutex<Option<tauri::AppHandle>>>,
 }
 
 impl Default for SftpState {
@@ -127,10 +128,10 @@ impl SftpState {
             user_group_cache: Arc::new(Mutex::new(HashMap::new())),
             sudo_passwords: Arc::new(Mutex::new(HashMap::new())),
             cancel_tokens: Arc::new(Mutex::new(HashMap::new())),
-            next_task_id: AtomicUsize::new(1),
+            next_task_id: Arc::new(AtomicUsize::new(1)),
             connect_lock: Arc::new(Mutex::new(())),
             temp_dirs: Arc::new(Mutex::new(HashMap::new())),
-            app: std::sync::Mutex::new(None),
+            app: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 

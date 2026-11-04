@@ -362,7 +362,7 @@ impl<'a> Routine<ExecResponse> for ExecRoutine<'a> {
                         has_more_rows = false;
                     } else if s.ret_code != 0 {
                         let msg_str =
-                            String::from_utf8_lossy(&s.error_message.unwrap_or_default()).to_string();
+                            crate::proto::charset::decode(&s.error_message.unwrap_or_default(), conn.server_charset as u32);
                         error!("SQL execution failed with ORA-{:05}: {}", s.ret_code, msg_str);
                         return Err(Error::Server(OracleError {
                             code: s.ret_code,

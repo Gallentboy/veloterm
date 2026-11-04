@@ -18,6 +18,7 @@ import {
   type SftpPanelState,
   type SftpSessionDescriptor,
 } from './sftpPanelState';
+import { closeSftp } from './sftpService';
 
 export interface SftpContextValue {
   sessions: SftpSessionDescriptor[];
@@ -57,6 +58,18 @@ export function SftpProvider({ children }: { children: ReactNode }) {
 
   const closeSession = useCallback((sessionId: number) => {
     setPanelState((current) => {
+      const session = current.sessions[sessionId];
+      if (session) {
+        // 如果关闭当前 Tab 后，没有其他打开的 Tab 属于同一主机，则通知后端关闭连接并清理缓存
+        const hasOtherSameHost = current.sessionIds
+          .filter((id) => id !== sessionId)
+          .some((id) => current.sessions[id]?.hostId === session.hostId);
+        if (!hasOtherSameHost) {
+          void closeSftp(String(session.hostId)).catch((err) => {
+            console.warn('[SFTP] Failed to close backend session on tab close:', err);
+          });
+        }
+      }
       const { state } = removeSftpSession(current, sessionId);
       return state;
     });

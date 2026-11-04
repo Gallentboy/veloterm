@@ -60,6 +60,13 @@ pub(crate) fn sftp_error_message(e: russh_sftp::client::error::Error) -> String 
     }
 }
 
+/// 判断 russh-sftp 错误是否属于底层连接/通道异常（如 IO、超时、通道已断、意外行为等，非业务层的 Status 状态码）。
+/// 命中此条件说明会话已不可靠，应驱逐出缓存以便下次请求自动重建连接。
+pub(crate) fn is_sftp_connection_error(e: &russh_sftp::client::error::Error) -> bool {
+    use russh_sftp::client::error::Error;
+    !matches!(e, Error::Status(_))
+}
+
 /// 远端流式 IO 错误（read/write/seek）的字符串去重：库把 [`sftp_error_message》
 /// 所面对的那份重复 Display 整串塞进了 `io::Error` 的 message（其 file.rs 的
 /// `io::Error::new(ErrorKind::Other, e.to_string())`），无法解构回 Status，
