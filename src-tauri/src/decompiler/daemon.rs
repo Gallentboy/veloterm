@@ -220,6 +220,19 @@ impl DecompilerManager {
         eprintln!("[decompiler] 启动常驻 Java Worker: java={:?}, classpath={}", java_bin, cp);
 
         let mut child = Command::new(java_bin)
+            // 堆内存参数（锁定 512MB，避免运行时申请系统页开销）
+            .arg("-Xms512m")
+            .arg("-Xmx512m")
+            // 启动时预触碰提交全部 512M 物理内存页，消除运行期缺页中断 (Page Fault)
+            .arg("-XX:+AlwaysPreTouch")
+            // Java 25 优化 GC 与延迟控制
+            .arg("-XX:+UseG1GC")
+            .arg("-XX:MaxGCPauseMillis=20")
+            // 字符串去重：Vineflower 生成大量重复的类名、标识符和符号表，去重后极大提升 CPU 缓存局部性
+            .arg("-XX:+UseStringDeduplication")
+            // 纯 Headless 运行模式与 UTF-8 编码
+            .arg("-Djava.awt.headless=true")
+            .arg("-Dfile.encoding=UTF-8")
             .arg("-cp")
             .arg(cp)
             .arg("com.veloterm.decompiler.VeloDecompilerWorker")
