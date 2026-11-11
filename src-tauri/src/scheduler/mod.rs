@@ -87,6 +87,10 @@ pub struct ScheduledTask {
     /// 'allow'（允许并发）| 'skip'（上一轮运行中则跳过）| 'queue'（上一轮运行中则排队）
     #[serde(default)]
     pub concurrency_policy: Option<String>,
+    // ── 错失触发补偿策略 ──
+    /// 允许补跑过去 N 小时内错过的任务（0 = 不补偿，默认；24 = 24 小时；168 = 7 天；u32::MAX = 总是补跑）
+    #[serde(default)]
+    pub catchup_window_hours: Option<u32>,
 }
 
 /// 执行日志条目

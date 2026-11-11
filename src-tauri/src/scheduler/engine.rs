@@ -75,6 +75,9 @@ impl SchedulerEngine {
         // D4 一次性任务（run_at）：到期触发，不用 cron
         self.spawn_run_at_tasks(&tasks);
 
+        // 错失触发补偿（开机/唤醒补跑）
+        self.spawn_catchup_tasks(&tasks);
+
         Ok(())
     }
 
@@ -98,6 +101,41 @@ impl SchedulerEngine {
             log::info!(
                 "[scheduler] 一次性任务「{task_name}」将在 {delay}s 后触发"
             );
+        }
+    }
+
+    /// 错失触发补偿策略：开机/唤醒时检测在休眠期间错过的任务并补跑
+    fn spawn_catchup_tasks(&self, tasks: &[ScheduledTask]) {
+        let now_ts = chrono::Utc::now().timestamp();
+        let mut delay_ms = 1000; // 启动 1s 后开始补跑，给系统初始化留足裕量
+
+        for task in tasks.iter().filter(|t| t.enabled && t.run_at.is_none()) {
+            let window = task.catchup_window_hours.unwrap_or(0);
+            if window == 0 {
+                continue;
+            }
+            let last_run = task.last_run_at.unwrap_or(task.created_at);
+            if let Some(missed_ts) = check_missed_run(&task.cron_expr, last_run, window, now_ts) {
+                let pool = self.pool.clone();
+                let app = self.app.clone();
+                let task = task.clone();
+                let task_name = task.name.clone();
+                let missed_dt = chrono::DateTime::from_timestamp(missed_ts, 0)
+                    .map(|d| d.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_else(|| missed_ts.to_string());
+
+                log::info!(
+                    "[scheduler] 任务「{task_name}」检测到错失触发（原定于 {missed_dt}），将在 {}ms 后执行补跑补偿",
+                    delay_ms
+                );
+
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    super::engine::run_task_internal(&task, &pool, &app).await;
+                });
+
+                delay_ms += 1000; // 错开发起，避免瞬时并发
+            }
         }
     }
 
@@ -251,5 +289,85 @@ async fn run_task(task: &ScheduledTask, pool: &DbPool, app: &AppHandle) {
     if task.run_at.is_some() {
         let _ = store::set_enabled(pool, &task.id, false);
         log::info!("[scheduler] 一次性任务「{}」已执行完毕，自动停用", task.name);
+    }
+}
+
+/// 检测 Cron 任务在关机或休眠期间是否错过了执行
+///
+/// - `cron_expr`: 标准 cron 表达式（5 字段或 6 字段）
+/// - `last_run_at`: 上次触发时间（秒）
+/// - `window_hours`: 允许补跑的最大时间窗口（小时；0 表示不补跑；u32::MAX 表示无限制）
+/// - `now_ts`: 当前系统时间（秒）
+///
+/// 返回 `Some(missed_ts)` 表示在 `(last_run_at, now_ts)` 区间内原本应触发但错过的执行时间戳
+pub fn check_missed_run(
+    cron_expr: &str,
+    last_run_at: i64,
+    window_hours: u32,
+    now_ts: i64,
+) -> Option<i64> {
+    if window_hours == 0 || last_run_at >= now_ts {
+        return None;
+    }
+
+    let window_seconds = if window_hours == u32::MAX {
+        i64::MAX
+    } else {
+        window_hours as i64 * 3600
+    };
+    let window_start = now_ts.saturating_sub(window_seconds);
+    let start_ts = last_run_at.max(window_start);
+
+    // 标准化 5 字段为带 0 秒位的 6 字段
+    let expr = if cron_expr.split_whitespace().count() == 5 {
+        format!("0 {}", cron_expr.trim())
+    } else {
+        cron_expr.trim().to_string()
+    };
+
+    use croner::parser::CronParser;
+    let schedule = CronParser::builder()
+        .seconds(croner::parser::Seconds::Required)
+        .dom_and_dow(true)
+        .build()
+        .parse(&expr)
+        .ok()?;
+
+    let cursor_dt = chrono::DateTime::from_timestamp(start_ts, 0)?
+        .with_timezone(&chrono::Local);
+
+    if let Ok(next) = schedule.find_next_occurrence(&cursor_dt, false) {
+        let missed_ts = next.timestamp();
+        if missed_ts > last_run_at && missed_ts < now_ts {
+            return Some(missed_ts);
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_check_missed_run_detection() {
+        // 每小时整点触发
+        let cron = "0 * * * *";
+        let now = 1700000000; // 假设当前时间
+        let last_run = now - 7200; // 2 小时前执行过
+
+        // 窗口为 0：不补偿
+        assert_eq!(check_missed_run(cron, last_run, 0, now), None);
+
+        // 窗口为 1 小时：2 小时前的错失超出了 1 小时窗口，但窗口内的下一次触发仍可被捕获
+        let missed = check_missed_run(cron, last_run, 3, now);
+        assert!(missed.is_some());
+        let missed_ts = missed.unwrap();
+        assert!(missed_ts > last_run);
+        assert!(missed_ts < now);
+
+        // 如果 last_run 就是现在或未来，则没有错失
+        assert_eq!(check_missed_run(cron, now, 24, now), None);
     }
 }

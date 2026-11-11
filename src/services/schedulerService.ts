@@ -34,6 +34,8 @@ export interface ScheduledTask {
   envVars?: string | null;
   // 并发控制与防重叠（单实例互斥）
   concurrencyPolicy?: 'allow' | 'skip' | 'queue' | null;
+  // 错失触发补偿策略（开机/休眠唤醒补跑窗口小时数；0 为不补偿）
+  catchupWindowHours?: number | null;
 }
 
 export interface TaskLog {

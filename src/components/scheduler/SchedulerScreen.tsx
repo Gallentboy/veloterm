@@ -442,6 +442,22 @@ export function SchedulerScreen() {
                             </span>
                           </ControlHintTooltip>
                         ) : null}
+                        {task.catchupWindowHours && task.catchupWindowHours > 0 ? (
+                          <ControlHintTooltip
+                            title={
+                              task.catchupWindowHours >= 4294967295
+                                ? t('scheduler.catchupAny')
+                                : t('scheduler.badgeCatchup', { hours: task.catchupWindowHours })
+                            }
+                            side="top"
+                          >
+                            <span className="shrink-0 rounded bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info border border-info/20 cursor-default">
+                              {task.catchupWindowHours >= 4294967295
+                                ? t('scheduler.badgeCatchupAny')
+                                : t('scheduler.badgeCatchup', { hours: task.catchupWindowHours })}
+                            </span>
+                          </ControlHintTooltip>
+                        ) : null}
                         {task.lastStatus ? (
                           <span
                             className={cn(
@@ -1266,6 +1282,9 @@ function TaskForm({
   const [concurrencyPolicy, setConcurrencyPolicy] = useState<'allow' | 'skip' | 'queue'>(
     (initial?.concurrencyPolicy as 'allow' | 'skip' | 'queue') ?? 'allow',
   );
+  const [catchupWindowHours, setCatchupWindowHours] = useState<number>(
+    initial?.catchupWindowHours ?? 0,
+  );
 
   const hasAdvanced = Boolean(
     (initial?.notifyOn && initial.notifyOn !== 'none') ||
@@ -1273,7 +1292,8 @@ function TaskForm({
     (initial?.timeoutSecs && initial.timeoutSecs !== 600) ||
     (initial?.maxRetries && initial.maxRetries > 0) ||
     (initial?.retentionDays && initial.retentionDays !== 30) ||
-    (initial?.concurrencyPolicy && initial.concurrencyPolicy !== 'allow'),
+    (initial?.concurrencyPolicy && initial.concurrencyPolicy !== 'allow') ||
+    (initial?.catchupWindowHours && initial.catchupWindowHours > 0),
   );
   const [showAdvanced, setShowAdvanced] = useState(hasAdvanced);
 
@@ -1364,6 +1384,7 @@ function TaskForm({
       retentionDays: retentionDays ? Math.max(0, Number(retentionDays)) : 30,
       envVars,
       concurrencyPolicy,
+      catchupWindowHours: catchupWindowHours > 0 ? catchupWindowHours : null,
     };
     try {
       if (initial) {
@@ -1904,6 +1925,27 @@ function TaskForm({
                       { value: 'queue', label: t('scheduler.concurrencyQueue') },
                     ]}
                     onChange={(val) => setConcurrencyPolicy(val as 'allow' | 'skip' | 'queue')}
+                  />
+                </div>
+
+                {/* 错失触发补偿策略（开机/唤醒补跑） */}
+                <div className="col-span-full">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className={labelCls}>{t('scheduler.fieldCatchup')}</label>
+                    <ControlHintTooltip title={t('scheduler.fieldCatchupTooltip')} side="left">
+                      <span className="text-[11px] text-foreground-subtlest cursor-help">ℹ️ {t('scheduler.catchupHelp')}</span>
+                    </ControlHintTooltip>
+                  </div>
+                  <SelectMenu
+                    value={String(catchupWindowHours)}
+                    options={[
+                      { value: '0', label: t('scheduler.catchupNone') },
+                      { value: '6', label: t('scheduler.catchup6h') },
+                      { value: '24', label: t('scheduler.catchup24h') },
+                      { value: '168', label: t('scheduler.catchup7d') },
+                      { value: '4294967295', label: t('scheduler.catchupAny') },
+                    ]}
+                    onChange={(val) => setCatchupWindowHours(Number(val))}
                   />
                 </div>
               </div>

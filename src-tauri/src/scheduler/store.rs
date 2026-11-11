@@ -30,7 +30,8 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
             run_at      INTEGER,
             retention_days INTEGER DEFAULT 30,
             env_vars    TEXT,
-            concurrency_policy TEXT DEFAULT 'allow'
+            concurrency_policy TEXT DEFAULT 'allow',
+            catchup_window_hours INTEGER DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS scheduled_task_logs (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,6 +58,7 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE scheduled_tasks ADD COLUMN retention_days INTEGER DEFAULT 30",
         "ALTER TABLE scheduled_tasks ADD COLUMN env_vars TEXT",
         "ALTER TABLE scheduled_tasks ADD COLUMN concurrency_policy TEXT DEFAULT 'allow'",
+        "ALTER TABLE scheduled_tasks ADD COLUMN catchup_window_hours INTEGER DEFAULT 0",
     ];
     for sql in migrations {
         let _ = conn.execute(sql, []);
@@ -87,6 +89,7 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledTask> {
         retention_days: row.get::<_, Option<i32>>("retention_days")?.map(|v| v as u32),
         env_vars: row.get("env_vars")?,
         concurrency_policy: row.get("concurrency_policy")?,
+        catchup_window_hours: row.get::<_, Option<i32>>("catchup_window_hours")?.map(|v| v as u32),
     })
 }
 
@@ -112,8 +115,8 @@ pub fn create_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
          (id, name, cron_expr, task_type, command, working_dir, host_id, enabled, \
           created_at, updated_at, last_run_at, last_status, \
           notify_on, webhook_url, timeout_secs, max_retries, retry_backoff_secs, \
-          run_at, retention_days, env_vars, concurrency_policy) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
+          run_at, retention_days, env_vars, concurrency_policy, catchup_window_hours) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
         rusqlite::params![
             created.id,
             created.name,
@@ -136,6 +139,7 @@ pub fn create_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
             created.retention_days.map(|v| v as i32).unwrap_or(30),
             created.env_vars,
             created.concurrency_policy.as_deref().unwrap_or("allow"),
+            created.catchup_window_hours.map(|v| v as i32).unwrap_or(0),
         ],
     )
     .map_err(|e| format!("插入定时任务失败：{e}"))?;
@@ -153,7 +157,7 @@ pub fn update_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
              working_dir=?6, host_id=?7, enabled=?8, updated_at=?9, \
              notify_on=?10, webhook_url=?11, timeout_secs=?12, max_retries=?13, \
              retry_backoff_secs=?14, run_at=?15, retention_days=?16, env_vars=?17, \
-             concurrency_policy=?18 \
+             concurrency_policy=?18, catchup_window_hours=?19 \
              WHERE id = ?1",
             rusqlite::params![
                 updated.id,
@@ -174,6 +178,7 @@ pub fn update_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
                 updated.retention_days.map(|v| v as i32).unwrap_or(30),
                 updated.env_vars,
                 updated.concurrency_policy.as_deref().unwrap_or("allow"),
+                updated.catchup_window_hours.map(|v| v as i32).unwrap_or(0),
             ],
         )
         .map_err(|e| format!("更新定时任务失败：{e}"))?;
@@ -516,6 +521,7 @@ mod tests {
             retention_days: None,
             env_vars: None,
             concurrency_policy: None,
+            catchup_window_hours: None,
         }
     }
 

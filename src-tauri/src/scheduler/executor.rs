@@ -465,6 +465,7 @@ mod tests {
             retention_days: None,
             env_vars: None,
             concurrency_policy: None,
+            catchup_window_hours: None,
         }
     }
 
