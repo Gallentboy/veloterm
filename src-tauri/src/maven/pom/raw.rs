@@ -46,6 +46,10 @@ pub struct RawPom {
     pub profiles: Vec<RawProfile>,
     /// `<distributionManagement><relocation>`：坐标已迁移，应改拉新坐标
     pub relocation: Option<ParentDecl>,
+    /// `<modules><module>xxx</module></modules>` 子模块相对路径（多模块工程）
+    pub modules: Vec<String>,
+    /// 本地文件来源绝对路径（如有）
+    pub file_path: Option<std::path::PathBuf>,
 }
 
 /// POM 内 `<profile>`（含激活条件，静态可判定部分）
@@ -64,6 +68,9 @@ pub struct RawProfile {
     pub os_name: Option<String>,
     pub os_arch: Option<String>,
     pub os_family: Option<String>,
+    /// `<activation><property><name/value>`
+    pub property_name: Option<String>,
+    pub property_value: Option<String>,
 }
 
 impl RawPom {
@@ -238,6 +245,20 @@ impl RawPom {
                                     .filter(|t| !t.is_empty())
                             })
                         };
+                        let act_prop = act.and_then(|a| a.children().find(|n| n.is_element() && n.tag_name().name() == "property"));
+                        let prop_name = act_prop.and_then(|p| {
+                            p.children()
+                                .find(|n| n.is_element() && n.tag_name().name() == "name")
+                                .and_then(|n| n.text())
+                                .map(|t| t.trim().to_string())
+                                .filter(|t| !t.is_empty())
+                        });
+                        let prop_val = act_prop.and_then(|p| {
+                            p.children()
+                                .find(|n| n.is_element() && n.tag_name().name() == "value")
+                                .and_then(|n| n.text())
+                                .map(|t| t.trim().to_string())
+                        });
                         let os = at_os(&p);
                         RawProfile {
                             properties,
@@ -249,6 +270,8 @@ impl RawPom {
                             os_name: os.0,
                             os_arch: os.1,
                             os_family: os.2,
+                            property_name: prop_name,
+                            property_value: prop_val,
                         }
                     })
                     .collect()
@@ -269,6 +292,16 @@ impl RawPom {
             })
             .filter(|r| !r.group.is_empty() && !r.artifact.is_empty());
 
+        let modules = child("modules")
+            .map(|m| {
+                m.children()
+                    .filter(|n| n.is_element() && n.tag_name().name() == "module")
+                    .filter_map(|n| n.text().map(|t| t.trim().to_string()))
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(Self {
             group: text("groupId"),
             artifact: text("artifactId").unwrap_or_default(),
@@ -282,7 +315,19 @@ impl RawPom {
             relative_path,
             profiles,
             relocation,
+            modules,
+            file_path: None,
         })
+    }
+
+    /// 从本地文件解析，自动记录其绝对路径 file_path
+    pub fn from_file(path: &std::path::Path) -> Result<Self> {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let xml = std::fs::read_to_string(&canonical)
+            .map_err(|e| Error::Other(format!("read pom file `{}`: {e}", canonical.display())))?;
+        let mut pom = Self::parse(&xml)?;
+        pom.file_path = Some(canonical);
+        Ok(pom)
     }
 }
 
@@ -639,5 +684,51 @@ mod tests {
         assert!(pom.dependencies[0].optional);
         assert_eq!(pom.dependencies[0].scope.as_deref(), Some("runtime"));
         assert!(pom.dependencies[0].type_.is_none());
+    }
+
+    #[test]
+    fn parse_modules_support() {
+        let xml = r#"
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>root</artifactId>
+  <version>1.0.0</version>
+  <packaging>pom</packaging>
+  <modules>
+    <module>core</module>
+    <module>web</module>
+    <module>common/utils</module>
+  </modules>
+</project>"#;
+        let pom = RawPom::parse(xml).unwrap();
+        assert_eq!(pom.packaging, "pom");
+        assert_eq!(pom.modules, vec!["core", "web", "common/utils"]);
+    }
+
+    #[test]
+    fn parse_profile_property_activation() {
+        let xml = r#"
+<project>
+  <groupId>g</groupId><artifactId>a</artifactId><version>1</version>
+  <profiles>
+    <profile>
+      <id>hadoop-2.0</id>
+      <activation>
+        <property>
+          <name>!hadoop.profile</name>
+        </property>
+      </activation>
+      <properties>
+        <hadoop.version>2.7.4</hadoop.version>
+      </properties>
+    </profile>
+  </profiles>
+</project>"#;
+        let pom = RawPom::parse(xml).unwrap();
+        assert_eq!(pom.profiles.len(), 1);
+        let prof = &pom.profiles[0];
+        assert_eq!(prof.property_name.as_deref(), Some("!hadoop.profile"));
+        assert!(prof.property_value.is_none());
+        assert_eq!(prof.properties, vec![("hadoop.version".to_string(), "2.7.4".to_string())]);
     }
 }

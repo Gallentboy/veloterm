@@ -34,6 +34,12 @@ pub enum Error {
     Other(String),
 }
 
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Other(e.to_string())
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// 记录一次下载在多仓库间的尝试结果，用于错误信息与失败清单。

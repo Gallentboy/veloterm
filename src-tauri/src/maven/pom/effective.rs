@@ -29,11 +29,14 @@ type Gav = (String, String, String);
 
 /// POM profile 激活判定（静态可判定部分）：
 /// activeByDefault，或 jdk（按模拟 java.version 1.8 匹配单值前缀/区间），
-/// 或 os（name/arch/family 按运行平台）；无法判定的条件视为不激活。
-fn profile_active(p: &super::raw::RawProfile) -> bool {
-    use crate::maven::version::cmp_version;
-    const SIM_JAVA: &str = "1.8.0_482";
+/// 或 os（name/arch/family 按运行平台），或 property（系统/环境属性匹配）；无法判定的条件视为不激活。
+fn profile_active(p: &super::raw::RawProfile, props: &HashMap<String, String>) -> bool {
+    let mut has_activation_rule = false;
+
     if let Some(jdk) = &p.jdk {
+        has_activation_rule = true;
+        use crate::maven::version::cmp_version;
+        const SIM_JAVA: &str = "1.8.0_482";
         use std::cmp::Ordering::*;
         let m = if let Some((lo, hi_opt)) = jdk.split_once(',') {
             // 区间 [a,b) / [a,]
@@ -50,7 +53,9 @@ fn profile_active(p: &super::raw::RawProfile) -> bool {
             return true;
         }
     }
+
     if p.os_family.is_some() || p.os_name.is_some() || p.os_arch.is_some() {
+        has_activation_rule = true;
         let (fam, _name, arch) = (
             if cfg!(target_os = "macos") { "mac" } else if cfg!(target_os = "windows") { "windows" } else { "linux" },
             "",
@@ -67,7 +72,49 @@ fn profile_active(p: &super::raw::RawProfile) -> bool {
             return true;
         }
     }
-    p.active_by_default
+
+    if let Some(prop_name) = &p.property_name {
+        has_activation_rule = true;
+        let active = if let Some(neg_key) = prop_name.strip_prefix('!') {
+            // !key：属性不存在或为空
+            match &p.property_value {
+                None => match props.get(neg_key) {
+                    None => true,
+                    Some(v) => v.is_empty(),
+                },
+                Some(expected) => match props.get(neg_key) {
+                    None => true,
+                    Some(v) => v != expected,
+                },
+            }
+        } else {
+            // key：属性存在
+            match &p.property_value {
+                None => match props.get(prop_name) {
+                    None => false,
+                    Some(v) => !v.is_empty(),
+                },
+                Some(expected) => {
+                    if let Some(neg_val) = expected.strip_prefix('!') {
+                        match props.get(prop_name) {
+                            None => true,
+                            Some(v) => v != neg_val,
+                        }
+                    } else {
+                        props.get(prop_name).map(|v| v == expected).unwrap_or(false)
+                    }
+                }
+            }
+        };
+        if active {
+            return true;
+        }
+    }
+
+    if !has_activation_rule && p.active_by_default {
+        return true;
+    }
+    false
 }
 
 /// 解析上下文：POM 来源 + CLI 属性 + effective 记忆化。
@@ -244,6 +291,12 @@ impl ResolveContext {
         // ---- 1. parent 链（自身 → 最远祖先）----
         let mut chain: Vec<RawPom> = vec![root];
         let mut seen: HashSet<Gav> = HashSet::new();
+        // 跟踪当前链尾 POM 的本地目录上下文（若有本地文件路径，支持多层 relativePath 级联向上查找）
+        let mut current_local_dir: Option<PathBuf> = chain
+            .first()
+            .and_then(|p| p.file_path.as_ref().and_then(|f| f.parent().map(Path::to_path_buf)))
+            .or_else(|| root_dir.map(Path::to_path_buf));
+
         while let Some(parent) = chain.last().and_then(|p| p.parent.clone()) {
             let key = (parent.group.clone(), parent.artifact.clone(), parent.version.clone());
             if !seen.insert(key.clone()) {
@@ -254,15 +307,18 @@ impl ResolveContext {
             if chain.len() >= 50 {
                 return Err(Error::Other(format!("parent chain too deep (>50) at {}", chain.len() + 1)));
             }
-            // relativePath 仅对 -f 根 POM 生效（链上其余 POM 无本地文件系统上下文）
-            let local = if chain.len() == 1 {
-                try_local_parent(root_dir, &chain[0].relative_path, &key)
-            } else {
-                None
-            };
+            // 只要当前 POM 具有本地文件系统上下文，就沿 relativePath 继续查找本地父 POM（多层级级联）
+            let last_pom = chain.last().unwrap();
+            let local = try_local_parent(current_local_dir.as_deref(), &last_pom.relative_path, &key);
             let raw = match local {
-                Some(r) => r,
-                None => src.fetch_raw_pom(&key.0, &key.1, &key.2).await?,
+                Some((r, parent_path)) => {
+                    current_local_dir = parent_path.parent().map(Path::to_path_buf);
+                    r
+                }
+                None => {
+                    current_local_dir = None;
+                    src.fetch_raw_pom(&key.0, &key.1, &key.2).await?
+                }
             };
             chain.push(raw);
         }
@@ -313,6 +369,14 @@ impl ResolveContext {
         if let Some(dir) = root_dir {
             builtin("project.basedir", &dir.to_string_lossy());
         }
+        // 环境属性模拟（Maven 的 Java system properties / os-maven-plugin 注入）：
+        // os.name 等供插值；os.detected.classifier 供 netty 等 native 依赖的 classifier
+        for (k, v) in Self::environment_properties() {
+            props.entry(k.to_string()).or_insert_with(|| v.clone());
+        }
+        for (k, v) in cli_props.iter() {
+            props.insert(k.clone(), v.clone());
+        }
         // 链属性（顶→尾，近者覆盖）；activeByDefault profile 属性（如 ${packaging.type}）；CLI -D 最高
         for p in &chain {
             for (k, v) in &p.properties {
@@ -321,20 +385,12 @@ impl ResolveContext {
         }
         for p in &chain {
             for prof in &p.profiles {
-                if profile_active(prof) {
+                if profile_active(prof, &props) {
                     for (k, v) in &prof.properties {
                         props.insert(k.clone(), v.clone());
                     }
                 }
             }
-        }
-        // 环境属性模拟（Maven 的 Java system properties / os-maven-plugin 注入）：
-        // os.name 等供插值；os.detected.classifier 供 netty 等 native 依赖的 classifier
-        for (k, v) in Self::environment_properties() {
-            props.entry(k.to_string()).or_insert_with(|| v.clone());
-        }
-        for (k, v) in cli_props.iter() {
-            props.insert(k.clone(), v.clone());
         }
         // 属性值自身的 ${...} 引用迭代展开到不动点（≤5 轮；无任何 ${ 时跳过整轮重建）
         if !props.values().any(|v| v.contains("${")) {
@@ -367,7 +423,7 @@ impl ResolveContext {
             // 该 POM 的全部 mgmt 条目 = 声明条目 + 激活 profile 条目（按 profile 声明序）
             let mut entries: Vec<&crate::maven::model::DepDecl> = p.dep_mgmt.iter().collect();
             for prof in &p.profiles {
-                if profile_active(prof) {
+                if profile_active(prof, &props) {
                     entries.extend(prof.dep_mgmt.iter());
                 }
             }
@@ -402,7 +458,7 @@ impl ResolveContext {
         for p in chain.iter().rev() {
             let mut decls: Vec<&crate::maven::model::DepDecl> = p.dependencies.iter().collect();
             for prof in &p.profiles {
-                if profile_active(prof) {
+                if profile_active(prof, &props) {
                     decls.extend(prof.dependencies.iter());
                 }
             }
@@ -476,7 +532,7 @@ impl ResolveContext {
                 }
             }
             for prof in &p.profiles {
-                if profile_active(prof) {
+                if profile_active(prof, &props) {
                     for r in &prof.repositories {
                         if repo_ids.insert(r.id.clone()) {
                             repositories.push(r.clone());
@@ -516,26 +572,35 @@ impl ResolveContext {
     }
 }
 
-/// relativePath 本地父 POM 查找：命中返回 Some，未命中/禁用/GAV 不匹配返回 None（回退远程）。
-fn try_local_parent(root_dir: Option<&Path>, rel: &RelativePath, expected: &Gav) -> Option<RawPom> {
-    let dir = root_dir?;
+/// relativePath 本地父 POM 查找：命中返回 Some((RawPom, PathBuf))，未命中/禁用/GAV 不匹配返回 None（回退远程）。
+pub(crate) fn try_local_parent(
+    current_dir: Option<&Path>,
+    rel: &RelativePath,
+    expected: &Gav,
+) -> Option<(RawPom, PathBuf)> {
+    let dir = current_dir?;
     let rel_path: PathBuf = match rel {
         RelativePath::Disabled => return None,
         RelativePath::Default => "../pom.xml".into(),
         RelativePath::Explicit(p) => p.into(),
     };
-    let path = dir.join(rel_path);
-    let xml = std::fs::read_to_string(&path).ok()?;
-    let pom = RawPom::parse(&xml).ok()?;
+    let mut candidate = dir.join(rel_path);
+    if candidate.is_dir() {
+        candidate = candidate.join("pom.xml");
+    }
+    let canonical = candidate.canonicalize().ok().unwrap_or(candidate);
+    let xml = std::fs::read_to_string(&canonical).ok()?;
+    let mut pom = RawPom::parse(&xml).ok()?;
+    pom.file_path = Some(canonical.clone());
     // GAV 一致性校验：artifact 必须匹配；group/version 未声明（继承自更上层）时不校验
     let group_ok = pom.group.as_ref().map(|g| g == &expected.0).unwrap_or(true);
     let version_ok = pom.version.as_ref().map(|v| v == &expected.2).unwrap_or(true);
     if pom.artifact == expected.1 && group_ok && version_ok {
-        Some(pom)
+        Some((pom, canonical))
     } else {
         log::warn(format!(
             "local parent {} GAV mismatch (expected {}:{}:{}), falling back to remote",
-            path.display(),
+            canonical.display(),
             expected.0,
             expected.1,
             expected.2
@@ -642,8 +707,9 @@ mod tests {
         ctx.build_from_local(pom(root_xml), None, Vec::new()).await
     }
 
+    #[allow(clippy::panic)]
     fn find_dep<'e>(eff: &'e EffectivePom, a: &str) -> &'e DepDecl {
-        eff.deps.iter().find(|d| d.artifact == a).unwrap_or_else(|| panic!("dep {a} not found"))
+        eff.deps.iter().find(|d| d.artifact == a).expect("dep not found")
     }
 
     #[tokio::test]
@@ -912,5 +978,38 @@ mod tests {
             .unwrap();
         assert_eq!(eff.coord.version, "9.9");
         assert_eq!(find_dep(&eff, "x").version.as_deref(), Some("9.9"));
+    }
+
+    #[tokio::test]
+    async fn profile_property_activation_negated() {
+        let eff = build(
+            r#"<project><groupId>g</groupId><artifactId>root</artifactId><version>1.0</version>
+              <profiles>
+                <profile>
+                  <id>default-hadoop</id>
+                  <activation>
+                    <property><name>!hadoop.profile</name></property>
+                  </activation>
+                  <properties><h.ver>2.7.4</h.ver></properties>
+                  <dependencyManagement>
+                    <dependencies>
+                      <dependency>
+                        <groupId>org.apache.hadoop</groupId>
+                        <artifactId>hadoop-hdfs</artifactId>
+                        <version>${h.ver}</version>
+                      </dependency>
+                    </dependencies>
+                  </dependencyManagement>
+                </profile>
+              </profiles>
+              <dependencies>
+                <dependency><groupId>org.apache.hadoop</groupId><artifactId>hadoop-hdfs</artifactId></dependency>
+              </dependencies>
+            </project>"#,
+        )
+        .await
+        .unwrap();
+        let d = find_dep(&eff, "hadoop-hdfs");
+        assert_eq!(d.version.as_deref(), Some("2.7.4"));
     }
 }

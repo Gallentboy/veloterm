@@ -89,6 +89,8 @@ pub fn run() {
             maven::maven_put_plan,
             maven::maven_put_run,
             maven::maven_env_info,
+            maven::maven_pack_offline,
+            maven::maven_pick_save_offline_file,
             js_runtime::js_run,
             js_runtime::js_run_cancel,
             terminal_recording::export_recording_gif,

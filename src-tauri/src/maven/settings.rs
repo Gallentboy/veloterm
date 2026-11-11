@@ -28,6 +28,39 @@ pub struct SettingsProfile {
     pub repositories: Vec<crate::maven::pom::raw::RawRepo>,
 }
 
+/// 展开路径中的 `~`（tilde）及 `${user.home}`，并规范化为绝对路径。
+pub fn resolve_path<P: AsRef<Path>>(path: P) -> PathBuf {
+    let p = path.as_ref();
+    let s = p.to_string_lossy();
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return PathBuf::new();
+    }
+    if let Some(rest) = trimmed.strip_prefix("${user.home}") {
+        let rest = rest.trim_start_matches('/').trim_start_matches('\\');
+        if let Some(h) = home::home_dir() {
+            return h.join(rest);
+        }
+    }
+    if trimmed == "~" {
+        if let Some(h) = home::home_dir() {
+            return h;
+        }
+    }
+    if let Some(rest) = trimmed.strip_prefix("~/").or_else(|| trimmed.strip_prefix("~\\")) {
+        if let Some(h) = home::home_dir() {
+            return h.join(rest);
+        }
+    }
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else if let Some(h) = home::home_dir() {
+        h.join(p)
+    } else {
+        p.to_path_buf()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Settings {
     pub local_repository: Option<PathBuf>,
@@ -48,6 +81,17 @@ impl Settings {
             .filter(|p| self.active_profile_ids.iter().any(|id| id == &p.id))
             .collect()
     }
+
+    /// 解析出的本地 Maven 仓库目录（settings.xml <localRepository> 优先，缺省 ~/.m2/repository）
+    pub fn resolved_local_repository(&self) -> PathBuf {
+        if let Some(lr) = &self.local_repository {
+            return resolve_path(lr);
+        }
+        home::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".m2")
+            .join("repository")
+    }
 }
 
 impl Settings {
@@ -61,7 +105,7 @@ impl Settings {
         };
         let explicit = path.is_some();
         let path: PathBuf = match path {
-            Some(p) => p.to_path_buf(),
+            Some(p) => resolve_path(p),
             None => default_path(),
         };
         if !path.exists() {
@@ -383,6 +427,18 @@ mod tests {
         // Maven 语义：`*` 匹配一切仓库（含 localhost）；external:* 才排除 localhost
         let m = s.mirror_for("local1", "http://localhost:8081/repo").unwrap();
         assert_eq!(m.id, "corp-all");
+    }
+
+    #[test]
+    fn test_resolve_path_expands_tilde_and_user_home() {
+        let home = home::home_dir().expect("must have home dir in test");
+        assert_eq!(resolve_path("~/.m2/repository"), home.join(".m2/repository"));
+        assert_eq!(resolve_path("${user.home}/.m2/repository"), home.join(".m2/repository"));
+        assert_eq!(resolve_path("~"), home);
+        #[cfg(unix)]
+        {
+            assert_eq!(resolve_path("/var/repo"), PathBuf::from("/var/repo"));
+        }
     }
 
     #[test]

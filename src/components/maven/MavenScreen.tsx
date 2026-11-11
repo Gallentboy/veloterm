@@ -10,6 +10,7 @@
  */
 import {
   AlertCircle,
+  Archive,
   CheckCircle2,
   CircleStop,
   Download,
@@ -25,14 +26,18 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { SelectMenu } from '@/components/ui/SelectMenu';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { MavenTree } from '@/components/maven/MavenTree';
+import { useDropTarget } from '@/hooks/useDropTarget';
 import {
   mavenCancelRun,
   mavenEnvInfo,
   mavenGetRun,
+  mavenPackOffline,
+  mavenPickSaveOfflineFile,
   mavenPutPlan,
   mavenPutRun,
   mavenResolve,
@@ -41,6 +46,7 @@ import {
   type MavenEnvInfo,
   type MavenEvent,
   type MavenGetSummary,
+  type MavenPackSummary,
   type MavenResolveResult,
   type ProbeCell,
   type PutSummary,
@@ -50,6 +56,14 @@ import { pickDownloadDir, pickUploadFiles } from '@/services/sftpService';
 import { cn } from '@/lib/utils';
 
 // ---------------- 通用小组件 ----------------
+
+/** 判定路径是否为 POM 文件（.xml / .pom / pom） */
+function isPomPath(path: string): boolean {
+  if (!path) return false;
+  const p = path.toLowerCase().trim();
+  const base = p.split(/[\\/]/).pop() || '';
+  return base.endsWith('.xml') || base.endsWith('.pom') || base === 'pom';
+}
 
 /** 三态探测徽章：1=✓ / 0=✗ / 2=? */
 function TriCell({ cell }: { cell: ProbeCell }) {
@@ -63,12 +77,11 @@ function TriCell({ cell }: { cell: ProbeCell }) {
   }
   if (cell.state === 2) {
     return (
-      <span
-        className="inline-flex items-center gap-0.5 font-mono text-[11px] text-terminal-yellow"
-        title={t('maven.probeUnknown')}
-      >
-        {cell.name}:?
-      </span>
+      <ControlHintTooltip title={t('maven.probeUnknown')} side="top">
+        <span className="inline-flex items-center gap-0.5 font-mono text-[11px] text-terminal-yellow">
+          {cell.name}:?
+        </span>
+      </ControlHintTooltip>
     );
   }
   return (
@@ -88,12 +101,15 @@ function StatsBar({
 }) {
   const { t } = useTranslation();
   if (!stats) return null;
-  const pct = stats.total > 0 ? Math.min(100, Math.round((stats.done / stats.total) * 100)) : 0;
+  // 已完成处理项（包含成功下载/跳过 与 失败项，均属已完成单元）
+  const processed = stats.done + stats.failed;
+  const effectiveTotal = Math.max(stats.total, processed);
+  const pct = effectiveTotal > 0 ? Math.min(100, Math.round((processed / effectiveTotal) * 100)) : 0;
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
       <div className="flex items-center gap-2 text-ui-xs text-foreground-subtle select-none">
         <span className="font-mono tabular-nums">
-          {stats.done}/{stats.total}
+          {processed}/{effectiveTotal}
         </span>
         <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface">
           <div
@@ -171,7 +187,7 @@ const INPUT_CLS =
 
 type DownloadInputMode = 'gav' | 'pom' | 'list';
 
-function DownloadTab() {
+function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<DownloadInputMode>('gav');
   const [gav, setGav] = useState('');
@@ -180,13 +196,15 @@ function DownloadTab() {
   const [output, setOutput] = useState('');
   const [reposText, setReposText] = useState('');
   const [definesText, setDefinesText] = useState('');
+  const [useMavenLocal, setUseMavenLocal] = useState(true);
   const [updateSnapshots, setUpdateSnapshots] = useState(false);
   const [allClassifiers, setAllClassifiers] = useState(false);
   const [sources, setSources] = useState(false);
   const [noTransitive, setNoTransitive] = useState(false);
+  const [autoPackOffline, setAutoPackOffline] = useState(false);
   const [checksum, setChecksum] = useState<'off' | 'warn' | 'strict'>('warn');
   const [layout, setLayout] = useState<'m2' | 'flat'>('m2');
-  const [threads, setThreads] = useState<string>('');
+  const [threads, setThreads] = useState<string>('16');
   const [proxy, setProxy] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -200,12 +218,56 @@ function DownloadTab() {
   >([]);
   const [logs, setLogs] = useState<Array<{ level: number; message: string }>>([]);
   const [summary, setSummary] = useState<MavenGetSummary | null>(null);
+  const [packingOffline, setPackingOffline] = useState(false);
+  const [packSummary, setPackSummary] = useState<MavenPackSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+  const fileFeedRef = useRef<HTMLDivElement | null>(null);
+
+  const pomDropRef = useRef<HTMLDivElement>(null);
+  const [pomDropHover, setPomDropHover] = useState(false);
+  const treeDropRef = useRef<HTMLDivElement>(null);
+  const [treeDropHover, setTreeDropHover] = useState(false);
+
+  useDropTarget({
+    ref: pomDropRef,
+    accepts: ['files'],
+    onHoverChange: (hovered) => setPomDropHover(hovered),
+    onDrop: (event) => {
+      if (mode !== 'pom' || event.kind !== 'files' || event.paths.length === 0) return;
+      const path = event.paths[0];
+      if (path && isPomPath(path)) {
+        setPomPath(path);
+      }
+    },
+  });
+
+  useDropTarget({
+    ref: treeDropRef,
+    accepts: ['files'],
+    onHoverChange: (hovered) => {
+      if (mode === 'pom') {
+        setTreeDropHover(hovered);
+      } else {
+        setTreeDropHover(false);
+      }
+    },
+    onDrop: (event) => {
+      if (mode !== 'pom' || event.kind !== 'files' || event.paths.length === 0) return;
+      const path = event.paths[0];
+      if (path && isPomPath(path)) {
+        setPomPath(path);
+      }
+    },
+  });
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [logs]);
+
+  useEffect(() => {
+    fileFeedRef.current?.scrollTo({ top: fileFeedRef.current.scrollHeight });
+  }, [fileFeed]);
 
   const buildRequest = useCallback(() => {
     const repos = reposText
@@ -224,6 +286,7 @@ function DownloadTab() {
       layout,
       repos: repos.length > 0 ? repos : null,
       define: define.length > 0 ? define : null,
+      useMavenLocal,
       updateSnapshots,
       allClassifiers,
       sources,
@@ -234,7 +297,7 @@ function DownloadTab() {
     };
   }, [
     mode, gav, pomPath, gavList, output, layout, reposText, definesText,
-    updateSnapshots, allClassifiers, sources, noTransitive, checksum, threads, proxy,
+    useMavenLocal, updateSnapshots, allClassifiers, sources, noTransitive, checksum, threads, proxy,
   ]);
 
   const validate = useCallback((): string | null => {
@@ -253,15 +316,21 @@ function DownloadTab() {
     } else if (e.type === 'downloadStart') {
       setFileFeed((prev) => [...prev.slice(-200), { rel: e.rel, ok: true }]);
     } else if (e.type === 'downloadDone') {
+      const isFailed = e.size.includes('失败');
       setFileFeed((prev) => {
         const next = [...prev];
+        let found = false;
         for (let i = next.length - 1; i >= 0; i -= 1) {
           if (next[i]!.rel === e.rel) {
-            next[i] = { ...next[i]!, ok: true, size: e.size, speed: e.speed, took: e.took };
+            next[i] = { ...next[i]!, ok: !isFailed, size: e.size, speed: e.speed, took: e.took };
+            found = true;
             break;
           }
         }
-        return next;
+        if (!found) {
+          next.push({ rel: e.rel, ok: !isFailed, size: e.size, speed: e.speed, took: e.took });
+        }
+        return next.slice(-200);
       });
     }
   }, []);
@@ -285,6 +354,27 @@ function DownloadTab() {
     }
   };
 
+  const handlePackOffline = async (defaultOutput?: string, sourceDirOverride?: string) => {
+    const dir = sourceDirOverride || summary?.outputDir || output.trim();
+    if (!dir) return;
+    try {
+      let targetFile = defaultOutput;
+      if (!targetFile) {
+        const baseName = dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'maven-offline-repository';
+        const picked = await mavenPickSaveOfflineFile(`${baseName}.zip`);
+        if (!picked) return;
+        targetFile = picked;
+      }
+      setPackingOffline(true);
+      const s = await mavenPackOffline(dir, targetFile);
+      setPackSummary(s);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setPackingOffline(false);
+    }
+  };
+
   const handleRun = async () => {
     const invalid = validate();
     if (invalid) {
@@ -293,6 +383,7 @@ function DownloadTab() {
     }
     setError(null);
     setSummary(null);
+    setPackSummary(null);
     setFileFeed([]);
     setLogs([]);
     setStats(null);
@@ -302,9 +393,25 @@ function DownloadTab() {
     try {
       const s = await mavenGetRun(runId, buildRequest(), handleEvent);
       setSummary(s);
+      const finished = s.downloaded + s.skipped;
+      const total = finished + s.failed.length;
+      setStats((prev) => ({
+        done: finished,
+        total: Math.max(prev?.total ?? 0, total),
+        active: 0,
+        queued: 0,
+        failed: s.failed.length,
+        bytes: s.bytes,
+      }));
       if (s.resolvedTotal > 0 && !resolveResult) {
         // 下载完成后也补一份树（方便复盘），失败不阻塞
         void mavenResolve(buildRequest()).then(setResolveResult).catch(() => undefined);
+      }
+      if (autoPackOffline && s.outputDir && !s.cancelled) {
+        const baseName = s.outputDir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'maven-offline-repository';
+        const parentDir = s.outputDir.replace(/[\\/]+[^\\/]+[\\/]*$/, '');
+        const autoZip = `${parentDir}/${baseName}.zip`;
+        void handlePackOffline(autoZip, s.outputDir);
       }
     } catch (e) {
       setError(String(e));
@@ -327,6 +434,20 @@ function DownloadTab() {
   const pickOutput = async () => {
     const dir = await pickDownloadDir();
     if (dir) setOutput(dir);
+  };
+  const handleUseDefaultLocalRepo = async () => {
+    if (env?.localRepository) {
+      setOutput(env.localRepository);
+      return;
+    }
+    try {
+      const info = await mavenEnvInfo();
+      if (info?.localRepository) {
+        setOutput(info.localRepository);
+      }
+    } catch (err) {
+      setError(String(err));
+    }
   };
 
   const busy = resolving || running;
@@ -369,16 +490,54 @@ function DownloadTab() {
             />
           ) : null}
           {mode === 'pom' ? (
-            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <div
+              ref={pomDropRef}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setPomDropHover(true);
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setPomDropHover(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setPomDropHover(false);
+                const files = e.dataTransfer.files;
+                if (files && files.length > 0) {
+                  const file = files[0] as unknown as { path?: string };
+                  if (file?.path && isPomPath(file.path)) {
+                    setPomPath(file.path);
+                  }
+                }
+              }}
+              className={cn(
+                'relative flex min-w-0 flex-1 items-center gap-1.5 rounded-md transition-all',
+                pomDropHover && 'ring-2 ring-primary/60 bg-primary/10',
+              )}
+            >
               <input
                 value={pomPath}
                 onChange={(e) => setPomPath(e.target.value)}
-                placeholder="/path/to/pom.xml"
-                className={cn(INPUT_CLS, 'flex-1')}
+                placeholder={pomDropHover ? t('maven.pomDropActive') : t('maven.pomPlaceholder')}
+                className={cn(
+                  INPUT_CLS,
+                  'flex-1 transition-colors',
+                  pomDropHover && 'border-primary bg-primary/5 text-primary placeholder:text-primary/70',
+                )}
               />
-              <Button variant="outline" size="sm" onClick={() => void pickPom()}>
-                <FolderOpen className="size-3.5" />
-              </Button>
+              <ControlHintTooltip title={t('maven.chooseDir')} side="top">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void pickPom()}
+                >
+                  <FolderOpen className="size-3.5" />
+                </Button>
+              </ControlHintTooltip>
             </div>
           ) : null}
           <Button
@@ -468,25 +627,25 @@ function DownloadTab() {
             <div className="col-span-2 flex flex-col justify-center gap-1.5 @xl:col-span-3">
               {(
                 [
+                  [useMavenLocal, setUseMavenLocal, t('maven.useMavenLocal'), t('maven.useMavenLocalHint')],
                   [updateSnapshots, setUpdateSnapshots, t('maven.updateSnapshots'), t('maven.updateSnapshotsHint')],
                   [allClassifiers, setAllClassifiers, t('maven.allClassifiers'), t('maven.allClassifiersHint')],
                   [sources, setSources, t('maven.sources'), t('maven.sourcesHint')],
                   [noTransitive, setNoTransitive, t('maven.noTransitive'), t('maven.noTransitiveHint')],
+                  [autoPackOffline, setAutoPackOffline, t('maven.autoPackOffline'), t('maven.autoPackOfflineHint')],
                 ] as const
               ).map(([value, setter, label, hint]) => (
-                <label
-                  key={label}
-                  className="flex cursor-pointer items-center gap-1.5 text-ui-xs text-foreground-subtle select-none hover:text-foreground"
-                  title={hint}
-                >
-                  <input
-                    type="checkbox"
-                    checked={value}
-                    onChange={(e) => setter(e.target.checked)}
-                    className="size-3.5 accent-[var(--color-primary)]"
-                  />
-                  {label}
-                </label>
+                <ControlHintTooltip key={label} title={hint} side="top" align="start">
+                  <label className="flex cursor-pointer items-center gap-1.5 text-ui-xs text-foreground-subtle select-none hover:text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={value}
+                      onChange={(e) => setter(e.target.checked)}
+                      className="size-3.5 accent-[var(--color-primary)]"
+                    />
+                    {label}
+                  </label>
+                </ControlHintTooltip>
               ))}
             </div>
           </div>
@@ -505,16 +664,59 @@ function DownloadTab() {
           <span>
             {resolveResult.failures.length} {t('maven.resolveFailures')}
           </span>
-          <span
-            className="min-w-0 flex-1 truncate font-mono text-[11px] opacity-75"
-            title={resolveResult.failures.map((f) => `${f.item}: ${f.error}`).join('\n')}
-          >
-            {resolveResult.failures.map((f) => f.item).join(', ')}
-          </span>
+          <div className="min-w-0 flex-1">
+            <ControlHintTooltip
+              title={resolveResult.failures.map((f) => `${f.item}: ${f.error}`).join('\n')}
+              side="bottom"
+              align="start"
+              block
+            >
+              <span className="block truncate font-mono text-[11px] opacity-75">
+                {resolveResult.failures.map((f) => f.item).join(', ')}
+              </span>
+            </ControlHintTooltip>
+          </div>
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 gap-2.5">
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-background">
+        <div
+          ref={treeDropRef}
+          onDragOver={(e) => {
+            if (mode !== 'pom') return;
+            e.preventDefault();
+            e.stopPropagation();
+            setTreeDropHover(true);
+          }}
+          onDragLeave={(e) => {
+            if (mode !== 'pom') return;
+            e.preventDefault();
+            e.stopPropagation();
+            setTreeDropHover(false);
+          }}
+          onDrop={(e) => {
+            if (mode !== 'pom') return;
+            e.preventDefault();
+            e.stopPropagation();
+            setTreeDropHover(false);
+            const files = e.dataTransfer.files;
+            if (files && files.length > 0) {
+              const file = files[0] as unknown as { path?: string };
+              if (file?.path && isPomPath(file.path)) {
+                setPomPath(file.path);
+              }
+            }
+          }}
+          className={cn(
+            'relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-background transition-all',
+            mode === 'pom' && treeDropHover && 'ring-2 ring-primary/60 border-primary bg-primary/5',
+          )}
+        >
+          {mode === 'pom' && treeDropHover ? (
+            <div className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 rounded-xl bg-background/80 backdrop-blur-xs">
+              <Package className="size-10 animate-bounce text-primary" />
+              <span className="text-ui-sm font-medium text-primary">{t('maven.pomDropActive')}</span>
+            </div>
+          ) : null}
           {resolveResult ? (
             resolveResult.nodes.length > 0 ? (
               <MavenTree nodes={resolveResult.nodes} className="min-h-0 flex-1" />
@@ -526,7 +728,9 @@ function DownloadTab() {
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 text-foreground-subtlest select-none">
               <Package className="size-8 opacity-40" />
-              <span className="text-ui-sm">{t('maven.treeEmptyHint')}</span>
+              <span className="text-ui-sm">
+                {mode === 'pom' ? t('maven.treeEmptyPomHint') : t('maven.treeEmptyHint')}
+              </span>
             </div>
           )}
         </div>
@@ -550,9 +754,31 @@ function DownloadTab() {
                     placeholder={t('maven.outputDirPlaceholder')}
                     className={cn(INPUT_CLS, 'flex-1', !output.trim() && 'border-destructive/50')}
                   />
-                  <Button variant="outline" size="sm" onClick={() => void pickOutput()}>
-                    <FolderOpen className="size-3.5" />
-                  </Button>
+                  {!output.trim() ? (
+                    <ControlHintTooltip
+                      title={
+                        env?.localRepository
+                          ? t('maven.useDefaultRepoHint', { path: env.localRepository })
+                          : t('maven.defaultRepoBtn')
+                      }
+                      side="top"
+                    >
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleUseDefaultLocalRepo()}
+                        className="h-8 shrink-0 px-2 text-ui-xs font-medium text-foreground-subtle hover:text-foreground"
+                      >
+                        {t('maven.defaultRepoBtn')}
+                      </Button>
+                    </ControlHintTooltip>
+                  ) : null}
+                  <ControlHintTooltip title={t('maven.chooseDir')} side="top">
+                    <Button variant="outline" size="sm" onClick={() => void pickOutput()}>
+                      <FolderOpen className="size-3.5" />
+                    </Button>
+                  </ControlHintTooltip>
                 </div>
               </Field>
               <Field label={t('maven.layout')}>
@@ -607,13 +833,47 @@ function DownloadTab() {
                     ) : null}
                   </p>
                 )}
-                <p className="truncate font-mono text-[11px] text-foreground-subtlest" title={summary.outputDir}>
-                  → {summary.outputDir}
-                </p>
-                {summary.reportPath ? (
-                  <p className="truncate font-mono text-[11px] text-foreground-subtlest" title={summary.reportPath}>
-                    {t('maven.reportAt')}: {summary.reportPath}
+                <ControlHintTooltip title={summary.outputDir} side="top" align="start" block>
+                  <p className="truncate font-mono text-[11px] text-foreground-subtlest">
+                    → {summary.outputDir}
                   </p>
+                </ControlHintTooltip>
+                {summary.reportPath ? (
+                  <ControlHintTooltip title={summary.reportPath} side="top" align="start" block>
+                    <p className="truncate font-mono text-[11px] text-foreground-subtlest">
+                      {t('maven.reportAt')}: {summary.reportPath}
+                    </p>
+                  </ControlHintTooltip>
+                ) : null}
+                {packSummary ? (
+                  <ControlHintTooltip title={packSummary.outputFile} side="top" align="start" block>
+                    <div className="mt-1.5 flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-2 py-1 text-ui-xs text-primary">
+                      <Archive className="size-3.5 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+                        {t('maven.packOfflineSuccess', {
+                          count: packSummary.totalFiles,
+                          bytes: formatBytes(packSummary.totalBytes),
+                          ms: formatMs(packSummary.elapsedMs),
+                        })}
+                      </span>
+                    </div>
+                  </ControlHintTooltip>
+                ) : !summary.cancelled && (summary.downloaded > 0 || summary.skipped > 0) ? (
+                  <div className="pt-1.5">
+                    <ControlHintTooltip title={t('maven.packOfflineHint')} side="top" block>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={packingOffline}
+                        onClick={() => void handlePackOffline()}
+                        className="h-7 w-full gap-1.5 text-[11px] font-medium text-foreground-subtle hover:text-foreground"
+                      >
+                        {packingOffline ? <Spinner className="size-3" /> : <Archive className="size-3" />}
+                        {packingOffline ? t('maven.packingOffline') : t('maven.packOfflineBtn')}
+                      </Button>
+                    </ControlHintTooltip>
+                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -634,7 +894,7 @@ function DownloadTab() {
                 </button>
               ) : null}
             </div>
-            <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto px-2 py-1">
+            <div ref={fileFeedRef} className="scrollbar-slim min-h-0 flex-1 overflow-y-auto px-2 py-1">
               {fileFeed.length === 0 ? (
                 <div className="flex h-full items-center justify-center text-ui-xs text-foreground-subtlest select-none">
                   {t('maven.fileFeedHint')}
@@ -643,16 +903,34 @@ function DownloadTab() {
                 fileFeed.map((f, i) => (
                   <div key={`${f.rel}-${i}`} className="flex items-center gap-1.5 py-px font-mono text-[11px]">
                     {f.size ? (
-                      <CheckCircle2 className="size-3 shrink-0 text-terminal-green" />
+                      !f.ok || f.size.includes('失败') ? (
+                        <XCircle className="size-3 shrink-0 text-destructive" />
+                      ) : (
+                        <CheckCircle2 className="size-3 shrink-0 text-terminal-green" />
+                      )
                     ) : (
                       <Spinner className="size-3 shrink-0" />
                     )}
-                    <span className="min-w-0 flex-1 truncate text-foreground-subtle" title={f.rel}>
-                      {f.rel}
-                    </span>
+                    <div className="min-w-0 flex-1">
+                      <ControlHintTooltip title={f.rel} side="top" align="start" delayMs={200} block>
+                        <span
+                          className={cn(
+                            'block truncate',
+                            f.size && (!f.ok || f.size.includes('失败')) ? 'text-destructive/80' : 'text-foreground-subtle',
+                          )}
+                        >
+                          {f.rel}
+                        </span>
+                      </ControlHintTooltip>
+                    </div>
                     {f.size ? (
-                      <span className="shrink-0 text-foreground-subtlest">
-                        {f.size} · {f.took}
+                      <span
+                        className={cn(
+                          'shrink-0',
+                          !f.ok || f.size.includes('失败') ? 'text-destructive font-medium' : 'text-foreground-subtlest',
+                        )}
+                      >
+                        {f.size}{f.took && f.took !== '0ms' ? ` · ${f.took}` : ''}
                       </span>
                     ) : null}
                   </div>
@@ -796,24 +1074,28 @@ function SearchTab() {
           </Field>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-4">
-          <label className="flex cursor-pointer items-center gap-1.5 text-ui-xs text-foreground-subtle select-none hover:text-foreground" title={t('maven.checkJarHint')}>
-            <input
-              type="checkbox"
-              checked={checkJar}
-              onChange={(e) => setCheckJar(e.target.checked)}
-              className="size-3.5 accent-[var(--color-primary)]"
-            />
-            {t('maven.checkJar')}
-          </label>
-          <label className="flex cursor-pointer items-center gap-1.5 text-ui-xs text-foreground-subtle select-none hover:text-foreground" title={t('maven.versionsHint')}>
-            <input
-              type="checkbox"
-              checked={versions}
-              onChange={(e) => setVersions(e.target.checked)}
-              className="size-3.5 accent-[var(--color-primary)]"
-            />
-            {t('maven.versions')}
-          </label>
+          <ControlHintTooltip title={t('maven.checkJarHint')} side="top">
+            <label className="flex cursor-pointer items-center gap-1.5 text-ui-xs text-foreground-subtle select-none hover:text-foreground">
+              <input
+                type="checkbox"
+                checked={checkJar}
+                onChange={(e) => setCheckJar(e.target.checked)}
+                className="size-3.5 accent-[var(--color-primary)]"
+              />
+              {t('maven.checkJar')}
+            </label>
+          </ControlHintTooltip>
+          <ControlHintTooltip title={t('maven.versionsHint')} side="top">
+            <label className="flex cursor-pointer items-center gap-1.5 text-ui-xs text-foreground-subtle select-none hover:text-foreground">
+              <input
+                type="checkbox"
+                checked={versions}
+                onChange={(e) => setVersions(e.target.checked)}
+                className="size-3.5 accent-[var(--color-primary)]"
+              />
+              {t('maven.versions')}
+            </label>
+          </ControlHintTooltip>
           <span className="text-[11px] text-foreground-subtlest">{t('maven.searchModeHint')}</span>
         </div>
       </div>
@@ -1127,9 +1409,11 @@ function UploadTab() {
             ) : null}
           </p>
           {summary.failed.slice(0, 5).map((f) => (
-            <p key={f.item} className="truncate font-mono text-[11px] text-warning" title={`${f.item}: ${f.error}`}>
-              ✗ {f.item} — {f.error}
-            </p>
+            <ControlHintTooltip key={f.item} title={`${f.item}: ${f.error}`} side="top" align="start" block>
+              <p className="truncate font-mono text-[11px] text-warning">
+                ✗ {f.item} — {f.error}
+              </p>
+            </ControlHintTooltip>
           ))}
         </div>
       ) : null}
@@ -1148,11 +1432,15 @@ function UploadTab() {
               {plan.items.map((it, i) => (
                 <tr key={it.rel} className="border-b border-border/30 hover:bg-hover/50">
                   <td className="px-3 py-1.5 font-mono text-foreground-subtlest">{i + 1}</td>
-                  <td className="px-3 py-1.5 font-mono text-foreground-subtle" title={it.local}>
-                    <span className="line-clamp-1">{it.local}</span>
+                  <td className="px-3 py-1.5 font-mono text-foreground-subtle">
+                    <ControlHintTooltip title={it.local} side="top" align="start" block>
+                      <span className="line-clamp-1">{it.local}</span>
+                    </ControlHintTooltip>
                   </td>
-                  <td className="px-3 py-1.5 font-mono text-foreground" title={it.rel}>
-                    <span className="line-clamp-1">{it.rel}</span>
+                  <td className="px-3 py-1.5 font-mono text-foreground">
+                    <ControlHintTooltip title={it.rel} side="top" align="start" block>
+                      <span className="line-clamp-1">{it.rel}</span>
+                    </ControlHintTooltip>
                   </td>
                 </tr>
               ))}
@@ -1199,9 +1487,13 @@ export function MavenScreen() {
           <Package className="size-4 text-foreground-subtle" />
         </div>
         <h1 className="text-ui-base font-semibold text-foreground">{t('maven.title')}</h1>
-        <span className="hidden truncate font-mono text-[11px] text-foreground-subtlest md:inline" title={env?.localRepository}>
-          {env ? `${t('maven.localRepo')}: ${env.localRepository}` : ''}
-        </span>
+        {env?.localRepository ? (
+          <ControlHintTooltip title={env.localRepository} side="bottom" align="start">
+            <span className="hidden truncate font-mono text-[11px] text-foreground-subtlest md:inline">
+              {t('maven.localRepo')}: {env.localRepository}
+            </span>
+          </ControlHintTooltip>
+        ) : null}
         <div className="flex-1" />
         <div className="flex items-center gap-0.5 rounded-lg border border-border/60 bg-surface/50 p-0.5">
           {tabs.map(([id, icon, label]) => (
@@ -1221,14 +1513,16 @@ export function MavenScreen() {
             </button>
           ))}
         </div>
-        <Button variant="ghost" size="icon-sm" aria-label={t('maven.refreshEnv')} onClick={loadEnv}>
-          <RefreshCw className="size-3.5" />
-        </Button>
+        <ControlHintTooltip title={t('maven.refreshEnv')} side="bottom">
+          <Button variant="ghost" size="icon-sm" aria-label={t('maven.refreshEnv')} onClick={loadEnv}>
+            <RefreshCw className="size-3.5" />
+          </Button>
+        </ControlHintTooltip>
       </div>
 
       {/* 内容区 */}
       <div className="flex min-h-0 flex-1 flex-col p-3">
-        {tab === 'download' ? <DownloadTab /> : tab === 'search' ? <SearchTab /> : <UploadTab />}
+        {tab === 'download' ? <DownloadTab env={env} /> : tab === 'search' ? <SearchTab /> : <UploadTab />}
       </div>
     </section>
   );

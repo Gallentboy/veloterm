@@ -43,8 +43,10 @@ pub mod error;
 pub mod layout;
 pub mod log;
 pub mod model;
+pub mod pack;
 pub mod pom;
 pub mod put;
+pub mod reactor;
 pub mod repo;
 pub mod resolver;
 pub mod search;
@@ -65,7 +67,6 @@ use crate::maven::download::{DownloadOpts, Summary as DlSummary};
 use crate::maven::layout::{Layout, Store};
 use crate::maven::model::Coordinate;
 use crate::maven::pom::effective::ResolveContext;
-use crate::maven::pom::raw::RawPom;
 use crate::maven::repo::{ChecksumMode, ProxySpec, RepoSet};
 use crate::maven::resolver::{
     export_nodes, render_tree, resolve, CancelFlag, ResolveOutcome, RootRequest, TreeNodeDto,
@@ -158,6 +159,10 @@ pub struct MavenGetRequest {
     pub no_transitive: Option<bool>,
     /// 显式代理 `http://host:port`
     pub proxy: Option<String>,
+    /// 优先复用本地 Maven 仓库文件（~/.m2/repository，有则免下载，默认 true）
+    pub use_maven_local: Option<bool>,
+    /// 显式本地 Maven 仓库路径（可选）
+    pub local_repo_path: Option<String>,
 }
 
 /// 仅解析（dry-run）结果：交互树 + 平面清单 + 文本树。
@@ -283,6 +288,19 @@ pub async fn maven_get_run(
 
     let result = run_get_flow(&request, false, Some(flag.clone())).await;
     ticker.abort();
+    // 流程结束后主动发一次终态 Stats 事件：分母闭合且 active/queued 归零，防 ticker 被早停丢失最终进度
+    let s = log::snapshot();
+    let total = s.total.max(s.done + s.failed);
+    if let Ok(guard) = ch.lock() {
+        let _ = guard.send(MavenEvent::Stats {
+            done: s.done,
+            total,
+            active: 0,
+            queued: 0,
+            failed: s.failed,
+            bytes: s.bytes,
+        });
+    }
     log::set_sink(None);
     unregister_run(&run_id);
     let out = result?;
@@ -330,13 +348,15 @@ async fn run_get_flow(
     let settings = Settings::load(cli.settings_path.as_deref().map(std::path::Path::new))
         .map_err(|e| format!("settings.xml: {e}"))?;
     // 输出目录为必填：不做任何默认回退（settings localRepository / ~/.m2/repository
-    // 均不启用）——用户必须显式选择，杜绝误写默认仓库
+    // 均不启用）——用户必须显式选择，杜绝误写默认仓库。展开 ~ 与 ${user.home} 为绝对路径。
     let output = cli
         .output
-        .clone()
-        .map(PathBuf::from)
+        .as_deref()
+        .map(crate::maven::settings::resolve_path)
         .filter(|p| !p.as_os_str().is_empty())
         .ok_or_else(|| "必须选择输出目录（output 必填，不使用默认位置）".to_string())?;
+    std::fs::create_dir_all(&output)
+        .map_err(|e| format!("无法创建输出目录 `{}`: {e}", output.display()))?;
     let store = Arc::new(Store::new(
         output.clone(),
         Layout::parse(cli.layout.as_deref().unwrap_or("m2")),
@@ -382,6 +402,18 @@ async fn run_get_flow(
         store.clone(),
         proxy,
     )?);
+    let use_maven_local = cli.use_maven_local.unwrap_or(true);
+    if use_maven_local {
+        let local_m2_dir = cli
+            .local_repo_path
+            .as_deref()
+            .map(crate::maven::settings::resolve_path)
+            .unwrap_or_else(|| settings.resolved_local_repository());
+        if local_m2_dir.exists() {
+            log::info(format!("启用本地 Maven 仓库复用: {}", local_m2_dir.display()));
+            repos.set_local_repo(Some(Arc::new(Store::new(local_m2_dir, Layout::M2))));
+        }
+    }
     if cli.update_snapshots.unwrap_or(false) {
         repos.set_force_snapshots(true);
     }
@@ -482,16 +514,13 @@ async fn run_get_flow(
         root_request = RootRequest::GavList(gav_strings);
         pom_repos = Vec::new();
     } else if let Some(pom_path) = &cli.pom_path {
-        let pom_path = std::path::Path::new(pom_path)
-            .canonicalize()
-            .map_err(|e| format!("pom 不可达 {}: {e}", pom_path))?;
-        let xml = std::fs::read_to_string(&pom_path).map_err(|e| e.to_string())?;
-        let raw = RawPom::parse(&xml).map_err(|e| format!("parse {}: {e}", pom_path.display()))?;
-        let root_dir = pom_path.parent().map(std::path::Path::to_path_buf);
-        // 先用显式仓库 + 兜底拉根 effective（parent 链需要网络）
+        let pom_path = std::path::Path::new(pom_path);
+        // 使用 ReactorWorkspace 自动向上查找本地父 POM，向下递归扫描 modules
+        let ws = reactor::ReactorWorkspace::discover(pom_path)
+            .map_err(|e| format!("pom 工作空间解析失败: {e}"))?;
         let eff = {
             let ctx = ResolveContext::new(repos.clone(), cli_props.clone());
-            ctx.build_from_local(raw, root_dir.as_deref(), Vec::new())
+            ws.build_effective(&ctx)
                 .await
                 .map_err(|e| format!("build effective pom: {e}"))?
         };
@@ -532,20 +561,20 @@ async fn run_get_flow(
         all_classifiers: cli.all_classifiers.unwrap_or(false),
         sources: cli.sources.unwrap_or(false),
     };
-    let (summary_rx, sink_tx): (
-        Option<tokio::sync::oneshot::Receiver<DlSummary>>,
-        tokio::sync::mpsc::Sender<Coordinate>,
-    ) = if dry_run {
-        // dry-run：dummy channel（接收端已 drop，send 失败被 dispatch 忽略）；
-        // 解析仍需拉 POM，但静默其下载日志
+
+    // 阶段一：POM 优先极速解析（无大 JAR 下载抢占带宽和 HTTP 连接）
+    if dry_run {
         repos.set_log_pom_downloads(false);
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
-        drop(rx);
-        (None, tx)
-    } else {
-        let (tx, rx) = download::start(repos.clone(), opts, cancel.clone());
-        (Some(rx), tx)
-    };
+    }
+    log::info("正在解析依赖树与 POM 约束...");
+    let (sink_tx, mut sink_rx) = tokio::sync::mpsc::channel(4096);
+    let collect_task = tokio::spawn(async move {
+        let mut list = Vec::new();
+        while let Some(c) = sink_rx.recv().await {
+            list.push(c);
+        }
+        list
+    });
 
     let ctx = Arc::new(ResolveContext::new(repos.clone(), cli_props));
     let outcome = resolve(
@@ -559,22 +588,14 @@ async fn run_get_flow(
     .await
     .map_err(|e| format!("resolve: {e}"))?;
 
-    // 解析完成：drop 投递端，下载端进入排空阶段
     drop(sink_tx);
-
-    // 分母口径：done + queued + active 闭合 = 管线将完成的总文件数（原 main.rs 同款）
-    if !dry_run {
-        let done = log::DL_DONE.load(Ordering::Relaxed);
-        let queued = log::DL_QUEUED.load(Ordering::Relaxed);
-        let active = log::DL_ACTIVE.load(Ordering::Relaxed);
-        log::DL_TOTAL.store(done + queued + active, Ordering::Relaxed);
-    }
-    log::info(format!("resolved {} artifacts", outcome.winners.len()));
+    let to_download = collect_task.await.unwrap_or_default();
 
     let poms = repos.pom_downloaded.load(Ordering::Relaxed);
     let pom_hits = repos.pom_cache_hits.load(Ordering::Relaxed);
 
     if dry_run {
+        log::info(format!("resolved {} artifacts", outcome.winners.len()));
         return Ok(GetFlowOutput {
             outcome,
             output_dir: output,
@@ -588,13 +609,18 @@ async fn run_get_flow(
         });
     }
 
-    // ---- 下载汇总 ----
-    // 非 dry-run 恒为 Some；None 走空汇总的防御分支（不 panic——release 的
-    // panic=abort 会击杀整个应用）
-    let summary = match summary_rx {
-        Some(rx) => rx.await.map_err(|_| "download pipeline dropped".to_string())?,
-        None => DlSummary::default(),
-    };
+    // 阶段二：构件清单确立，锁定真实分母，16 线程（或 opts.threads）全并发满载下载
+    let total_jars = to_download.len();
+    log::DL_TOTAL.store(total_jars, Ordering::Relaxed);
+    log::DL_QUEUED.store(total_jars, Ordering::Relaxed);
+    log::DL_DONE.store(0, Ordering::Relaxed);
+    log::DL_FAILED.store(0, Ordering::Relaxed);
+    log::info(format!(
+        "依赖树解析完成：确定共 {} 个有效构件，开始以 {} 并发全速拉取...",
+        total_jars, opts.threads
+    ));
+
+    let summary = download::run_batch(to_download, repos.clone(), opts, cancel.clone()).await;
     let bytes = log::DL_BYTES.load(Ordering::Relaxed);
     let cancelled =
         summary.cancelled || cancel.map(|f| f.load(Ordering::Relaxed)).unwrap_or(false);
@@ -784,20 +810,45 @@ pub struct MavenEnvInfo {
 pub fn maven_env_info() -> MavenEnvInfo {
     let settings_path = home::home_dir().map(|h| h.join(".m2").join("settings.xml"));
     let settings_exists = settings_path.as_ref().map(|p| p.exists()).unwrap_or(false);
-    let local_repository = settings_path
-        .as_deref()
-        .and_then(|_| Settings::load(None).ok())
-        .and_then(|s| s.local_repository)
-        .map(|p| p.display().to_string())
-        .or_else(|| {
-            home::home_dir()
-                .map(|h| h.join(".m2").join("repository").display().to_string())
-        })
-        .unwrap_or_else(|| "~/.m2/repository".to_string());
+    let settings = Settings::load(None).unwrap_or_default();
+    let local_repository = settings.resolved_local_repository().display().to_string();
     MavenEnvInfo {
         settings_path: settings_path.map(|p| p.display().to_string()),
         settings_exists,
         local_repository,
         default_repo_url: config::DEFAULT_REPO_URL.to_string(),
     }
+}
+
+// ---------------- 离线仓库打包 ----------------
+
+#[tauri::command]
+pub async fn maven_pick_save_offline_file(
+    default_name: Option<String>,
+) -> std::result::Result<Option<String>, String> {
+    let name = default_name.unwrap_or_else(|| "maven-offline-repository.zip".to_string());
+    let file = rfd::AsyncFileDialog::new().set_file_name(&name).save_file().await;
+    Ok(file.map(|f| f.path().to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub async fn maven_pack_offline(
+    source_dir: String,
+    output_file: String,
+    format: Option<String>,
+) -> std::result::Result<pack::PackSummary, String> {
+    let fmt = format.as_deref().map(|f| match f {
+        "tar.gz" | "tgz" => pack::PackFormat::TarGz,
+        _ => pack::PackFormat::Zip,
+    });
+    tokio::task::spawn_blocking(move || {
+        pack::pack_offline_repository(
+            std::path::Path::new(&source_dir),
+            std::path::Path::new(&output_file),
+            fmt,
+        )
+        .map_err(|e| format!("{e}"))
+    })
+    .await
+    .map_err(|e| format!("pack task panicked: {e}"))?
 }

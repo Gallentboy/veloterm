@@ -232,6 +232,8 @@ pub struct RepoSet {
     raw_lru: RwLock<std::collections::VecDeque<(Gav, Arc<RawPom>)>>,
     /// sha1 校验模式（--checksum）
     checksum_mode: std::sync::atomic::AtomicU8,
+    /// 本地 Maven 仓库 (~/.m2/repository 或 settings.xml localRepository)
+    local_repo: RwLock<Option<Arc<Store>>>,
 }
 
 impl RepoSet {
@@ -277,7 +279,16 @@ impl RepoSet {
             raw_inflight: tokio::sync::Mutex::new(HashMap::new()),
             raw_lru: RwLock::new(std::collections::VecDeque::with_capacity(128)),
             checksum_mode: std::sync::atomic::AtomicU8::new(1), // 默认 Warn
+            local_repo: RwLock::new(None),
         })
+    }
+
+    pub fn set_local_repo(&self, store: Option<Arc<Store>>) {
+        *self.local_repo.write().unwrap_or_else(|e| e.into_inner()) = store;
+    }
+
+    pub fn local_repo(&self) -> Option<Arc<Store>> {
+        self.local_repo.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn set_checksum_mode(&self, m: ChecksumMode) {
@@ -563,6 +574,26 @@ fn raw_lru_put(&self, key: Gav, pom: Arc<RawPom>) {
                                 "cached pom {g}/{a}/{v} corrupted ({e}); re-downloading"
                             ));
                             let _ = std::fs::remove_file(&disk_pom_path);
+                        }
+                    }
+                }
+            }
+            // 本地 Maven 仓库 (~/.m2/repository 或 settings.xml localRepository) 优先检查
+            if let Some(local_store) = self.local_repo() {
+                let m2_pom_path = local_store.path(&disk_coord, "pom");
+                if m2_pom_path != disk_pom_path && m2_pom_path.exists() {
+                    if let Ok(bytes) = std::fs::read(&m2_pom_path) {
+                        if !bytes.is_empty() {
+                            if let Ok(parsed) = RawPom::parse(&String::from_utf8_lossy(&bytes)) {
+                                self.pom_cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                log::DL_DONE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                log::verbose(format!("pom local m2 hit {g}/{a}/{v}/{a}-{v}.pom"));
+                                // 写透同步到当前输出目录
+                                let _ = self.write_store(&disk_coord, "pom", &bytes);
+                                let pom = Arc::new(parsed);
+                                self.raw_lru_put(key.clone(), pom.clone());
+                                return Ok(pom);
+                            }
                         }
                     }
                 }

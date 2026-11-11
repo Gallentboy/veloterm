@@ -34,6 +34,8 @@ export interface MavenGetRequest {
   threads?: number | null;
   noTransitive?: boolean | null;
   proxy?: string | null;
+  useMavenLocal?: boolean | null;
+  localRepoPath?: string | null;
 }
 
 export interface MavenTreeNode {
@@ -232,4 +234,31 @@ export function mavenPutRun(
 
 export function mavenEnvInfo(): Promise<MavenEnvInfo> {
   return invoke('maven_env_info');
+}
+
+export interface MavenPackSummary {
+  outputFile: string;
+  totalFiles: number;
+  totalBytes: number;
+  elapsedMs: number;
+}
+
+export function mavenPickSaveOfflineFile(
+  defaultName?: string,
+): Promise<string | null> {
+  return invoke('maven_pick_save_offline_file', {
+    defaultName: defaultName ?? null,
+  });
+}
+
+export function mavenPackOffline(
+  sourceDir: string,
+  outputFile: string,
+  format?: 'zip' | 'tar.gz',
+): Promise<MavenPackSummary> {
+  return invoke('maven_pack_offline', {
+    sourceDir,
+    outputFile,
+    format: format ?? null,
+  });
 }

@@ -8,6 +8,7 @@
 import { ChevronRight } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import type { MavenTreeNode } from '@/services/mavenService';
 import { cn } from '@/lib/utils';
 
@@ -86,25 +87,27 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
           ) : (
             <span className="size-4 shrink-0" />
           )}
-          <span
-            className={cn(
-              'truncate font-mono text-ui-xs',
-              node.loser ? 'line-through text-foreground-subtlest' : 'text-foreground',
-            )}
-            title={coord}
-          >
-            {coord}
-          </span>
+          <div className="min-w-0 flex-1">
+            <ControlHintTooltip title={coord} side="top" align="start" delayMs={200} block>
+              <span
+                className={cn(
+                  'block truncate font-mono text-ui-xs',
+                  node.loser ? 'line-through text-foreground-subtlest' : 'text-foreground',
+                )}
+              >
+                {coord}
+              </span>
+            </ControlHintTooltip>
+          </div>
           <span className="shrink-0 rounded bg-surface/80 px-1 font-mono text-[10px] text-foreground-subtle border border-border/40">
             {node.scope}
           </span>
           {node.managedFrom ? (
-            <span
-              className="shrink-0 rounded bg-primary/10 px-1 font-mono text-[10px] text-primary border border-primary/20"
-              title={`${t('maven.managedFrom')}: ${node.managedFrom}`}
-            >
-              ⚲ {node.managedFrom}
-            </span>
+            <ControlHintTooltip title={`${t('maven.managedFrom')}: ${node.managedFrom}`} side="top">
+              <span className="shrink-0 rounded bg-primary/10 px-1 font-mono text-[10px] text-primary border border-primary/20">
+                ⚲ {node.managedFrom}
+              </span>
+            </ControlHintTooltip>
           ) : null}
           {node.loser ? (
             <span className="shrink-0 rounded bg-warning/10 px-1 font-mono text-[10px] text-warning border border-warning/20">

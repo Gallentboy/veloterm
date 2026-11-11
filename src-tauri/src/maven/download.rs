@@ -91,13 +91,19 @@ pub fn start(
                             }
                             log::refresh_status();
                             match &r {
-                                Ok(true) => {}
-                                Ok(false) => log::verbose(format!(
-                                    "exists, skipped {} ({})",
+                                Ok(true) => log::info(format!(
+                                    "已下载: {} ({})",
                                     rel_path(&coord),
                                     log::fmt_duration(took)
                                 )),
-                                Err((name, e)) => log::error(format!("Failed {name}: {e}")),
+                                Ok(false) => log::info(format!(
+                                    "已就绪 (本地复用/已存在): {}",
+                                    rel_path(&coord)
+                                )),
+                                Err((name, e)) => {
+                    log::error(format!("下载失败 {name}: {e}"));
+                    log::downloaded_line(&rel_path(&coord), "[失败]", "-", &log::fmt_duration(took));
+                }
                             }
                             r.map(|ok| (ok, took))
                                 .map_err(|(name, e)| ((name, e), took))
@@ -145,6 +151,96 @@ pub fn start(
         let _ = done_tx.send(summary);
     });
     (tx, done_rx)
+}
+
+/// 批量满载并发下载：接收已确立的构件全量清单，
+/// 满打满算以 opts.threads 并发全速拉取，无 POM 抢占与 channel 反压。
+pub async fn run_batch(
+    coords: Vec<Coordinate>,
+    repos: Arc<RepoSet>,
+    opts: DownloadOpts,
+    cancel: Option<CancelFlag>,
+) -> Summary {
+    let threads = opts.threads.max(1);
+    let sem = Arc::new(Semaphore::new(threads));
+    let started_all = Instant::now();
+    let mut summary = Summary::default();
+    let mut set: JoinSet<TaskOut> = JoinSet::new();
+
+    for coord in coords {
+        if let Some(flag) = &cancel {
+            if flag.load(Ordering::Relaxed) {
+                summary.cancelled = true;
+                break;
+            }
+        }
+        let permit = match sem.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => break,
+        };
+        log::DL_QUEUED.fetch_sub(1, Ordering::Relaxed);
+        let repos = repos.clone();
+        let update = opts.update_snapshots;
+        let all_cls = opts.all_classifiers;
+        let want_sources = opts.sources;
+        set.spawn(async move {
+            let _permit = permit;
+            let started = Instant::now();
+            let r = download_artifact_opts(&coord, &repos, update, all_cls, want_sources).await;
+            let took = started.elapsed();
+            match &r {
+                Err(_) => {
+                    log::DL_FAILED.fetch_add(1, Ordering::Relaxed);
+                }
+                _ => {
+                    log::DL_DONE.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            log::refresh_status();
+            match &r {
+                Ok(true) => log::info(format!(
+                    "已下载: {} ({})",
+                    rel_path(&coord),
+                    log::fmt_duration(took)
+                )),
+                Ok(false) => log::info(format!(
+                    "已就绪 (本地复用/已存在): {}",
+                    rel_path(&coord)
+                )),
+                Err((name, e)) => {
+                    log::error(format!("下载失败 {name}: {e}"));
+                    log::downloaded_line(&rel_path(&coord), "[失败]", "-", &log::fmt_duration(took));
+                }
+            }
+            r.map(|ok| (ok, took))
+                .map_err(|(name, e)| ((name, e), took))
+        });
+
+        // 边投递边收割已完成的任务，防止 JoinSet 在内存中堆积
+        while let Some(joined) = set.try_join_next() {
+            match joined {
+                Ok(Ok((true, _))) => summary.downloaded += 1,
+                Ok(Ok((false, _))) => summary.skipped += 1,
+                Ok(Err(_)) => {}
+                Err(e) => summary.failed.push((format!("{e}"), "task panicked".into())),
+            }
+        }
+    }
+
+    // 等待所有剩余任务排空完成
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok(Ok((true, _))) => summary.downloaded += 1,
+            Ok(Ok((false, _))) => summary.skipped += 1,
+            Ok(Err(((name, e), took))) => {
+                summary.failed.push((name, format!("{e} (after {})", log::fmt_duration(took))))
+            }
+            Err(e) => summary.failed.push((format!("{e}"), "task panicked".into())),
+        }
+    }
+
+    summary.elapsed = Some(started_all.elapsed());
+    summary
 }
 
 /// 仓库内相对路径（日志显示用）。
@@ -209,15 +305,40 @@ async fn download_single(
     repos: &RepoSet,
     update: bool,
 ) -> std::result::Result<bool, (String, String)> {
+    let rel = rel_path(coord);
     let ext = packaging_ext(&coord.packaging);
     let local = repos.store().path(coord, ext);
     let snapshot = is_snapshot(&coord.version);
     if local.exists() && local.metadata().map(|m| m.len() > 0).unwrap_or(false) {
         if !(snapshot && update) {
+            log::downloaded_line(&rel, "已存在(跳过)", "-", "0ms");
             return Ok(false);
         }
     }
-    let rel = rel_path(coord);
+    // 检查本地 Maven 仓库 (MavenLocal ~/.m2/repository)：有则直接复制使用，免网络下载
+    if !(snapshot && update) {
+        if let Some(local_store) = repos.local_repo() {
+            let m2_file = local_store.path(coord, ext);
+            if m2_file.exists() && m2_file.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+                if m2_file == local {
+                    log::downloaded_line(&rel, "已存在(跳过)", "-", "0ms");
+                    return Ok(false);
+                }
+                if let Some(parent) = local.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if std::fs::copy(&m2_file, &local).is_ok() {
+                    let m2_sha = m2_file.with_extension(format!("{ext}.sha1"));
+                    if m2_sha.exists() {
+                        let _ = std::fs::copy(&m2_sha, local.with_extension(format!("{ext}.sha1")));
+                    }
+                    log::downloaded_line(&rel, "本地复用", "-", "0ms");
+                    log::info(format!("从本地 Maven 仓库复用（免下载）: {}", rel));
+                    return Ok(false);
+                }
+            }
+        }
+    }
     let started = Instant::now();
     log::DL_ACTIVE.fetch_add(1, Ordering::Relaxed);
     log::refresh_status();
@@ -249,4 +370,52 @@ async fn download_single(
         &log::fmt_duration(started.elapsed()),
     );
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::maven::layout::{Layout, Store};
+
+    #[tokio::test]
+    async fn test_download_reuses_local_m2_store() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base_dir = std::env::temp_dir().join(format!("veloterm-mavenlocal-test-{nanos}"));
+        let m2_dir = base_dir.join("m2");
+        let out_dir = base_dir.join("out");
+
+        let m2_store = Arc::new(Store::new(m2_dir.clone(), Layout::M2));
+        let out_store = Arc::new(Store::new(out_dir.clone(), Layout::M2));
+
+        let coord = Coordinate {
+            group: "com.example".to_string(),
+            artifact: "demo".to_string(),
+            version: "1.0.0".to_string(),
+            packaging: "jar".to_string(),
+            classifier: None,
+        };
+
+        // 模拟本地 m2 中已有预装的 jar 包
+        let m2_jar_path = m2_store.path(&coord, "jar");
+        std::fs::create_dir_all(m2_jar_path.parent().unwrap()).unwrap();
+        std::fs::write(&m2_jar_path, b"mock-jar-content-from-m2").unwrap();
+
+        let repos = RepoSet::new(Vec::new(), out_store.clone(), None).unwrap();
+        repos.set_local_repo(Some(m2_store));
+
+        let out_jar_path = out_store.path(&coord, "jar");
+        assert!(!out_jar_path.exists());
+
+        // 执行下载单构件
+        let result = download_single(&coord, &repos, false).await.unwrap();
+        // 期望直接复用本地 m2，免下载（Ok(false)）
+        assert!(!result);
+        assert!(out_jar_path.exists());
+        assert_eq!(std::fs::read(&out_jar_path).unwrap(), b"mock-jar-content-from-m2");
+
+        let _ = std::fs::remove_dir_all(&base_dir);
+    }
 }

@@ -1,7 +1,7 @@
 //! 传递依赖解析：层同步 BFS 收集（层内并行预取 POM）→ 每 key (g:a:ext:classifier)
 //! 按 (depth, 全局 seq) nearest-wins 调解 → 落败子树整体剪枝。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::maven::error::{Error, Result};
@@ -206,6 +206,11 @@ pub async fn resolve(
                 return Ok(ResolveOutcome { nodes, winners, failures });
             }
         }
+
+        // 层级 POM 批量并发预取：将当前层节点涉及的所有 POM（及级联 parent、BOM import）
+        // 以 48 线程高并发一次性提前拉取并落盘到本地缓存，消除后续 Effective 构建时的串行网络等待
+        prefetch_level_poms(&level, &nodes, repos.clone(), cancel.clone()).await;
+
         /// 单节点的展开产物（gather 时并入 arena）
         struct NodeWork {
             ni: usize,
@@ -421,10 +426,132 @@ async fn dispatch_after_pom(
     } else {
         coord.packaging = pom.coord.packaging.clone();
     }
-    // 先计数后 send：recv 侧立即 fetch_sub，若 send 后才 add 存在瞬时回绕窗口
+    // 先计数后 send：recv 侧立即 fetch_sub，若 send 后才 add 存在瞬时回绕窗口；
+    // 同步递增 DL_TOTAL 使下载端分母实时反映当前确立的全部任务数
     log::DL_QUEUED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    log::DL_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if on_winner.send(coord).await.is_err() {
         log::DL_QUEUED.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        log::DL_TOTAL.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// 层级 POM 批量并发预取：将当前层节点涉及的所有 POM（及级联 parent、BOM import）
+/// 以 48 线程高并发一次性提前拉取并落盘到本地缓存，消除后续 Effective 构建时的串行网络等待。
+async fn prefetch_level_poms(
+    level: &[usize],
+    nodes: &[Node],
+    repos: Arc<RepoSet>,
+    cancel: Option<CancelFlag>,
+) {
+    if level.is_empty() {
+        return;
+    }
+    // 收集当前层需要预取的初始 GAV 清单（去重）
+    let mut initial_gavs = Vec::new();
+    let mut seen = HashSet::new();
+    for &ni in level {
+        if ni >= nodes.len() {
+            continue;
+        }
+        let coord = &nodes[ni].coord;
+        if coord.group.is_empty() || coord.artifact.is_empty() || coord.version.is_empty() {
+            continue;
+        }
+        let key = (coord.group.clone(), coord.artifact.clone(), coord.version.clone());
+        if seen.insert(key.clone()) {
+            initial_gavs.push(key);
+        }
+    }
+    if initial_gavs.is_empty() {
+        return;
+    }
+
+    if initial_gavs.len() > 1 {
+        log::info(format!(
+            "层级并发预取：正在批量预热 {} 个构件 POM 与依赖元数据...",
+            initial_gavs.len()
+        ));
+    }
+
+    let sem = Arc::new(tokio::sync::Semaphore::new(48));
+    let seen = Arc::new(std::sync::Mutex::new(seen));
+    let mut current_batch = initial_gavs;
+
+    // 最多 4 轮级联展开（预热当前 pom -> parent pom -> BOM pom），兼顾深度与防环
+    for _round in 0..4 {
+        if current_batch.is_empty() {
+            break;
+        }
+        if let Some(flag) = &cancel {
+            if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+        }
+        let mut set = tokio::task::JoinSet::new();
+        let next_batch = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        for gav in current_batch {
+            let repos = repos.clone();
+            let sem = sem.clone();
+            let seen = seen.clone();
+            let next_batch = next_batch.clone();
+            let cancel = cancel.clone();
+
+            set.spawn(async move {
+                if let Some(flag) = &cancel {
+                    if flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+                }
+                let _permit = match sem.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => return,
+                };
+
+                // 利用底层的磁盘/LRU缓存与防重锁并发抓取
+                if let Ok(raw) = repos.fetch_raw_pom_cached(&gav.0, &gav.1, &gav.2).await {
+                    let mut cascades = Vec::new();
+                    // 级联探测 parent
+                    if let Some(p) = &raw.parent {
+                        if !p.group.is_empty()
+                            && !p.artifact.is_empty()
+                            && !p.version.is_empty()
+                            && !p.version.contains("${")
+                        {
+                            cascades.push((p.group.clone(), p.artifact.clone(), p.version.clone()));
+                        }
+                    }
+                    // 级联探测 BOM import
+                    for d in &raw.dep_mgmt {
+                        if d.scope.as_deref() == Some("import") {
+                            if let Some(v) = &d.version {
+                                if !v.contains("${") && !v.is_empty() {
+                                    cascades.push((d.group.clone(), d.artifact.clone(), v.clone()));
+                                }
+                            }
+                        }
+                    }
+                    if !cascades.is_empty() {
+                        let mut s = seen.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut nb = next_batch.lock().unwrap_or_else(|e| e.into_inner());
+                        for c in cascades {
+                            if s.insert(c.clone()) {
+                                nb.push(c);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        while set.join_next().await.is_some() {}
+
+        let next = {
+            let mut nb = next_batch.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *nb)
+        };
+        current_batch = next;
     }
 }
 
@@ -888,5 +1015,67 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let out = resolve(&root, ctx, mock_repos(), true, None, &tx).await.unwrap();
         assert_eq!(winners_by_ga(&out), vec!["t:a:1.0".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_prefetch_level_poms_cascades_and_warms() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base_dir = std::env::temp_dir().join(format!("veloterm-prefetch-test-{nanos}"));
+        let store = Arc::new(crate::maven::layout::Store::new(
+            base_dir.clone(),
+            crate::maven::layout::Layout::M2,
+        ));
+        let repos = Arc::new(RepoSet::new(Vec::new(), store.clone(), None).unwrap());
+
+        // 模拟已存在本地 POM
+        let parent_coord = Coordinate {
+            group: "com.example".to_string(),
+            artifact: "parent".to_string(),
+            version: "1.0.0".to_string(),
+            packaging: "pom".to_string(),
+            classifier: None,
+        };
+        let child_coord = Coordinate {
+            group: "com.example".to_string(),
+            artifact: "child".to_string(),
+            version: "1.0.0".to_string(),
+            packaging: "jar".to_string(),
+            classifier: None,
+        };
+
+        let child_pom_path = store.path(&child_coord, "pom");
+        let parent_pom_path = store.path(&parent_coord, "pom");
+        std::fs::create_dir_all(child_pom_path.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(parent_pom_path.parent().unwrap()).unwrap();
+
+        std::fs::write(
+            &child_pom_path,
+            r#"<project><groupId>com.example</groupId><artifactId>child</artifactId><version>1.0.0</version>
+            <parent><groupId>com.example</groupId><artifactId>parent</artifactId><version>1.0.0</version></parent>
+            </project>"#,
+        ).unwrap();
+        std::fs::write(
+            &parent_pom_path,
+            r#"<project><groupId>com.example</groupId><artifactId>parent</artifactId><version>1.0.0</version>
+            <packaging>pom</packaging></project>"#,
+        ).unwrap();
+
+        let mut nodes = Vec::new();
+        let ci = push_node(&mut nodes, child_coord, Scope::Compile, Vec::new(), None);
+        let level = vec![ci];
+
+        // 执行预取
+        prefetch_level_poms(&level, &nodes, repos.clone(), None).await;
+
+        // 预取执行后，LRU 缓存中应已包含 child 和 parent
+        let child_cached = repos.fetch_raw_pom_cached("com.example", "child", "1.0.0").await;
+        assert!(child_cached.is_ok());
+        let parent_cached = repos.fetch_raw_pom_cached("com.example", "parent", "1.0.0").await;
+        assert!(parent_cached.is_ok());
+
+        let _ = std::fs::remove_dir_all(&base_dir);
     }
 }
