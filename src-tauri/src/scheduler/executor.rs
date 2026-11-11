@@ -466,6 +466,8 @@ mod tests {
             env_vars: None,
             concurrency_policy: None,
             catchup_window_hours: None,
+            on_success_task_id: None,
+            on_failure_task_id: None,
         }
     }
 

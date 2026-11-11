@@ -91,6 +91,13 @@ pub struct ScheduledTask {
     /// 允许补跑过去 N 小时内错过的任务（0 = 不补偿，默认；24 = 24 小时；168 = 7 天；u32::MAX = 总是补跑）
     #[serde(default)]
     pub catchup_window_hours: Option<u32>,
+    // ── 任务链式联动 ──
+    /// 执行成功后自动触发的下游任务 ID
+    #[serde(default)]
+    pub on_success_task_id: Option<String>,
+    /// 执行失败后自动触发的下游任务 ID
+    #[serde(default)]
+    pub on_failure_task_id: Option<String>,
 }
 
 /// 执行日志条目

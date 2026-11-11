@@ -31,7 +31,9 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
             retention_days INTEGER DEFAULT 30,
             env_vars    TEXT,
             concurrency_policy TEXT DEFAULT 'allow',
-            catchup_window_hours INTEGER DEFAULT 0
+            catchup_window_hours INTEGER DEFAULT 0,
+            on_success_task_id TEXT,
+            on_failure_task_id TEXT
         );
         CREATE TABLE IF NOT EXISTS scheduled_task_logs (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +61,8 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE scheduled_tasks ADD COLUMN env_vars TEXT",
         "ALTER TABLE scheduled_tasks ADD COLUMN concurrency_policy TEXT DEFAULT 'allow'",
         "ALTER TABLE scheduled_tasks ADD COLUMN catchup_window_hours INTEGER DEFAULT 0",
+        "ALTER TABLE scheduled_tasks ADD COLUMN on_success_task_id TEXT",
+        "ALTER TABLE scheduled_tasks ADD COLUMN on_failure_task_id TEXT",
     ];
     for sql in migrations {
         let _ = conn.execute(sql, []);
@@ -90,6 +94,8 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledTask> {
         env_vars: row.get("env_vars")?,
         concurrency_policy: row.get("concurrency_policy")?,
         catchup_window_hours: row.get::<_, Option<i32>>("catchup_window_hours")?.map(|v| v as u32),
+        on_success_task_id: row.get("on_success_task_id")?,
+        on_failure_task_id: row.get("on_failure_task_id")?,
     })
 }
 
@@ -115,8 +121,9 @@ pub fn create_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
          (id, name, cron_expr, task_type, command, working_dir, host_id, enabled, \
           created_at, updated_at, last_run_at, last_status, \
           notify_on, webhook_url, timeout_secs, max_retries, retry_backoff_secs, \
-          run_at, retention_days, env_vars, concurrency_policy, catchup_window_hours) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
+          run_at, retention_days, env_vars, concurrency_policy, catchup_window_hours, \
+          on_success_task_id, on_failure_task_id) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)",
         rusqlite::params![
             created.id,
             created.name,
@@ -140,6 +147,8 @@ pub fn create_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
             created.env_vars,
             created.concurrency_policy.as_deref().unwrap_or("allow"),
             created.catchup_window_hours.map(|v| v as i32).unwrap_or(0),
+            created.on_success_task_id,
+            created.on_failure_task_id,
         ],
     )
     .map_err(|e| format!("插入定时任务失败：{e}"))?;
@@ -157,7 +166,8 @@ pub fn update_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
              working_dir=?6, host_id=?7, enabled=?8, updated_at=?9, \
              notify_on=?10, webhook_url=?11, timeout_secs=?12, max_retries=?13, \
              retry_backoff_secs=?14, run_at=?15, retention_days=?16, env_vars=?17, \
-             concurrency_policy=?18, catchup_window_hours=?19 \
+             concurrency_policy=?18, catchup_window_hours=?19, \
+             on_success_task_id=?20, on_failure_task_id=?21 \
              WHERE id = ?1",
             rusqlite::params![
                 updated.id,
@@ -179,6 +189,8 @@ pub fn update_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
                 updated.env_vars,
                 updated.concurrency_policy.as_deref().unwrap_or("allow"),
                 updated.catchup_window_hours.map(|v| v as i32).unwrap_or(0),
+                updated.on_success_task_id,
+                updated.on_failure_task_id,
             ],
         )
         .map_err(|e| format!("更新定时任务失败：{e}"))?;
@@ -522,6 +534,8 @@ mod tests {
             env_vars: None,
             concurrency_policy: None,
             catchup_window_hours: None,
+            on_success_task_id: None,
+            on_failure_task_id: None,
         }
     }
 
@@ -671,5 +685,28 @@ mod tests {
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].exit_code, Some(-2));
         assert_eq!(logs[0].stderr_tail.as_deref(), Some("测试跳过：上一轮正在运行"));
+    }
+
+    #[test]
+    fn test_task_chaining_persistence() {
+        let pool = test_pool();
+        {
+            let conn = pool.get().unwrap();
+            ensure_tables(&conn).unwrap();
+        }
+
+        let mut t1 = sample("task-chain-1", "local_command", true);
+        t1.on_success_task_id = Some("task-chain-2".to_string());
+        t1.on_failure_task_id = Some("task-chain-alert".to_string());
+
+        let created = create_task(&pool, &t1).unwrap();
+        assert_eq!(created.on_success_task_id.as_deref(), Some("task-chain-2"));
+        assert_eq!(created.on_failure_task_id.as_deref(), Some("task-chain-alert"));
+
+        let mut to_update = created;
+        to_update.on_failure_task_id = None;
+        let updated = update_task(&pool, &to_update).unwrap();
+        assert_eq!(updated.on_success_task_id.as_deref(), Some("task-chain-2"));
+        assert_eq!(updated.on_failure_task_id, None);
     }
 }

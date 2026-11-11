@@ -36,6 +36,9 @@ export interface ScheduledTask {
   concurrencyPolicy?: 'allow' | 'skip' | 'queue' | null;
   // 错失触发补偿策略（开机/休眠唤醒补跑窗口小时数；0 为不补偿）
   catchupWindowHours?: number | null;
+  // 任务链式联动（前后置流水线）
+  onSuccessTaskId?: string | null;
+  onFailureTaskId?: string | null;
 }
 
 export interface TaskLog {

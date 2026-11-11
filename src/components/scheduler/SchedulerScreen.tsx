@@ -31,7 +31,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
@@ -458,6 +458,26 @@ export function SchedulerScreen() {
                             </span>
                           </ControlHintTooltip>
                         ) : null}
+                        {task.onSuccessTaskId ? (
+                          <ControlHintTooltip
+                            title={t('scheduler.fieldOnSuccessTask')}
+                            side="top"
+                          >
+                            <span className="shrink-0 rounded bg-terminal-green/10 px-1.5 py-0.5 text-[10px] font-medium text-terminal-green border border-terminal-green/20 cursor-default">
+                              {t('scheduler.badgeChainSuccess')}
+                            </span>
+                          </ControlHintTooltip>
+                        ) : null}
+                        {task.onFailureTaskId ? (
+                          <ControlHintTooltip
+                            title={t('scheduler.fieldOnFailureTask')}
+                            side="top"
+                          >
+                            <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive border border-destructive/20 cursor-default">
+                              {t('scheduler.badgeChainFailure')}
+                            </span>
+                          </ControlHintTooltip>
+                        ) : null}
                         {task.lastStatus ? (
                           <span
                             className={cn(
@@ -872,6 +892,7 @@ export function SchedulerScreen() {
         {editing ? (
           <TaskForm
             initial={editing === 'new' ? null : editing}
+            allTasks={tasks}
             onClose={() => setEditing(null)}
             onSaved={() => {
               setEditing(null);
@@ -1170,15 +1191,25 @@ function parseEnvText(text: string): { key: string; value: string }[] {
 
 function TaskForm({
   initial,
+  allTasks,
   onClose,
   onSaved,
 }: {
   initial: ScheduledTask | null;
+  allTasks?: ScheduledTask[];
   onClose: () => void;
   onSaved: () => void;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState(initial?.name ?? '');
+
+  const downstreamOptions = useMemo(() => {
+    const candidates = (allTasks ?? []).filter((t) => t.id !== initial?.id);
+    return [
+      { value: '', label: t('scheduler.noChainedTask') },
+      ...candidates.map((t) => ({ value: t.id, label: `${t.name} (${t.taskType})` })),
+    ];
+  }, [allTasks, initial?.id, t]);
 
   // 调度方式：周期 Cron 还是 一次性任务 (run_at)
   const [scheduleMode, setScheduleMode] = useState<'cron' | 'once'>(
@@ -1285,6 +1316,12 @@ function TaskForm({
   const [catchupWindowHours, setCatchupWindowHours] = useState<number>(
     initial?.catchupWindowHours ?? 0,
   );
+  const [onSuccessTaskId, setOnSuccessTaskId] = useState<string>(
+    initial?.onSuccessTaskId ?? '',
+  );
+  const [onFailureTaskId, setOnFailureTaskId] = useState<string>(
+    initial?.onFailureTaskId ?? '',
+  );
 
   const hasAdvanced = Boolean(
     (initial?.notifyOn && initial.notifyOn !== 'none') ||
@@ -1293,7 +1330,9 @@ function TaskForm({
     (initial?.maxRetries && initial.maxRetries > 0) ||
     (initial?.retentionDays && initial.retentionDays !== 30) ||
     (initial?.concurrencyPolicy && initial.concurrencyPolicy !== 'allow') ||
-    (initial?.catchupWindowHours && initial.catchupWindowHours > 0),
+    (initial?.catchupWindowHours && initial.catchupWindowHours > 0) ||
+    initial?.onSuccessTaskId ||
+    initial?.onFailureTaskId,
   );
   const [showAdvanced, setShowAdvanced] = useState(hasAdvanced);
 
@@ -1385,6 +1424,8 @@ function TaskForm({
       envVars,
       concurrencyPolicy,
       catchupWindowHours: catchupWindowHours > 0 ? catchupWindowHours : null,
+      onSuccessTaskId: onSuccessTaskId.trim() || null,
+      onFailureTaskId: onFailureTaskId.trim() || null,
     };
     try {
       if (initial) {
@@ -1947,6 +1988,41 @@ function TaskForm({
                     ]}
                     onChange={(val) => setCatchupWindowHours(Number(val))}
                   />
+                </div>
+
+                {/* 任务链式联动（前后置流水线） */}
+                <div className="col-span-full rounded-md border border-border/50 bg-surface/30 p-2.5">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className={labelCls}>{t('scheduler.fieldTaskChaining')}</label>
+                    <ControlHintTooltip title={t('scheduler.fieldTaskChainingTooltip')} side="left">
+                      <span className="text-[11px] text-foreground-subtlest cursor-help">ℹ️ {t('scheduler.chainHelp')}</span>
+                    </ControlHintTooltip>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="text-[11px] font-medium text-terminal-green block mb-1">
+                        {t('scheduler.fieldOnSuccessTask')}
+                      </span>
+                      <SelectMenu
+                        value={onSuccessTaskId}
+                        options={downstreamOptions}
+                        onChange={(val) => setOnSuccessTaskId(val)}
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-medium text-destructive block mb-1">
+                        {t('scheduler.fieldOnFailureTask')}
+                      </span>
+                      <SelectMenu
+                        value={onFailureTaskId}
+                        options={downstreamOptions}
+                        onChange={(val) => setOnFailureTaskId(val)}
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-2 text-[10.5px] text-foreground-subtlest">
+                    {t('scheduler.chainEnvTip')}
+                  </div>
                 </div>
               </div>
             ) : null}

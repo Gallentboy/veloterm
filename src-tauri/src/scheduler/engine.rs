@@ -205,91 +205,170 @@ pub(crate) async fn run_task_internal(task: &ScheduledTask, pool: &DbPool, app: 
     run_task(task, pool, app).await;
 }
 
-/// 执行一个任务并记录结果 + 推送事件 + D1 通知 + D2 重试 + D4 一次性自动停用 + 单实例互斥控制
-async fn run_task(task: &ScheduledTask, pool: &DbPool, app: &AppHandle) {
-    let policy = task.concurrency_policy.as_deref().unwrap_or("allow");
-    let _lock_guard = match policy {
-        "skip" => {
-            let lock = get_task_lock(&task.id);
-            match lock.try_lock_owned() {
-                Ok(guard) => Some(guard),
-                Err(_) => {
-                    let now = chrono::Utc::now().timestamp();
-                    let reason = "已跳过：上一轮任务仍在运行中（单实例互斥）";
-                    log::warn!(
-                        "[scheduler] 任务「{}」（{}）跳过执行：上一轮实例仍在运行中（单实例互斥/skip 策略）",
-                        task.name, task.id
-                    );
-                    let _ = store::record_skipped_run(pool, &task.id, now, reason);
-                    let _ = app.emit("scheduler-task-event", executor::skipped_event(task, now, reason));
-                    return;
+/// 执行一个任务并记录结果 + 推送事件 + D1 通知 + D2 重试 + D4 一次性自动停用 + 单实例互斥控制 + 任务链式联动
+fn run_task(
+    task: &ScheduledTask,
+    pool: &DbPool,
+    app: &AppHandle,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    let task = task.clone();
+    let pool = pool.clone();
+    let app = app.clone();
+
+    Box::pin(async move {
+        let policy = task.concurrency_policy.as_deref().unwrap_or("allow");
+        let _lock_guard = match policy {
+            "skip" => {
+                let lock = get_task_lock(&task.id);
+                match lock.try_lock_owned() {
+                    Ok(guard) => Some(guard),
+                    Err(_) => {
+                        let now = chrono::Utc::now().timestamp();
+                        let reason = "已跳过：上一轮任务仍在运行中（单实例互斥）";
+                        log::warn!(
+                            "[scheduler] 任务「{}」（{}）跳过执行：上一轮实例仍在运行中（单实例互斥/skip 策略）",
+                            task.name, task.id
+                        );
+                        let _ = store::record_skipped_run(&pool, &task.id, now, reason);
+                        let _ = app.emit("scheduler-task-event", executor::skipped_event(&task, now, reason));
+                        return;
+                    }
+                }
+            }
+            "queue" => {
+                let lock = get_task_lock(&task.id);
+                Some(lock.lock_owned().await)
+            }
+            _ => None,
+        };
+
+        let max_retries = task.max_retries.unwrap_or(0);
+        let backoff = task.retry_backoff_secs.unwrap_or(30);
+        let mut attempt: u32 = 0;
+        let final_result;
+
+        loop {
+            let started_ts = chrono::Utc::now().timestamp();
+
+            // 推送 started 事件
+            let _ = app.emit("scheduler-task-event", executor::started_event(&task, started_ts));
+
+            // 记录 running 状态
+            let _ = store::record_run(&pool, &task.id, started_ts, None, None, None, None);
+
+            let result = executor::execute(&task, &pool).await;
+            let finished_ts = chrono::Utc::now().timestamp();
+
+            // 更新日志 + 任务状态
+            let _ = store::record_run_extra(
+                &pool,
+                &task.id,
+                started_ts,
+                finished_ts,
+                result.exit_code,
+                Some(&result.stdout_tail),
+                Some(&result.stderr_tail),
+            );
+
+            // 推送 finished 事件
+            let _ = app.emit(
+                "scheduler-task-event",
+                executor::finished_event(&task, started_ts, finished_ts, result.exit_code, &result.stderr_tail),
+            );
+
+            let is_failure = result.exit_code != Some(0);
+            if !is_failure || attempt >= max_retries {
+                final_result = result;
+                break;
+            }
+
+            // D2 失败重试：等待 backoff 后重跑（最后一次重试的结果为最终结果）
+            attempt += 1;
+            log::info!(
+                "[scheduler] 任务「{}」失败（attempt {}/{}），{}s 后重试",
+                task.name, attempt, max_retries, backoff
+            );
+            tokio::time::sleep(Duration::from_secs(backoff)).await;
+        }
+
+        // D1 失败/成功通知
+        executor::send_notification(&task, final_result.exit_code, &final_result.stderr_tail, &app).await;
+
+        // D4 一次性任务触发后自动停用
+        if task.run_at.is_some() {
+            let _ = store::set_enabled(&pool, &task.id, false);
+            log::info!("[scheduler] 一次性任务「{}」已执行完毕，自动停用", task.name);
+        }
+
+        // ── 任务链式联动（On-Success / On-Failure） ──
+        let is_failure = final_result.exit_code != Some(0);
+        let next_task_id = if !is_failure {
+            task.on_success_task_id.as_deref()
+        } else {
+            task.on_failure_task_id.as_deref()
+        };
+
+        if let Some(next_id) = next_task_id {
+            if next_id == task.id {
+                log::warn!(
+                    "[scheduler] 任务「{}」链式联动指向自身，已忽略以避免无限循环",
+                    task.name
+                );
+            } else {
+                match store::get_task(&pool, next_id) {
+                    Ok(mut downstream_task) => {
+                        log::info!(
+                            "[scheduler] 任务「{}」执行完毕（{}），触发下游任务「{}」（{}）",
+                            task.name,
+                            if is_failure { "失败" } else { "成功" },
+                            downstream_task.name,
+                            downstream_task.id
+                        );
+
+                        // 传递上游上下文环境变量给下游
+                        let mut env_map: std::collections::HashMap<String, String> = downstream_task
+                            .env_vars
+                            .as_deref()
+                            .and_then(|s| serde_json::from_str(s).ok())
+                            .unwrap_or_default();
+
+                        env_map.insert("VELOTERM_UPSTREAM_TASK_ID".to_string(), task.id.clone());
+                        env_map.insert("VELOTERM_UPSTREAM_TASK_NAME".to_string(), task.name.clone());
+                        env_map.insert(
+                            "VELOTERM_UPSTREAM_EXIT_CODE".to_string(),
+                            final_result.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "-1".to_string()),
+                        );
+                        env_map.insert(
+                            "VELOTERM_UPSTREAM_STATUS".to_string(),
+                            if is_failure { "failed".to_string() } else { "success".to_string() },
+                        );
+                        if !final_result.stdout_tail.is_empty() {
+                            env_map.insert("VELOTERM_UPSTREAM_STDOUT_TAIL".to_string(), final_result.stdout_tail.clone());
+                        }
+                        if !final_result.stderr_tail.is_empty() {
+                            env_map.insert("VELOTERM_UPSTREAM_STDERR_TAIL".to_string(), final_result.stderr_tail.clone());
+                        }
+
+                        if let Ok(json_str) = serde_json::to_string(&env_map) {
+                            downstream_task.env_vars = Some(json_str);
+                        }
+
+                        let pool_clone = pool.clone();
+                        let app_clone = app.clone();
+                        tokio::spawn(async move {
+                            run_task(&downstream_task, &pool_clone, &app_clone).await;
+                        });
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[scheduler] 任务「{}」尝试触发下游任务 {next_id} 失败：{e}",
+                            task.name
+                        );
+                    }
                 }
             }
         }
-        "queue" => {
-            let lock = get_task_lock(&task.id);
-            Some(lock.lock_owned().await)
-        }
-        _ => None,
-    };
-
-    let max_retries = task.max_retries.unwrap_or(0);
-    let backoff = task.retry_backoff_secs.unwrap_or(30);
-    let mut attempt: u32 = 0;
-    let final_result;
-
-    loop {
-        let started_ts = chrono::Utc::now().timestamp();
-
-        // 推送 started 事件
-        let _ = app.emit("scheduler-task-event", executor::started_event(task, started_ts));
-
-        // 记录 running 状态
-        let _ = store::record_run(pool, &task.id, started_ts, None, None, None, None);
-
-        let result = executor::execute(task, pool).await;
-        let finished_ts = chrono::Utc::now().timestamp();
-
-        // 更新日志 + 任务状态
-        let _ = store::record_run_extra(
-            pool,
-            &task.id,
-            started_ts,
-            finished_ts,
-            result.exit_code,
-            Some(&result.stdout_tail),
-            Some(&result.stderr_tail),
-        );
-
-        // 推送 finished 事件
-        let _ = app.emit(
-            "scheduler-task-event",
-            executor::finished_event(task, started_ts, finished_ts, result.exit_code, &result.stderr_tail),
-        );
-
-        let is_failure = result.exit_code != Some(0);
-        if !is_failure || attempt >= max_retries {
-            final_result = result;
-            break;
-        }
-
-        // D2 失败重试：等待 backoff 后重跑（最后一次重试的结果为最终结果）
-        attempt += 1;
-        log::info!(
-            "[scheduler] 任务「{}」失败（attempt {}/{}），{}s 后重试",
-            task.name, attempt, max_retries, backoff
-        );
-        tokio::time::sleep(Duration::from_secs(backoff)).await;
-    }
-
-    // D1 失败/成功通知
-    executor::send_notification(task, final_result.exit_code, &final_result.stderr_tail, app).await;
-
-    // D4 一次性任务触发后自动停用
-    if task.run_at.is_some() {
-        let _ = store::set_enabled(pool, &task.id, false);
-        log::info!("[scheduler] 一次性任务「{}」已执行完毕，自动停用", task.name);
-    }
+    })
 }
 
 /// 检测 Cron 任务在关机或休眠期间是否错过了执行
