@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
@@ -60,6 +61,7 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
   const [scanResult, setScanResult] = useState<MavenBrokenCacheScanResult | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [cleanSummary, setCleanSummary] = useState<MavenCleanResult | null>(null);
+  const [confirmCleanBrokenOpen, setConfirmCleanBrokenOpen] = useState(false);
 
   // 2. 体积透视与多版本去重
   const [minVersions, setMinVersions] = useState('5');
@@ -69,6 +71,7 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
   const [selectedVersionDirs, setSelectedVersionDirs] = useState<Set<string>>(new Set());
   const [expandedArtifacts, setExpandedArtifacts] = useState<Set<string>>(new Set());
   const [spaceCleanSummary, setSpaceCleanSummary] = useState<MavenCleanResult | null>(null);
+  const [confirmCleanHistoricalOpen, setConfirmCleanHistoricalOpen] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -99,13 +102,12 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
     }
   };
 
-  const handleClean = async () => {
+  const handleCleanClick = () => {
     if (selectedPaths.size === 0) return;
-    const count = selectedPaths.size;
-    if (!window.confirm(t('maven.cleanConfirm', { count }))) {
-      return;
-    }
+    setConfirmCleanBrokenOpen(true);
+  };
 
+  const executeCleanBroken = async () => {
     setCleaning(true);
     setError(null);
     try {
@@ -114,6 +116,7 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
         repoPath.trim() || null,
       );
       setCleanSummary(res);
+      setConfirmCleanBrokenOpen(false);
       const refreshed = await mavenScanBrokenCache(repoPath.trim() || null);
       setScanResult(refreshed);
       setSelectedPaths(new Set(refreshed.files.map((f) => f.path)));
@@ -191,33 +194,12 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
     }
   };
 
-  const handleCleanHistorical = async () => {
+  const handleCleanHistoricalClick = () => {
     if (selectedVersionDirs.size === 0) return;
-    const count = selectedVersionDirs.size;
+    setConfirmCleanHistoricalOpen(true);
+  };
 
-    // 计算将要释放的预估体积
-    let totalFreed = 0;
-    if (spaceResult) {
-      for (const g of spaceResult.redundantArtifacts) {
-        for (const v of g.versions) {
-          if (selectedVersionDirs.has(v.dirPath)) {
-            totalFreed += v.totalBytes;
-          }
-        }
-      }
-    }
-
-    if (
-      !window.confirm(
-        t('maven.confirmCleanHistorical', {
-          count,
-          bytes: formatBytes(totalFreed),
-        }),
-      )
-    ) {
-      return;
-    }
-
+  const executeCleanHistorical = async () => {
     setCleaningVersions(true);
     setError(null);
     try {
@@ -226,6 +208,7 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
         repoPath.trim() || null,
       );
       setSpaceCleanSummary(res);
+      setConfirmCleanHistoricalOpen(false);
       // 刷新体积透视
       const mv = parseInt(minVersions.trim(), 10) || 5;
       const refreshed = await mavenAnalyzeRepoSpace(repoPath.trim() || null, mv);
@@ -484,7 +467,7 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
                       variant="destructive"
                       size="sm"
                       disabled={selectedPaths.size === 0 || cleaning}
-                      onClick={() => void handleClean()}
+                      onClick={handleCleanClick}
                       className="gap-1.5"
                     >
                       {cleaning ? <Spinner className="size-3.5" /> : <Trash2 className="size-3.5" />}
@@ -606,7 +589,7 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
                       variant="destructive"
                       size="sm"
                       disabled={selectedVersionDirs.size === 0 || cleaningVersions}
-                      onClick={() => void handleCleanHistorical()}
+                      onClick={handleCleanHistoricalClick}
                       className="gap-1.5"
                     >
                       {cleaningVersions ? <Spinner className="size-3.5" /> : <Trash2 className="size-3.5" />}
@@ -773,6 +756,29 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
           )}
         </div>
       )}
+
+      {/* 危险操作二次确认弹窗 */}
+      <ConfirmDialog
+        open={confirmCleanBrokenOpen}
+        title={t('maven.cleanAllBroken')}
+        description={t('maven.cleanConfirm', { count: selectedPaths.size })}
+        confirmLabel={t('maven.cleanAllBroken')}
+        busy={cleaning}
+        onConfirm={() => void executeCleanBroken()}
+        onCancel={() => setConfirmCleanBrokenOpen(false)}
+      />
+      <ConfirmDialog
+        open={confirmCleanHistoricalOpen}
+        title={t('maven.cleanHistoricalBtn')}
+        description={t('maven.confirmCleanHistorical', {
+          count: selectedVersionDirs.size,
+          bytes: formatBytes(totalRedundantSelectedBytes),
+        })}
+        confirmLabel={t('maven.cleanHistoricalBtn')}
+        busy={cleaningVersions}
+        onConfirm={() => void executeCleanHistorical()}
+        onCancel={() => setConfirmCleanHistoricalOpen(false)}
+      />
     </div>
   );
 }
