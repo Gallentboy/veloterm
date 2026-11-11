@@ -68,3 +68,6 @@ thirdpart/
 testdata/
 src-tauri/testdata/
 !src-tauri/testdata/sample.jxl
+# JRE 运行环境与本地缓存（由 prepare-jre.mjs 动态准备，不进 git 树）
+src-tauri/.jre-cache/
+src-tauri/resources/jre/

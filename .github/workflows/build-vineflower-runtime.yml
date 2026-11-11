@@ -66,6 +66,8 @@ jobs:
           Get-ChildItem -Path .\vineflower-runtime\bin | Select-Object Name, Length
           # 删除 bin 下除了 java.exe 以外的所有 .exe 二进制（如 keytool.exe）
           Get-ChildItem -Path .\vineflower-runtime\bin -Filter *.exe | Where-Object { $_.Name -ne 'java.exe' } | Remove-Item -Force -Verbose
+          # 删除非运行必需的 legal 目录
+          if (Test-Path .\vineflower-runtime\legal) { Remove-Item -Path .\vineflower-runtime\legal -Recurse -Force }
           Write-Host "=== After Clean: bin directory contents ==="
           Get-ChildItem -Path .\vineflower-runtime\bin | Select-Object Name, Length
 
@@ -77,6 +79,8 @@ jobs:
           ls -la vineflower-runtime/bin
           # 删除 bin 下除了 java 以外的二进制文件（如 keytool）
           find vineflower-runtime/bin -type f ! -name 'java' -exec rm -fv {} +
+          # 删除非运行必需的 legal 目录
+          rm -rf vineflower-runtime/legal
           echo "=== After Clean: bin directory contents ==="
           ls -la vineflower-runtime/bin
 

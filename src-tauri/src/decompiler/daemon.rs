@@ -75,6 +75,8 @@ impl DecompilerManager {
         let resource_roots = get_candidate_resource_roots();
         for root in &resource_roots {
             candidates.push(root.join("jre").join("bin").join(exe_name));
+            candidates.push(root.join("resources").join("jre").join("bin").join(exe_name));
+            candidates.push(root.join("bin").join(exe_name));
         }
 
         // 3. 专用环境变量 VELOTERM_JAVA_HOME
@@ -114,8 +116,22 @@ impl DecompilerManager {
 
         // 优先挑选存在且版本 >= 17 的 JRE
         for candidate in &candidates {
-            if candidate.exists() && is_java_17_or_higher(candidate) {
-                return Some(candidate.clone());
+            if candidate.exists() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(meta) = candidate.metadata() {
+                        let mode = meta.permissions().mode();
+                        if mode & 0o111 == 0 {
+                            let mut perms = meta.permissions();
+                            perms.set_mode(mode | 0o755);
+                            let _ = std::fs::set_permissions(candidate, perms);
+                        }
+                    }
+                }
+                if is_java_17_or_higher(candidate) {
+                    return Some(candidate.clone());
+                }
             }
         }
 

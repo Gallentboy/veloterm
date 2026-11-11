@@ -51,7 +51,8 @@
     ],
     "resources": {
       "resources/decompiler/vineflower.jar": "decompiler/vineflower.jar",
-      "resources/decompiler/velo-worker.jar": "decompiler/velo-worker.jar"
+      "resources/decompiler/velo-worker.jar": "decompiler/velo-worker.jar",
+      "resources/jre": "jre"
     },
     "android": {
       "debugApplicationIdSuffix": ".debug"

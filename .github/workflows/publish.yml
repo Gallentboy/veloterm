@@ -265,6 +265,12 @@ jobs:
       - name: install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # 自动为当前打包平台下载并就地部署轻量裁剪版 JRE 25 (用于 Vineflower 动态类反编译)
+      - name: Prepare trimmed JRE runtime for target
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/prepare-jre.mjs --target ${{ matrix.rust_target }}
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

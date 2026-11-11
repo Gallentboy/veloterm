@@ -14,6 +14,7 @@ import { LogViewer } from '@/components/files/LogViewer';
 import { ExcelRemotePreview } from '@/components/files/ExcelRemotePreview';
 import { CertViewer } from '@/components/files/CertViewer';
 import { SqliteRemotePreview } from '@/components/files/SqliteRemotePreview';
+import { JarRemotePreview } from '@/components/files/JarRemotePreview';
 import { isPreviewableImage } from '@/services/imagePreviewService';
 import { loadRemoteContent, loadRemoteContentSudo, saveRemoteContent, saveRemoteContentSudo } from '@/editor/contentLoader';
 import { resolveLanguageIdWithContent } from '@/editor/languageMap';
@@ -101,10 +102,12 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
   const isSqlite = /\.(db|sqlite|sqlite3)$/i.test(fileName);
   /** X.509 SSL 证书文件（.crt/.cer/.pem/.ca-bundle）走结构化证书解析器 */
   const isCert = /\.(crt|cer|pem|ca-bundle)$/i.test(fileName);
+  /** JAR/WAR 归档文件走轻量结构透视与 Vineflower 类反编译 */
+  const isJar = /\.(jar|war)$/i.test(fileName);
   /** 具备专用预览渲染器的文本类型（Markdown / CSV / TSV / JSON / Log / Cert） */
   const hasCustomPreview = isMarkdown || isCsv || isJson || isLog || isCert;
-  /** 非纯文本/独立渲染分支（PDF / 图片 / Excel / SQLite）：跳过 Monaco 内容加载与编辑按钮 */
-  const isBinaryPreview = isPdf || isImage || isExcel || isSqlite;
+  /** 非纯文本/独立渲染分支（PDF / 图片 / Excel / SQLite / JAR）：跳过 Monaco 内容加载与编辑按钮 */
+  const isBinaryPreview = isPdf || isImage || isExcel || isSqlite || isJar;
 
   /** 检测到非文本文件时自动置为 true 并切到 Hex 模式 */
   const [isBinaryFile, setIsBinaryFile] = useState(false);
@@ -433,6 +436,11 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
                 {t('files.previewEditing')}
               </span>
             )}
+            {isJar && (
+              <span className="shrink-0 rounded-full bg-terminal-blue/15 px-2 py-0.5 text-ui-xs text-terminal-blue font-medium select-none">
+                {t('files.previewJar', { defaultValue: 'JAR 透视与反编译' })}
+              </span>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {/* 只读模式下的多视图切换器（专用结构视图 / Monaco 源码 / Hex 十六进制） */}
@@ -602,6 +610,11 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
             // SQLite：只读模式打开，表清单 + 虚拟滚动表格 + 只读 SQL 查询（见 SqliteRemotePreview）
             <Suspense fallback={null}>
               <SqliteRemotePreview sessionId={sessionId} remotePath={remotePath} fileName={fileName} />
+            </Suspense>
+          ) : isJar && sessionId ? (
+            // JAR / WAR：后端流式 Central Directory 解析 + 常驻 Vineflower Worker 秒级反编译
+            <Suspense fallback={null}>
+              <JarRemotePreview sessionId={sessionId} remotePath={remotePath} fileName={fileName} />
             </Suspense>
           ) : (
             <>

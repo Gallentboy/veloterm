@@ -199,6 +199,7 @@ interface SftpFileRowProps {
   dirSize: number | undefined;
   hostId: number;
   onSelect: (event: ReactMouseEvent<HTMLTableRowElement>, item: RemoteFileItem, index: number) => void;
+  onToggleCheck: (path: string) => void;
   onDragStart: (item: RemoteFileItem, index: number, isSelected: boolean) => void;
   onDragEnd: () => void;
   onDoubleClick: (item: RemoteFileItem) => void;
@@ -221,6 +222,7 @@ const SftpFileRow = memo(function SftpFileRow({
   dirSize,
   hostId,
   onSelect,
+  onToggleCheck,
   onDragStart,
   onDragEnd,
   onDoubleClick,
@@ -248,7 +250,21 @@ const SftpFileRow = memo(function SftpFileRow({
         isSelected ? 'bg-selected' : 'hover:bg-surface/40',
       )}
     >
-      <td className="py-1.5 pl-4 pr-2 font-medium">
+      <td
+        className="py-1.5 pl-3 pr-1 w-8 text-center"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleCheck(item.path);
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => {}}
+          className="size-3.5 rounded border-border accent-[var(--color-primary)] cursor-pointer align-middle"
+        />
+      </td>
+      <td className="py-1.5 pl-2 pr-2 font-medium">
         <div className="flex items-center gap-2">
           {item.is_dir ? (
             <Folder className={cn('size-4 shrink-0', visuals.iconClass)} />
@@ -569,6 +585,40 @@ export function SftpSessionView({
     setSelectedPaths(new Set());
     selectionAnchorRef.current = null;
   }, [currentPath]);
+
+  // 批量删除状态
+  const [batchDeleteItems, setBatchDeleteItems] = useState<RemoteFileItem[] | null>(null);
+  const [isBatchDeleting, setIsBatchDeleting] = useState<boolean>(false);
+  const [batchDeleteProgress, setBatchDeleteProgress] = useState<{
+    current: number;
+    total: number;
+    currentName: string;
+  } | null>(null);
+
+  const isAllSelected = items.length > 0 && items.every((it) => selectedPaths.has(it.path));
+  const isPartialSelected = items.some((it) => selectedPaths.has(it.path)) && !isAllSelected;
+
+  const handleToggleSelectAll = useCallback(() => {
+    if (items.length === 0) return;
+    if (items.every((it) => selectedPaths.has(it.path))) {
+      setSelectedPaths(new Set());
+      selectionAnchorRef.current = null;
+    } else {
+      setSelectedPaths(new Set(items.map((it) => it.path)));
+    }
+  }, [items, selectedPaths]);
+
+  const handleToggleCheck = useCallback((path: string) => {
+    setSelectedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }, []);
 
   // ── 文件列表固定行高虚拟滚动（无论上千或上万文件，视口内仅保持 30~50 行 DOM）──
   const listScrollRef = useRef<HTMLDivElement>(null);
@@ -1043,6 +1093,99 @@ export function SftpSessionView({
     }
   };
 
+  const handleTriggerBatchDelete = useCallback(() => {
+    const targets = items.filter((it) => selectedPaths.has(it.path));
+    if (targets.length === 0) return;
+    setBatchDeleteItems(targets);
+  }, [items, selectedPaths]);
+
+  const handleBatchDeleteConfirm = useCallback(async () => {
+    if (!batchDeleteItems || !sessionId) return;
+    setIsBatchDeleting(true);
+    let successCount = 0;
+    let failedCount = 0;
+    const total = batchDeleteItems.length;
+
+    for (let i = 0; i < total; i++) {
+      const item = batchDeleteItems[i];
+      setBatchDeleteProgress({ current: i + 1, total, currentName: item.name });
+      try {
+        if (item.is_dir) {
+          try {
+            await removeRemoteFast(sessionId, item.path, null);
+          } catch {
+            const handle = await removeRemoteTree(sessionId, item.path, null, () => {});
+            await handle.done;
+          }
+        } else {
+          await removeRemoteItem(sessionId, item.path, false);
+        }
+        successCount++;
+      } catch {
+        failedCount++;
+      }
+    }
+
+    setBatchDeleteProgress(null);
+    setIsBatchDeleting(false);
+    setBatchDeleteItems(null);
+    setSelectedPaths(new Set());
+    selectionAnchorRef.current = null;
+    await loadDirectory(currentPath);
+
+    if (failedCount > 0) {
+      setError(
+        t('files.selection.deletePartialFailed', {
+          success: successCount,
+          failed: failedCount,
+        }),
+      );
+    }
+  }, [batchDeleteItems, currentPath, loadDirectory, sessionId, t]);
+
+  // 键盘快捷键监听：Delete / Backspace 触发批量删除所选
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (
+        itemToDelete ||
+        deleteFlow ||
+        batchDeleteItems ||
+        preview ||
+        diffTargetPair ||
+        propsItem ||
+        editAttempt
+      ) {
+        return;
+      }
+      if (selectedPaths.size > 0) {
+        e.preventDefault();
+        handleTriggerBatchDelete();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    selectedPaths,
+    itemToDelete,
+    deleteFlow,
+    batchDeleteItems,
+    preview,
+    diffTargetPair,
+    propsItem,
+    editAttempt,
+    handleTriggerBatchDelete,
+  ]);
+
   // 行点击：多选状态机（Ctrl/⌘ 切换、Shift 范围、单击单选）；双击打开不受影响
   const handleRowSelect = useCallback(
     (
@@ -1108,9 +1251,11 @@ export function SftpSessionView({
         handleNavigate(item.path);
       } else if (item.editable && onOpenEditor) {
         onOpenEditor({ hostId, remotePath: item.path });
+      } else if (canPreview(item)) {
+        handlePreview(item);
       }
     },
-    [handleNavigate, hostId, onOpenEditor],
+    [handleNavigate, handlePreview, hostId, onOpenEditor],
   );
 
   const handleRowContextMenu = useCallback(
@@ -1316,6 +1461,15 @@ export function SftpSessionView({
               ) : null}
               <Button
                 type="button"
+                variant="destructive"
+                onClick={handleTriggerBatchDelete}
+                className="h-6 gap-1 rounded-md px-2 text-ui-xs font-medium shadow-2xs transition-colors"
+              >
+                <Trash2 className="size-3" />
+                <span>{t('files.selection.delete')}</span>
+              </Button>
+              <Button
+                type="button"
                 variant="ghost"
                 onClick={() => {
                   setSelectedPaths(new Set());
@@ -1422,7 +1576,19 @@ export function SftpSessionView({
           <table className="w-full border-collapse text-left text-ui-xs">
             <thead className="sticky top-0 bg-background border-b border-border/50 text-foreground-subtle select-none z-10">
               <tr>
-                <th className="py-2 pl-4 pr-2 font-medium">{t('files.name')}</th>
+                <th className="py-2 pl-3 pr-1 w-8 text-center">
+                  <input
+                    ref={(el) => {
+                      if (el) el.indeterminate = isPartialSelected;
+                    }}
+                    type="checkbox"
+                    checked={isAllSelected}
+                    onChange={handleToggleSelectAll}
+                    className="size-3.5 rounded border-border accent-[var(--color-primary)] cursor-pointer align-middle"
+                    aria-label={t('common.selectAll', { defaultValue: '全选' })}
+                  />
+                </th>
+                <th className="py-2 pl-2 pr-2 font-medium">{t('files.name')}</th>
                 <th className="py-2 px-2 font-medium w-24">{t('files.size')}</th>
                 <th className="py-2 px-2 font-medium w-28">{t('files.permissions')}</th>
                 <th className="py-2 px-2 font-medium w-24">{t('files.owner')}</th>
@@ -1434,7 +1600,7 @@ export function SftpSessionView({
             <tbody className="divide-y divide-border/30">
               {topSpacerHeight > 0 && (
                 <tr style={{ height: `${topSpacerHeight}px` }} aria-hidden>
-                  <td colSpan={7} className="p-0 border-0" />
+                  <td colSpan={8} className="p-0 border-0" />
                 </tr>
               )}
               {visibleItems.map((item, localIdx) => {
@@ -1449,6 +1615,7 @@ export function SftpSessionView({
                     dirSize={dirSizes[item.path]}
                     hostId={hostId}
                     onSelect={handleRowSelect}
+                    onToggleCheck={handleToggleCheck}
                     onDragStart={handleRowDragStart}
                     onDragEnd={endInternalDrag}
                     onDoubleClick={handleRowDoubleClick}
@@ -1463,7 +1630,7 @@ export function SftpSessionView({
               })}
               {bottomSpacerHeight > 0 && (
                 <tr style={{ height: `${bottomSpacerHeight}px` }} aria-hidden>
-                  <td colSpan={7} className="p-0 border-0" />
+                  <td colSpan={8} className="p-0 border-0" />
                 </tr>
               )}
             </tbody>
@@ -1530,6 +1697,106 @@ export function SftpSessionView({
           {transfersList.map((tItem) => (
             <TransferTaskRow key={tItem.id} task={tItem} />
           ))}
+        </div>
+      )}
+
+      {/* 批量删除确认弹窗（ZCode 桌面级精致对话框风格） */}
+      {batchDeleteItems && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/25 p-4 animate-in fade-in duration-150"
+        >
+          <div className="flex w-[420px] max-w-full flex-col overflow-hidden rounded-2xl border border-border/80 bg-popover p-5 shadow-2xl animate-in zoom-in-95 duration-150">
+            <h4 className="text-ui-base font-semibold text-foreground select-none">
+              {t('files.selection.confirmDeleteTitle')}
+            </h4>
+            <div className="mt-2 space-y-2 text-ui-sm text-foreground-subtle">
+              <p>
+                {t('files.selection.confirmDeleteBody', {
+                  count: batchDeleteItems.length,
+                })}
+              </p>
+              {batchDeleteItems.some((it) => it.is_dir) ? (
+                <p className="text-warning font-medium">
+                  {t('files.selection.confirmDeleteDirsNote', {
+                    dirCount: batchDeleteItems.filter((it) => it.is_dir).length,
+                  })}
+                </p>
+              ) : null}
+              {/* 文件名列表预览 */}
+              <div className="max-h-36 overflow-y-auto rounded-md border border-border/60 bg-surface/60 p-2 space-y-1 font-mono text-ui-xs">
+                {batchDeleteItems.slice(0, 5).map((it) => (
+                  <div key={it.path} className="flex items-center gap-1.5 truncate text-foreground">
+                    {it.is_dir ? (
+                      <Folder className="size-3.5 shrink-0 text-terminal-blue" />
+                    ) : (
+                      <File className="size-3.5 shrink-0 text-foreground-subtle" />
+                    )}
+                    <span className="truncate">{it.name}</span>
+                  </div>
+                ))}
+                {batchDeleteItems.length > 5 ? (
+                  <div className="text-foreground-subtlest pt-0.5">
+                    ... 等共 {batchDeleteItems.length} 项
+                  </div>
+                ) : null}
+              </div>
+
+              {/* 进度显示 */}
+              {batchDeleteProgress ? (
+                <div className="pt-1">
+                  <div className="flex items-center gap-2 text-ui-xs text-foreground">
+                    <Spinner className="size-3.5 text-destructive" />
+                    <span className="truncate">
+                      {t('files.selection.deletingProgress', {
+                        current: batchDeleteProgress.current,
+                        total: batchDeleteProgress.total,
+                        name: batchDeleteProgress.currentName,
+                      })}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface">
+                    <div
+                      className="h-full rounded-full bg-destructive transition-[width] duration-150"
+                      style={{
+                        width: `${Math.min(100, (batchDeleteProgress.current / batchDeleteProgress.total) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                onClick={() => {
+                  if (!isBatchDeleting) setBatchDeleteItems(null);
+                }}
+                disabled={isBatchDeleting}
+                className="h-8 px-3 text-ui-base"
+              >
+                {t('common.cancel', { defaultValue: '取消' })}
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="lg"
+                onClick={() => void handleBatchDeleteConfirm()}
+                disabled={isBatchDeleting}
+                className="h-8 gap-1.5 px-3 text-ui-base"
+              >
+                {isBatchDeleting ? (
+                  <Spinner className="size-4" />
+                ) : (
+                  <Trash2 className="size-4" />
+                )}
+                <span>{t('files.delete')}</span>
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1991,12 +2258,20 @@ export function SftpSessionView({
             onClick={() => {
               const target = fileMenu.item;
               setFileMenu(null);
-              setItemToDelete(target);
+              if (selectedPaths.size > 1 && selectedPaths.has(target.path)) {
+                handleTriggerBatchDelete();
+              } else {
+                setItemToDelete(target);
+              }
             }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover hover:text-destructive"
           >
             <Trash2 className="size-3.5 text-foreground-subtle" />
-            <span>{t('files.delete')}</span>
+            <span>
+              {selectedPaths.size > 1 && selectedPaths.has(fileMenu.item.path)
+                ? t('files.selection.deleteCount', { count: selectedPaths.size })
+                : t('files.delete')}
+            </span>
           </button>
         </div>
       ) : null}
