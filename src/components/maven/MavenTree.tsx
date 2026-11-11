@@ -16,12 +16,14 @@ import {
   CheckCircle2,
   AlertTriangle,
   ShieldAlert,
+  FileDown,
 } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import type { MavenTreeNode } from '@/services/mavenService';
 import { checkCve } from '@/components/maven/cveDatabase';
+import { ExportDependenciesModal } from '@/components/maven/ExportDependenciesModal';
 import { cn } from '@/lib/utils';
 
 interface MavenTreeProps {
@@ -41,6 +43,7 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
 
   // 数据变化时重置为「展开前两层」
   useEffect(() => {
@@ -317,7 +320,17 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
           </span>
         ) : null}
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
+          <ControlHintTooltip title={t('maven.exportDependenciesHint')} side="top">
+            <button
+              type="button"
+              onClick={() => setShowExportModal(true)}
+              className="flex items-center gap-1 rounded border border-border/60 bg-surface/80 px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-hover hover:border-border"
+            >
+              <FileDown className="size-3 text-primary" />
+              <span>{t('maven.exportDependencies')}</span>
+            </button>
+          </ControlHintTooltip>
           <button
             type="button"
             onClick={expandAll}
@@ -449,6 +462,12 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
           </div>
         </div>
       ) : null}
+
+      <ExportDependenciesModal
+        nodes={nodes}
+        isOpen={showExportModal}
+        onClose={() => setShowExportModal(false)}
+      />
     </div>
   );
 }
