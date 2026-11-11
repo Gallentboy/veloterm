@@ -1,4 +1,4 @@
-import { Columns2, FolderSync, Plus, Server } from 'lucide-react';
+import { Columns2, FileCode, FolderSync, Plus, Server } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -18,6 +18,9 @@ import {
 import { NewSessionMenu } from '@/components/NewSessionMenu';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ControlHintTooltip } from '@/components/ControlHintTooltip';
+import { LocalJarViewerModal } from '@/components/files/LocalJarViewerModal';
+import { decompilerPickLocalJar } from '@/services/decompilerService';
 import { useHostsStore } from '@/hosts/HostsProvider';
 import { hasPrimaryModifier } from '@/lib/keyboard';
 import { cn } from '@/lib/utils';
@@ -109,6 +112,20 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor, o
 
   const closePaneMenu = useCallback(() => {
     setPaneMenu(null);
+  }, []);
+
+  // 本地 JAR / WAR 结构透视与反编译弹窗状态
+  const [localJarTarget, setLocalJarTarget] = useState<{ filePath: string; fileName: string } | null>(null);
+
+  const handlePickLocalJar = useCallback(async () => {
+    try {
+      const path = await decompilerPickLocalJar();
+      if (!path) return;
+      const name = path.split(/[/\\]/).pop() || 'archive.jar';
+      setLocalJarTarget({ filePath: path, fileName: name });
+    } catch (err) {
+      console.error('打开本地 JAR 失败:', err);
+    }
   }, []);
 
   // 点击外部 / Escape 关闭：document 捕获阶段监听，不受子树 stopPropagation 影响
@@ -617,8 +634,21 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor, o
           )}
         </div>
 
-        {/* 右侧主机标识与状态指示 */}
+        {/* 右侧：透视本地 JAR 按钮 + 主机标识 */}
         <div className="flex shrink-0 items-center gap-2">
+          <ControlHintTooltip title={t('files.decompiler.openLocalJar', { defaultValue: '选择并透视本地 JAR / WAR 归档文件' })} side="bottom">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void handlePickLocalJar()}
+              className="h-7 gap-1.5 rounded-lg px-2 text-ui-xs font-normal border-border/70 bg-surface/40 hover:bg-hover transition-colors"
+            >
+              <FileCode className="size-3.5 text-terminal-blue" />
+              <span>{t('files.decompiler.openLocal', { defaultValue: '透视本地 JAR' })}</span>
+            </Button>
+          </ControlHintTooltip>
+
           {activeSession ? (
             <span className="rounded bg-surface px-1.5 py-0.5 font-mono text-ui-xs text-foreground-subtle select-none">
               {activeSession.hostName}
@@ -799,6 +829,16 @@ export function FilesScreen({ isVisible = true, onNavigateHosts, onOpenEditor, o
           })()}
         </div>
       ) : null}
+
+      {/* 本地 JAR / WAR 结构透视与反编译模态框 */}
+      {localJarTarget && (
+        <LocalJarViewerModal
+          isOpen={Boolean(localJarTarget)}
+          filePath={localJarTarget.filePath}
+          fileName={localJarTarget.fileName}
+          onClose={() => setLocalJarTarget(null)}
+        />
+      )}
     </section>
   );
 }

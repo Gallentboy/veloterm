@@ -1187,6 +1187,8 @@ export default {
     decompiler: {
       title: 'JAR Structure & Decompiler',
       searchPlaceholder: 'Search class or path…',
+      openLocal: 'Open Local JAR',
+      openLocalJar: 'Select and decompile local JAR / WAR archive',
       overview: 'Metadata Overview',
       classes: 'Classes',
       files: 'Files',

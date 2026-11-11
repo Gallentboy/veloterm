@@ -58,6 +58,11 @@ export async function decompilerGetStatus(): Promise<DecompilerStatus> {
   return invoke<DecompilerStatus>('decompiler_get_status');
 }
 
+/** 弹出原生文件选择对话框选择本地 JAR / WAR 文件路径 */
+export async function decompilerPickLocalJar(): Promise<string | null> {
+  return invoke<string | null>('decompiler_pick_local_jar');
+}
+
 /** 显式停止常驻反编译守护进程释放内存 */
 export async function decompilerStopDaemon(): Promise<void> {
   return invoke<void>('decompiler_stop_daemon');

@@ -100,6 +100,7 @@ pub fn run() {
             decompiler::commands::decompiler_open_jar,
             decompiler::commands::decompiler_read_entry,
             decompiler::commands::decompiler_get_status,
+            decompiler::commands::decompiler_pick_local_jar,
             decompiler::commands::decompiler_stop_daemon,
             js_runtime::js_run,
             js_runtime::js_run_cancel,

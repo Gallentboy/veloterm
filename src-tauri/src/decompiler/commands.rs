@@ -47,6 +47,18 @@ pub fn decompiler_get_status() -> DecompilerStatus {
     GLOBAL_DECOMPILER_MGR.get_status()
 }
 
+/// 弹出原生文件选择对话框选择本地 JAR / WAR 文件（取消返回 None）
+#[tauri::command]
+pub async fn decompiler_pick_local_jar() -> Result<Option<String>, String> {
+    let file = rfd::AsyncFileDialog::new()
+        .set_title("选择本地 JAR / WAR 归档文件")
+        .add_filter("Java Archive", &["jar", "war"])
+        .pick_file()
+        .await;
+
+    Ok(file.map(|f| f.path().to_string_lossy().into_owned()))
+}
+
 /// 停止常驻守护进程（用于用户离开面板或手动回收内存）
 #[tauri::command]
 pub fn decompiler_stop_daemon() {

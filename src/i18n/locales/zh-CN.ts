@@ -1189,6 +1189,8 @@ export default {
     decompiler: {
       title: 'JAR 结构透视与反编译',
       searchPlaceholder: '搜索类名或路径…',
+      openLocal: '透视本地 JAR',
+      openLocalJar: '选择并透视本地 JAR / WAR 归档文件',
       overview: '元数据透视',
       classes: '类总数',
       files: '文件总数',
