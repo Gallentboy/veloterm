@@ -909,3 +909,82 @@ pub fn maven_clean_historical_versions(
         .unwrap_or_else(|| settings.resolved_local_repository());
     clean::clean_historical_versions(&dirs, Some(&target_dir))
 }
+
+// ---------------- 镜像源延迟测速 ----------------
+
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MavenRepoPingResult {
+    pub url: String,
+    pub latency_ms: u64,
+    pub status: u16,
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn maven_ping_repos(
+    urls: Vec<String>,
+    timeout_ms: Option<u64>,
+) -> Vec<MavenRepoPingResult> {
+    let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(5000));
+    let client = match reqwest::Client::builder()
+        .timeout(timeout)
+        .user_agent("Apache-Maven/3.9.6 (VeloTerm)")
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return urls
+                .into_iter()
+                .map(|url| MavenRepoPingResult {
+                    url,
+                    latency_ms: 0,
+                    status: 0,
+                    ok: false,
+                    error: Some(e.to_string()),
+                })
+                .collect();
+        }
+    };
+
+    let mut set = tokio::task::JoinSet::new();
+    for url in urls {
+        let client = client.clone();
+        set.spawn(async move {
+            let start = std::time::Instant::now();
+            let res = client.head(&url).send().await;
+            let latency_ms = start.elapsed().as_millis() as u64;
+
+            match res {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let ok = status < 400 || status == 405;
+                    MavenRepoPingResult {
+                        url,
+                        latency_ms,
+                        status,
+                        ok,
+                        error: if ok { None } else { Some(format!("HTTP {status}")) },
+                    }
+                }
+                Err(err) => MavenRepoPingResult {
+                    url,
+                    latency_ms,
+                    status: 0,
+                    ok: false,
+                    error: Some(err.to_string()),
+                },
+            }
+        });
+    }
+
+    let mut results = Vec::new();
+    while let Some(res) = set.join_next().await {
+        if let Ok(item) = res {
+            results.push(item);
+        }
+    }
+    results
+}

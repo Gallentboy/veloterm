@@ -95,6 +95,7 @@ pub fn run() {
             maven::maven_clean_broken_cache,
             maven::maven_analyze_repo_space,
             maven::maven_clean_historical_versions,
+            maven::maven_ping_repos,
             js_runtime::js_run,
             js_runtime::js_run_cancel,
             terminal_recording::export_recording_gif,

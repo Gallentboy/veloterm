@@ -15,6 +15,7 @@ import {
   CircleStop,
   Download,
   FolderOpen,
+  Gauge,
   Package,
   Play,
   RefreshCw,
@@ -33,6 +34,7 @@ import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { MavenTree } from '@/components/maven/MavenTree';
 import { RepoCleanTab } from '@/components/maven/RepoCleanTab';
+import { RepoSpeedAndPresetsModal } from '@/components/maven/RepoSpeedAndPresetsModal';
 import { useDropTarget } from '@/hooks/useDropTarget';
 import {
   mavenCancelRun,
@@ -210,6 +212,7 @@ function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
   const [threads, setThreads] = useState<string>('16');
   const [proxy, setProxy] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showSpeedModal, setShowSpeedModal] = useState(false);
 
   const [resolving, setResolving] = useState(false);
   const [resolveResult, setResolveResult] = useState<MavenResolveResult | null>(null);
@@ -610,7 +613,23 @@ function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
                 className={INPUT_CLS}
               />
             </Field>
-            <Field label={t('maven.repos')} className="col-span-2" hint={t('maven.reposHint')}>
+            <Field
+              label={
+                <span className="flex items-center justify-between w-full">
+                  <span>{t('maven.repos')}</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSpeedModal(true)}
+                    className="inline-flex items-center gap-1 text-[11px] font-normal text-primary hover:underline cursor-pointer"
+                  >
+                    <Gauge className="size-3" />
+                    {t('maven.speedTestBtn')}
+                  </button>
+                </span>
+              }
+              className="col-span-2"
+              hint={t('maven.reposHint')}
+            >
               <textarea
                 value={reposText}
                 onChange={(e) => setReposText(e.target.value)}
@@ -979,6 +998,22 @@ function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
           )}
         </div>
       </div>
+
+      {showSpeedModal && (
+        <RepoSpeedAndPresetsModal
+          isOpen={showSpeedModal}
+          currentReposText={reposText}
+          onApplyRepo={(url) => {
+            setReposText((prev) => {
+              const trimmed = prev.trim();
+              if (!trimmed) return url;
+              if (trimmed.includes(url)) return trimmed;
+              return `${trimmed}\n${url}`;
+            });
+          }}
+          onClose={() => setShowSpeedModal(false)}
+        />
+      )}
     </div>
   );
 }

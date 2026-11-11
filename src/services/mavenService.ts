@@ -359,3 +359,23 @@ export function mavenCleanHistoricalVersions(
     repoPath: repoPath ?? null,
   });
 }
+
+// ---------------- 镜像源测速 ----------------
+
+export interface MavenRepoPingResult {
+  url: string;
+  latencyMs: number;
+  status: number;
+  ok: boolean;
+  error?: string | null;
+}
+
+export function mavenPingRepos(
+  urls: string[],
+  timeoutMs?: number | null,
+): Promise<MavenRepoPingResult[]> {
+  return invoke('maven_ping_repos', {
+    urls,
+    timeoutMs: timeoutMs ?? null,
+  });
+}
