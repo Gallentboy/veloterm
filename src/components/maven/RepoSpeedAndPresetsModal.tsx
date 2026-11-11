@@ -7,16 +7,15 @@ import {
   Check,
   CheckCircle2,
   ExternalLink,
-  Gauge,
   Radio,
   Sparkles,
-  X,
   Zap,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import { Button } from '@/components/ui/button';
+import { Modal } from '@/components/ui/modal';
 import { Spinner } from '@/components/ui/spinner';
 import {
   mavenPingRepos,
@@ -130,44 +129,42 @@ export function RepoSpeedAndPresetsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="flex h-[82vh] w-full max-w-3xl flex-col rounded-xl border border-border bg-background shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-        {/* 顶部标题与测速触发 */}
-        <div className="flex shrink-0 items-center justify-between border-b border-border/60 px-4 py-3 bg-surface/40">
-          <div className="flex items-center gap-2">
-            <Gauge className="size-4 text-primary" />
-            <div>
-              <h3 className="text-ui-sm font-semibold text-foreground">
-                {t('maven.speedTestModalTitle')}
-              </h3>
-              <p className="text-[11px] text-foreground-subtle">
-                {t('maven.speedTestModalDesc')}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pinging}
-              onClick={() => void runPing()}
-              className="gap-1.5"
-            >
-              {pinging ? <Spinner className="size-3.5" /> : <Zap className="size-3.5 text-primary" />}
-              {pinging ? t('maven.pinging') : t('maven.retestAll')}
-            </Button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex size-6 items-center justify-center rounded-md text-foreground-subtle hover:bg-hover hover:text-foreground"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
+    <Modal
+      title={t('maven.speedTestModalTitle')}
+      onClose={onClose}
+      className="w-[780px] max-w-full h-[82vh]"
+      footer={
+        <div className="flex w-full items-center justify-between">
+          <span className="text-[11px] text-foreground-subtler flex items-center gap-1.5">
+            <CheckCircle2 className="size-3.5 text-terminal-green" />
+            {t('maven.speedTestTip')}
+          </span>
+          <Button size="sm" onClick={onClose}>
+            {t('common.close')}
+          </Button>
+        </div>
+      }
+    >
+      <div className="flex h-full flex-col gap-3 min-h-0">
+        {/* 说明与测速动作栏 */}
+        <div className="flex shrink-0 items-center justify-between rounded-lg border border-border/60 bg-surface/40 p-2.5">
+          <p className="text-[11px] text-foreground-subtle">
+            {t('maven.speedTestModalDesc')}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={pinging}
+            onClick={() => void runPing()}
+            className="gap-1.5 shrink-0"
+          >
+            {pinging ? <Spinner className="size-3.5" /> : <Zap className="size-3.5 text-primary" />}
+            {pinging ? t('maven.pinging') : t('maven.retestAll')}
+          </Button>
         </div>
 
         {/* 列表区 */}
-        <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto p-4 space-y-3 bg-input/20">
+        <div className="scrollbar-slim min-h-0 flex-1 overflow-y-auto space-y-3 rounded-lg border border-border/50 bg-input/20 p-3">
           <div className="text-ui-xs font-semibold text-foreground flex items-center gap-1.5">
             <Radio className="size-3.5 text-primary" />
             <span>{t('maven.presetMirrors')}</span>
@@ -307,18 +304,7 @@ export function RepoSpeedAndPresetsModal({
             </div>
           ) : null}
         </div>
-
-        {/* 底部关闭 */}
-        <div className="flex shrink-0 items-center justify-between border-t border-border/60 bg-surface/30 px-4 py-3">
-          <span className="text-[11px] text-foreground-subtler flex items-center gap-1.5">
-            <CheckCircle2 className="size-3.5 text-terminal-green" />
-            {t('maven.speedTestTip')}
-          </span>
-          <Button size="sm" onClick={onClose}>
-            {t('common.close')}
-          </Button>
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 }

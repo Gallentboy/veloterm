@@ -472,17 +472,14 @@ function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
                 ['list', t('maven.modeList')],
               ] as const
             ).map(([m, label]) => (
-              <button
+              <Button
                 key={m}
-                type="button"
+                variant={mode === m ? 'default' : 'ghost'}
+                size="xs"
                 onClick={() => setMode(m)}
-                className={cn(
-                  'rounded-md px-2.5 py-1 text-ui-xs font-medium transition-colors',
-                  mode === m ? 'bg-selected text-foreground font-semibold' : 'text-foreground-subtle hover:text-foreground',
-                )}
               >
                 {label}
-              </button>
+              </Button>
             ))}
           </div>
           {mode === 'gav' ? (
@@ -617,14 +614,15 @@ function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
               label={
                 <span className="flex items-center justify-between w-full">
                   <span>{t('maven.repos')}</span>
-                  <button
-                    type="button"
+                  <Button
+                    variant="link"
+                    size="xs"
                     onClick={() => setShowSpeedModal(true)}
-                    className="inline-flex items-center gap-1 text-[11px] font-normal text-primary hover:underline cursor-pointer"
+                    className="h-auto p-0 text-[11px] font-normal gap-1 text-primary"
                   >
                     <Gauge className="size-3" />
                     {t('maven.speedTestBtn')}
-                  </button>
+                  </Button>
                 </span>
               }
               className="col-span-2"
@@ -909,13 +907,14 @@ function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
               <span className="font-medium text-foreground">{t('maven.fileFeed')}</span>
               <span className="flex-1" />
               {fileFeed.length > 0 ? (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="xs"
                   onClick={() => setFileFeed([])}
-                  className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-foreground"
+                  className="h-5 px-1.5 text-foreground-subtle hover:text-foreground"
                 >
                   {t('maven.clear')}
-                </button>
+                </Button>
               ) : null}
             </div>
             <div ref={fileFeedRef} className="scrollbar-slim min-h-0 flex-1 overflow-y-auto px-2 py-1">
@@ -971,13 +970,14 @@ function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
           <span className="font-medium text-foreground">{t('maven.logs')}</span>
           <span className="flex-1" />
           {logs.length > 0 ? (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="xs"
               onClick={() => setLogs([])}
-              className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-foreground"
+              className="h-5 px-1.5 text-foreground-subtle hover:text-foreground"
             >
               {t('maven.clear')}
-            </button>
+            </Button>
           ) : null}
         </div>
         <div ref={logRef} className="scrollbar-slim min-h-0 flex-1 overflow-y-auto px-2.5 py-1 font-mono text-[11px] leading-relaxed">
@@ -1538,20 +1538,16 @@ export function MavenScreen() {
         <div className="flex-1" />
         <div className="flex items-center gap-0.5 rounded-lg border border-border/60 bg-surface/50 p-0.5">
           {tabs.map(([id, icon, label]) => (
-            <button
+            <Button
               key={id}
-              type="button"
+              variant={tab === id ? 'default' : 'ghost'}
+              size="xs"
               onClick={() => setTab(id)}
-              className={cn(
-                'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-ui-xs font-medium transition-colors',
-                tab === id
-                  ? 'bg-selected text-foreground font-semibold'
-                  : 'text-foreground-subtle hover:text-foreground',
-              )}
+              className="gap-1.5"
             >
               {icon}
               {label}
-            </button>
+            </Button>
           ))}
         </div>
         <ControlHintTooltip title={t('maven.refreshEnv')} side="bottom">

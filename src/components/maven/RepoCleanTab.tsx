@@ -290,32 +290,24 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
 
             {/* 子 Tab 切换 */}
             <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-surface/50 p-0.5">
-              <button
-                type="button"
+              <Button
+                variant={subTab === 'broken' ? 'default' : 'ghost'}
+                size="xs"
                 onClick={() => setSubTab('broken')}
-                className={cn(
-                  'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-ui-xs font-medium transition-colors',
-                  subTab === 'broken'
-                    ? 'bg-selected text-foreground font-semibold shadow-2xs'
-                    : 'text-foreground-subtle hover:text-foreground',
-                )}
+                className="gap-1.5"
               >
                 <Sparkles className="size-3.5" />
                 {t('maven.subTabBroken')}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant={subTab === 'space' ? 'default' : 'ghost'}
+                size="xs"
                 onClick={() => setSubTab('space')}
-                className={cn(
-                  'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-ui-xs font-medium transition-colors',
-                  subTab === 'space'
-                    ? 'bg-selected text-foreground font-semibold shadow-2xs'
-                    : 'text-foreground-subtle hover:text-foreground',
-                )}
+                className="gap-1.5"
               >
                 <PieChart className="size-3.5" />
                 {t('maven.subTabSpace')}
-              </button>
+              </Button>
             </div>
           </div>
 
@@ -415,54 +407,59 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
                     </span>
                     <div className="flex items-center gap-1.5 font-mono text-[11px]">
                       {scanResult.lastUpdatedCount > 0 ? (
-                        <button
-                          type="button"
+                        <Button
+                          variant="outline"
+                          size="xs"
                           onClick={() => toggleSelectKind('lastUpdated')}
-                          className="rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-destructive hover:bg-destructive/20"
+                          className="border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20 h-5 px-1.5"
                         >
                           {t('maven.lastUpdatedDesc')}: {scanResult.lastUpdatedCount}
-                        </button>
+                        </Button>
                       ) : null}
                       {scanResult.partCount > 0 ? (
-                        <button
-                          type="button"
+                        <Button
+                          variant="outline"
+                          size="xs"
                           onClick={() => toggleSelectKind('part')}
-                          className="rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-warning hover:bg-warning/20"
+                          className="border-warning/30 bg-warning/10 text-warning hover:bg-warning/20 h-5 px-1.5"
                         >
                           {t('maven.partDesc')}: {scanResult.partCount}
-                        </button>
+                        </Button>
                       ) : null}
                       {scanResult.remoteRepoCount > 0 ? (
-                        <button
-                          type="button"
+                        <Button
+                          variant="outline"
+                          size="xs"
                           onClick={() => toggleSelectKind('remoteRepo')}
-                          className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-primary hover:bg-primary/20"
+                          className="border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 h-5 px-1.5"
                         >
                           {t('maven.remoteRepoDesc')}: {scanResult.remoteRepoCount}
-                        </button>
+                        </Button>
                       ) : null}
                       {scanResult.tmpCount > 0 ? (
-                        <button
-                          type="button"
+                        <Button
+                          variant="outline"
+                          size="xs"
                           onClick={() => toggleSelectKind('tmp')}
-                          className="rounded border border-border/60 bg-surface/60 px-1.5 py-0.5 text-foreground-subtle hover:bg-hover"
+                          className="border-border/60 bg-surface/60 text-foreground-subtle hover:bg-hover h-5 px-1.5"
                         >
                           {t('maven.tmpDesc')}: {scanResult.tmpCount}
-                        </button>
+                        </Button>
                       ) : null}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="xs"
                       onClick={toggleSelectAll}
-                      className="rounded px-2 py-0.5 font-medium text-foreground-subtle hover:bg-hover hover:text-foreground"
+                      className="font-medium text-foreground-subtle hover:text-foreground"
                     >
                       {selectedPaths.size === scanResult.files.length
                         ? t('maven.unselectAll')
                         : t('maven.selectAll')}
-                    </button>
+                    </Button>
                     <Button
                       variant="destructive"
                       size="sm"
@@ -660,17 +657,18 @@ export function RepoCleanTab({ defaultRepoPath }: { defaultRepoPath?: string | n
                           <div key={gaKey} className="py-2">
                             {/* 构件标题行 */}
                             <div className="flex items-center gap-2 rounded px-1.5 py-1 transition-colors hover:bg-surface/50">
-                              <button
-                                type="button"
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
                                 onClick={() => toggleArtifactExpand(gaKey)}
-                                className="flex size-4 items-center justify-center text-foreground-subtlest hover:text-foreground"
+                                className="size-4 p-0 text-foreground-subtlest hover:text-foreground"
                               >
                                 {isExpanded ? (
                                   <ChevronDown className="size-3.5" />
                                 ) : (
                                   <ChevronRight className="size-3.5" />
                                 )}
-                              </button>
+                              </Button>
                               <input
                                 type="checkbox"
                                 checked={allHistoricalSelected}

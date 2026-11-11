@@ -21,6 +21,7 @@ import {
 import { memo, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
+import { Button } from '@/components/ui/button';
 import type { MavenTreeNode } from '@/services/mavenService';
 import { checkCve } from '@/components/maven/cveDatabase';
 import { ExportDependenciesModal } from '@/components/maven/ExportDependenciesModal';
@@ -210,17 +211,18 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
           style={{ paddingLeft: `${Math.min(prefix.length, 40) * 5 + 4}px` }}
         >
           {hasChildren ? (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon-xs"
               onClick={(e) => {
                 e.stopPropagation();
                 toggle(node.id);
               }}
-              className="flex size-4 shrink-0 items-center justify-center rounded text-foreground-subtlest hover:bg-hover hover:text-foreground"
+              className="size-4 p-0 text-foreground-subtlest hover:text-foreground"
               aria-label={open ? t('maven.collapse') : t('maven.expand')}
             >
               <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
-            </button>
+            </Button>
           ) : (
             <span className="size-4 shrink-0" />
           )}
@@ -304,13 +306,14 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
             className="h-6 w-full rounded border border-border/60 bg-input pl-6 pr-6 font-mono text-[11px] text-foreground outline-none placeholder:text-foreground-subtlest focus:border-border-hover"
           />
           {search ? (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon-xs"
               onClick={() => setSearch('')}
-              className="absolute right-1.5 flex size-3.5 items-center justify-center rounded text-foreground-subtlest hover:text-foreground"
+              className="absolute right-1 size-4 p-0 text-foreground-subtlest hover:text-foreground"
             >
               <X className="size-2.5" />
-            </button>
+            </Button>
           ) : null}
         </div>
 
@@ -322,29 +325,32 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
 
         <div className="flex items-center gap-1.5">
           <ControlHintTooltip title={t('maven.exportDependenciesHint')} side="top">
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="xs"
               onClick={() => setShowExportModal(true)}
-              className="flex items-center gap-1 rounded border border-border/60 bg-surface/80 px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-hover hover:border-border"
+              className="gap-1 text-[11px]"
             >
               <FileDown className="size-3 text-primary" />
               <span>{t('maven.exportDependencies')}</span>
-            </button>
+            </Button>
           </ControlHintTooltip>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={expandAll}
-            className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-foreground"
+            className="text-foreground-subtle hover:text-foreground"
           >
             {t('maven.expandAll')}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={collapseAll}
-            className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-foreground"
+            className="text-foreground-subtle hover:text-foreground"
           >
             {t('maven.collapseAll')}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -364,13 +370,14 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
                 ({selectedNode.group}:{selectedNode.artifact}:{selectedNode.version})
               </span>
             </div>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="icon-xs"
               onClick={() => setSelectedId(null)}
-              className="flex size-4 items-center justify-center rounded text-foreground-subtlest hover:bg-hover hover:text-foreground"
+              className="size-4 p-0 text-foreground-subtlest hover:text-foreground"
             >
               <X className="size-3" />
-            </button>
+            </Button>
           </div>
 
           {/* 当前节点引入链路 */}
@@ -404,20 +411,21 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
                 return (
                   <div key={item.id} className="flex items-center gap-1">
                     {idx > 0 ? <ArrowRight className="size-2.5 text-foreground-subtlest" /> : null}
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="xs"
                       onClick={() => setSelectedId(item.id)}
                       className={cn(
-                        'rounded px-1 py-0.5 transition-colors hover:bg-hover',
+                        'h-auto px-1 py-0.5 text-[11px] font-normal transition-colors',
                         isTarget
                           ? item.loser
-                            ? 'bg-warning/15 font-semibold text-warning line-through'
-                            : 'bg-primary/20 font-semibold text-primary'
+                            ? 'bg-warning/15 font-semibold text-warning line-through hover:bg-warning/25'
+                            : 'bg-primary/20 font-semibold text-primary hover:bg-primary/30'
                           : 'text-foreground-subtle hover:text-foreground',
                       )}
                     >
                       {item.artifact}:{item.version}
-                    </button>
+                    </Button>
                   </div>
                 );
               })}
@@ -441,18 +449,19 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
                     return (
                       <div key={item.id} className="flex items-center gap-1">
                         {idx > 0 ? <ArrowRight className="size-2.5 text-foreground-subtlest" /> : null}
-                        <button
-                          type="button"
+                        <Button
+                          variant="ghost"
+                          size="xs"
                           onClick={() => setSelectedId(item.id)}
                           className={cn(
-                            'rounded px-1 py-0.5 transition-colors hover:bg-hover',
+                            'h-auto px-1 py-0.5 text-[11px] font-normal transition-colors',
                             isWinner
-                              ? 'bg-primary/20 font-semibold text-primary'
+                              ? 'bg-primary/20 font-semibold text-primary hover:bg-primary/30'
                               : 'text-foreground-subtle hover:text-foreground',
                           )}
                         >
                           {item.artifact}:{item.version}
-                        </button>
+                        </Button>
                       </div>
                     );
                   })}
