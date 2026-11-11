@@ -49,7 +49,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": {},
+    "resources": {
+      "resources/decompiler/vineflower.jar": "decompiler/vineflower.jar",
+      "resources/decompiler/velo-worker.jar": "decompiler/velo-worker.jar"
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }
