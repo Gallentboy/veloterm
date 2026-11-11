@@ -26,6 +26,15 @@ pub struct RawRepo {
     pub url: String,
 }
 
+/// `<build><plugins>` 或 `<pluginManagement><plugins>` 中声明的插件
+#[derive(Clone, Debug)]
+pub struct PluginDecl {
+    pub group: Option<String>,
+    pub artifact: String,
+    pub version: Option<String>,
+    pub dependencies: Vec<DepDecl>,
+}
+
 /// 未加工的 POM 模型（保留声明顺序）。
 #[derive(Clone, Debug)]
 pub struct RawPom {
@@ -40,6 +49,10 @@ pub struct RawPom {
     pub dependencies: Vec<DepDecl>,
     /// `<dependencyManagement><dependencies>` 条目（含 scope=import）
     pub dep_mgmt: Vec<DepDecl>,
+    /// `<build><plugins>` 声明的构建插件
+    pub plugins: Vec<PluginDecl>,
+    /// `<build><pluginManagement><plugins>` 插件版本管理
+    pub plugin_mgmt: Vec<PluginDecl>,
     pub repositories: Vec<RawRepo>,
     pub relative_path: RelativePath,
     /// 全部 `<profile>`（激活判定在 effective 侧：activeByDefault + jdk/os 静态条件）
@@ -61,6 +74,8 @@ pub struct RawProfile {
     pub dependencies: Vec<crate::maven::model::DepDecl>,
     /// profile 内声明的 <dependencyManagement>（激活时参与合并，import 条目同样支持）
     pub dep_mgmt: Vec<crate::maven::model::DepDecl>,
+    pub plugins: Vec<PluginDecl>,
+    pub plugin_mgmt: Vec<PluginDecl>,
     pub active_by_default: bool,
     /// `<activation><jdk>`（如 "1.8"、"[1.8,1.9)"）
     pub jdk: Option<String>,
@@ -260,10 +275,13 @@ impl RawPom {
                                 .map(|t| t.trim().to_string())
                         });
                         let os = at_os(&p);
+                        let (prof_plugins, prof_plugin_mgmt) = parse_build_plugins(&p);
                         RawProfile {
                             properties,
                             dependencies,
                             dep_mgmt,
+                            plugins: prof_plugins,
+                            plugin_mgmt: prof_plugin_mgmt,
                             repositories,
                             active_by_default: at("activeByDefault").map(|t| t == "true").unwrap_or(false),
                             jdk: at("jdk"),
@@ -302,6 +320,8 @@ impl RawPom {
             })
             .unwrap_or_default();
 
+        let (plugins, plugin_mgmt) = parse_build_plugins(&root);
+
         Ok(Self {
             group: text("groupId"),
             artifact: text("artifactId").unwrap_or_default(),
@@ -311,6 +331,8 @@ impl RawPom {
             properties,
             dependencies,
             dep_mgmt,
+            plugins,
+            plugin_mgmt,
             repositories,
             relative_path,
             profiles,
@@ -523,6 +545,56 @@ fn parse_dep_list(deps: &roxmltree::Node<'_, '_>) -> Vec<DepDecl> {
         .collect()
 }
 
+/// `<plugins>` 节点下的 `<plugin>` 列表。
+fn parse_plugin_list(plugins_node: &roxmltree::Node<'_, '_>) -> Vec<PluginDecl> {
+    plugins_node
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "plugin")
+        .filter_map(|p| {
+            let t = |name: &str| -> Option<String> {
+                p.children()
+                    .find(|n| n.is_element() && n.tag_name().name() == name)
+                    .and_then(|n| n.text())
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+            };
+            let artifact = t("artifactId")?;
+            let group = t("groupId");
+            let version = t("version");
+            let dependencies = p
+                .children()
+                .find(|n| n.is_element() && n.tag_name().name() == "dependencies")
+                .map(|d| parse_dep_list(&d))
+                .unwrap_or_default();
+            Some(PluginDecl {
+                group,
+                artifact,
+                version,
+                dependencies,
+            })
+        })
+        .collect()
+}
+
+/// 解析任意容器节点（如 root 或 profile）下的 `<build><plugins>` 与 `<build><pluginManagement><plugins>`。
+fn parse_build_plugins(parent_node: &roxmltree::Node<'_, '_>) -> (Vec<PluginDecl>, Vec<PluginDecl>) {
+    let build = parent_node
+        .children()
+        .find(|n| n.is_element() && n.tag_name().name() == "build");
+    let plugins = build
+        .as_ref()
+        .and_then(|b| b.children().find(|n| n.is_element() && n.tag_name().name() == "plugins"))
+        .map(|p| parse_plugin_list(&p))
+        .unwrap_or_default();
+    let plugin_mgmt = build
+        .as_ref()
+        .and_then(|b| b.children().find(|n| n.is_element() && n.tag_name().name() == "pluginManagement"))
+        .and_then(|pm| pm.children().find(|n| n.is_element() && n.tag_name().name() == "plugins"))
+        .map(|p| parse_plugin_list(&p))
+        .unwrap_or_default();
+    (plugins, plugin_mgmt)
+}
+
 /// 异步 POM 来源抽象（依赖倒置：pom 层不依赖 repo 层）。
 pub type BoxFut<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
@@ -703,6 +775,58 @@ mod tests {
         let pom = RawPom::parse(xml).unwrap();
         assert_eq!(pom.packaging, "pom");
         assert_eq!(pom.modules, vec!["core", "web", "common/utils"]);
+    }
+
+    #[test]
+    fn parse_plugins_and_plugin_management() {
+        let xml = r#"
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.11.0</version>
+      </plugin>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <dependencies>
+          <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.30</version>
+          </dependency>
+        </dependencies>
+      </plugin>
+    </plugins>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>3.2.5</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>"#;
+        let pom = RawPom::parse(xml).unwrap();
+        assert_eq!(pom.plugins.len(), 2);
+        assert_eq!(pom.plugins[0].artifact, "maven-compiler-plugin");
+        assert_eq!(pom.plugins[0].group, None);
+        assert_eq!(pom.plugins[0].version.as_deref(), Some("3.11.0"));
+
+        assert_eq!(pom.plugins[1].artifact, "spring-boot-maven-plugin");
+        assert_eq!(pom.plugins[1].group.as_deref(), Some("org.springframework.boot"));
+        assert_eq!(pom.plugins[1].dependencies.len(), 1);
+        assert_eq!(pom.plugins[1].dependencies[0].artifact, "lombok");
+
+        assert_eq!(pom.plugin_mgmt.len(), 1);
+        assert_eq!(pom.plugin_mgmt[0].artifact, "maven-surefire-plugin");
+        assert_eq!(pom.plugin_mgmt[0].version.as_deref(), Some("3.2.5"));
     }
 
     #[test]

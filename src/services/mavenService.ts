@@ -36,6 +36,7 @@ export interface MavenGetRequest {
   proxy?: string | null;
   useMavenLocal?: boolean | null;
   localRepoPath?: string | null;
+  includePlugins?: boolean | null;
 }
 
 export interface MavenTreeNode {

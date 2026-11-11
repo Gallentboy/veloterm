@@ -163,6 +163,8 @@ pub struct MavenGetRequest {
     pub use_maven_local: Option<bool>,
     /// 显式本地 Maven 仓库路径（可选）
     pub local_repo_path: Option<String>,
+    /// 包含构建插件 (Plugins)：扫描 <build><plugins> 并递归拉取插件及其依赖
+    pub include_plugins: Option<bool>,
 }
 
 /// 仅解析（dry-run）结果：交互树 + 平面清单 + 文本树。
@@ -519,7 +521,8 @@ async fn run_get_flow(
         let ws = reactor::ReactorWorkspace::discover(pom_path)
             .map_err(|e| format!("pom 工作空间解析失败: {e}"))?;
         let eff = {
-            let ctx = ResolveContext::new(repos.clone(), cli_props.clone());
+            let ctx = ResolveContext::new(repos.clone(), cli_props.clone())
+                .with_include_plugins(cli.include_plugins.unwrap_or(false));
             ws.build_effective(&ctx)
                 .await
                 .map_err(|e| format!("build effective pom: {e}"))?

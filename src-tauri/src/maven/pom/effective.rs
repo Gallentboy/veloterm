@@ -127,6 +127,8 @@ pub struct ResolveContext {
     eff_cache: std::sync::Mutex<HashMap<Gav, Arc<EffectivePom>>>,
     /// per-key 去重锁（同 key 并发构建者排队）
     inflight: tokio::sync::Mutex<HashMap<Gav, Arc<tokio::sync::Mutex<()>>>>,
+    /// 是否扫描并拉取 <build><plugins> 中的构建插件及其依赖
+    pub include_plugins: bool,
 }
 
 impl ResolveContext {
@@ -136,7 +138,13 @@ impl ResolveContext {
             cli_props: Arc::new(cli_props),
             eff_cache: std::sync::Mutex::new(HashMap::new()),
             inflight: tokio::sync::Mutex::new(HashMap::new()),
+            include_plugins: false,
         }
+    }
+
+    pub fn with_include_plugins(mut self, include_plugins: bool) -> Self {
+        self.include_plugins = include_plugins;
+        self
     }
 
     /// 按 GAV 构建（远程来源，无本地 relativePath），带记忆化与并发去重。
@@ -466,6 +474,86 @@ impl ResolveContext {
                 let d = interpolate_decl(d, &props);
                 if dep_keys.insert(d.key()) {
                     deps.push(d);
+                }
+            }
+        }
+
+        // ---- 5.1 包含构建插件 (Build Plugins)：自动提取 <build><plugins> 并作为根直接依赖拉取 ----
+        if self.include_plugins {
+            let mut plugin_mgmt: HashMap<(String, String), String> = HashMap::new();
+            for p in &chain {
+                let mut p_entries: Vec<&super::raw::PluginDecl> = p.plugin_mgmt.iter().collect();
+                for prof in &p.profiles {
+                    if profile_active(prof, &props) {
+                        p_entries.extend(prof.plugin_mgmt.iter());
+                    }
+                }
+                for pm in p_entries {
+                    let g = pm.group.as_deref().unwrap_or("org.apache.maven.plugins");
+                    let g = interpolate(g, &props);
+                    let a = interpolate(&pm.artifact, &props);
+                    if let Some(v) = &pm.version {
+                        let v = interpolate(v, &props);
+                        if !v.is_empty() {
+                            plugin_mgmt.insert((g, a), v);
+                        }
+                    }
+                }
+            }
+
+            let mut seen_plugins: HashSet<(String, String)> = HashSet::new();
+            for p in chain.iter().rev() {
+                let mut p_entries: Vec<&super::raw::PluginDecl> = p.plugins.iter().collect();
+                for prof in &p.profiles {
+                    if profile_active(prof, &props) {
+                        p_entries.extend(prof.plugins.iter());
+                    }
+                }
+                for pl in p_entries {
+                    let g = pl.group.as_deref().unwrap_or("org.apache.maven.plugins");
+                    let g = interpolate(g, &props);
+                    let a = interpolate(&pl.artifact, &props);
+                    if !seen_plugins.insert((g.clone(), a.clone())) {
+                        continue;
+                    }
+                    let version_opt = pl
+                        .version
+                        .as_deref()
+                        .map(|v| interpolate(v, &props))
+                        .filter(|v| !v.is_empty())
+                        .or_else(|| plugin_mgmt.get(&(g.clone(), a.clone())).cloned());
+
+                    if let Some(v) = version_opt {
+                        let plugin_dep = DepDecl {
+                            group: g.clone(),
+                            artifact: a.clone(),
+                            version: Some(v),
+                            scope: Some("runtime".to_string()),
+                            optional: false,
+                            type_: Some("maven-plugin".to_string()),
+                            classifier: None,
+                            exclusions: vec![],
+                        };
+                        if dep_keys.insert(plugin_dep.key()) {
+                            log::info(format!(
+                                "包含构建插件: {}:{}:{}",
+                                plugin_dep.group,
+                                plugin_dep.artifact,
+                                plugin_dep.version.as_deref().unwrap_or("")
+                            ));
+                            deps.push(plugin_dep);
+                        }
+                    } else {
+                        log::warn(format!("构建插件 {g}:{a} 未指定版本且未在 pluginManagement 中找到，已跳过"));
+                    }
+
+                    // 插件附加依赖
+                    for pd in &pl.dependencies {
+                        let pd = interpolate_decl(pd, &props);
+                        if dep_keys.insert(pd.key()) {
+                            deps.push(pd);
+                        }
+                    }
                 }
             }
         }
@@ -1011,5 +1099,70 @@ mod tests {
         .unwrap();
         let d = find_dep(&eff, "hadoop-hdfs");
         assert_eq!(d.version.as_deref(), Some("2.7.4"));
+    }
+
+    #[tokio::test]
+    async fn include_plugins_support() {
+        let xml = r#"
+<project>
+  <groupId>com.example</groupId>
+  <artifactId>root</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <compiler.version>3.11.0</compiler.version>
+  </properties>
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${compiler.version}</version>
+      </plugin>
+      <plugin>
+        <groupId>org.mybatis.generator</groupId>
+        <artifactId>mybatis-generator-maven-plugin</artifactId>
+        <dependencies>
+          <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>8.3.0</version>
+          </dependency>
+        </dependencies>
+      </plugin>
+    </plugins>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.mybatis.generator</groupId>
+          <artifactId>mybatis-generator-maven-plugin</artifactId>
+          <version>1.4.2</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+  <dependencies>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>2.0.13</version>
+    </dependency>
+  </dependencies>
+</project>"#;
+        let pom = RawPom::parse(xml).unwrap();
+        let src = Arc::new(MockSource { poms: std::collections::BTreeMap::new() });
+        let ctx = ResolveContext::new(src, HashMap::new()).with_include_plugins(true);
+        let eff = ctx.build_from_local(pom, None, Vec::new()).await.unwrap();
+
+        assert_eq!(eff.deps.len(), 4);
+        let compiler = find_dep(&eff, "maven-compiler-plugin");
+        assert_eq!(compiler.group, "org.apache.maven.plugins");
+        assert_eq!(compiler.version.as_deref(), Some("3.11.0"));
+        assert_eq!(compiler.type_.as_deref(), Some("maven-plugin"));
+
+        let mb = find_dep(&eff, "mybatis-generator-maven-plugin");
+        assert_eq!(mb.group, "org.mybatis.generator");
+        assert_eq!(mb.version.as_deref(), Some("1.4.2"));
+
+        let mysql = find_dep(&eff, "mysql-connector-j");
+        assert_eq!(mysql.version.as_deref(), Some("8.3.0"));
     }
 }

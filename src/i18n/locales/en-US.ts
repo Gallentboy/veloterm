@@ -524,6 +524,8 @@ export default {
     noTransitiveHint: 'Direct dependencies only (-T)',
     autoPackOffline: 'Auto-pack offline zip on finish',
     autoPackOfflineHint: 'Automatically generate an offline delivery zip package with settings.xml once download completes',
+    includePlugins: 'Include build plugins (Build Plugins)',
+    includePluginsHint: 'Automatically scan <build><plugins> and recursively fetch build plugins and their transitive dependencies for true offline compilation',
     packOfflineBtn: 'Pack as offline repo',
     packOfflineHint: 'Pack downloaded repo as an offline delivery package (.zip / .tar.gz) with settings.xml',
     packingOffline: 'Generating offline package…',

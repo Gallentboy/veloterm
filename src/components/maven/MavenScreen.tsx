@@ -202,6 +202,7 @@ function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
   const [sources, setSources] = useState(false);
   const [noTransitive, setNoTransitive] = useState(false);
   const [autoPackOffline, setAutoPackOffline] = useState(false);
+  const [includePlugins, setIncludePlugins] = useState(false);
   const [checksum, setChecksum] = useState<'off' | 'warn' | 'strict'>('warn');
   const [layout, setLayout] = useState<'m2' | 'flat'>('m2');
   const [threads, setThreads] = useState<string>('16');
@@ -291,13 +292,14 @@ function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
       allClassifiers,
       sources,
       noTransitive,
+      includePlugins,
       checksum,
       threads: threads.trim() ? Number(threads.trim()) : null,
       proxy: proxy.trim() || null,
     };
   }, [
     mode, gav, pomPath, gavList, output, layout, reposText, definesText,
-    useMavenLocal, updateSnapshots, allClassifiers, sources, noTransitive, checksum, threads, proxy,
+    useMavenLocal, updateSnapshots, allClassifiers, sources, noTransitive, includePlugins, checksum, threads, proxy,
   ]);
 
   const validate = useCallback((): string | null => {
@@ -632,6 +634,7 @@ function DownloadTab({ env }: { env?: MavenEnvInfo | null }) {
                   [allClassifiers, setAllClassifiers, t('maven.allClassifiers'), t('maven.allClassifiersHint')],
                   [sources, setSources, t('maven.sources'), t('maven.sourcesHint')],
                   [noTransitive, setNoTransitive, t('maven.noTransitive'), t('maven.noTransitiveHint')],
+                  [includePlugins, setIncludePlugins, t('maven.includePlugins'), t('maven.includePluginsHint')],
                   [autoPackOffline, setAutoPackOffline, t('maven.autoPackOffline'), t('maven.autoPackOfflineHint')],
                 ] as const
               ).map(([value, setter, label, hint]) => (

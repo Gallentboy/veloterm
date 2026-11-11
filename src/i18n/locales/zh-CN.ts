@@ -524,6 +524,8 @@ export default {
     noTransitiveHint: '仅处理直接依赖（-T）',
     autoPackOffline: '下载后自动打包离线压缩包',
     autoPackOfflineHint: '下载完成后自动打包为包含 settings.xml 的离线仓库 (.zip)',
+    includePlugins: '包含构建插件 (Build Plugins)',
+    includePluginsHint: '自动扫描 <build><plugins> 并递归拉取编译/打包插件及其传递依赖，实现完全离线构建',
     packOfflineBtn: '打包为离线交付包',
     packOfflineHint: '将下载内容打包为离线仓库压缩包 (.zip / .tar.gz)，自动附带离线 settings.xml',
     packingOffline: '正在生成离线交付包…',
