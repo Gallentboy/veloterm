@@ -15,11 +15,13 @@ import {
   ArrowRight,
   CheckCircle2,
   AlertTriangle,
+  ShieldAlert,
 } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ControlHintTooltip } from '@/components/ControlHintTooltip';
 import type { MavenTreeNode } from '@/services/mavenService';
+import { checkCve } from '@/components/maven/cveDatabase';
 import { cn } from '@/lib/utils';
 
 interface MavenTreeProps {
@@ -107,8 +109,16 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
   const collapseAll = () => setExpanded(new Set());
 
   const totalLosers = nodes.filter((n) => n.loser).length;
+  const cveCount = useMemo(() => {
+    let count = 0;
+    for (const n of nodes) {
+      if (checkCve(n.group, n.artifact, n.version)) count++;
+    }
+    return count;
+  }, [nodes]);
 
   const selectedNode = selectedId != null ? byId.get(selectedId) : null;
+  const selectedCve = selectedNode ? checkCve(selectedNode.group, selectedNode.artifact, selectedNode.version) : null;
 
   // 选定节点的 Path-to-Root 链路（从 Root 到当前节点）
   const pathToRoot = useMemo(() => {
@@ -175,6 +185,7 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
     const hasChildren = node.children.length > 0;
     const isSelected = selectedId === node.id;
     const isMatched = query ? matchedIds.has(node.id) : false;
+    const cve = checkCve(node.group, node.artifact, node.version);
     const coord =
       node.classifier && node.classifier.length > 0
         ? `${node.group}:${node.artifact}:${node.version}:${node.packaging}:${node.classifier}`
@@ -238,6 +249,17 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
               ✗ {node.conflictWith ? `conflict ${node.conflictWith}` : 'duplicate'}
             </span>
           ) : null}
+          {cve ? (
+            <ControlHintTooltip
+              title={`【${cve.severity}】${cve.name} (${cve.cve})\n${cve.description}\n${t('maven.recommendedFix')}: ${cve.recommendedVersion}`}
+              side="top"
+            >
+              <span className="shrink-0 flex items-center gap-0.5 rounded bg-destructive/15 px-1 font-mono text-[10px] text-destructive border border-destructive/30 font-semibold animate-pulse">
+                <ShieldAlert className="size-2.5" />
+                {cve.cve}
+              </span>
+            </ControlHintTooltip>
+          ) : null}
         </div>
         {hasChildren && open ? (
           <div>
@@ -262,6 +284,12 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
         <span>
           {nodes.length} {t('maven.nodes')} · {totalLosers} {t('maven.conflicts')}
         </span>
+        {cveCount > 0 ? (
+          <span className="flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 font-medium text-destructive border border-destructive/25 text-[11px]">
+            <ShieldAlert className="size-3" />
+            {cveCount} {t('maven.cveVulnerabilities')}
+          </span>
+        ) : null}
 
         {/* 实时搜索过滤框 */}
         <div className="relative flex min-w-44 flex-1 items-center max-w-sm">
@@ -334,6 +362,23 @@ function MavenTreeInner({ nodes, className }: MavenTreeProps) {
 
           {/* 当前节点引入链路 */}
           <div className="space-y-1.5">
+            {selectedCve ? (
+              <div className="rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
+                <div className="flex items-center gap-1.5 font-semibold">
+                  <ShieldAlert className="size-3.5 shrink-0" />
+                  <span>
+                    {t('maven.cveAlert')}: {selectedCve.name} ({selectedCve.cve}) · {selectedCve.severity}
+                  </span>
+                </div>
+                <div className="mt-1 text-foreground-subtle leading-relaxed">
+                  {selectedCve.description}
+                </div>
+                <div className="mt-1 font-mono font-medium text-destructive">
+                  {t('maven.recommendedFix')}: {selectedCve.recommendedVersion}
+                </div>
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap items-center gap-1 rounded bg-background/60 p-1.5 border border-border/40 font-mono text-[11px]">
               {selectedNode.loser ? (
                 <span className="flex items-center gap-1 font-sans text-warning font-medium mr-1 shrink-0">
