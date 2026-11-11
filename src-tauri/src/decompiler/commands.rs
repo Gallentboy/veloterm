@@ -15,12 +15,17 @@ pub async fn decompiler_open_jar(file_path: String) -> Result<JarStructureOvervi
 /// 读取 Jar 内指定条目（若是 .class 则自动反编译为 Java 源码，文本文件直接返回，二进制文件提示）
 #[tauri::command]
 pub async fn decompiler_read_entry(file_path: String, entry_path: String) -> Result<String, String> {
+    eprintln!("[decompiler] 收到条目读取请求: file={}, entry={}", file_path, entry_path);
     tokio::task::spawn_blocking(move || {
-        let bytes = read_jar_entry_bytes(&file_path, &entry_path)?;
+        let bytes = read_jar_entry_bytes(&file_path, &entry_path).map_err(|e| {
+            eprintln!("[decompiler] 读取条目字节失败: entry={}, err={}", entry_path, e);
+            e
+        })?;
 
         if entry_path.ends_with(".class") {
             // 取类名 (如 com/example/Foo)
             let class_name = entry_path.trim_end_matches(".class");
+            eprintln!("[decompiler] 准备反编译 Class: {}, 字节数: {}", class_name, bytes.len());
             GLOBAL_DECOMPILER_MGR.decompile_class(class_name, &bytes)
         } else {
             // 普通文本文件（如 pom.properties, MANIFEST.MF, application.yml）

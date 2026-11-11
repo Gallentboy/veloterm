@@ -172,6 +172,20 @@ pub fn read_jar_entry_bytes<P: AsRef<Path>>(file_path: P, entry_path: &str) -> R
         .index_for_name(clean_path)
         .or_else(|| archive.index_for_name(&clean_path_win))
         .or_else(|| archive.index_for_name(entry_path))
+        .or_else(|| {
+            // 归一化路径遍历兜底匹配（防止 Zip 内部 entry 命名含有前导斜杠或相对前缀）
+            for i in 0..archive.len() {
+                if let Ok(e) = archive.by_index(i) {
+                    if let Ok(name) = e.name() {
+                        let norm = name.replace('\\', "/").trim_start_matches('/').to_string();
+                        if norm == clean_path {
+                            return Some(i);
+                        }
+                    }
+                }
+            }
+            None
+        })
         .ok_or_else(|| format!("Jar 包中未找到条目: {}", entry_path))?;
 
     let mut entry = archive

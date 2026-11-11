@@ -220,8 +220,10 @@ export const JarPreview = memo(function JarPreview({
 
   // 内存缓存已读取/反编译的内容，避免重复请求
   const contentCacheRef = useRef<Map<string, string>>(new Map());
+  const currentContentRef = useRef<string>('// 正在加载或选择文件...');
+  const currentLangRef = useRef<string>('java');
 
-  // Monaco 编辑器容器
+  // Monaco 编辑器容器与实例
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
@@ -292,21 +294,52 @@ export const JarPreview = memo(function JarPreview({
     };
   }, [filePath]);
 
-  // 2. 初始化与销毁 Monaco 实例
+  // 2. 初始化与销毁 Monaco 实例，并监听容器尺寸自适应排版
   useEffect(() => {
-    if (!editorContainerRef.current) return;
+    const container = editorContainerRef.current;
+    if (!container) return;
 
-    const editor = monaco.editor.create(editorContainerRef.current, {
+    setupMonacoEnvironment();
+    initMonacoTheme();
+
+    const editor = monaco.editor.create(container, {
       ...MONACO_OPTIONS,
-      value: '// 正在加载或选择文件...',
-      language: 'java',
+      value: currentContentRef.current,
+      language: currentLangRef.current,
     });
     editorRef.current = editor;
 
+    // 监听容器 ResizeObserver 保证 Monaco 在 Flex/Modal 伸缩时绝对撑满
+    const ro = new ResizeObserver(() => {
+      editor.layout();
+    });
+    ro.observe(container);
+
+    // 延迟一帧强制刷新布局，防挂载初期的零尺寸计算
+    requestAnimationFrame(() => {
+      editor.layout();
+    });
+
     return () => {
+      ro.disconnect();
       editor.dispose();
       editorRef.current = null;
     };
+  }, []);
+
+  // 更新编辑器文本与语言辅助函数
+  const applyContentToEditor = useCallback((content: string, language: string) => {
+    currentContentRef.current = content;
+    currentLangRef.current = language;
+    if (editorRef.current) {
+      editorRef.current.setValue(content);
+      const model = editorRef.current.getModel();
+      if (model) monaco.editor.setModelLanguage(model, language);
+      editorRef.current.setScrollTop(0);
+      requestAnimationFrame(() => {
+        editorRef.current?.layout();
+      });
+    }
   }, []);
 
   // 3. 读取选中条目内容并渲染到 Monaco
@@ -320,37 +353,26 @@ export const JarPreview = memo(function JarPreview({
     // 命中缓存直接更新
     const cached = contentCacheRef.current.get(entryPath);
     if (cached !== undefined) {
-      if (editorRef.current) {
-        editorRef.current.setValue(cached);
-        const model = editorRef.current.getModel();
-        if (model) monaco.editor.setModelLanguage(model, language);
-        editorRef.current.setScrollTop(0);
-      }
+      applyContentToEditor(cached, language);
       return;
     }
 
     setContentLoading(true);
 
     let active = true;
+    console.log('[decompiler] 前端请求读取条目:', entryPath, { isClass, filePath });
     decompilerReadEntry(filePath, entryPath)
       .then((content) => {
         if (!active) return;
+        console.log('[decompiler] 成功获得条目内容:', entryPath, `(${content.length} 字符)`);
         contentCacheRef.current.set(entryPath, content);
-        if (editorRef.current) {
-          editorRef.current.setValue(content);
-          const model = editorRef.current.getModel();
-          if (model) monaco.editor.setModelLanguage(model, language);
-          editorRef.current.setScrollTop(0);
-        }
+        applyContentToEditor(content, language);
       })
       .catch((err) => {
         if (!active) return;
         const msg = err instanceof Error ? err.message : String(err);
-        if (editorRef.current) {
-          editorRef.current.setValue(`// 读取/反编译失败:\n// ${msg}`);
-          const model = editorRef.current.getModel();
-          if (model) monaco.editor.setModelLanguage(model, 'plaintext');
-        }
+        console.error('[decompiler] 读取条目失败:', entryPath, msg);
+        applyContentToEditor(`// 读取/反编译失败:\n// ${msg}`, 'plaintext');
       })
       .finally(() => {
         if (active) setContentLoading(false);
@@ -359,7 +381,7 @@ export const JarPreview = memo(function JarPreview({
     return () => {
       active = false;
     };
-  }, [filePath, selectedNode]);
+  }, [applyContentToEditor, filePath, selectedNode]);
 
   // 过滤后的树形列表
   const filteredTree = useMemo(() => {
@@ -557,7 +579,7 @@ export const JarPreview = memo(function JarPreview({
       </div>
 
       {/* ── 右侧主区域：工具栏 + Monaco 源码展示 ── */}
-      <div className="flex flex-1 flex-col overflow-hidden bg-background">
+      <div className="flex flex-1 min-w-0 min-h-0 flex-col overflow-hidden bg-background">
         {/* 条目头部信息栏 */}
         <div className="flex h-9 shrink-0 items-center justify-between border-b border-border/70 px-3 bg-surface/20">
           <div className="flex items-center gap-2 truncate font-mono text-ui-xs">
@@ -607,8 +629,8 @@ export const JarPreview = memo(function JarPreview({
         )}
 
         {/* Monaco 编辑器展示区域 */}
-        <div className="relative flex-1 overflow-hidden">
-          <div ref={editorContainerRef} className="h-full w-full" />
+        <div className="relative flex-1 min-w-0 min-h-0 overflow-hidden">
+          <div ref={editorContainerRef} className="absolute inset-0" />
           {contentLoading && (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
               <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-ui-xs shadow-md">

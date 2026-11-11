@@ -219,26 +219,31 @@ impl DecompilerManager {
 
         eprintln!("[decompiler] 启动常驻 Java Worker: java={:?}, classpath={}", java_bin, cp);
 
-        let mut child = Command::new(java_bin)
-            // 堆内存参数（锁定 512MB，避免运行时申请系统页开销）
-            .arg("-Xms512m")
+        let mut cmd = Command::new(&java_bin);
+        cmd.arg("-Xms512m")
             .arg("-Xmx512m")
-            // 启动时预触碰提交全部 512M 物理内存页，消除运行期缺页中断 (Page Fault)
             .arg("-XX:+AlwaysPreTouch")
-            // Java 25 优化 GC 与延迟控制
             .arg("-XX:+UseG1GC")
             .arg("-XX:MaxGCPauseMillis=20")
-            // 字符串去重：Vineflower 生成大量重复的类名、标识符和符号表，去重后极大提升 CPU 缓存局部性
-            .arg("-XX:+UseStringDeduplication")
-            // 纯 Headless 运行模式与 UTF-8 编码
-            .arg("-Djava.awt.headless=true")
+            .arg("-XX:+UseStringDeduplication");
+
+        // Java 24/25 JEP 450: 紧凑对象头 (Compact Object Headers) - 开启 64 位紧凑头，大幅压缩 AST 节点体积并提升 CPU Cache 命中率
+        if is_java_24_or_higher(&java_bin) {
+            eprintln!("[decompiler] 激活 Java 25 专属 JEP 450: -XX:+UnlockExperimentalVMOptions -XX:+UseCompactObjectHeaders");
+            cmd.arg("-XX:+UnlockExperimentalVMOptions");
+            cmd.arg("-XX:+UseCompactObjectHeaders");
+        }
+
+        cmd.arg("-Djava.awt.headless=true")
             .arg("-Dfile.encoding=UTF-8")
             .arg("-cp")
             .arg(cp)
             .arg("com.veloterm.decompiler.VeloDecompilerWorker")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit()) // 打印到标准错误用于排障
+            .stderr(Stdio::inherit());
+
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("启动常驻 Java Worker 失败: {}", e))?;
 
@@ -345,6 +350,26 @@ fn is_java_17_or_higher(java_bin: &Path) -> bool {
                         }
                         let major: u32 = v.split('.').next().unwrap_or("0").parse().unwrap_or(0);
                         return major >= 17;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// 检查 java -version 是否 >= 24 (支持 JEP 450 Compact Object Headers)
+fn is_java_24_or_higher<P: AsRef<Path>>(bin: P) -> bool {
+    if let Ok(out) = Command::new(bin.as_ref()).arg("-version").output() {
+        let s = String::from_utf8_lossy(&out.stderr);
+        for line in s.lines() {
+            if line.contains("version") {
+                if let Some(start) = line.find('"') {
+                    let ver_str = &line[start + 1..];
+                    if let Some(end) = ver_str.find('"') {
+                        let v = &ver_str[..end];
+                        let major: u32 = v.split('.').next().unwrap_or("0").parse().unwrap_or(0);
+                        return major >= 24;
                     }
                 }
             }
