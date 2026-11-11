@@ -883,3 +883,29 @@ pub fn maven_clean_broken_cache(
         .unwrap_or_else(|| settings.resolved_local_repository());
     clean::clean_broken_cache(&file_paths, Some(&target_dir))
 }
+
+#[tauri::command]
+pub fn maven_analyze_repo_space(
+    repo_path: Option<String>,
+    min_versions: Option<usize>,
+) -> std::result::Result<clean::RepoSpaceAnalysisResult, String> {
+    let settings = settings::Settings::load(None).unwrap_or_default();
+    let target_dir = repo_path
+        .as_deref()
+        .map(settings::resolve_path)
+        .unwrap_or_else(|| settings.resolved_local_repository());
+    clean::analyze_repo_space(&target_dir, min_versions.unwrap_or(5)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn maven_clean_historical_versions(
+    dirs: Vec<String>,
+    repo_path: Option<String>,
+) -> clean::MavenCleanResult {
+    let settings = settings::Settings::load(None).unwrap_or_default();
+    let target_dir = repo_path
+        .as_deref()
+        .map(settings::resolve_path)
+        .unwrap_or_else(|| settings.resolved_local_repository());
+    clean::clean_historical_versions(&dirs, Some(&target_dir))
+}

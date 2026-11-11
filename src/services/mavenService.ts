@@ -306,3 +306,56 @@ export function mavenCleanBrokenCache(
     repoPath: repoPath ?? null,
   });
 }
+
+// ---------------- 本地仓库体积透视与历史多版本去重 ----------------
+
+export interface GroupSpaceItem {
+  group: string;
+  totalBytes: number;
+  artifactCount: number;
+  versionCount: number;
+}
+
+export interface ArtifactVersionItem {
+  version: string;
+  dirPath: string;
+  totalBytes: number;
+  fileCount: number;
+  isLatest: boolean;
+}
+
+export interface RedundantArtifactGroup {
+  group: string;
+  artifact: string;
+  versions: ArtifactVersionItem[];
+  totalBytes: number;
+  redundantBytes: number;
+}
+
+export interface RepoSpaceAnalysisResult {
+  repoPath: string;
+  totalRepoBytes: number;
+  totalArtifacts: number;
+  topGroups: GroupSpaceItem[];
+  redundantArtifacts: RedundantArtifactGroup[];
+}
+
+export function mavenAnalyzeRepoSpace(
+  repoPath?: string | null,
+  minVersions?: number | null,
+): Promise<RepoSpaceAnalysisResult> {
+  return invoke('maven_analyze_repo_space', {
+    repoPath: repoPath ?? null,
+    minVersions: minVersions ?? null,
+  });
+}
+
+export function mavenCleanHistoricalVersions(
+  dirs: string[],
+  repoPath?: string | null,
+): Promise<MavenCleanResult> {
+  return invoke('maven_clean_historical_versions', {
+    dirs,
+    repoPath: repoPath ?? null,
+  });
+}
