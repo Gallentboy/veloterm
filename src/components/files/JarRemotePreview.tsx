@@ -137,5 +137,5 @@ export const JarRemotePreview = memo(function JarRemotePreview({
 
   if (!localPath) return null;
 
-  return <JarPreview filePath={localPath} fileName={fileName} className={className} />;
+  return <JarPreview filePath={localPath} fileName={fileName} className={cn('h-full w-full', className)} />;
 });

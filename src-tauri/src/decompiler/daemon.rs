@@ -217,6 +217,8 @@ impl DecompilerManager {
         let cp_separator = if cfg!(windows) { ";" } else { ":" };
         let cp = format!("{}{}{}", vf_jar.to_string_lossy(), cp_separator, wk_jar.to_string_lossy());
 
+        eprintln!("[decompiler] 启动常驻 Java Worker: java={:?}, classpath={}", java_bin, cp);
+
         let mut child = Command::new(java_bin)
             .arg("-cp")
             .arg(cp)
@@ -254,6 +256,9 @@ impl DecompilerManager {
 
     /// 反编译单个 Class 的原始字节码，返回 Java 源代码
     pub fn decompile_class(&self, class_name: &str, class_bytes: &[u8]) -> Result<String, String> {
+        let start = Instant::now();
+        eprintln!("[decompiler] 接收到反编译请求: {}, 原始大小: {} bytes", class_name, class_bytes.len());
+
         self.ensure_daemon_started()?;
 
         let mut lock = self.daemon.lock().map_err(|e| format!("锁竞争失败: {}", e))?;
@@ -288,6 +293,8 @@ impl DecompilerManager {
         let payload_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64_payload)
             .map_err(|e| format!("解码 Base64 响应失败: {}", e))?;
         let payload_text = String::from_utf8_lossy(&payload_bytes).to_string();
+
+        eprintln!("[decompiler] 反编译响应完成: {}, status={}, 耗时: {:?}", class_name, status, start.elapsed());
 
         if status == "OK" {
             Ok(payload_text)

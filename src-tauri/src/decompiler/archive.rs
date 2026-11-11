@@ -165,9 +165,18 @@ pub fn read_jar_entry_bytes<P: AsRef<Path>>(file_path: P, entry_path: &str) -> R
     let file = File::open(path_ref).map_err(|e| format!("无法打开文件 {:?}: {}", path_ref, e))?;
     let mut archive = ZipArchive::new(file).map_err(|e| format!("解析 Zip/Jar 归档失败: {}", e))?;
 
+    let clean_path = entry_path.trim_start_matches('/');
+    let clean_path_win = clean_path.replace('/', "\\");
+
+    let idx = archive
+        .index_for_name(clean_path)
+        .or_else(|| archive.index_for_name(&clean_path_win))
+        .or_else(|| archive.index_for_name(entry_path))
+        .ok_or_else(|| format!("Jar 包中未找到条目: {}", entry_path))?;
+
     let mut entry = archive
-        .by_name(entry_path)
-        .map_err(|_| format!("Jar 包中未找到条目: {}", entry_path))?;
+        .by_index(idx)
+        .map_err(|e| format!("打开条目失败: {}", e))?;
 
     let mut buffer = Vec::with_capacity(entry.size() as usize);
     entry.read_to_end(&mut buffer).map_err(|e| format!("读取条目失败: {}", e))?;

@@ -589,7 +589,7 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
           </div>
         </div>
 
-        <div className="relative min-h-0 flex-1">
+        <div className="relative min-h-0 flex-1 h-full">
           {isPdf && sessionId ? (
             // PDF：后端 PDFium 渲染成图，不走 Monaco（下载 → 渲染 → 翻页全链路
             // 自带进度与 Loading 反馈，见 PdfRemotePreview）
@@ -614,7 +614,7 @@ export function SftpFilePreviewModal(props: SftpFilePreviewModalProps) {
           ) : isJar && sessionId ? (
             // JAR / WAR：后端流式 Central Directory 解析 + 常驻 Vineflower Worker 秒级反编译
             <Suspense fallback={null}>
-              <JarRemotePreview sessionId={sessionId} remotePath={remotePath} fileName={fileName} />
+              <JarRemotePreview sessionId={sessionId} remotePath={remotePath} fileName={fileName} className="h-full w-full" />
             </Suspense>
           ) : (
             <>

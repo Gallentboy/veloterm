@@ -422,32 +422,30 @@ export const JarPreview = memo(function JarPreview({
     setTimeout(() => setCopiedCoords(false), 2000);
   }, [overview]);
 
-  if (loading) {
-    return (
-      <div className={cn('flex flex-col items-center justify-center h-full gap-3 text-foreground-subtle', className)}>
-        <Spinner className="size-6 text-foreground-subtle" />
-        <span className="text-ui-base font-medium">{t('files.decompiler.loading', { defaultValue: '正在解析 JAR 归档结构与字节码…' })}</span>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className={cn('flex flex-col items-center justify-center h-full gap-3 p-6 text-center', className)}>
-        <div className="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
-          <Archive className="size-5" />
-        </div>
-        <p className="text-ui-base font-medium text-foreground">{t('files.decompiler.openFailed', { defaultValue: '打开 JAR 文件失败' })}</p>
-        <p className="max-w-md font-mono text-ui-xs text-destructive">{error}</p>
-      </div>
-    );
-  }
-
   const meta = overview?.metadata;
   const hasMaven = Boolean(meta?.group_id && meta?.artifact_id);
 
   return (
-    <div className={cn('flex h-full w-full overflow-hidden bg-background text-foreground select-none', className)}>
+    <div className={cn('relative flex h-full w-full overflow-hidden bg-background text-foreground select-none', className)}>
+      {/* ── 加载蒙层 ── */}
+      {loading && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-background text-foreground-subtle">
+          <Spinner className="size-6 text-foreground-subtle" />
+          <span className="text-ui-base font-medium">{t('files.decompiler.loading', { defaultValue: '正在解析 JAR 归档结构与字节码…' })}</span>
+        </div>
+      )}
+
+      {/* ── 错误蒙层 ── */}
+      {error && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-background p-6 text-center">
+          <div className="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+            <Archive className="size-5" />
+          </div>
+          <p className="text-ui-base font-medium text-foreground">{t('files.decompiler.openFailed', { defaultValue: '打开 JAR 文件失败' })}</p>
+          <p className="max-w-md font-mono text-ui-xs text-destructive">{error}</p>
+        </div>
+      )}
+
       {/* ── 左侧面板：搜索 + 元信息 + 目录树 ── */}
       <div className="flex w-72 sm:w-80 shrink-0 flex-col border-r border-border/70 bg-surface/30">
         {/* 顶部搜索框 */}
@@ -610,7 +608,15 @@ export const JarPreview = memo(function JarPreview({
 
         {/* Monaco 编辑器展示区域 */}
         <div className="relative flex-1 overflow-hidden">
-          <div ref={editorContainerRef} className="absolute inset-0 h-full w-full" />
+          <div ref={editorContainerRef} className="h-full w-full" />
+          {contentLoading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-ui-xs shadow-md">
+                <Spinner className="size-4 text-terminal-blue" />
+                <span className="font-medium text-foreground">{t('files.decompiler.decompiling', { defaultValue: '正在反编译字节码…' })}</span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
