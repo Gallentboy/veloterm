@@ -421,6 +421,23 @@ pub fn finished_event(
     }
 }
 
+/// 便捷：构造 skipped_running 事件（单实例互斥跳过）
+pub fn skipped_event(
+    task: &ScheduledTask,
+    timestamp: i64,
+    reason: &str,
+) -> TaskEvent {
+    TaskEvent {
+        task_id: task.id.clone(),
+        task_name: task.name.clone(),
+        kind: "skipped_running".to_string(),
+        started_at: timestamp,
+        finished_at: Some(timestamp),
+        exit_code: Some(-2),
+        message: Some(reason.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,6 +464,7 @@ mod tests {
             run_at: None,
             retention_days: None,
             env_vars: None,
+            concurrency_policy: None,
         }
     }
 

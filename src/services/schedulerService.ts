@@ -32,6 +32,8 @@ export interface ScheduledTask {
   retentionDays?: number | null;
   // 环境变量配置（JSON 格式字符串，如 {"PORT":"8080"}）
   envVars?: string | null;
+  // 并发控制与防重叠（单实例互斥）
+  concurrencyPolicy?: 'allow' | 'skip' | 'queue' | null;
 }
 
 export interface TaskLog {

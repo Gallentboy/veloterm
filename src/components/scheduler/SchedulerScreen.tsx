@@ -426,6 +426,22 @@ export function SchedulerScreen() {
                             </span>
                           </ControlHintTooltip>
                         ) : null}
+                        {task.concurrencyPolicy && task.concurrencyPolicy !== 'allow' ? (
+                          <ControlHintTooltip
+                            title={
+                              task.concurrencyPolicy === 'skip'
+                                ? t('scheduler.concurrencySkip')
+                                : t('scheduler.concurrencyQueue')
+                            }
+                            side="top"
+                          >
+                            <span className="shrink-0 rounded bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning border border-warning/20 cursor-default">
+                              {task.concurrencyPolicy === 'skip'
+                                ? t('scheduler.badgeConcurrencySkip')
+                                : t('scheduler.badgeConcurrencyQueue')}
+                            </span>
+                          </ControlHintTooltip>
+                        ) : null}
                         {task.lastStatus ? (
                           <span
                             className={cn(
@@ -434,14 +450,18 @@ export function SchedulerScreen() {
                                 ? 'bg-terminal-green/10 text-terminal-green'
                                 : task.lastStatus === 'failed'
                                   ? 'bg-destructive/10 text-destructive'
-                                  : 'bg-primary/10 text-primary',
+                                  : task.lastStatus === 'skipped_running'
+                                    ? 'bg-warning/10 text-warning border border-warning/20'
+                                    : 'bg-primary/10 text-primary',
                             )}
                           >
                             {task.lastStatus === 'success'
                               ? t('scheduler.statusSuccess')
                               : task.lastStatus === 'failed'
                                 ? t('scheduler.statusFailed')
-                                : t('scheduler.statusRunning')}
+                                : task.lastStatus === 'skipped_running'
+                                  ? t('scheduler.statusSkippedRunning')
+                                  : t('scheduler.statusRunning')}
                           </span>
                         ) : null}
                       </div>
@@ -580,10 +600,12 @@ export function SchedulerScreen() {
                                 'rounded px-1.5 py-px font-mono font-semibold',
                                 log.exitCode === 0
                                   ? 'bg-terminal-green/10 text-terminal-green'
-                                  : 'bg-destructive/10 text-destructive',
+                                  : log.exitCode === -2
+                                    ? 'bg-warning/10 text-warning border border-warning/20'
+                                    : 'bg-destructive/10 text-destructive',
                               )}
                             >
-                              exit {log.exitCode}
+                              {log.exitCode === -2 ? t('scheduler.statusSkippedRunning') : `exit ${log.exitCode}`}
                             </span>
                           ) : (
                             <span className="flex items-center gap-1 text-primary">
@@ -747,6 +769,11 @@ export function SchedulerScreen() {
                                 {item.exitCode != null ? (
                                   <span className="font-mono text-[10px]">({item.exitCode})</span>
                                 ) : null}
+                              </span>
+                            ) : item.status === 'skipped_running' ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-warning/10 border border-warning/20 px-2 py-0.5 font-medium text-warning">
+                                <CircleSlash className="size-3" />
+                                {t('scheduler.statusSkippedRunning')}
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 rounded bg-primary/10 px-2 py-0.5 font-medium text-primary">
@@ -941,6 +968,10 @@ function HistoryDetailModal({
                 ) : item.status === 'failed' ? (
                   <span className="text-destructive">
                     {t('scheduler.statusFailed')} ({item.exitCode ?? 'Err'})
+                  </span>
+                ) : item.status === 'skipped_running' ? (
+                  <span className="text-warning">
+                    {t('scheduler.statusSkippedRunning')} (-2)
                   </span>
                 ) : (
                   <span className="text-primary">{t('scheduler.statusRunning')}</span>
@@ -1232,13 +1263,17 @@ function TaskForm({
   const [retentionDays, setRetentionDays] = useState<string>(
     initial?.retentionDays != null ? String(initial.retentionDays) : '30',
   );
+  const [concurrencyPolicy, setConcurrencyPolicy] = useState<'allow' | 'skip' | 'queue'>(
+    (initial?.concurrencyPolicy as 'allow' | 'skip' | 'queue') ?? 'allow',
+  );
 
   const hasAdvanced = Boolean(
     (initial?.notifyOn && initial.notifyOn !== 'none') ||
     initial?.webhookUrl ||
     (initial?.timeoutSecs && initial.timeoutSecs !== 600) ||
     (initial?.maxRetries && initial.maxRetries > 0) ||
-    (initial?.retentionDays && initial.retentionDays !== 30),
+    (initial?.retentionDays && initial.retentionDays !== 30) ||
+    (initial?.concurrencyPolicy && initial.concurrencyPolicy !== 'allow'),
   );
   const [showAdvanced, setShowAdvanced] = useState(hasAdvanced);
 
@@ -1328,6 +1363,7 @@ function TaskForm({
       runAt,
       retentionDays: retentionDays ? Math.max(0, Number(retentionDays)) : 30,
       envVars,
+      concurrencyPolicy,
     };
     try {
       if (initial) {
@@ -1849,6 +1885,25 @@ function TaskForm({
                     value={retentionDays}
                     onChange={(e) => setRetentionDays(e.target.value)}
                     placeholder="30"
+                  />
+                </div>
+
+                {/* 并发控制与防重叠（单实例互斥） */}
+                <div className="col-span-full">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className={labelCls}>{t('scheduler.fieldConcurrency')}</label>
+                    <ControlHintTooltip title={t('scheduler.fieldConcurrencyTooltip')} side="left">
+                      <span className="text-[11px] text-foreground-subtlest cursor-help">ℹ️ {t('scheduler.concurrencyHelp')}</span>
+                    </ControlHintTooltip>
+                  </div>
+                  <SelectMenu
+                    value={concurrencyPolicy}
+                    options={[
+                      { value: 'allow', label: t('scheduler.concurrencyAllow') },
+                      { value: 'skip', label: t('scheduler.concurrencySkip') },
+                      { value: 'queue', label: t('scheduler.concurrencyQueue') },
+                    ]}
+                    onChange={(val) => setConcurrencyPolicy(val as 'allow' | 'skip' | 'queue')}
                   />
                 </div>
               </div>

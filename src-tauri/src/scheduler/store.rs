@@ -29,7 +29,8 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
             retry_backoff_secs INTEGER DEFAULT 30,
             run_at      INTEGER,
             retention_days INTEGER DEFAULT 30,
-            env_vars    TEXT
+            env_vars    TEXT,
+            concurrency_policy TEXT DEFAULT 'allow'
         );
         CREATE TABLE IF NOT EXISTS scheduled_task_logs (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +56,7 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE scheduled_tasks ADD COLUMN run_at INTEGER",
         "ALTER TABLE scheduled_tasks ADD COLUMN retention_days INTEGER DEFAULT 30",
         "ALTER TABLE scheduled_tasks ADD COLUMN env_vars TEXT",
+        "ALTER TABLE scheduled_tasks ADD COLUMN concurrency_policy TEXT DEFAULT 'allow'",
     ];
     for sql in migrations {
         let _ = conn.execute(sql, []);
@@ -84,6 +86,7 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledTask> {
         run_at: row.get("run_at")?,
         retention_days: row.get::<_, Option<i32>>("retention_days")?.map(|v| v as u32),
         env_vars: row.get("env_vars")?,
+        concurrency_policy: row.get("concurrency_policy")?,
     })
 }
 
@@ -109,8 +112,8 @@ pub fn create_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
          (id, name, cron_expr, task_type, command, working_dir, host_id, enabled, \
           created_at, updated_at, last_run_at, last_status, \
           notify_on, webhook_url, timeout_secs, max_retries, retry_backoff_secs, \
-          run_at, retention_days, env_vars) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+          run_at, retention_days, env_vars, concurrency_policy) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
         rusqlite::params![
             created.id,
             created.name,
@@ -132,6 +135,7 @@ pub fn create_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
             created.run_at,
             created.retention_days.map(|v| v as i32).unwrap_or(30),
             created.env_vars,
+            created.concurrency_policy.as_deref().unwrap_or("allow"),
         ],
     )
     .map_err(|e| format!("插入定时任务失败：{e}"))?;
@@ -148,7 +152,8 @@ pub fn update_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
              name=?2, cron_expr=?3, task_type=?4, command=?5, \
              working_dir=?6, host_id=?7, enabled=?8, updated_at=?9, \
              notify_on=?10, webhook_url=?11, timeout_secs=?12, max_retries=?13, \
-             retry_backoff_secs=?14, run_at=?15, retention_days=?16, env_vars=?17 \
+             retry_backoff_secs=?14, run_at=?15, retention_days=?16, env_vars=?17, \
+             concurrency_policy=?18 \
              WHERE id = ?1",
             rusqlite::params![
                 updated.id,
@@ -168,6 +173,7 @@ pub fn update_task(pool: &DbPool, task: &ScheduledTask) -> Result<ScheduledTask,
                 updated.run_at,
                 updated.retention_days.map(|v| v as i32).unwrap_or(30),
                 updated.env_vars,
+                updated.concurrency_policy.as_deref().unwrap_or("allow"),
             ],
         )
         .map_err(|e| format!("更新定时任务失败：{e}"))?;
@@ -292,6 +298,29 @@ pub fn record_run_extra(
         rusqlite::params![task_id, started_at, status],
     )
     .map_err(|e| format!("更新任务状态失败：{e}"))?;
+    Ok(())
+}
+
+/// 记录一次单实例互斥跳过的执行（concurrency_policy = "skip"）
+pub fn record_skipped_run(
+    pool: &DbPool,
+    task_id: &str,
+    timestamp: i64,
+    reason: &str,
+) -> Result<(), String> {
+    let conn = pool.get().map_err(|e| format!("取数据库连接失败：{e}"))?;
+    conn.execute(
+        "INSERT INTO scheduled_task_logs \
+         (task_id, started_at, finished_at, exit_code, stdout_tail, stderr_tail) \
+         VALUES (?1, ?2, ?2, -2, '', ?3)",
+        rusqlite::params![task_id, timestamp, reason],
+    )
+    .map_err(|e| format!("写入跳过日志失败：{e}"))?;
+    conn.execute(
+        "UPDATE scheduled_tasks SET last_run_at = ?2, last_status = 'skipped_running' WHERE id = ?1",
+        rusqlite::params![task_id, timestamp],
+    )
+    .map_err(|e| format!("更新任务跳过状态失败：{e}"))?;
     Ok(())
 }
 
@@ -486,6 +515,7 @@ mod tests {
             run_at: None,
             retention_days: None,
             env_vars: None,
+            concurrency_policy: None,
         }
     }
 
@@ -604,5 +634,36 @@ mod tests {
         clear_history(&pool, None).unwrap();
         let resp_empty = query_history(&pool, &q_all).unwrap();
         assert_eq!(resp_empty.total, 0);
+    }
+
+    #[test]
+    fn test_concurrency_policy_and_skipped_run() {
+        let pool = test_pool();
+        {
+            let conn = pool.get().unwrap();
+            ensure_tables(&conn).unwrap();
+        }
+
+        let mut t = sample("task-concurrency", "local_command", true);
+        t.concurrency_policy = Some("skip".to_string());
+        let created = create_task(&pool, &t).unwrap();
+        assert_eq!(created.concurrency_policy.as_deref(), Some("skip"));
+
+        // 更新并发策略为 queue
+        let mut to_update = created;
+        to_update.concurrency_policy = Some("queue".to_string());
+        let updated = update_task(&pool, &to_update).unwrap();
+        assert_eq!(updated.concurrency_policy.as_deref(), Some("queue"));
+
+        // 测试 record_skipped_run
+        record_skipped_run(&pool, "task-concurrency", 1500, "测试跳过：上一轮正在运行").unwrap();
+        let fetched = get_task(&pool, "task-concurrency").unwrap();
+        assert_eq!(fetched.last_status.as_deref(), Some("skipped_running"));
+        assert_eq!(fetched.last_run_at, Some(1500));
+
+        let logs = list_logs(&pool, "task-concurrency", 10).unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].exit_code, Some(-2));
+        assert_eq!(logs[0].stderr_tail.as_deref(), Some("测试跳过：上一轮正在运行"));
     }
 }

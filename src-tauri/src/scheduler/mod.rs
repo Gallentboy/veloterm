@@ -83,6 +83,10 @@ pub struct ScheduledTask {
     /// 环境变量配置（JSON 字符串，格式如 {"KEY":"VALUE"}）
     #[serde(default)]
     pub env_vars: Option<String>,
+    // ── 并发控制与防重叠 ──
+    /// 'allow'（允许并发）| 'skip'（上一轮运行中则跳过）| 'queue'（上一轮运行中则排队）
+    #[serde(default)]
+    pub concurrency_policy: Option<String>,
 }
 
 /// 执行日志条目

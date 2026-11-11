@@ -3,7 +3,7 @@
 //! （不阻塞调度循环），执行结果写库 + 事件推送前端。
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
 use tokio::sync::Mutex;
@@ -13,6 +13,18 @@ use uuid::Uuid;
 
 use super::{executor, store, ScheduledTask};
 use crate::db::DbPool;
+
+/// 任务执行锁池（单实例互斥控制：按 task_id 隔离）
+static TASK_EXEC_LOCKS: OnceLock<StdMutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+
+pub fn get_task_lock(task_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let pool = TASK_EXEC_LOCKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut guard = pool.lock().unwrap();
+    guard
+        .entry(task_id.to_string())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
 
 pub struct SchedulerEngine {
     scheduler: JobScheduler,
@@ -155,8 +167,34 @@ pub(crate) async fn run_task_internal(task: &ScheduledTask, pool: &DbPool, app: 
     run_task(task, pool, app).await;
 }
 
-/// 执行一个任务并记录结果 + 推送事件 + D1 通知 + D2 重试 + D4 一次性自动停用
+/// 执行一个任务并记录结果 + 推送事件 + D1 通知 + D2 重试 + D4 一次性自动停用 + 单实例互斥控制
 async fn run_task(task: &ScheduledTask, pool: &DbPool, app: &AppHandle) {
+    let policy = task.concurrency_policy.as_deref().unwrap_or("allow");
+    let _lock_guard = match policy {
+        "skip" => {
+            let lock = get_task_lock(&task.id);
+            match lock.try_lock_owned() {
+                Ok(guard) => Some(guard),
+                Err(_) => {
+                    let now = chrono::Utc::now().timestamp();
+                    let reason = "已跳过：上一轮任务仍在运行中（单实例互斥）";
+                    log::warn!(
+                        "[scheduler] 任务「{}」（{}）跳过执行：上一轮实例仍在运行中（单实例互斥/skip 策略）",
+                        task.name, task.id
+                    );
+                    let _ = store::record_skipped_run(pool, &task.id, now, reason);
+                    let _ = app.emit("scheduler-task-event", executor::skipped_event(task, now, reason));
+                    return;
+                }
+            }
+        }
+        "queue" => {
+            let lock = get_task_lock(&task.id);
+            Some(lock.lock_owned().await)
+        }
+        _ => None,
+    };
+
     let max_retries = task.max_retries.unwrap_or(0);
     let backoff = task.retry_backoff_secs.unwrap_or(30);
     let mut attempt: u32 = 0;
