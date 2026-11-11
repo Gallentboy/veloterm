@@ -40,6 +40,7 @@ pub mod tools;
 pub mod window_state;
 pub mod zk;
 pub mod zk_hosts;
+pub mod decompiler;
 /// 批量执行（fleet exec）：多主机并行执行 + per-host 事件流
 pub mod fleet_exec;
 
@@ -96,6 +97,10 @@ pub fn run() {
             maven::maven_analyze_repo_space,
             maven::maven_clean_historical_versions,
             maven::maven_ping_repos,
+            decompiler::commands::decompiler_open_jar,
+            decompiler::commands::decompiler_read_entry,
+            decompiler::commands::decompiler_get_status,
+            decompiler::commands::decompiler_stop_daemon,
             js_runtime::js_run,
             js_runtime::js_run_cancel,
             terminal_recording::export_recording_gif,
