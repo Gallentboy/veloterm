@@ -20,6 +20,7 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  Sparkles,
   Upload,
   XCircle,
 } from 'lucide-react';
@@ -31,6 +32,7 @@ import { SelectMenu } from '@/components/ui/SelectMenu';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { MavenTree } from '@/components/maven/MavenTree';
+import { RepoCleanTab } from '@/components/maven/RepoCleanTab';
 import { useDropTarget } from '@/hooks/useDropTarget';
 import {
   mavenCancelRun,
@@ -1464,7 +1466,7 @@ function UploadTab() {
 
 export function MavenScreen() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<'download' | 'search' | 'upload'>('download');
+  const [tab, setTab] = useState<'download' | 'search' | 'upload' | 'clean'>('download');
   const [env, setEnv] = useState<MavenEnvInfo | null>(null);
 
   const loadEnv = useCallback(() => {
@@ -1478,6 +1480,7 @@ export function MavenScreen() {
         ['download', <Download key="d" className="size-3.5" />, t('maven.tabDownload')],
         ['search', <Search key="s" className="size-3.5" />, t('maven.tabSearch')],
         ['upload', <Upload key="u" className="size-3.5" />, t('maven.tabUpload')],
+        ['clean', <Sparkles key="c" className="size-3.5" />, t('maven.tabClean')],
       ] as const,
     [t],
   );
@@ -1525,7 +1528,15 @@ export function MavenScreen() {
 
       {/* 内容区 */}
       <div className="flex min-h-0 flex-1 flex-col p-3">
-        {tab === 'download' ? <DownloadTab env={env} /> : tab === 'search' ? <SearchTab /> : <UploadTab />}
+        {tab === 'download' ? (
+          <DownloadTab env={env} />
+        ) : tab === 'search' ? (
+          <SearchTab />
+        ) : tab === 'upload' ? (
+          <UploadTab />
+        ) : (
+          <RepoCleanTab defaultRepoPath={env?.localRepository} />
+        )}
       </div>
     </section>
   );

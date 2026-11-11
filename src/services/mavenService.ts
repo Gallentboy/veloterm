@@ -263,3 +263,46 @@ export function mavenPackOffline(
     format: format ?? null,
   });
 }
+
+// ---------------- 本地仓库脏数据清理 ----------------
+
+export interface BrokenCacheItem {
+  path: string;
+  relPath: string;
+  kind: 'lastUpdated' | 'part' | 'remoteRepo' | 'tmp' | string;
+  size: number;
+}
+
+export interface MavenBrokenCacheScanResult {
+  repoPath: string;
+  files: BrokenCacheItem[];
+  totalFiles: number;
+  totalBytes: number;
+  lastUpdatedCount: number;
+  partCount: number;
+  remoteRepoCount: number;
+  tmpCount: number;
+}
+
+export interface MavenCleanResult {
+  deletedFiles: number;
+  freedBytes: number;
+  cleanedDirs: number;
+  failedItems: Array<[string, string]>;
+}
+
+export function mavenScanBrokenCache(
+  repoPath?: string | null,
+): Promise<MavenBrokenCacheScanResult> {
+  return invoke('maven_scan_broken_cache', { repoPath: repoPath ?? null });
+}
+
+export function mavenCleanBrokenCache(
+  filePaths: string[],
+  repoPath?: string | null,
+): Promise<MavenCleanResult> {
+  return invoke('maven_clean_broken_cache', {
+    filePaths,
+    repoPath: repoPath ?? null,
+  });
+}

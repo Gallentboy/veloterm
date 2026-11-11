@@ -37,6 +37,7 @@
     clippy::doc_lazy_continuation
 )]
 
+pub mod clean;
 pub mod config;
 pub mod download;
 pub mod error;
@@ -854,4 +855,31 @@ pub async fn maven_pack_offline(
     })
     .await
     .map_err(|e| format!("pack task panicked: {e}"))?
+}
+
+// ---------------- 本地仓库脏数据体检与清理 ----------------
+
+#[tauri::command]
+pub fn maven_scan_broken_cache(
+    repo_path: Option<String>,
+) -> std::result::Result<clean::MavenBrokenCacheScanResult, String> {
+    let settings = settings::Settings::load(None).unwrap_or_default();
+    let target_dir = repo_path
+        .as_deref()
+        .map(settings::resolve_path)
+        .unwrap_or_else(|| settings.resolved_local_repository());
+    clean::scan_broken_cache(&target_dir).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn maven_clean_broken_cache(
+    file_paths: Vec<String>,
+    repo_path: Option<String>,
+) -> clean::MavenCleanResult {
+    let settings = settings::Settings::load(None).unwrap_or_default();
+    let target_dir = repo_path
+        .as_deref()
+        .map(settings::resolve_path)
+        .unwrap_or_else(|| settings.resolved_local_repository());
+    clean::clean_broken_cache(&file_paths, Some(&target_dir))
 }

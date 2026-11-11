@@ -91,6 +91,8 @@ pub fn run() {
             maven::maven_env_info,
             maven::maven_pack_offline,
             maven::maven_pick_save_offline_file,
+            maven::maven_scan_broken_cache,
+            maven::maven_clean_broken_cache,
             js_runtime::js_run,
             js_runtime::js_run_cancel,
             terminal_recording::export_recording_gif,
