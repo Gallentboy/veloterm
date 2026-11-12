@@ -228,7 +228,27 @@ jobs:
           # -Syuu：双同步允许降级，确保 runner 镜像里的旧包与 repo 最新版
           # 一致（-Sy --needed 只装缺失不升级旧包——v1.0.12 实锤：镜像旧 crt
           # 与新 gcc 混搭导致 C compiler cannot create executables）
-          C:\msys64\usr\bin\bash.exe -l -c "pacman -Syuu --needed --noconfirm $pkgs"
+          #
+          # 连跑三遍：msys2-runtime 自身要升级时 pacman 会「关闭全部 MSYS2
+          # 进程重启终端」自杀退出——退出码 0、后续目标包一个没装（2026-11-11
+          # windows-2025-vs2026 新镜像实锤：缓存过期 + 全新 MSYS2 触发 bash
+          # runtime 升级，两腿全炸在「装依赖成功」的假象里）。MSYS2 官方推荐
+          # 的收敛姿势就是重跑：第 1 遍完成 runtime 升级自杀，第 2 遍补完升
+          # 级并真正安装目标包，第 3 遍空转确认收敛（幂等）。
+          $bash = 'C:\msys64\usr\bin\bash.exe'
+          $cmd = "pacman -Syuu --needed --noconfirm $pkgs"
+          & $bash -l -c $cmd
+          if ($LASTEXITCODE -ne 0) { throw "pacman 第 1 遍失败：exit $LASTEXITCODE" }
+          & $bash -l -c $cmd
+          if ($LASTEXITCODE -ne 0) { throw "pacman 第 2 遍失败：exit $LASTEXITCODE" }
+          & $bash -l -c $cmd
+          if ($LASTEXITCODE -ne 0) { throw "pacman 第 3 遍失败：exit $LASTEXITCODE" }
+          # 兜底校验（与 build-tools.mjs 的 qalc 探测同口径）：编译器/构建工
+          # 具确在位才放行——残缺树一旦被快照进缓存会连续污染后续发布
+          $prefix = if ('${{ matrix.msys_arch }}' -eq 'x86_64') { 'mingw64' } else { 'clangarm64' }
+          foreach ($tool in @("${prefix}\bin\g++.exe", "${prefix}\bin\pkg-config.exe", 'usr\bin\make.exe')) {
+            if (-not (Test-Path "C:\msys64\$tool")) { throw "MSYS2 依赖安装不完整：缺 $tool（拒绝快照残缺树）" }
+          }
 
       - name: Snapshot MSYS2 toolchain for pinning (cache miss)
         # 缓存未命中：把刚装好的整套工具链打包，job 成功后由 actions/cache
