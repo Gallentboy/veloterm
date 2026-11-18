@@ -67,6 +67,39 @@ export interface WebhookStatus {
   error?: string | null;
 }
 
+/**
+ * WebHook 运行时注入的单次请求对象 (webhook.req)
+ *
+ * 在 JS / TS 脚本动作中，全局变量 `webhook` 将作为只读对象注入运行时：
+ * ```ts
+ * const { method, path, bodyJson, queryParams } = webhook.req;
+ * console.log(`Received ${method} request to ${path}`);
+ * ```
+ */
+export interface WebhookRequest<TBody = Record<string, unknown>> {
+  /** HTTP 请求方法，全大写（如 'GET', 'POST', 'PUT', 'DELETE'） */
+  readonly method: string;
+  /** 请求的 URI 路径（如 '/deploy/prod'） */
+  readonly path: string;
+  /** 客户端远端 IP 地址（如 '127.0.0.1'） */
+  readonly clientIp: string;
+  /** 路径中提取的动态命名参数（如路由定义为 `/deploy/:service/:env` 时，`pathParams.service`, `pathParams.env`） */
+  readonly pathParams: Readonly<Record<string, string>>;
+  /** URL Query 查询参数键值对映射（如 `?token=abc&debug=1`） */
+  readonly queryParams: Readonly<Record<string, string>>;
+  /** 全部 HTTP 请求头映射（小写键名，如 `headers['content-type']`） */
+  readonly headers: Readonly<Record<string, string>>;
+  /** 自动解析后的 JSON 请求体对象；若请求体非 JSON 或为空则为 null */
+  readonly bodyJson: Readonly<TBody> | null;
+  /** 原始请求体字符串（Text / Binary 字符流） */
+  readonly rawBody: string;
+}
+
+/** 全局注入的 webhook 根容器类型 */
+export interface WebhookGlobalContext<TBody = Record<string, unknown>> {
+  readonly req: WebhookRequest<TBody>;
+}
+
 export interface WebhookTestResult {
   success: boolean;
   exitCode?: number | null;
