@@ -12,7 +12,7 @@
  *  node scripts/prepare-jre.mjs [--target <rust-target>] [--tag <release-tag>] [--force]
  */
 
-import { existsSync, mkdirSync, rmSync, renameSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, renameSync, chmodSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -85,12 +85,30 @@ if (!targetConfig) {
 
 const javaExePath = join(jreDestDir, 'bin', targetConfig.exeName);
 
+// 清理 JRE 根目录中的临时杂质文件（如手动 CLI 性能压测产生的 *.java, *.log, *.class 等，防止打进 release 安装包）
+function cleanJreDirImpurities() {
+  if (existsSync(jreDestDir)) {
+    try {
+      const entries = readdirSync(jreDestDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile() && (entry.name.endsWith('.java') || entry.name.endsWith('.log') || entry.name.endsWith('.class'))) {
+          rmSync(join(jreDestDir, entry.name), { force: true });
+          console.log(`[prepare-jre] 清除 JRE 目录中的杂质文件: ${entry.name}`);
+        }
+      }
+    } catch (_) {}
+  }
+}
+
+cleanJreDirImpurities();
+
 // 检查是否已准备完毕
 if (!force && existsSync(javaExePath)) {
   console.log(`[prepare-jre] 目标 JRE 已就绪: ${javaExePath}`);
   try {
     const versionOutput = execSync(`"${javaExePath}" -version 2>&1`, { encoding: 'utf8' });
     console.log(`[prepare-jre] 运行环境验证成功:\n${versionOutput.trim()}`);
+    cleanJreDirImpurities();
     process.exit(0);
   } catch (err) {
     console.warn(`[prepare-jre] 既有 JRE 无法执行，重新拉取准备: ${err.message}`);
@@ -221,6 +239,7 @@ try {
     throw new Error(`部署完成后未在 ${javaExePath} 找到 Java 可执行文件`);
   }
 
+  cleanJreDirImpurities();
   console.log(`[prepare-jre] ✅ 裁剪版 JRE 准备完毕！`);
 } finally {
   // 清理临时解压目录
