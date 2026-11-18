@@ -129,6 +129,7 @@ export function WebhookScreen() {
   // 删除确认对话框（替代 window.confirm）
   const [deletingRule, setDeletingRule] = useState<WebhookRule | null>(null);
   const [clearingLogsConfirm, setClearingLogsConfirm] = useState(false);
+  const [clearingLogsBusy, setClearingLogsBusy] = useState(false);
 
   // 测试运行面板状态
   const [testing, setTesting] = useState(false);
@@ -367,12 +368,17 @@ export function WebhookScreen() {
 
   // 清空日志
   const handleConfirmClearLogs = async () => {
+    setClearingLogsBusy(true);
     try {
       await webhookLogsClear();
       setClearingLogsConfirm(false);
+      setLogs([]);
+      setTotalLogs(0);
       await refreshLogs();
     } catch (err) {
       console.error('清空日志失败:', err);
+    } finally {
+      setClearingLogsBusy(false);
     }
   };
 
@@ -967,8 +973,13 @@ export function WebhookScreen() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => setClearingLogsConfirm(true)}
-                disabled={logs.length === 0}
+                onClick={() => {
+                  if (logs.length > 0 || totalLogs > 0) {
+                    setClearingLogsConfirm(true);
+                  }
+                }}
+                disabled={logs.length === 0 && totalLogs === 0}
+                title={logs.length === 0 && totalLogs === 0 ? t('webhook.emptyLogs') : t('webhook.clearLogs')}
                 className="h-8.5 gap-2 px-3 text-ui-xs text-destructive hover:bg-destructive/10"
               >
                 <Trash2 className="size-3.5" />
@@ -1116,8 +1127,10 @@ export function WebhookScreen() {
       {/* ── 清空日志确认弹窗 ── */}
       <ConfirmDialog
         open={clearingLogsConfirm}
+        busy={clearingLogsBusy}
         title={t('webhook.clearLogs')}
         description={t('webhook.clearLogsConfirm')}
+        confirmLabel={t('webhook.clearLogs', { defaultValue: '清空' })}
         onConfirm={() => void handleConfirmClearLogs()}
         onCancel={() => setClearingLogsConfirm(false)}
       />
