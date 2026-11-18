@@ -1382,6 +1382,7 @@ export default {
     reset: '重置',
     retry: '重试',
     clear: '清空',
+    readOnly: '只读',
   },
   topology: {
     title: '连接拓扑 · {{name}}',

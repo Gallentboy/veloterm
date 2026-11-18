@@ -1380,6 +1380,7 @@ export default {
     reset: 'Reset',
     retry: 'Retry',
     clear: 'Clear',
+    readOnly: 'Read-only',
   },
   topology: {
     title: 'Connection Topology · {{name}}',

@@ -53,6 +53,7 @@ import {
 import { WebhookSettingsModal } from '@/components/webhook/WebhookSettingsModal';
 import { WebhookScriptEditor } from '@/components/webhook/WebhookScriptEditor';
 import { WebhookCommandEditor } from '@/components/webhook/WebhookCommandEditor';
+import { WebhookReadOnlyEditor } from '@/components/webhook/WebhookReadOnlyEditor';
 import { loadHostStore } from '@/hosts/storage';
 import type { HostNode } from '@/hosts/types';
 
@@ -169,7 +170,7 @@ export function WebhookScreen() {
   // 测试运行面板状态
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<WebhookTestResult | null>(null);
-  const [testPayload, setTestPayload] = useState('{\n  "ref": "refs/heads/main",\n  "event": "push"\n}');
+  const [testPayload] = useState('{\n  "ref": "refs/heads/main",\n  "event": "push"\n}');
 
   // 审计日志列表
   const [logs, setLogs] = useState<WebhookLog[]>([]);
@@ -1295,11 +1296,11 @@ export function WebhookScreen() {
 
                   <div className="space-y-1.5">
                     <label className="text-ui-xs font-medium text-foreground-subtle">{t('webhook.mockPayload', { defaultValue: '模拟请求体 (JSON Body):' })}</label>
-                    <textarea
-                      rows={3}
+                    <WebhookReadOnlyEditor
                       value={testPayload}
-                      onChange={(e) => setTestPayload(e.target.value)}
-                      className="w-full rounded-lg border border-border bg-input p-3 text-ui-xs font-mono text-foreground focus:outline-none focus:border-border-hover transition-colors"
+                      language="json"
+                      minHeight={64}
+                      maxHeight={320}
                     />
                   </div>
 
@@ -1318,19 +1319,28 @@ export function WebhookScreen() {
                         <span className="text-foreground-subtle font-medium">{t('webhook.duration', { defaultValue: '耗时' })}: {testResult.durationMs}ms</span>
                       </div>
                       {testResult.stdout && (
-                        <div>
-                          <span className="text-[11px] text-foreground-subtler block mb-1">{t('webhook.stdout', { defaultValue: 'Standard Output' })}:</span>
-                          <pre className="rounded bg-background/80 p-3 overflow-x-auto whitespace-pre-wrap text-foreground font-mono leading-relaxed border border-border/50">
-                            {testResult.stdout}
-                          </pre>
+                        <div className="space-y-1">
+                          <span className="text-[11px] text-foreground-subtler block">{t('webhook.stdout', { defaultValue: 'Standard Output' })}:</span>
+                          <WebhookReadOnlyEditor
+                            value={testResult.stdout}
+                            language="shell"
+                            headerTitle="stdout"
+                            minHeight={48}
+                            maxHeight={260}
+                          />
                         </div>
                       )}
                       {testResult.stderr && (
-                        <div>
-                          <span className="text-[11px] text-destructive block mb-1">{t('webhook.stderr', { defaultValue: 'Standard Error' })}:</span>
-                          <pre className="rounded bg-background/80 p-3 overflow-x-auto whitespace-pre-wrap text-destructive font-mono leading-relaxed border border-destructive/20">
-                            {testResult.stderr}
-                          </pre>
+                        <div className="space-y-1">
+                          <span className="text-[11px] text-destructive block">{t('webhook.stderr', { defaultValue: 'Standard Error' })}:</span>
+                          <WebhookReadOnlyEditor
+                            value={testResult.stderr}
+                            language="shell"
+                            headerTitle="stderr"
+                            minHeight={48}
+                            maxHeight={260}
+                            isError
+                          />
                         </div>
                       )}
                     </div>
@@ -1466,31 +1476,48 @@ export function WebhookScreen() {
                         {log.requestHeaders && (
                           <div className="space-y-1">
                             <span className="text-ui-xs text-foreground-subtler font-medium">{t('webhook.logHeaders', { defaultValue: '请求头 (Headers)' })}:</span>
-                            <pre className="rounded-lg bg-background/80 p-3 text-ui-xs font-mono overflow-x-auto text-foreground-subtle whitespace-pre-wrap border border-border/40">
-                              {log.requestHeaders}
-                            </pre>
+                            <WebhookReadOnlyEditor
+                              value={log.requestHeaders}
+                              language="json"
+                              headerTitle="Headers"
+                              minHeight={44}
+                              maxHeight={200}
+                            />
                           </div>
                         )}
                         {log.requestBody && (
                           <div className="space-y-1">
                             <span className="text-ui-xs text-foreground-subtler font-medium">{t('webhook.logPayload', { defaultValue: '请求体 (Payload Body)' })}:</span>
-                            <pre className="rounded-lg bg-background/80 p-3 text-ui-xs font-mono overflow-x-auto text-foreground-subtle whitespace-pre-wrap border border-border/40">
-                              {log.requestBody}
-                            </pre>
+                            <WebhookReadOnlyEditor
+                              value={log.requestBody}
+                              language="json"
+                              headerTitle="Payload"
+                              minHeight={44}
+                              maxHeight={220}
+                            />
                           </div>
                         )}
                         {(log.stdoutTail || log.stderrTail) && (
                           <div className="space-y-1">
                             <span className="text-ui-xs text-foreground-subtler font-medium">{t('webhook.logOutput', { defaultValue: '执行输出 (Output)' })}:</span>
                             {log.stdoutTail && (
-                              <pre className="rounded-lg bg-background/80 p-3 text-ui-xs font-mono overflow-x-auto text-terminal-green whitespace-pre-wrap border border-border/40">
-                                {log.stdoutTail}
-                              </pre>
+                              <WebhookReadOnlyEditor
+                                value={log.stdoutTail}
+                                language="shell"
+                                headerTitle="stdout"
+                                minHeight={44}
+                                maxHeight={220}
+                              />
                             )}
                             {log.stderrTail && (
-                              <pre className="rounded-lg bg-background/80 p-3 text-ui-xs font-mono overflow-x-auto text-destructive whitespace-pre-wrap border border-destructive/20">
-                                {log.stderrTail}
-                              </pre>
+                              <WebhookReadOnlyEditor
+                                value={log.stderrTail}
+                                language="shell"
+                                headerTitle="stderr"
+                                minHeight={44}
+                                maxHeight={220}
+                                isError
+                              />
                             )}
                           </div>
                         )}
