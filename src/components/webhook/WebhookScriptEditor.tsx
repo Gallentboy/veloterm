@@ -265,7 +265,7 @@ export const WebhookScriptEditor = memo(function WebhookScriptEditor({
             className="h-5 px-1.5 text-[10px] text-foreground-subtle hover:text-foreground"
           >
             {copied ? <Check className="size-2.5 text-terminal-green mr-1" /> : <Copy className="size-2.5 mr-1" />}
-            <span>{copied ? t('common.copied') : t('common.copy')}</span>
+            <span>{copied ? t('common.copied', { defaultValue: '已复制' }) : t('common.copy', { defaultValue: '复制' })}</span>
           </Button>
         </div>
       </div>
