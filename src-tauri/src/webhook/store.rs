@@ -29,6 +29,20 @@ impl Default for WebhookSettings {
     }
 }
 
+/// 链式执行中的单个动作步骤
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebhookActionStep {
+    pub id: String,
+    pub name: Option<String>,
+    pub action_type: String,         // local_command, ssh_command, js_script
+    pub target_host_id: Option<i64>, // SSH 目标主机
+    pub command_text: String,        // 待执行的命令文本或 JS 源码
+    pub cwd: Option<String>,         // 本地命令工作目录
+    pub timeout_secs: Option<u64>,   // 可选步骤超时
+    pub continue_on_error: Option<bool>, // 失败时是否继续流水线
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebhookRule {
@@ -47,8 +61,33 @@ pub struct WebhookRule {
     pub timeout_secs: u64,           // 超时秒数，默认 60
     pub response_mode: String,       // async (202), sync (200)
     pub sort_order: i32,
+    pub actions_json: Option<String>,// 链式多步骤 JSON 序列化定义
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+impl WebhookRule {
+    /// 获取完整的链式执行步骤列表（若配置了 actions_json 则返回其列表，否则由原有单动作平滑过渡为单步列表）
+    pub fn get_action_steps(&self) -> Vec<WebhookActionStep> {
+        if let Some(ref json) = self.actions_json {
+            if let Ok(steps) = serde_json::from_str::<Vec<WebhookActionStep>>(json) {
+                if !steps.is_empty() {
+                    return steps;
+                }
+            }
+        }
+
+        vec![WebhookActionStep {
+            id: format!("step_1_{}", self.id),
+            name: Some("主要动作".to_string()),
+            action_type: self.action_type.clone(),
+            target_host_id: self.target_host_id,
+            command_text: self.command_text.clone(),
+            cwd: self.cwd.clone(),
+            timeout_secs: Some(self.timeout_secs),
+            continue_on_error: Some(false),
+        }]
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +178,9 @@ pub fn ensure_tables(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("初始化 WebHook 数据表失败: {e}"))?;
 
+    // 幂等增加 actions_json 列（支持多步骤链式流水线执行）
+    let _ = conn.execute("ALTER TABLE webhook_rules ADD COLUMN actions_json TEXT", []);
+
     // 默认插入一条 id=1 的全局设置（如果不存在）
     conn.execute(
         "INSERT OR IGNORE INTO webhook_settings (id, enabled, bind_ip, bind_port, max_body_bytes, updated_at)
@@ -207,7 +249,7 @@ pub fn list_rules(conn: &Connection) -> Result<Vec<WebhookRule>, String> {
         .prepare(
             "SELECT id, name, enabled, method, path_pattern, secret_token, signature_type,
                     filter_expr, action_type, target_host_id, command_text, cwd,
-                    timeout_secs, response_mode, sort_order, created_at, updated_at
+                    timeout_secs, response_mode, sort_order, created_at, updated_at, actions_json
              FROM webhook_rules
              ORDER BY sort_order ASC, created_at ASC",
         )
@@ -235,6 +277,7 @@ pub fn list_rules(conn: &Connection) -> Result<Vec<WebhookRule>, String> {
                 sort_order: r.get(14)?,
                 created_at: r.get(15)?,
                 updated_at: r.get(16)?,
+                actions_json: r.get(17)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -251,7 +294,7 @@ pub fn get_rule(conn: &Connection, id: &str) -> Result<Option<WebhookRule>, Stri
         .prepare(
             "SELECT id, name, enabled, method, path_pattern, secret_token, signature_type,
                     filter_expr, action_type, target_host_id, command_text, cwd,
-                    timeout_secs, response_mode, sort_order, created_at, updated_at
+                    timeout_secs, response_mode, sort_order, created_at, updated_at, actions_json
              FROM webhook_rules
              WHERE id = ?1",
         )
@@ -279,6 +322,7 @@ pub fn get_rule(conn: &Connection, id: &str) -> Result<Option<WebhookRule>, Stri
                 sort_order: r.get(14)?,
                 created_at: r.get(15)?,
                 updated_at: r.get(16)?,
+                actions_json: r.get(17)?,
             })
         })
         .optional()
@@ -293,8 +337,8 @@ pub fn save_rule(conn: &Connection, rule: &WebhookRule) -> Result<(), String> {
         "INSERT INTO webhook_rules (
             id, name, enabled, method, path_pattern, secret_token, signature_type,
             filter_expr, action_type, target_host_id, command_text, cwd,
-            timeout_secs, response_mode, sort_order, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            timeout_secs, response_mode, sort_order, created_at, updated_at, actions_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             enabled = excluded.enabled,
@@ -310,7 +354,8 @@ pub fn save_rule(conn: &Connection, rule: &WebhookRule) -> Result<(), String> {
             timeout_secs = excluded.timeout_secs,
             response_mode = excluded.response_mode,
             sort_order = excluded.sort_order,
-            updated_at = excluded.updated_at",
+            updated_at = excluded.updated_at,
+            actions_json = excluded.actions_json",
         params![
             rule.id,
             rule.name,
@@ -329,6 +374,7 @@ pub fn save_rule(conn: &Connection, rule: &WebhookRule) -> Result<(), String> {
             rule.sort_order,
             if rule.created_at == 0 { now } else { rule.created_at },
             now,
+            rule.actions_json,
         ],
     )
     .map_err(|e| format!("保存 WebHook 规则失败: {e}"))?;

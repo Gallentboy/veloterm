@@ -20,6 +20,18 @@ export type WebhookActionType = 'local_command' | 'ssh_command' | 'js_script';
 
 export type WebhookResponseMode = 'async' | 'sync';
 
+/** 链式流水线中的单个动作步骤契约 */
+export interface WebhookActionStep {
+  id: string;
+  name?: string | null;
+  actionType: WebhookActionType;
+  targetHostId?: number | null;
+  commandText: string;
+  cwd?: string | null;
+  timeoutSecs?: number | null;
+  continueOnError?: boolean | null;
+}
+
 export interface WebhookRule {
   id: string;
   name: string;
@@ -35,6 +47,8 @@ export interface WebhookRule {
   cwd?: string | null;
   timeoutSecs: number;
   responseMode: WebhookResponseMode;
+  actionsJson?: string | null;
+  actions?: WebhookActionStep[];
   sortOrder: number;
   createdAt: number;
   updatedAt: number;
@@ -95,9 +109,35 @@ export interface WebhookRequest<TBody = Record<string, unknown>> {
   readonly rawBody: string;
 }
 
+/** 链式执行中上一步骤的输出上下文 (webhook.prev) */
+export interface WebhookPrevOutput<TData = unknown> {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode?: number | null;
+  readonly success: boolean;
+  readonly data?: Readonly<TData> | null;
+  readonly output: string;
+}
+
+/** 链式执行中历史步骤的执行结果记录 (webhook.steps) */
+export interface WebhookStepHistoryItem<TData = unknown> {
+  readonly stepIndex: number;
+  readonly stepId: string;
+  readonly stepName: string;
+  readonly actionType: WebhookActionType;
+  readonly success: boolean;
+  readonly exitCode?: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly data?: Readonly<TData> | null;
+  readonly durationMs: number;
+}
+
 /** 全局注入的 webhook 根容器类型 */
-export interface WebhookGlobalContext<TBody = Record<string, unknown>> {
+export interface WebhookGlobalContext<TBody = Record<string, unknown>, TData = unknown> {
   readonly req: WebhookRequest<TBody>;
+  readonly prev: WebhookPrevOutput<TData> | null;
+  readonly steps: ReadonlyArray<WebhookStepHistoryItem<TData>>;
 }
 
 export interface WebhookTestResult {

@@ -1,5 +1,7 @@
 import {
   AlertCircle,
+  ArrowDown,
+  ArrowUp,
   Check,
   Clock,
   Copy,
@@ -36,6 +38,7 @@ import {
   webhookRuleTest,
   webhookRuleToggle,
   webhookUpdateSettings,
+  type WebhookActionStep,
   type WebhookActionType,
   type WebhookLog,
   type WebhookMethod,
@@ -46,6 +49,7 @@ import {
   type WebhookTestResult,
 } from '@/services/webhookService';
 import { WebhookSettingsModal } from '@/components/webhook/WebhookSettingsModal';
+import { WebhookScriptEditor } from '@/components/webhook/WebhookScriptEditor';
 import { loadHostStore } from '@/hosts/storage';
 import type { HostNode } from '@/hosts/types';
 
@@ -57,6 +61,31 @@ const METHOD_COLORS: Record<string, string> = {
   PATCH: 'text-purple-400 bg-purple-400/10 border-purple-400/20',
   ANY: 'text-foreground-subtle bg-surface border-border',
 };
+
+/** 解析或回退提取规则中的全部流水线步骤 */
+function extractRuleSteps(r: WebhookRule): WebhookActionStep[] {
+  if (r.actions && r.actions.length > 0) return r.actions;
+  if (r.actionsJson) {
+    try {
+      const parsed = JSON.parse(r.actionsJson);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    } catch {}
+  }
+  return [
+    {
+      id: `step_${Date.now()}_1`,
+      name: '第 1 步',
+      actionType: r.actionType || 'local_command',
+      targetHostId: r.targetHostId,
+      commandText: r.commandText || '',
+      cwd: r.cwd,
+      timeoutSecs: r.timeoutSecs || 60,
+      continueOnError: false,
+    },
+  ];
+}
 
 function formatTime(ms: number): string {
   if (!ms) return '-';
@@ -206,6 +235,18 @@ export function WebhookScreen() {
   // 新建规则
   const handleCreateNewRule = () => {
     const newId = `rule_${Date.now()}`;
+    const defaultSteps: WebhookActionStep[] = [
+      {
+        id: `step_${Date.now()}_1`,
+        name: '第 1 步：接收请求',
+        actionType: 'local_command',
+        targetHostId: hosts.length > 0 ? hosts[0].id : null,
+        commandText: 'echo "Received WebHook: ${method} ${path}"',
+        cwd: null,
+        timeoutSecs: 60,
+        continueOnError: false,
+      },
+    ];
     const newRule: WebhookRule = {
       id: newId,
       name: `${t('webhook.newRule')} ${rules.length + 1}`,
@@ -221,6 +262,8 @@ export function WebhookScreen() {
       cwd: null,
       timeoutSecs: 60,
       responseMode: 'async',
+      actions: defaultSteps,
+      actionsJson: JSON.stringify(defaultSteps),
       sortOrder: rules.length,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -232,8 +275,9 @@ export function WebhookScreen() {
 
   // 选中规则
   const handleSelectRule = (r: WebhookRule) => {
+    const steps = extractRuleSteps(r);
     setSelectedRuleId(r.id);
-    setEditingRule({ ...r });
+    setEditingRule({ ...r, actions: steps });
     setTestResult(null);
   };
 
@@ -241,8 +285,22 @@ export function WebhookScreen() {
   const handleSaveRule = async () => {
     if (!editingRule) return;
     setSavingRule(true);
+    const steps = editingRule.actions && editingRule.actions.length > 0
+      ? editingRule.actions
+      : extractRuleSteps(editingRule);
+    const firstStep = steps[0];
+    const ruleToSave: WebhookRule = {
+      ...editingRule,
+      actions: steps,
+      actionsJson: JSON.stringify(steps),
+      actionType: firstStep ? firstStep.actionType : editingRule.actionType,
+      targetHostId: firstStep ? firstStep.targetHostId : editingRule.targetHostId,
+      commandText: firstStep ? firstStep.commandText : editingRule.commandText,
+      cwd: firstStep ? firstStep.cwd : editingRule.cwd,
+      timeoutSecs: firstStep?.timeoutSecs || editingRule.timeoutSecs,
+    };
     try {
-      await webhookRuleSave(editingRule);
+      await webhookRuleSave(ruleToSave);
       await refreshData();
     } catch (err) {
       console.error('保存规则失败:', err);
@@ -278,6 +336,74 @@ export function WebhookScreen() {
     } catch (err) {
       console.error('切换规则启用状态失败:', err);
     }
+  };
+
+  // 流水线步骤操作
+  const handleUpdateStep = (index: number, patch: Partial<WebhookActionStep>) => {
+    if (!editingRule) return;
+    const currentSteps = editingRule.actions && editingRule.actions.length > 0
+      ? editingRule.actions
+      : extractRuleSteps(editingRule);
+    const nextSteps = currentSteps.map((s, i) => (i === index ? { ...s, ...patch } : s));
+    setEditingRule({ ...editingRule, actions: nextSteps });
+  };
+
+  const handleAddStep = () => {
+    if (!editingRule) return;
+    const currentSteps = editingRule.actions && editingRule.actions.length > 0
+      ? editingRule.actions
+      : extractRuleSteps(editingRule);
+    const newIdx = currentSteps.length + 1;
+    const newStep: WebhookActionStep = {
+      id: `step_${Date.now()}_${newIdx}`,
+      name: `第 ${newIdx} 步`,
+      actionType: 'js_script',
+      targetHostId: hosts.length > 0 ? hosts[0].id : null,
+      commandText: '// 访问前一步数据：const prevData = webhook.prev?.data;\nreturn { success: true };',
+      cwd: null,
+      timeoutSecs: editingRule.timeoutSecs || 60,
+      continueOnError: false,
+    };
+    setEditingRule({ ...editingRule, actions: [...currentSteps, newStep] });
+  };
+
+  const handleDeleteStep = (index: number) => {
+    if (!editingRule) return;
+    const currentSteps = editingRule.actions && editingRule.actions.length > 0
+      ? editingRule.actions
+      : extractRuleSteps(editingRule);
+    if (currentSteps.length <= 1) return;
+    const nextSteps = currentSteps.filter((_, i) => i !== index);
+    setEditingRule({ ...editingRule, actions: nextSteps });
+  };
+
+  const handleMoveStep = (index: number, direction: 'up' | 'down') => {
+    if (!editingRule) return;
+    const currentSteps = [...(editingRule.actions && editingRule.actions.length > 0
+      ? editingRule.actions
+      : extractRuleSteps(editingRule))];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= currentSteps.length) return;
+    const temp = currentSteps[index];
+    currentSteps[index] = currentSteps[targetIndex];
+    currentSteps[targetIndex] = temp;
+    setEditingRule({ ...editingRule, actions: currentSteps });
+  };
+
+  const handleDuplicateStep = (index: number) => {
+    if (!editingRule) return;
+    const currentSteps = editingRule.actions && editingRule.actions.length > 0
+      ? editingRule.actions
+      : extractRuleSteps(editingRule);
+    const target = currentSteps[index];
+    const duplicated: WebhookActionStep = {
+      ...target,
+      id: `step_${Date.now()}_${currentSteps.length + 1}`,
+      name: `${target.name || '步骤'} (${t('webhook.duplicateStep', { defaultValue: '副本' })})`,
+    };
+    const nextSteps = [...currentSteps];
+    nextSteps.splice(index + 1, 0, duplicated);
+    setEditingRule({ ...editingRule, actions: nextSteps });
   };
 
   // 复制 cURL
@@ -779,97 +905,329 @@ export function WebhookScreen() {
                   </div>
                 </div>
 
-                {/* 3. 动作类型与执行逻辑 */}
-                <div className="space-y-4 rounded-xl border border-border/70 bg-surface/30 p-5">
-                  <span className="text-ui-xs font-semibold text-foreground-subtle uppercase tracking-wider flex items-center gap-1.5">
-                    <Terminal className="size-4" />
-                    <span>动作执行配置</span>
-                  </span>
+                {/* 3. 动作执行流水线（支持单步及多步骤链式执行） */}
+                {(() => {
+                  const currentSteps = editingRule.actions && editingRule.actions.length > 0
+                    ? editingRule.actions
+                    : extractRuleSteps(editingRule);
+                  const isMultiStep = currentSteps.length > 1;
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-ui-xs font-medium text-foreground-subtle">{t('webhook.actionType')}</label>
-                      <SelectMenu
-                        value={editingRule.actionType}
-                        options={actionOptions}
-                        onChange={(val) => setEditingRule({ ...editingRule, actionType: val as WebhookActionType })}
-                        triggerClassName="h-9 text-ui-sm"
-                      />
-                    </div>
-
-                    {editingRule.actionType === 'ssh_command' && (
-                      <div className="space-y-1.5">
-                        <label className="flex items-center gap-1.5 text-ui-xs font-medium text-foreground-subtle">
-                          <Server className="size-3.5 text-foreground-subtle" />
-                          <span>{t('webhook.targetHost')}</span>
-                        </label>
-                        <SelectMenu
-                          value={editingRule.targetHostId ? String(editingRule.targetHostId) : ''}
-                          options={hostOptions}
-                          onChange={(val) => setEditingRule({ ...editingRule, targetHostId: val ? Number(val) : null })}
-                          triggerClassName="h-9 text-ui-sm"
-                        />
+                  return (
+                    <div className="space-y-4 rounded-xl border border-border/70 bg-surface/30 p-5">
+                      <div className="flex items-center justify-between border-b border-border/50 pb-3">
+                        <div className="flex items-center gap-2">
+                          <Terminal className="size-4 text-terminal-blue" />
+                          <span className="text-ui-sm font-semibold text-foreground">
+                            {t('webhook.pipeline', { defaultValue: '动作执行流水线' })}
+                          </span>
+                          <span className="rounded-full bg-surface px-2 py-0.5 font-mono text-[11px] text-foreground-subtle border border-border/50 select-none">
+                            {currentSteps.length} {t('webhook.stepIndex', { defaultValue: '步骤' })}
+                          </span>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleAddStep}
+                          className="h-7.5 gap-1.5 px-2.5 text-ui-xs font-medium"
+                        >
+                          <Plus className="size-3.5 text-terminal-green" />
+                          <span>{t('webhook.addStep', { defaultValue: '添加流水线步骤' })}</span>
+                        </Button>
                       </div>
-                    )}
 
-                    {editingRule.actionType === 'local_command' && (
-                      <div className="space-y-1.5">
-                        <label className="text-ui-xs font-medium text-foreground-subtle">{t('webhook.cwd')}</label>
-                        <input
-                          type="text"
-                          value={editingRule.cwd || ''}
-                          onChange={(e) => setEditingRule({ ...editingRule, cwd: e.target.value || null })}
-                          placeholder={t('webhook.cwdPlaceholder')}
-                          className="w-full h-9 rounded-md border border-border bg-surface/80 px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
-                        />
+                      <p className="text-ui-xs text-foreground-subtler leading-relaxed">
+                        {t(
+                          'webhook.pipelineHint',
+                          { defaultValue: '支持按序链式执行多步骤（如：第1步JS处理 -> 第2步命令部署 -> 第3步JS发通知）。后一步骤可通过 ${prev.stdout}、${prev.data.xxx} 或 webhook.prev 获取前一步输出。' }
+                        )}
+                      </p>
+
+                      {/* 步骤卡片列表 */}
+                      <div className="space-y-3.5">
+                        {currentSteps.map((step, idx) => (
+                          <div
+                            key={step.id || `step_${idx}`}
+                            className="rounded-lg border border-border/70 bg-surface/60 overflow-hidden shadow-xs transition-colors"
+                          >
+                            {/* 步骤标题栏 */}
+                            <div className="flex h-10 items-center justify-between border-b border-border/40 bg-surface/80 px-3 select-none">
+                              <div className="flex flex-1 min-w-0 items-center gap-2.5">
+                                <span className="flex size-5.5 shrink-0 items-center justify-center rounded-full bg-surface border border-border text-[11px] font-mono font-semibold text-foreground">
+                                  {idx + 1}
+                                </span>
+                                <input
+                                  type="text"
+                                  value={step.name || ''}
+                                  onChange={(e) => handleUpdateStep(idx, { name: e.target.value })}
+                                  placeholder={`${t('webhook.stepIndex', { defaultValue: '步骤' })} ${idx + 1}`}
+                                  className="h-6.5 max-w-xs rounded border border-transparent bg-transparent px-1.5 font-mono text-ui-xs font-medium text-foreground hover:border-border focus:border-border focus:bg-surface focus:outline-none transition-colors"
+                                />
+                                <span
+                                  className={cn(
+                                    'hidden sm:inline-flex rounded px-1.5 py-0.5 text-[10px] font-mono select-none',
+                                    step.actionType === 'js_script'
+                                      ? 'bg-terminal-yellow/15 text-terminal-yellow'
+                                      : step.actionType === 'ssh_command'
+                                      ? 'bg-purple-500/15 text-purple-400'
+                                      : 'bg-terminal-blue/15 text-terminal-blue',
+                                  )}
+                                >
+                                  {step.actionType === 'js_script'
+                                    ? 'JS / TS'
+                                    : step.actionType === 'ssh_command'
+                                    ? 'SSH'
+                                    : 'Local'}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleMoveStep(idx, 'up')}
+                                  disabled={idx === 0}
+                                  className="size-7 p-0 text-foreground-subtle hover:text-foreground disabled:opacity-30"
+                                  title={t('webhook.moveUp', { defaultValue: '上移' })}
+                                >
+                                  <ArrowUp className="size-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleMoveStep(idx, 'down')}
+                                  disabled={idx === currentSteps.length - 1}
+                                  className="size-7 p-0 text-foreground-subtle hover:text-foreground disabled:opacity-30"
+                                  title={t('webhook.moveDown', { defaultValue: '下移' })}
+                                >
+                                  <ArrowDown className="size-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDuplicateStep(idx)}
+                                  className="size-7 p-0 text-foreground-subtle hover:text-foreground"
+                                  title={t('webhook.duplicateStep', { defaultValue: '复制步骤' })}
+                                >
+                                  <Copy className="size-3.5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteStep(idx)}
+                                  disabled={currentSteps.length <= 1}
+                                  className="size-7 p-0 text-destructive/80 hover:text-destructive hover:bg-destructive/10 disabled:opacity-30"
+                                  title={t('webhook.deleteStep', { defaultValue: '删除步骤' })}
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* 步骤主体配置 */}
+                            <div className="p-3.5 space-y-3.5">
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div className="space-y-1">
+                                  <label className="text-[11px] font-medium text-foreground-subtle">
+                                    {t('webhook.actionType')}
+                                  </label>
+                                  <SelectMenu
+                                    value={step.actionType}
+                                    options={actionOptions}
+                                    onChange={(val) => handleUpdateStep(idx, { actionType: val as WebhookActionType })}
+                                    triggerClassName="h-8 text-ui-xs"
+                                  />
+                                </div>
+
+                                {step.actionType === 'ssh_command' && (
+                                  <div className="space-y-1">
+                                    <label className="flex items-center gap-1 text-[11px] font-medium text-foreground-subtle">
+                                      <Server className="size-3 text-foreground-subtle" />
+                                      <span>{t('webhook.targetHost')}</span>
+                                    </label>
+                                    <SelectMenu
+                                      value={step.targetHostId ? String(step.targetHostId) : ''}
+                                      options={hostOptions}
+                                      onChange={(val) => handleUpdateStep(idx, { targetHostId: val ? Number(val) : null })}
+                                      triggerClassName="h-8 text-ui-xs"
+                                    />
+                                  </div>
+                                )}
+
+                                {step.actionType === 'local_command' && (
+                                  <div className="space-y-1">
+                                    <label className="text-[11px] font-medium text-foreground-subtle">
+                                      {t('webhook.cwd')}
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={step.cwd || ''}
+                                      onChange={(e) => handleUpdateStep(idx, { cwd: e.target.value || null })}
+                                      placeholder={t('webhook.cwdPlaceholder')}
+                                      className="w-full h-8 rounded-md border border-border bg-surface/80 px-2.5 text-ui-xs text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
+                                    />
+                                  </div>
+                                )}
+
+                                <div className="space-y-1">
+                                  <label className="flex items-center gap-1 text-[11px] font-medium text-foreground-subtle">
+                                    <Clock className="size-3 text-foreground-subtle" />
+                                    <span>{t('webhook.stepTimeout', { defaultValue: '步骤独立超时 (秒)' })}</span>
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={600}
+                                    value={step.timeoutSecs || 60}
+                                    onChange={(e) => handleUpdateStep(idx, { timeoutSecs: Number(e.target.value) || 60 })}
+                                    className="w-full h-8 rounded-md border border-border bg-surface/80 px-2.5 text-ui-xs text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* 流水线错误控制策略（仅多步骤时呈现） */}
+                              {isMultiStep && (
+                                <div className="flex items-center gap-2 pt-0.5">
+                                  <input
+                                    type="checkbox"
+                                    id={`continue_on_err_${step.id || idx}`}
+                                    checked={Boolean(step.continueOnError)}
+                                    onChange={(e) => handleUpdateStep(idx, { continueOnError: e.target.checked })}
+                                    className="size-3.5 rounded border-border accent-foreground-subtle"
+                                  />
+                                  <label
+                                    htmlFor={`continue_on_err_${step.id || idx}`}
+                                    className="text-ui-xs text-foreground-subtle select-none cursor-pointer"
+                                  >
+                                    {t('webhook.continueOnError', { defaultValue: '步骤失败时仍继续后续流水线' })}
+                                  </label>
+                                </div>
+                              )}
+
+                              {/* 动作逻辑：JS 脚本嵌入 Monaco 编辑器；Shell 命令嵌入高亮文本框 */}
+                              <div className="space-y-1.5 pt-1">
+                                <label className="text-[11px] font-medium text-foreground-subtle flex items-center justify-between">
+                                  <span>
+                                    {step.actionType === 'js_script' ? t('webhook.jsScript') : t('webhook.command')}
+                                  </span>
+                                  {step.actionType !== 'js_script' && isMultiStep && idx > 0 && (
+                                    <span className="text-[10px] text-foreground-subtlest font-mono">
+                                      可使用 ${'{prev.stdout}'} / ${'{prev.data.xxx}'}
+                                    </span>
+                                  )}
+                                </label>
+
+                                {step.actionType === 'js_script' ? (
+                                  <WebhookScriptEditor
+                                    value={step.commandText}
+                                    onChange={(val) => handleUpdateStep(idx, { commandText: val })}
+                                    height={200}
+                                  />
+                                ) : (
+                                  <div className="space-y-1.5">
+                                    <textarea
+                                      rows={4}
+                                      value={step.commandText}
+                                      onChange={(e) => handleUpdateStep(idx, { commandText: e.target.value })}
+                                      placeholder={t('webhook.commandPlaceholder')}
+                                      className="w-full rounded-lg border border-border bg-surface/90 p-2.5 text-ui-xs text-foreground font-mono leading-relaxed focus:outline-none focus:border-border-hover transition-colors"
+                                    />
+                                    {/* 变量快捷插入药丸 */}
+                                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-foreground-subtlest select-none">
+                                      <span className="text-foreground-subtle">常用变量:</span>
+                                      {isMultiStep && idx > 0 && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleUpdateStep(idx, {
+                                                commandText: `${step.commandText}\${prev.stdout}`,
+                                              })
+                                            }
+                                            className="rounded bg-surface px-1.5 py-0.5 font-mono text-terminal-green border border-border/50 hover:border-border hover:bg-hover transition-colors"
+                                          >
+                                            ${'{prev.stdout}'}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleUpdateStep(idx, {
+                                                commandText: `${step.commandText}\${prev.data.tag}`,
+                                              })
+                                            }
+                                            className="rounded bg-surface px-1.5 py-0.5 font-mono text-terminal-yellow border border-border/50 hover:border-border hover:bg-hover transition-colors"
+                                          >
+                                            ${'{prev.data.tag}'}
+                                          </button>
+                                        </>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleUpdateStep(idx, {
+                                            commandText: `${step.commandText}\${path.service}`,
+                                          })
+                                        }
+                                        className="rounded bg-surface px-1.5 py-0.5 font-mono text-terminal-blue border border-border/50 hover:border-border hover:bg-hover transition-colors"
+                                      >
+                                        ${'{path.service}'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleUpdateStep(idx, {
+                                            commandText: `${step.commandText}\${body.ref}`,
+                                          })
+                                        }
+                                        className="rounded bg-surface px-1.5 py-0.5 font-mono text-purple-400 border border-border/50 hover:border-border hover:bg-hover transition-colors"
+                                      >
+                                        ${'{body.ref}'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    )}
-                  </div>
 
-                  {/* 执行脚本或命令 */}
-                  <div className="space-y-2">
-                    <label className="text-ui-xs font-medium text-foreground-subtle">
-                      {editingRule.actionType === 'js_script' ? t('webhook.jsScript') : t('webhook.command')}
-                    </label>
-                    <textarea
-                      rows={6}
-                      value={editingRule.commandText}
-                      onChange={(e) => setEditingRule({ ...editingRule, commandText: e.target.value })}
-                      placeholder={editingRule.actionType === 'js_script' ? '// console.log(webhook.req.body);' : t('webhook.commandPlaceholder')}
-                      className="w-full rounded-lg border border-border bg-surface/90 p-3 text-ui-sm text-foreground font-mono leading-relaxed focus:outline-none focus:border-border-hover transition-colors"
-                    />
-                    {editingRule.actionType === 'js_script' && (
-                      <p className="text-ui-xs text-foreground-subtler leading-relaxed">{t('webhook.jsScriptHint')}</p>
-                    )}
-                  </div>
+                      {/* 响应模式与默认总超时 */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-border/50">
+                        <div className="space-y-1.5">
+                          <label className="text-ui-xs font-medium text-foreground-subtle">
+                            {t('webhook.responseMode')}
+                          </label>
+                          <SelectMenu
+                            value={editingRule.responseMode}
+                            options={responseModeOptions}
+                            onChange={(val) => setEditingRule({ ...editingRule, responseMode: val as 'async' | 'sync' })}
+                            triggerClassName="h-9 text-ui-sm"
+                          />
+                        </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
-                    <div className="space-y-1.5">
-                      <label className="text-ui-xs font-medium text-foreground-subtle">{t('webhook.responseMode')}</label>
-                      <SelectMenu
-                        value={editingRule.responseMode}
-                        options={responseModeOptions}
-                        onChange={(val) => setEditingRule({ ...editingRule, responseMode: val as 'async' | 'sync' })}
-                        triggerClassName="h-9 text-ui-sm"
-                      />
+                        <div className="space-y-1.5">
+                          <label className="flex items-center gap-1.5 text-ui-xs font-medium text-foreground-subtle">
+                            <Clock className="size-3.5 text-foreground-subtle" />
+                            <span>{t('webhook.timeout')}</span>
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={600}
+                            value={editingRule.timeoutSecs}
+                            onChange={(e) => setEditingRule({ ...editingRule, timeoutSecs: Number(e.target.value) || 60 })}
+                            className="w-full h-9 rounded-md border border-border bg-surface/80 px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
+                          />
+                        </div>
+                      </div>
                     </div>
-
-                    <div className="space-y-1.5">
-                      <label className="flex items-center gap-1.5 text-ui-xs font-medium text-foreground-subtle">
-                        <Clock className="size-3.5 text-foreground-subtle" />
-                        <span>{t('webhook.timeout')}</span>
-                      </label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={600}
-                        value={editingRule.timeoutSecs}
-                        onChange={(e) => setEditingRule({ ...editingRule, timeoutSecs: Number(e.target.value) || 60 })}
-                        className="w-full h-9 rounded-md border border-border bg-surface/80 px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
-                      />
-                    </div>
-                  </div>
-                </div>
+                  );
+                })()}
 
                 {/* 4. 模拟测试面板 */}
                 <div className="rounded-xl border border-border/70 bg-surface/40 p-5 space-y-4">

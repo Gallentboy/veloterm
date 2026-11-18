@@ -130,7 +130,7 @@ fn evaluate_filter_expr(expr: &str, ctx: &WebhookContext) -> bool {
         return true;
     }
 
-    let var_map = super::executor::build_variable_map(ctx);
+    let var_map = super::executor::build_variable_map(ctx, None);
 
     if let Some((left, right)) = trimmed.split_once("==") {
         let l_key = left.trim();

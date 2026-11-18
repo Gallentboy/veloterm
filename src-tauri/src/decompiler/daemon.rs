@@ -317,12 +317,12 @@ impl DecompilerManager {
 
         let resp_line = resp_line.trim();
         let parts: Vec<&str> = resp_line.split('\t').collect();
-        if parts.len() < 4 || parts[0] != "RES" {
+        if parts.len() < 4 || parts.first().copied() != Some("RES") {
             return Err(format!("Worker 响应格式错误: {}", resp_line));
         }
 
-        let status = parts[2];
-        let b64_payload = parts[3];
+        let status = parts.get(2).copied().unwrap_or("");
+        let b64_payload = parts.get(3).copied().unwrap_or("");
 
         let payload_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64_payload)
             .map_err(|e| format!("解码 Base64 响应失败: {}", e))?;

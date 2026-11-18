@@ -29,6 +29,12 @@ pub struct WebhookManager {
     rules: Arc<RwLock<Vec<WebhookRule>>>,
 }
 
+impl Default for WebhookManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebhookManager {
     pub fn new() -> Self {
         Self {

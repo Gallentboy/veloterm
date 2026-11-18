@@ -283,17 +283,20 @@ fn build_entry_tree(items: Vec<FlatItem>) -> Vec<JarEntryNode> {
                     children: Vec::new(),
                 });
             } else {
-                let dir_name = &parts[0];
-                let sub_path = if self.path.is_empty() {
-                    dir_name.clone()
-                } else {
-                    format!("{}/{}", self.path, dir_name)
-                };
-                let sub_dir = self
-                    .sub_dirs
-                    .entry(dir_name.clone())
-                    .or_insert_with(|| DirNode::new(dir_name.clone(), sub_path));
-                sub_dir.insert_file(&parts[1..], item);
+                if let Some(dir_name) = parts.first() {
+                    let sub_path = if self.path.is_empty() {
+                        dir_name.clone()
+                    } else {
+                        format!("{}/{}", self.path, dir_name)
+                    };
+                    let sub_dir = self
+                        .sub_dirs
+                        .entry(dir_name.clone())
+                        .or_insert_with(|| DirNode::new(dir_name.clone(), sub_path));
+                    if let Some(rem) = parts.get(1..) {
+                        sub_dir.insert_file(rem, item);
+                    }
+                }
             }
         }
 

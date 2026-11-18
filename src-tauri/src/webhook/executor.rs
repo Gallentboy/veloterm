@@ -1,11 +1,11 @@
-//! WebHook 动作执行引擎：本地 Shell 命令、SSH 远端主机命令与 V8/JS 脚本执行。
+//! WebHook 动作执行引擎：本地 Shell 命令、SSH 远端主机命令与 V8/JS 脚本执行（支持多步骤链式流水线）。
 
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::store::WebhookRule;
+use super::store::{WebhookActionStep, WebhookRule};
 use crate::db::DbPool;
 
 /// 单次请求上下文（用于模板变量插值与 JS 脚本注入）
@@ -29,6 +29,34 @@ pub struct ExecOutput {
     pub stderr: String,
 }
 
+/// 链式执行中上一步骤的输出上下文（注入后一步）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrevStepOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+    pub success: bool,
+    pub data: Option<Value>,
+    pub output: String,
+}
+
+/// 单个步骤的执行明细（写入流水线记录与审计流水账）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StepExecutionResult {
+    pub step_index: usize,
+    pub step_id: String,
+    pub step_name: String,
+    pub action_type: String,
+    pub success: bool,
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+    pub data: Option<Value>,
+    pub duration_ms: u64,
+}
+
 /// 尾部截断（保留最后 4KB，防止海量日志打爆数据库）
 fn tail_4kb(s: &str) -> String {
     const MAX_BYTES: usize = 4096;
@@ -36,13 +64,11 @@ fn tail_4kb(s: &str) -> String {
         s.to_string()
     } else {
         let truncated = &s[s.len() - MAX_BYTES..];
-        // 确保 UTF-8 边界安全
         format!("... [截断，仅保留尾部 4KB]\n{}", clean_utf8_tail(truncated))
     }
 }
 
 fn clean_utf8_tail(slice: &str) -> &str {
-    // Rust 的 &str 本身保证合法 UTF-8，但如果是从字节切片截断需保证字符边界
     slice
 }
 
@@ -80,8 +106,11 @@ fn flatten_json(prefix: &str, val: &Value, map: &mut HashMap<String, String>) {
     }
 }
 
-/// 提取上下文构建所有可供插值的变量字典
-pub fn build_variable_map(ctx: &WebhookContext) -> HashMap<String, String> {
+/// 提取上下文构建所有可供插值的变量字典（包含原始请求与链式上一步输出）
+pub fn build_variable_map(
+    ctx: &WebhookContext,
+    prev: Option<&PrevStepOutput>,
+) -> HashMap<String, String> {
     let mut map = HashMap::new();
 
     map.insert("method".to_string(), ctx.method.clone());
@@ -105,6 +134,22 @@ pub fn build_variable_map(ctx: &WebhookContext) -> HashMap<String, String> {
         flatten_json("body", json, &mut map);
     }
 
+    // 注入上一步链式输出
+    if let Some(p) = prev {
+        map.insert("prev.stdout".to_string(), p.stdout.clone());
+        map.insert("prev.stderr".to_string(), p.stderr.clone());
+        map.insert("prev.output".to_string(), p.output.clone());
+        map.insert(
+            "prev.exit_code".to_string(),
+            p.exit_code.map(|c| c.to_string()).unwrap_or_default(),
+        );
+        map.insert("prev.success".to_string(), p.success.to_string());
+
+        if let Some(ref d) = p.data {
+            flatten_json("prev.data", d, &mut map);
+        }
+    }
+
     map
 }
 
@@ -112,9 +157,10 @@ pub fn build_variable_map(ctx: &WebhookContext) -> HashMap<String, String> {
 pub fn interpolate_template(
     template: &str,
     ctx: &WebhookContext,
+    prev: Option<&PrevStepOutput>,
     is_windows: bool,
 ) -> (String, HashMap<String, String>) {
-    let vars = build_variable_map(ctx);
+    let vars = build_variable_map(ctx, prev);
     let mut final_cmd = template.to_string();
 
     // 按 key 长度降序排序替换，避免前缀被覆盖（如 body.ref_name 优先于 body.ref）
@@ -136,7 +182,7 @@ pub fn interpolate_template(
         }
     }
 
-    // 环境变量字典：只保留合法标识符命名，点分属性转下划线（如 body.ref -> VELO_BODY_REF）
+    // 环境变量字典：只保留合法标识符命名，点分属性转下划线（如 body.ref -> VELO_BODY_REF, prev.stdout -> VELO_PREV_STDOUT）
     let mut env_map = HashMap::new();
     for (k, v) in vars {
         let safe_key = format!(
@@ -152,30 +198,184 @@ pub fn interpolate_template(
     (final_cmd, env_map)
 }
 
-/// 执行 WebHook 绑定的动作
+/// 执行 WebHook 绑定的动作或链式流水线
 pub async fn execute_rule(
     rule: &WebhookRule,
     ctx: &WebhookContext,
     pool: &DbPool,
 ) -> Result<ExecOutput, String> {
-    let timeout = Duration::from_secs(rule.timeout_secs.max(1));
-
-    match rule.action_type.as_str() {
-        "local_command" => exec_local(rule, ctx, timeout).await,
-        "ssh_command" => exec_ssh(rule, ctx, pool, timeout).await,
-        "js_script" => exec_js(rule, ctx, timeout).await,
-        other => Err(format!("不支持的动作类型: {other}")),
+    let steps = rule.get_action_steps();
+    if steps.is_empty() {
+        return Ok(ExecOutput {
+            exit_code: Some(0),
+            stdout: "无配置任何动作步骤".to_string(),
+            stderr: String::new(),
+        });
     }
+
+    let is_pipeline = steps.len() > 1;
+    let mut prev: Option<PrevStepOutput> = None;
+    let mut history: Vec<StepExecutionResult> = Vec::new();
+    let mut combined_stdout = Vec::new();
+    let mut combined_stderr = Vec::new();
+    let mut final_exit_code = Some(0);
+
+    for (idx, step) in steps.iter().enumerate() {
+        let step_res = exec_single_step(step, idx, rule.timeout_secs, ctx, prev.as_ref(), &history, pool).await;
+
+        let is_step_ok = step_res.success;
+        let step_exit = step_res.exit_code;
+        let step_name = step.name.as_deref().unwrap_or("未命名步骤");
+
+        // 收集输出日志
+        if is_pipeline {
+            let banner = format!("--- [步骤 {}/{}: {} ({})] ---", idx + 1, steps.len(), step_name, step.action_type);
+            combined_stdout.push(banner.clone());
+            if !step_res.stdout.is_empty() {
+                combined_stdout.push(step_res.stdout.clone());
+            }
+            if !step_res.stderr.is_empty() {
+                combined_stderr.push(format!("{banner}\n{}", step_res.stderr));
+            }
+        } else {
+            if !step_res.stdout.is_empty() {
+                combined_stdout.push(step_res.stdout.clone());
+            }
+            if !step_res.stderr.is_empty() {
+                combined_stderr.push(step_res.stderr.clone());
+            }
+        }
+
+        // 构造下一步 prev
+        let combined_output = if step_res.stderr.is_empty() {
+            step_res.stdout.clone()
+        } else if step_res.stdout.is_empty() {
+            step_res.stderr.clone()
+        } else {
+            format!("{}\n{}", step_res.stdout, step_res.stderr)
+        };
+
+        prev = Some(PrevStepOutput {
+            stdout: step_res.stdout.clone(),
+            stderr: step_res.stderr.clone(),
+            exit_code: step_res.exit_code,
+            success: step_res.success,
+            data: step_res.data.clone(),
+            output: combined_output,
+        });
+
+        history.push(step_res);
+
+        if !is_step_ok {
+            final_exit_code = step_exit.or(Some(1));
+            let continue_on_err = step.continue_on_error.unwrap_or(false);
+            if !continue_on_err {
+                let err_msg = if !combined_stderr.is_empty() {
+                    combined_stderr.join("\n")
+                } else {
+                    format!("步骤 \"{}\" 退出异常 (code={:?})", step_name, step_exit)
+                };
+                return Err(format!("流水线步骤 #{}: \"{}\" 执行失败并终止: {}", idx + 1, step_name, err_msg));
+            }
+        }
+    }
+
+    Ok(ExecOutput {
+        exit_code: final_exit_code,
+        stdout: tail_4kb(&combined_stdout.join("\n")),
+        stderr: tail_4kb(&combined_stderr.join("\n")),
+    })
 }
 
-/// 本地 Shell 命令执行
-async fn exec_local(
-    rule: &WebhookRule,
+/// 执行单一步骤并计时
+async fn exec_single_step(
+    step: &WebhookActionStep,
+    step_index: usize,
+    fallback_timeout_secs: u64,
     ctx: &WebhookContext,
+    prev: Option<&PrevStepOutput>,
+    history: &[StepExecutionResult],
+    pool: &DbPool,
+) -> StepExecutionResult {
+    let start = Instant::now();
+    let timeout_secs = step.timeout_secs.unwrap_or(fallback_timeout_secs).max(1);
+    let timeout = Duration::from_secs(timeout_secs);
+
+    let mut result = StepExecutionResult {
+        step_index,
+        step_id: step.id.clone(),
+        step_name: step.name.clone().unwrap_or_else(|| format!("步骤 {}", step_index + 1)),
+        action_type: step.action_type.clone(),
+        ..Default::default()
+    };
+
+    match step.action_type.as_str() {
+        "local_command" => {
+            match exec_local_step(step, ctx, prev, timeout).await {
+                Ok(out) => {
+                    result.exit_code = out.exit_code;
+                    result.success = out.exit_code == Some(0) || out.exit_code.is_none();
+                    result.stdout = out.stdout;
+                    result.stderr = out.stderr;
+                }
+                Err(err) => {
+                    result.exit_code = Some(1);
+                    result.success = false;
+                    result.stderr = err;
+                }
+            }
+        }
+        "ssh_command" => {
+            match exec_ssh_step(step, ctx, prev, pool, timeout).await {
+                Ok(out) => {
+                    result.exit_code = out.exit_code;
+                    result.success = out.exit_code == Some(0) || out.exit_code.is_none();
+                    result.stdout = out.stdout;
+                    result.stderr = out.stderr;
+                }
+                Err(err) => {
+                    result.exit_code = Some(1);
+                    result.success = false;
+                    result.stderr = err;
+                }
+            }
+        }
+        "js_script" => {
+            match exec_js_step(step, ctx, prev, history, timeout).await {
+                Ok((out, data)) => {
+                    result.exit_code = out.exit_code;
+                    result.success = out.exit_code == Some(0) || out.exit_code.is_none();
+                    result.stdout = out.stdout;
+                    result.stderr = out.stderr;
+                    result.data = data;
+                }
+                Err(err) => {
+                    result.exit_code = Some(1);
+                    result.success = false;
+                    result.stderr = err;
+                }
+            }
+        }
+        other => {
+            result.exit_code = Some(1);
+            result.success = false;
+            result.stderr = format!("不支持的步骤动作类型: {other}");
+        }
+    }
+
+    result.duration_ms = start.elapsed().as_millis() as u64;
+    result
+}
+
+/// 本地 Shell 命令执行单步
+async fn exec_local_step(
+    step: &WebhookActionStep,
+    ctx: &WebhookContext,
+    prev: Option<&PrevStepOutput>,
     timeout: Duration,
 ) -> Result<ExecOutput, String> {
     let is_windows = cfg!(target_os = "windows");
-    let (cmd_text, env_vars) = interpolate_template(&rule.command_text, ctx, is_windows);
+    let (cmd_text, env_vars) = interpolate_template(&step.command_text, ctx, prev, is_windows);
 
     let mut cmd = if is_windows {
         let mut c = tokio::process::Command::new("cmd");
@@ -187,7 +387,7 @@ async fn exec_local(
         c
     };
 
-    if let Some(ref cwd) = rule.cwd {
+    if let Some(ref cwd) = step.cwd {
         if !cwd.trim().is_empty() {
             cmd.current_dir(cwd);
         }
@@ -209,7 +409,6 @@ async fn exec_local(
         use tokio::io::AsyncReadExt;
         let mut stdout_buf = Vec::new();
         let mut stderr_buf = Vec::new();
-
         let (r1, r2) = tokio::join!(
             async {
                 if let Some(mut p) = stdout_pipe {
@@ -241,14 +440,15 @@ async fn exec_local(
     })
 }
 
-/// 远程 SSH 主机命令执行
-async fn exec_ssh(
-    rule: &WebhookRule,
+/// 远程 SSH 主机命令执行单步
+async fn exec_ssh_step(
+    step: &WebhookActionStep,
     ctx: &WebhookContext,
+    prev: Option<&PrevStepOutput>,
     pool: &DbPool,
     timeout: Duration,
 ) -> Result<ExecOutput, String> {
-    let host_id = rule
+    let host_id = step
         .target_host_id
         .ok_or_else(|| "SSH 动作缺少目标主机 (target_host_id 为空)".to_string())?;
 
@@ -287,7 +487,7 @@ async fn exec_ssh(
         .map_err(|_| format!("SSH 打开通道超时（>{}s）", timeout.as_secs()))?
         .map_err(|e| format!("打开 SSH 通道失败: {e}"))?;
 
-    let (cmd_text, env_vars) = interpolate_template(&rule.command_text, ctx, false);
+    let (cmd_text, env_vars) = interpolate_template(&step.command_text, ctx, prev, false);
 
     // 在 Unix 环境下注入 export VAR='VAL'
     let mut export_prefix = String::new();
@@ -322,16 +522,21 @@ async fn exec_ssh(
     })
 }
 
-/// JS 脚本执行（内嵌 V8 引擎，注入 webhook 上下文）
-async fn exec_js(
-    rule: &WebhookRule,
+/// JS 脚本执行单步（内嵌 V8 引擎，注入 req/prev/steps 上下文，支持 return 对象注入下一步）
+async fn exec_js_step(
+    step: &WebhookActionStep,
     ctx: &WebhookContext,
+    prev: Option<&PrevStepOutput>,
+    history: &[StepExecutionResult],
     timeout: Duration,
-) -> Result<ExecOutput, String> {
+) -> Result<(ExecOutput, Option<Value>), String> {
     let ctx_json = serde_json::to_string(ctx).unwrap_or_else(|_| "{}".to_string());
+    let prev_json = serde_json::to_string(&prev).unwrap_or_else(|_| "null".to_string());
+    let steps_json = serde_json::to_string(&history).unwrap_or_else(|_| "[]".to_string());
+
     let source = format!(
-        "const webhook = Object.freeze({{ req: Object.freeze({}) }});\n{}",
-        ctx_json, rule.command_text
+        "const webhook = Object.freeze({{\n  req: Object.freeze({}),\n  prev: Object.freeze({}),\n  steps: Object.freeze({})\n}});\n{}",
+        ctx_json, prev_json, steps_json, step.command_text
     );
 
     let is_ts = source.contains("interface ")
@@ -364,24 +569,82 @@ async fn exec_js(
                         _ => stdout_lines.push(line.text),
                     }
                 }
+
+                let mut data_val: Option<Value> = None;
                 if let Some(res) = outcome.result_json {
                     if !res.is_empty() && res != "null" {
                         stdout_lines.push(format!("[return] {res}"));
+                        if let Ok(parsed) = serde_json::from_str::<Value>(&res) {
+                            data_val = Some(parsed);
+                        }
                     }
                 }
-                Ok(ExecOutput {
-                    exit_code: Some(0),
-                    stdout: tail_4kb(&stdout_lines.join("\n")),
-                    stderr: tail_4kb(&stderr_lines.join("\n")),
-                })
+
+                Ok((
+                    ExecOutput {
+                        exit_code: Some(0),
+                        stdout: tail_4kb(&stdout_lines.join("\n")),
+                        stderr: tail_4kb(&stderr_lines.join("\n")),
+                    },
+                    data_val,
+                ))
             }
-            Err(e) => Ok(ExecOutput {
-                exit_code: Some(1),
-                stdout: String::new(),
-                stderr: tail_4kb(&e.to_string()),
-            }),
+            Err(e) => Ok((
+                ExecOutput {
+                    exit_code: Some(1),
+                    stdout: String::new(),
+                    stderr: tail_4kb(&e.to_string()),
+                },
+                None,
+            )),
         }
     })
     .await
     .map_err(|e| format!("执行 JS 任务失败: {e}"))?
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_interpolate_prev_step_variables() {
+        let ctx = WebhookContext {
+            method: "POST".to_string(),
+            path: "/deploy/api".to_string(),
+            client_ip: "127.0.0.1".to_string(),
+            path_params: HashMap::new(),
+            query_params: HashMap::new(),
+            headers: HashMap::new(),
+            body_json: Some(serde_json::json!({
+                "service": "order-center"
+            })),
+            raw_body: r#"{"service":"order-center"}"#.to_string(),
+        };
+
+        let prev = PrevStepOutput {
+            stdout: "v2.1.0-build.42".to_string(),
+            stderr: "".to_string(),
+            exit_code: Some(0),
+            success: true,
+            data: Some(serde_json::json!({
+                "version": "2.1.0",
+                "tag": "release-v2.1.0"
+            })),
+            output: "v2.1.0-build.42".to_string(),
+        };
+
+        let template = "docker build -t ${body.service}:${prev.stdout} --build-arg TAG=${prev.data.tag} .";
+        let (interpolated, env_vars) = interpolate_template(template, &ctx, Some(&prev), false);
+
+        assert_eq!(
+            interpolated,
+            "docker build -t order-center:v2.1.0-build.42 --build-arg TAG=release-v2.1.0 ."
+        );
+
+        assert_eq!(env_vars.get("VELO_PREV_STDOUT").map(|s| s.as_str()), Some("v2.1.0-build.42"));
+        assert_eq!(env_vars.get("VELO_PREV_DATA_TAG").map(|s| s.as_str()), Some("release-v2.1.0"));
+        assert_eq!(env_vars.get("VELO_BODY_SERVICE").map(|s| s.as_str()), Some("order-center"));
+    }
+}
+
