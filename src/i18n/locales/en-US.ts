@@ -1798,5 +1798,8 @@ export default {
     insertBodyParam: 'Insert Request Body Field',
     switchToBash: 'To Bash',
     switchToBat: 'To Bat',
+    expandAllSteps: 'Expand All',
+    collapseAllSteps: 'Collapse All',
+    toggleStep: 'Toggle Step Collapse',
   },
 };

@@ -1801,5 +1801,8 @@ export default {
     insertBodyParam: '插入请求体 JSON 字段',
     switchToBash: '切至 Bash',
     switchToBat: '切至 Bat',
+    expandAllSteps: '全部展开',
+    collapseAllSteps: '全部折叠',
+    toggleStep: '折叠/展开步骤',
   },
 };
