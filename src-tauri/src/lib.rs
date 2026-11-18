@@ -43,6 +43,8 @@ pub mod zk_hosts;
 pub mod decompiler;
 /// 批量执行（fleet exec）：多主机并行执行 + per-host 事件流
 pub mod fleet_exec;
+/// WebHook 守护服务与动态路由执行
+pub mod webhook;
 
 #[tauri::command]
 fn is_apple_silicon() -> bool {
@@ -269,6 +271,17 @@ pub fn run() {
 	            editor_storage::editor_save_draft,
 	            editor_storage::editor_delete_draft,
 	            tools::jq::execute_jq_filter,
+	            webhook::webhook_get_settings,
+	            webhook::webhook_update_settings,
+	            webhook::webhook_get_status,
+	            webhook::webhook_rule_list,
+	            webhook::webhook_rule_save,
+	            webhook::webhook_rule_delete,
+	            webhook::webhook_rule_toggle,
+	            webhook::webhook_rule_test,
+	            webhook::webhook_logs_list,
+	            webhook::webhook_logs_clear,
+	            webhook::webhook_log_replay,
 	        ])
         .on_menu_event(|app, event| {
             use tauri::Emitter;
@@ -348,6 +361,21 @@ pub fn run() {
                             let _ = SCHEDULER_ENGINE.set(engine);
                         }
                         Err(e) => log::warn!("[scheduler] 引擎启动失败（定时任务不可用）：{e}"),
+                    }
+                });
+            }
+
+            // WebHook HTTP 守护服务：建表 → 依据配置在后台拉起监听器
+            {
+                if let Ok(conn) = db_pool.get() {
+                    if let Err(e) = webhook::store::ensure_tables(&conn) {
+                        log::warn!("[webhook] 建表失败：{e}");
+                    }
+                }
+                let pool_for_webhook = db_pool.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = webhook::GLOBAL_WEBHOOK_MGR.restart(pool_for_webhook).await {
+                        log::warn!("[webhook] 自动拉起服务未成功（可能未启用或端口占用）：{e}");
                     }
                 });
             }

@@ -17,6 +17,7 @@ import { CommandHistoryScreen } from '@/components/history/CommandHistoryScreen'
 import { BatchExecScreen } from '@/components/batchexec/BatchExecScreen';
 import { JsScriptScreen } from '@/components/jsscript/JsScriptScreen';
 import { SchedulerScreen } from '@/components/scheduler/SchedulerScreen';
+import { WebhookScreen } from '@/components/webhook/WebhookScreen';
 import { RelaysScreen } from '@/components/relays/RelaysScreen';
 import { ZkScreen } from '@/components/zk/ZkScreen';
 import { ZkHostsScreen } from '@/components/zkhosts/ZkHostsScreen';
@@ -618,6 +619,8 @@ export function AppShell() {
                   <JsScriptScreen />
                 ) : page === 'scheduler' ? (
                   <SchedulerScreen />
+                ) : page === 'webhook' ? (
+                  <WebhookScreen />
                 ) : page === 'zkhosts' ? (
                   <ZkHostsScreen
                     onConnectHost={(host) => {
