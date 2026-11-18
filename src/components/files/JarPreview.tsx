@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   Archive,
   ChevronDown,
   ChevronRight,
@@ -9,6 +10,7 @@ import {
   Folder,
   FolderOpen,
   Info,
+  RefreshCw,
   Search,
   X,
 } from 'lucide-react';
@@ -211,6 +213,7 @@ export const JarPreview = memo(function JarPreview({
   // 选中的文件条目与内容
   const [selectedNode, setSelectedNode] = useState<JarEntryNode | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
+  const [entryError, setEntryError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedCoords, setCopiedCoords] = useState(false);
 
@@ -343,45 +346,57 @@ export const JarPreview = memo(function JarPreview({
   }, []);
 
   // 3. 读取选中条目内容并渲染到 Monaco
-  useEffect(() => {
-    if (!selectedNode || selectedNode.is_dir) return;
+  const loadEntryContent = useCallback(
+    async (node: JarEntryNode, force = false) => {
+      if (node.is_dir) return;
 
-    const entryPath = selectedNode.path;
-    const isClass = selectedNode.is_class;
-    const language = isClass ? 'java' : entryPath.endsWith('.xml') ? 'xml' : entryPath.endsWith('.json') ? 'json' : 'plaintext';
+      const entryPath = node.path;
+      const isClass = node.is_class;
+      const language = isClass
+        ? 'java'
+        : entryPath.endsWith('.xml')
+        ? 'xml'
+        : entryPath.endsWith('.json')
+        ? 'json'
+        : 'plaintext';
 
-    // 命中缓存直接更新
-    const cached = contentCacheRef.current.get(entryPath);
-    if (cached !== undefined) {
-      applyContentToEditor(cached, language);
-      return;
-    }
+      setEntryError(null);
 
-    setContentLoading(true);
+      // 命中缓存直接更新
+      if (!force) {
+        const cached = contentCacheRef.current.get(entryPath);
+        if (cached !== undefined) {
+          applyContentToEditor(cached, language);
+          return;
+        }
+      }
 
-    let active = true;
-    console.log('[decompiler] 前端请求读取条目:', entryPath, { isClass, filePath });
-    decompilerReadEntry(filePath, entryPath)
-      .then((content) => {
-        if (!active) return;
+      setContentLoading(true);
+
+      try {
+        console.log('[decompiler] 前端请求读取条目:', entryPath, { isClass, filePath });
+        const content = await decompilerReadEntry(filePath, entryPath);
         console.log('[decompiler] 成功获得条目内容:', entryPath, `(${content.length} 字符)`);
         contentCacheRef.current.set(entryPath, content);
+        setEntryError(null);
         applyContentToEditor(content, language);
-      })
-      .catch((err) => {
-        if (!active) return;
+      } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[decompiler] 读取条目失败:', entryPath, msg);
+        setEntryError(msg);
         applyContentToEditor(`// 读取/反编译失败:\n// ${msg}`, 'plaintext');
-      })
-      .finally(() => {
-        if (active) setContentLoading(false);
-      });
+      } finally {
+        setContentLoading(false);
+      }
+    },
+    [applyContentToEditor, filePath],
+  );
 
-    return () => {
-      active = false;
-    };
-  }, [applyContentToEditor, filePath, selectedNode]);
+  useEffect(() => {
+    if (selectedNode && !selectedNode.is_dir) {
+      void loadEntryContent(selectedNode);
+    }
+  }, [loadEntryContent, selectedNode]);
 
   // 过滤后的树形列表
   const filteredTree = useMemo(() => {
@@ -605,6 +620,14 @@ export const JarPreview = memo(function JarPreview({
           </div>
 
           <div className="flex items-center gap-2">
+            {decompilerStatus?.jre_version ? (
+              <span
+                className="hidden sm:inline-flex items-center gap-1 rounded bg-surface/70 px-1.5 py-0.5 text-[10px] font-mono text-foreground-subtle border border-border/40 select-none"
+                title={decompilerStatus.jre_path || decompilerStatus.jre_version}
+              >
+                <span>{decompilerStatus.jre_version.split(' ')[0]}</span>
+              </span>
+            ) : null}
             {selectedNode && (
               <Button
                 type="button"
@@ -630,13 +653,42 @@ export const JarPreview = memo(function JarPreview({
 
         {/* Monaco 编辑器展示区域 */}
         <div className="relative flex-1 min-w-0 min-h-0 overflow-hidden">
-          <div ref={editorContainerRef} className="absolute inset-0" />
+          <div ref={editorContainerRef} className="h-full w-full" />
+
+          {/* 反编译加载中蒙层 */}
           {contentLoading && (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-[1px]">
               <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-ui-xs shadow-md">
                 <Spinner className="size-4 text-terminal-blue" />
                 <span className="font-medium text-foreground">{t('files.decompiler.decompiling', { defaultValue: '正在反编译字节码…' })}</span>
               </div>
+            </div>
+          )}
+
+          {/* 错误提示蒙层（醒目居中展示，彻底消除空白无信息的排障盲区） */}
+          {entryError && !contentLoading && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/95 p-6 text-center select-text">
+              <div className="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                <AlertCircle className="size-5" />
+              </div>
+              <p className="text-ui-base font-medium text-foreground">
+                {selectedNode?.is_class
+                  ? t('files.decompiler.decompileFailed', { defaultValue: '类反编译失败' })
+                  : t('files.decompiler.openFailed', { defaultValue: '读取条目内容失败' })}
+              </p>
+              <div className="max-w-xl rounded-md border border-destructive/20 bg-destructive/5 p-3 text-left font-mono text-ui-xs text-destructive break-all leading-relaxed max-h-48 overflow-y-auto">
+                {entryError}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => selectedNode && void loadEntryContent(selectedNode, true)}
+                className="mt-2 gap-1.5"
+              >
+                <RefreshCw className="size-3.5" />
+                <span>{t('common.retry', { defaultValue: '重试' })}</span>
+              </Button>
             </div>
           )}
         </div>

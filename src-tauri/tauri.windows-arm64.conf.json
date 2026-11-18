@@ -3,7 +3,10 @@
   "bundle": {
     "resources": {
       "vendor/pdfium/pdfium-arm64.dll": "lib/pdfium.dll",
-      "vendor/libjxl/arm64": "lib"
+      "vendor/libjxl/arm64": "lib",
+      "resources/decompiler/vineflower.jar": "decompiler/vineflower.jar",
+      "resources/decompiler/velo-worker.jar": "decompiler/velo-worker.jar",
+      "resources/jre": "jre"
     }
   }
 }

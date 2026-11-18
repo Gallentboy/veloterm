@@ -210,8 +210,24 @@ impl DecompilerManager {
         })?;
 
         let (vf_jar, wk_jar) = self.find_decompiler_jars();
-        let vf_jar = vf_jar.ok_or_else(|| "未找到 vineflower.jar 资源文件".to_string())?;
-        let wk_jar = wk_jar.ok_or_else(|| "未找到 velo-worker.jar 资源文件".to_string())?;
+        let roots_repr = get_candidate_resource_roots()
+            .into_iter()
+            .map(|r| r.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        let vf_jar = vf_jar.ok_or_else(|| {
+            format!(
+                "未找到 vineflower.jar 资源文件。已排查候选根目录: [{}]",
+                roots_repr
+            )
+        })?;
+        let wk_jar = wk_jar.ok_or_else(|| {
+            format!(
+                "未找到 velo-worker.jar 资源文件。已排查候选根目录: [{}]",
+                roots_repr
+            )
+        })?;
 
         // 拼接 classpath (Windows 用 ';'，Unix 用 ':')
         let cp_separator = if cfg!(windows) { ";" } else { ":" };
@@ -391,9 +407,10 @@ fn get_candidate_resource_roots() -> Vec<PathBuf> {
         if let Some(parent) = exe.parent() {
             roots.push(parent.join("resources"));
             roots.push(parent.to_path_buf());
-            // macOS bundle Contents/Resources
+            // macOS bundle Contents/Resources (与 Contents/resources)
             if let Some(grand) = parent.parent() {
                 roots.push(grand.join("Resources"));
+                roots.push(grand.join("resources"));
             }
         }
     }
