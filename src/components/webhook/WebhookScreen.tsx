@@ -63,7 +63,7 @@ const METHOD_COLORS: Record<string, string> = {
 };
 
 /** 解析或回退提取规则中的全部流水线步骤 */
-function extractRuleSteps(r: WebhookRule): WebhookActionStep[] {
+function extractRuleSteps(r: WebhookRule, defaultStepPrefix = 'Step'): WebhookActionStep[] {
   if (r.actions && r.actions.length > 0) return r.actions;
   if (r.actionsJson) {
     try {
@@ -76,7 +76,7 @@ function extractRuleSteps(r: WebhookRule): WebhookActionStep[] {
   return [
     {
       id: `step_${Date.now()}_1`,
-      name: '第 1 步',
+      name: `${defaultStepPrefix} 1`,
       actionType: r.actionType || 'local_command',
       targetHostId: r.targetHostId,
       commandText: r.commandText || '',
@@ -235,10 +235,12 @@ export function WebhookScreen() {
   // 新建规则
   const handleCreateNewRule = () => {
     const newId = `rule_${Date.now()}`;
+    const stepPrefix = t('webhook.stepIndex', { defaultValue: '步骤' });
+    const receiveText = t('webhook.stepDefaultReceive', { defaultValue: '接收请求' });
     const defaultSteps: WebhookActionStep[] = [
       {
         id: `step_${Date.now()}_1`,
-        name: '第 1 步：接收请求',
+        name: `${stepPrefix} 1: ${receiveText}`,
         actionType: 'local_command',
         targetHostId: hosts.length > 0 ? hosts[0].id : null,
         commandText: 'echo "Received WebHook: ${method} ${path}"',
@@ -354,12 +356,13 @@ export function WebhookScreen() {
       ? editingRule.actions
       : extractRuleSteps(editingRule);
     const newIdx = currentSteps.length + 1;
+    const stepPrefix = t('webhook.stepIndex', { defaultValue: '步骤' });
     const newStep: WebhookActionStep = {
       id: `step_${Date.now()}_${newIdx}`,
-      name: `第 ${newIdx} 步`,
+      name: `${stepPrefix} ${newIdx}`,
       actionType: 'js_script',
       targetHostId: hosts.length > 0 ? hosts[0].id : null,
-      commandText: '// 访问前一步数据：const prevData = webhook.prev?.data;\nreturn { success: true };',
+      commandText: '// webhook.prev?.data\nreturn { success: true };',
       cwd: null,
       timeoutSecs: editingRule.timeoutSecs || 60,
       continueOnError: false,
@@ -524,7 +527,7 @@ export function WebhookScreen() {
     { value: 'PUT', label: 'PUT' },
     { value: 'DELETE', label: 'DELETE' },
     { value: 'PATCH', label: 'PATCH' },
-    { value: 'ANY', label: 'ANY (任意 HTTP 方法)' },
+    { value: 'ANY', label: t('webhook.methodAny', { defaultValue: 'ANY (任意 HTTP 方法)' }) },
   ];
 
   const signatureOptions: SelectMenuOption[] = [
@@ -554,6 +557,13 @@ export function WebhookScreen() {
     { value: 'async', label: t('webhook.responseAsync') },
     { value: 'sync', label: t('webhook.responseSync') },
   ];
+
+  const matchStatusMap: Record<string, string> = {
+    MATCHED: t('webhook.statusMatched', { defaultValue: '匹配成功' }),
+    UNMATCHED: t('webhook.statusUnmatched', { defaultValue: '未匹配路由' }),
+    AUTH_FAILED: t('webhook.statusAuthFailed', { defaultValue: '鉴权未通过' }),
+    FILTER_SKIPPED: t('webhook.statusFilterSkipped', { defaultValue: '被过滤跳过' }),
+  };
 
   if (loading) {
     return (
@@ -615,7 +625,7 @@ export function WebhookScreen() {
             className="h-8.5 gap-2 px-3.5 text-ui-xs"
           >
             <Power className="size-3.5" />
-            <span>{settings?.enabled ? t('common.disable', { defaultValue: '停用服务' }) : t('common.enable', { defaultValue: '启用服务' })}</span>
+            <span>{settings?.enabled ? t('webhook.stopService', { defaultValue: '停用服务' }) : t('webhook.startService', { defaultValue: '启用服务' })}</span>
           </Button>
 
           {/* 全局设置按钮 */}
@@ -738,7 +748,7 @@ export function WebhookScreen() {
                         <Switch
                           checked={r.enabled}
                           onChange={(checked) => void handleToggleRule(r.id, checked)}
-                          aria-label={r.enabled ? '已启用' : '已停用'}
+                          aria-label={r.enabled ? t('common.enabled', { defaultValue: '已启用' }) : t('common.disabled', { defaultValue: '已停用' })}
                         />
                       </div>
 
@@ -812,7 +822,7 @@ export function WebhookScreen() {
                 <div className="space-y-4 rounded-xl border border-border/70 bg-surface/30 p-5">
                   <span className="text-ui-xs font-semibold text-foreground-subtle uppercase tracking-wider flex items-center gap-1.5">
                     <Layers className="size-4" />
-                    <span>请求匹配配置</span>
+                    <span>{t('webhook.matchConfig', { defaultValue: '请求匹配配置' })}</span>
                   </span>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -855,7 +865,7 @@ export function WebhookScreen() {
                 <div className="space-y-4 rounded-xl border border-border/70 bg-surface/30 p-5">
                   <span className="text-ui-xs font-semibold text-foreground-subtle uppercase tracking-wider flex items-center gap-1.5">
                     <Shield className="size-4" />
-                    <span>安全鉴权与过滤</span>
+                    <span>{t('webhook.securityConfig', { defaultValue: '安全鉴权与过滤' })}</span>
                   </span>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -887,7 +897,7 @@ export function WebhookScreen() {
                       <div className="space-y-1.5 opacity-60">
                         <label className="text-ui-xs font-medium text-foreground-subtle">{t('webhook.secretToken')}</label>
                         <div className="w-full h-9 rounded-md border border-border/40 bg-surface/30 px-3 flex items-center text-ui-xs text-foreground-subtlest">
-                          无需填写密钥
+                          {t('webhook.noSecretRequired', { defaultValue: '无需填写密钥' })}
                         </div>
                       </div>
                     )}
@@ -1116,7 +1126,7 @@ export function WebhookScreen() {
                                   </span>
                                   {step.actionType !== 'js_script' && isMultiStep && idx > 0 && (
                                     <span className="text-[10px] text-foreground-subtlest font-mono">
-                                      可使用 ${'{prev.stdout}'} / ${'{prev.data.xxx}'}
+                                      {t('webhook.prevVariablesHint', { defaultValue: '可使用 ${prev.stdout} / ${prev.data.xxx}' })}
                                     </span>
                                   )}
                                 </label>
@@ -1138,7 +1148,7 @@ export function WebhookScreen() {
                                     />
                                     {/* 变量快捷插入药丸 */}
                                     <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-foreground-subtlest select-none">
-                                      <span className="text-foreground-subtle">常用变量:</span>
+                                      <span className="text-foreground-subtle">{t('webhook.commonVariables', { defaultValue: '常用变量:' })}</span>
                                       {isMultiStep && idx > 0 && (
                                         <>
                                           <button
@@ -1237,7 +1247,7 @@ export function WebhookScreen() {
                         <Play className="size-4 text-terminal-green" />
                         <span>{t('webhook.testRule')}</span>
                       </span>
-                      <p className="text-ui-xs text-foreground-subtle">模拟外部调用此 WebHook 接口，原地执行并观察实际返回</p>
+                      <p className="text-ui-xs text-foreground-subtle">{t('webhook.testRuleDesc', { defaultValue: '模拟外部调用此 WebHook 接口，原地执行并观察实际返回' })}</p>
                     </div>
                     <Button
                       type="button"
@@ -1253,7 +1263,7 @@ export function WebhookScreen() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-ui-xs font-medium text-foreground-subtle">模拟请求体 (JSON Body):</label>
+                    <label className="text-ui-xs font-medium text-foreground-subtle">{t('webhook.mockPayload', { defaultValue: '模拟请求体 (JSON Body):' })}</label>
                     <textarea
                       rows={3}
                       value={testPayload}
@@ -1273,12 +1283,12 @@ export function WebhookScreen() {
                         >
                           {testResult.success ? t('webhook.execSuccess') : t('webhook.execFailed')}
                         </span>
-                        <span className="text-foreground-subtle font-medium">Exit Code: {testResult.exitCode ?? 'None'}</span>
-                        <span className="text-foreground-subtle font-medium">耗时: {testResult.durationMs}ms</span>
+                        <span className="text-foreground-subtle font-medium">{t('webhook.exitCode', { defaultValue: 'Exit Code' })}: {testResult.exitCode ?? 'None'}</span>
+                        <span className="text-foreground-subtle font-medium">{t('webhook.duration', { defaultValue: '耗时' })}: {testResult.durationMs}ms</span>
                       </div>
                       {testResult.stdout && (
                         <div>
-                          <span className="text-[11px] text-foreground-subtler block mb-1">Standard Output:</span>
+                          <span className="text-[11px] text-foreground-subtler block mb-1">{t('webhook.stdout', { defaultValue: 'Standard Output' })}:</span>
                           <pre className="rounded bg-background/80 p-3 overflow-x-auto whitespace-pre-wrap text-foreground font-mono leading-relaxed border border-border/50">
                             {testResult.stdout}
                           </pre>
@@ -1286,7 +1296,7 @@ export function WebhookScreen() {
                       )}
                       {testResult.stderr && (
                         <div>
-                          <span className="text-[11px] text-destructive block mb-1">Standard Error:</span>
+                          <span className="text-[11px] text-destructive block mb-1">{t('webhook.stderr', { defaultValue: 'Standard Error' })}:</span>
                           <pre className="rounded bg-background/80 p-3 overflow-x-auto whitespace-pre-wrap text-destructive font-mono leading-relaxed border border-destructive/20">
                             {testResult.stderr}
                           </pre>
@@ -1299,8 +1309,8 @@ export function WebhookScreen() {
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center text-ui-xs text-foreground-subtle space-y-2">
                 <Webhook className="size-10 text-foreground-subtlest" />
-                <p className="text-ui-sm font-medium text-foreground">未选择任何 WebHook 规则</p>
-                <p className="text-foreground-subtler">在左侧列表中点击选择一条规则，或点击「+ 新建规则」开始配置</p>
+                <p className="text-ui-sm font-medium text-foreground">{t('webhook.noRuleSelected', { defaultValue: '未选择任何 WebHook 规则' })}</p>
+                <p className="text-foreground-subtler">{t('webhook.selectRuleHint', { defaultValue: '在左侧列表中点击选择一条规则，或点击「+ 新建规则」开始配置' })}</p>
               </div>
             )}
           </div>
@@ -1312,7 +1322,7 @@ export function WebhookScreen() {
             <div className="flex items-center gap-2.5">
               <span className="text-ui-base font-bold text-foreground">{t('webhook.logsTitle')}</span>
               <span className="rounded-full bg-surface px-2.5 py-0.5 text-ui-xs text-foreground-subtle border border-border/50">
-                {totalLogs} 条记录
+                {t('webhook.totalLogsCount', { count: totalLogs, defaultValue: `${totalLogs} 条记录` })}
               </span>
             </div>
             <div className="flex items-center gap-2.5">
@@ -1399,7 +1409,7 @@ export function WebhookScreen() {
                             ? log.executionStatus === 'SUCCESS'
                               ? t('webhook.execSuccess')
                               : t('webhook.execFailed')
-                            : log.matchStatus}
+                            : matchStatusMap[log.matchStatus] || log.matchStatus}
                         </span>
                         <span className="text-ui-xs text-foreground-subtlest">{log.clientIp}</span>
                         <span className="text-ui-xs text-foreground-subtlest">{formatTime(log.createdAt)}</span>
@@ -1424,7 +1434,7 @@ export function WebhookScreen() {
                       <div className="border-t border-border/60 p-4 bg-surface/70 space-y-3 font-sans">
                         {log.requestHeaders && (
                           <div className="space-y-1">
-                            <span className="text-ui-xs text-foreground-subtler font-medium">Headers:</span>
+                            <span className="text-ui-xs text-foreground-subtler font-medium">{t('webhook.logHeaders', { defaultValue: '请求头 (Headers)' })}:</span>
                             <pre className="rounded-lg bg-background/80 p-3 text-ui-xs font-mono overflow-x-auto text-foreground-subtle whitespace-pre-wrap border border-border/40">
                               {log.requestHeaders}
                             </pre>
@@ -1432,7 +1442,7 @@ export function WebhookScreen() {
                         )}
                         {log.requestBody && (
                           <div className="space-y-1">
-                            <span className="text-ui-xs text-foreground-subtler font-medium">Payload Body:</span>
+                            <span className="text-ui-xs text-foreground-subtler font-medium">{t('webhook.logPayload', { defaultValue: '请求体 (Payload Body)' })}:</span>
                             <pre className="rounded-lg bg-background/80 p-3 text-ui-xs font-mono overflow-x-auto text-foreground-subtle whitespace-pre-wrap border border-border/40">
                               {log.requestBody}
                             </pre>
@@ -1440,7 +1450,7 @@ export function WebhookScreen() {
                         )}
                         {(log.stdoutTail || log.stderrTail) && (
                           <div className="space-y-1">
-                            <span className="text-ui-xs text-foreground-subtler font-medium">Execution Output:</span>
+                            <span className="text-ui-xs text-foreground-subtler font-medium">{t('webhook.logOutput', { defaultValue: '执行输出 (Output)' })}:</span>
                             {log.stdoutTail && (
                               <pre className="rounded-lg bg-background/80 p-3 text-ui-xs font-mono overflow-x-auto text-terminal-green whitespace-pre-wrap border border-border/40">
                                 {log.stdoutTail}
