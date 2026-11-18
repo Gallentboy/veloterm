@@ -149,7 +149,7 @@ export const WebhookCommandEditor = memo(function WebhookCommandEditor({
   return (
     <div
       className={cn(
-        'group flex flex-col rounded-lg border border-border bg-surface/80 overflow-hidden shadow-xs transition-colors focus-within:border-border-hover',
+        'group flex flex-col rounded-lg border border-border bg-input overflow-hidden shadow-xs transition-colors focus-within:border-border-hover',
         className,
       )}
     >

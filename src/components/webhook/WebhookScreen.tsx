@@ -682,7 +682,7 @@ export function WebhookScreen() {
                     value={ruleSearch}
                     onChange={(e) => setRuleSearch(e.target.value)}
                     placeholder={t('webhook.searchPlaceholder')}
-                    className="h-9 w-full rounded-md border border-border bg-surface/80 pl-9 pr-3 text-ui-sm text-foreground placeholder:text-foreground-subtlest focus:outline-none focus:border-border-hover transition-colors"
+                    className="h-9 w-full rounded-md border border-border bg-input pl-9 pr-3 text-ui-sm text-foreground placeholder:text-foreground-subtlest focus:outline-none focus:border-border-hover transition-colors"
                   />
                 </div>
                 <Button
@@ -834,7 +834,7 @@ export function WebhookScreen() {
                         value={editingRule.name}
                         onChange={(e) => setEditingRule({ ...editingRule, name: e.target.value })}
                         placeholder={t('webhook.ruleNamePlaceholder')}
-                        className="w-full h-9 rounded-md border border-border bg-surface/80 px-3 text-ui-sm text-foreground focus:outline-none focus:border-border-hover transition-colors"
+                        className="w-full h-9 rounded-md border border-border bg-input px-3 text-ui-sm text-foreground focus:outline-none focus:border-border-hover transition-colors"
                       />
                     </div>
 
@@ -856,7 +856,7 @@ export function WebhookScreen() {
                       value={editingRule.pathPattern}
                       onChange={(e) => setEditingRule({ ...editingRule, pathPattern: e.target.value })}
                       placeholder={t('webhook.pathPatternPlaceholder')}
-                      className="w-full h-9 rounded-md border border-border bg-surface/80 px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
+                      className="w-full h-9 rounded-md border border-border bg-input px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
                     />
                     <p className="text-ui-xs text-foreground-subtler leading-relaxed">{t('webhook.pathPatternHint')}</p>
                   </div>
@@ -891,7 +891,7 @@ export function WebhookScreen() {
                           value={editingRule.secretToken || ''}
                           onChange={(e) => setEditingRule({ ...editingRule, secretToken: e.target.value || null })}
                           placeholder={t('webhook.secretTokenPlaceholder')}
-                          className="w-full h-9 rounded-md border border-border bg-surface/80 px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
+                          className="w-full h-9 rounded-md border border-border bg-input px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
                         />
                       </div>
                     ) : (
@@ -910,7 +910,7 @@ export function WebhookScreen() {
                         value={editingRule.filterExpr || ''}
                         onChange={(e) => setEditingRule({ ...editingRule, filterExpr: e.target.value || null })}
                         placeholder={t('webhook.filterExprPlaceholder')}
-                        className="w-full h-9 rounded-md border border-border bg-surface/80 px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
+                        className="w-full h-9 rounded-md border border-border bg-input px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
                       />
                     </div>
                   </div>
@@ -959,10 +959,10 @@ export function WebhookScreen() {
                         {currentSteps.map((step, idx) => (
                           <div
                             key={step.id || `step_${idx}`}
-                            className="rounded-lg border border-border/70 bg-surface/60 overflow-hidden shadow-xs transition-colors"
+                            className="rounded-lg border border-border/60 bg-surface/30 overflow-hidden shadow-xs transition-colors"
                           >
                             {/* 步骤标题栏 */}
-                            <div className="flex h-10 items-center justify-between border-b border-border/40 bg-surface/80 px-3 select-none">
+                            <div className="flex h-10 items-center justify-between border-b border-border/40 bg-surface/40 px-3 select-none">
                               <div className="flex flex-1 min-w-0 items-center gap-2.5">
                                 <span className="flex size-5.5 shrink-0 items-center justify-center rounded-full bg-surface border border-border text-[11px] font-mono font-semibold text-foreground">
                                   {idx + 1}
@@ -1079,7 +1079,7 @@ export function WebhookScreen() {
                                       value={step.cwd || ''}
                                       onChange={(e) => handleUpdateStep(idx, { cwd: e.target.value || null })}
                                       placeholder={t('webhook.cwdPlaceholder')}
-                                      className="w-full h-8 rounded-md border border-border bg-surface/80 px-2.5 text-ui-xs text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
+                                      className="w-full h-8 rounded-md border border-border bg-input px-2.5 text-ui-xs text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
                                     />
                                   </div>
                                 )}
@@ -1095,7 +1095,7 @@ export function WebhookScreen() {
                                     max={600}
                                     value={step.timeoutSecs || 60}
                                     onChange={(e) => handleUpdateStep(idx, { timeoutSecs: Number(e.target.value) || 60 })}
-                                    className="w-full h-8 rounded-md border border-border bg-surface/80 px-2.5 text-ui-xs text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
+                                    className="w-full h-8 rounded-md border border-border bg-input px-2.5 text-ui-xs text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
                                   />
                                 </div>
                               </div>
@@ -1179,7 +1179,7 @@ export function WebhookScreen() {
                             max={600}
                             value={editingRule.timeoutSecs}
                             onChange={(e) => setEditingRule({ ...editingRule, timeoutSecs: Number(e.target.value) || 60 })}
-                            className="w-full h-9 rounded-md border border-border bg-surface/80 px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
+                            className="w-full h-9 rounded-md border border-border bg-input px-3 text-ui-sm text-foreground font-mono focus:outline-none focus:border-border-hover transition-colors"
                           />
                         </div>
                       </div>
@@ -1188,7 +1188,7 @@ export function WebhookScreen() {
                 })()}
 
                 {/* 4. 模拟测试面板 */}
-                <div className="rounded-xl border border-border/70 bg-surface/40 p-5 space-y-4">
+                <div className="rounded-xl border border-border/60 bg-surface/30 p-5 space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
                       <span className="text-ui-sm font-semibold text-foreground flex items-center gap-2">
@@ -1216,7 +1216,7 @@ export function WebhookScreen() {
                       rows={3}
                       value={testPayload}
                       onChange={(e) => setTestPayload(e.target.value)}
-                      className="w-full rounded-lg border border-border bg-surface/90 p-3 text-ui-xs font-mono text-foreground focus:outline-none focus:border-border-hover transition-colors"
+                      className="w-full rounded-lg border border-border bg-input p-3 text-ui-xs font-mono text-foreground focus:outline-none focus:border-border-hover transition-colors"
                     />
                   </div>
 

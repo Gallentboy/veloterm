@@ -166,7 +166,7 @@ export function WebhookSettingsModal({
               value={bindIp}
               options={ipOptions}
               onChange={setBindIp}
-              triggerClassName="h-9 text-ui-sm bg-surface/70"
+              triggerClassName="h-9 text-ui-sm"
             />
           </div>
 
@@ -182,7 +182,7 @@ export function WebhookSettingsModal({
               value={bindPort}
               onChange={(e) => setBindPort(Number(e.target.value))}
               placeholder="9876"
-              className="w-full h-9 rounded-md border border-border bg-surface/70 px-3 text-ui-sm text-foreground font-mono transition-colors focus:border-border-hover focus:outline-none"
+              className="w-full h-9 rounded-md border border-border bg-input px-3 text-ui-sm text-foreground font-mono transition-colors focus:border-border-hover focus:outline-none"
               required
             />
           </div>
@@ -199,7 +199,7 @@ export function WebhookSettingsModal({
             value={globalSecret}
             onChange={(e) => setGlobalSecret(e.target.value)}
             placeholder="X-Velo-Token: secret_key"
-            className="w-full h-9 rounded-md border border-border bg-surface/70 px-3 text-ui-sm text-foreground font-mono transition-colors focus:border-border-hover focus:outline-none"
+            className="w-full h-9 rounded-md border border-border bg-input px-3 text-ui-sm text-foreground font-mono transition-colors focus:border-border-hover focus:outline-none"
           />
           <p className="text-ui-xs text-foreground-subtler leading-relaxed">
             {t('webhook.globalSecretDesc')}
@@ -219,7 +219,7 @@ export function WebhookSettingsModal({
               max={50}
               value={maxBodyMb}
               onChange={(e) => setMaxBodyMb(Number(e.target.value))}
-              className="w-28 h-9 rounded-md border border-border bg-surface/70 px-3 text-ui-sm text-foreground font-mono transition-colors focus:border-border-hover focus:outline-none"
+              className="w-28 h-9 rounded-md border border-border bg-input px-3 text-ui-sm text-foreground font-mono transition-colors focus:border-border-hover focus:outline-none"
             />
             <span className="text-ui-sm text-foreground-subtle font-medium">MB</span>
           </div>
