@@ -1794,5 +1794,12 @@ export default {
     stdout: '标准输出 (stdout):',
     stderr: '错误输出 (stderr):',
     exitCode: '退出码',
+    switchLanguage: '切换语法高亮 (Bash / Batch)',
+    insertPrevStdout: '插入前一步标准输出',
+    insertPrevData: '插入前一步结构化数据字段',
+    insertPathParam: '插入路径动态参数',
+    insertBodyParam: '插入请求体 JSON 字段',
+    switchToBash: '切至 Bash',
+    switchToBat: '切至 Bat',
   },
 };

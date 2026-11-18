@@ -50,6 +50,7 @@ import {
 } from '@/services/webhookService';
 import { WebhookSettingsModal } from '@/components/webhook/WebhookSettingsModal';
 import { WebhookScriptEditor } from '@/components/webhook/WebhookScriptEditor';
+import { WebhookCommandEditor } from '@/components/webhook/WebhookCommandEditor';
 import { loadHostStore } from '@/hosts/storage';
 import type { HostNode } from '@/hosts/types';
 
@@ -1138,67 +1139,14 @@ export function WebhookScreen() {
                                     height={200}
                                   />
                                 ) : (
-                                  <div className="space-y-1.5">
-                                    <textarea
-                                      rows={4}
-                                      value={step.commandText}
-                                      onChange={(e) => handleUpdateStep(idx, { commandText: e.target.value })}
-                                      placeholder={t('webhook.commandPlaceholder')}
-                                      className="w-full rounded-lg border border-border bg-surface/90 p-2.5 text-ui-xs text-foreground font-mono leading-relaxed focus:outline-none focus:border-border-hover transition-colors"
-                                    />
-                                    {/* 变量快捷插入药丸 */}
-                                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-foreground-subtlest select-none">
-                                      <span className="text-foreground-subtle">{t('webhook.commonVariables', { defaultValue: '常用变量:' })}</span>
-                                      {isMultiStep && idx > 0 && (
-                                        <>
-                                          <button
-                                            type="button"
-                                            onClick={() =>
-                                              handleUpdateStep(idx, {
-                                                commandText: `${step.commandText}\${prev.stdout}`,
-                                              })
-                                            }
-                                            className="rounded bg-surface px-1.5 py-0.5 font-mono text-terminal-green border border-border/50 hover:border-border hover:bg-hover transition-colors"
-                                          >
-                                            ${'{prev.stdout}'}
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() =>
-                                              handleUpdateStep(idx, {
-                                                commandText: `${step.commandText}\${prev.data.tag}`,
-                                              })
-                                            }
-                                            className="rounded bg-surface px-1.5 py-0.5 font-mono text-terminal-yellow border border-border/50 hover:border-border hover:bg-hover transition-colors"
-                                          >
-                                            ${'{prev.data.tag}'}
-                                          </button>
-                                        </>
-                                      )}
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleUpdateStep(idx, {
-                                            commandText: `${step.commandText}\${path.service}`,
-                                          })
-                                        }
-                                        className="rounded bg-surface px-1.5 py-0.5 font-mono text-terminal-blue border border-border/50 hover:border-border hover:bg-hover transition-colors"
-                                      >
-                                        ${'{path.service}'}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleUpdateStep(idx, {
-                                            commandText: `${step.commandText}\${body.ref}`,
-                                          })
-                                        }
-                                        className="rounded bg-surface px-1.5 py-0.5 font-mono text-purple-400 border border-border/50 hover:border-border hover:bg-hover transition-colors"
-                                      >
-                                        ${'{body.ref}'}
-                                      </button>
-                                    </div>
-                                  </div>
+                                  <WebhookCommandEditor
+                                    value={step.commandText}
+                                    onChange={(val) => handleUpdateStep(idx, { commandText: val })}
+                                    actionType={step.actionType as 'local_command' | 'ssh_command'}
+                                    isMultiStep={isMultiStep}
+                                    stepIndex={idx}
+                                    height={200}
+                                  />
                                 )}
                               </div>
                             </div>

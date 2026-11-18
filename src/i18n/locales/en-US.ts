@@ -1791,5 +1791,12 @@ export default {
     stdout: 'Standard Output (stdout):',
     stderr: 'Standard Error (stderr):',
     exitCode: 'Exit Code',
+    switchLanguage: 'Switch Language (Bash / Batch)',
+    insertPrevStdout: 'Insert Previous stdout',
+    insertPrevData: 'Insert Previous Data Field',
+    insertPathParam: 'Insert Path Parameter',
+    insertBodyParam: 'Insert Request Body Field',
+    switchToBash: 'To Bash',
+    switchToBat: 'To Bat',
   },
 };
