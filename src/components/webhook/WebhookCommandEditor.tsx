@@ -7,7 +7,7 @@
  */
 
 import * as monaco from 'monaco-editor';
-import { Copy, Check, Terminal, Sparkles, ArrowLeftRight } from 'lucide-react';
+import { Copy, Check, Terminal, Sparkles } from 'lucide-react';
 import { memo, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { setupMonacoEnvironment } from '@/editor/monacoEnvironment';
@@ -45,11 +45,9 @@ export const WebhookCommandEditor = memo(function WebhookCommandEditor({
   const modelRef = useRef<monaco.editor.ITextModel | null>(null);
   const [copied, setCopied] = useState(false);
 
-  // 默认语言检测：如果是 Windows 本地命令，默认为 Batch；否则为 Bash / Shell
-  const defaultLanguage =
+  // 语法语言模式与运行环境强绑定：Windows 本地命令固定为 Batch (cmd/bat)；非 Windows 本地或 SSH 远端固定为 Bash (shell)
+  const language: 'shell' | 'batch' =
     actionType === 'local_command' && platformKind === 'windows' ? 'batch' : 'shell';
-
-  const [language, setLanguage] = useState<'shell' | 'batch'>(defaultLanguage);
 
   // 1. 初始化 Monaco 编辑器
   useEffect(() => {
@@ -106,7 +104,7 @@ export const WebhookCommandEditor = memo(function WebhookCommandEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 当语言模式改变时动态切换 Monaco 语言
+  // 当动作类型改变（如本地命令切换为 SSH 命令）导致绑定语言改变时，自动同步 Monaco 语言
   useEffect(() => {
     if (modelRef.current) {
       monaco.editor.setModelLanguage(modelRef.current, language);
@@ -142,10 +140,6 @@ export const WebhookCommandEditor = memo(function WebhookCommandEditor({
     editor.focus();
   };
 
-  const toggleLanguage = () => {
-    setLanguage((prev) => (prev === 'shell' ? 'batch' : 'shell'));
-  };
-
   return (
     <div
       className={cn(
@@ -160,15 +154,6 @@ export const WebhookCommandEditor = memo(function WebhookCommandEditor({
           <span className="font-mono font-medium text-foreground">
             {language === 'batch' ? 'Batch (CMD)' : 'Bash (Shell)'}
           </span>
-          <button
-            type="button"
-            onClick={toggleLanguage}
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-foreground-subtlest hover:bg-hover hover:text-foreground transition-colors"
-            title={t('webhook.switchLanguage', { defaultValue: '切换语法高亮 (Bash / Batch)' })}
-          >
-            <ArrowLeftRight className="size-2.5" />
-            <span>{language === 'batch' ? t('webhook.switchToBash', { defaultValue: '切至 Bash' }) : t('webhook.switchToBat', { defaultValue: '切至 Bat' })}</span>
-          </button>
 
           <span className="text-border">|</span>
 
