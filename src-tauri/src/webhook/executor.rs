@@ -1,12 +1,101 @@
 //! WebHook 动作执行引擎：本地 Shell 命令、SSH 远端主机命令与 V8/JS 脚本执行（支持多步骤链式流水线）。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::store::{WebhookActionStep, WebhookRule};
 use crate::db::DbPool;
+
+static RESOLVED_LOCAL_PATH: OnceLock<String> = OnceLock::new();
+
+/// 获取本地环境最完整且已去重合并的 PATH 变量（涵盖系统 PATH 与用户终端 Shell 环境变量）
+pub fn get_resolved_local_path() -> &'static str {
+    RESOLVED_LOCAL_PATH.get_or_init(resolve_full_local_path)
+}
+
+fn resolve_full_local_path() -> String {
+    #[cfg(unix)]
+    {
+        let sep = ':';
+        // 1. 尝试从用户登录 shell 获取（能够无遗漏地加载 ~/.zshrc, ~/.bash_profile 注入的 brew, nvm, cargo, bun 等路径）
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| {
+            #[cfg(target_os = "macos")]
+            {
+                "/bin/zsh".to_string()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                "/bin/bash".to_string()
+            }
+        });
+
+        if let Ok(out) = std::process::Command::new(&shell)
+            .arg("-l")
+            .arg("-c")
+            .arg("printf '%s' \"$PATH\"")
+            .output()
+        {
+            if out.status.success() {
+                let shell_path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !shell_path.is_empty() {
+                    return merge_and_dedup_paths(&shell_path, sep);
+                }
+            }
+        }
+
+        // 2. 兜底方案：当前进程系统 PATH 加上 macOS / Linux 常用现代开发工具路径
+        let current = std::env::var("PATH").unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_default();
+
+        let mut candidate_dirs: Vec<String> = Vec::new();
+        candidate_dirs.push("/opt/homebrew/bin".to_string());
+        candidate_dirs.push("/opt/homebrew/sbin".to_string());
+        candidate_dirs.push("/usr/local/bin".to_string());
+        candidate_dirs.push("/usr/local/sbin".to_string());
+        candidate_dirs.push("/usr/bin".to_string());
+        candidate_dirs.push("/bin".to_string());
+        candidate_dirs.push("/usr/sbin".to_string());
+        candidate_dirs.push("/sbin".to_string());
+
+        if !home.is_empty() {
+            candidate_dirs.push(format!("{home}/.cargo/bin"));
+            candidate_dirs.push(format!("{home}/.local/bin"));
+            candidate_dirs.push(format!("{home}/.bun/bin"));
+            candidate_dirs.push(format!("{home}/.orbstack/bin"));
+            candidate_dirs.push(format!("{home}/go/bin"));
+        }
+
+        let combined = if current.is_empty() {
+            candidate_dirs.join(":")
+        } else {
+            format!("{}:{}", current, candidate_dirs.join(":"))
+        };
+
+        merge_and_dedup_paths(&combined, sep)
+    }
+
+    #[cfg(windows)]
+    {
+        let current = std::env::var("PATH").unwrap_or_default();
+        merge_and_dedup_paths(&current, ';')
+    }
+}
+
+/// 路径按指定分隔符拆分、顺序去重并重新合并
+fn merge_and_dedup_paths(raw: &str, sep: char) -> String {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for part in raw.split(sep) {
+        let trimmed = part.trim();
+        if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
+            result.push(trimmed.to_string());
+        }
+    }
+    result.join(&sep.to_string())
+}
 
 /// 单次请求上下文（用于模板变量插值与 JS 脚本注入）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +237,17 @@ pub fn build_variable_map(
         if let Some(ref d) = p.data {
             flatten_json("prev.data", d, &mut map);
         }
+    }
+
+    // 注入本地完整 PATH 变量（供模板插值 ${env.PATH}、${path_env} 与子进程环境变量传递）
+    let local_path = get_resolved_local_path();
+    map.insert("env.PATH".to_string(), local_path.to_string());
+    map.insert("path_env".to_string(), local_path.to_string());
+    if let Ok(home) = std::env::var("HOME") {
+        map.insert("env.HOME".to_string(), home);
+    }
+    if let Ok(user) = std::env::var("USER") {
+        map.insert("env.USER".to_string(), user);
     }
 
     map
@@ -376,6 +476,7 @@ async fn exec_local_step(
 ) -> Result<ExecOutput, String> {
     let is_windows = cfg!(target_os = "windows");
     let (cmd_text, env_vars) = interpolate_template(&step.command_text, ctx, prev, is_windows);
+    let local_path = get_resolved_local_path();
 
     let mut cmd = if is_windows {
         let mut c = tokio::process::Command::new("cmd");
@@ -383,7 +484,10 @@ async fn exec_local_step(
         c
     } else {
         let mut c = tokio::process::Command::new("sh");
-        c.arg("-c").arg(&cmd_text);
+        // 执行命令前，显式导出本地完整 PATH，确保命令内调用的任何外部工具（node, brew, cargo, git, docker 等）均能精准命中
+        let escaped_path = local_path.replace('\'', "'\\''");
+        let command_with_path = format!("export PATH='{}'; {}", escaped_path, cmd_text);
+        c.arg("-c").arg(&command_with_path);
         c
     };
 
@@ -392,6 +496,9 @@ async fn exec_local_step(
             cmd.current_dir(cwd);
         }
     }
+
+    // 注入解析出的完整本地 PATH 到环境变量中
+    cmd.env("PATH", local_path);
 
     for (k, v) in env_vars {
         cmd.env(k, v);
@@ -645,6 +752,28 @@ mod tests {
         assert_eq!(env_vars.get("VELO_PREV_STDOUT").map(|s| s.as_str()), Some("v2.1.0-build.42"));
         assert_eq!(env_vars.get("VELO_PREV_DATA_TAG").map(|s| s.as_str()), Some("release-v2.1.0"));
         assert_eq!(env_vars.get("VELO_BODY_SERVICE").map(|s| s.as_str()), Some("order-center"));
+    }
+
+    #[test]
+    fn test_local_path_injection() {
+        let local_path = get_resolved_local_path();
+        assert!(!local_path.is_empty(), "本地 PATH 解析结果不应为空");
+
+        let ctx = WebhookContext {
+            method: "GET".to_string(),
+            path: "/test".to_string(),
+            client_ip: "127.0.0.1".to_string(),
+            path_params: HashMap::new(),
+            query_params: HashMap::new(),
+            headers: HashMap::new(),
+            body_json: None,
+            raw_body: String::new(),
+        };
+
+        let template = "echo ${path_env}";
+        let (interpolated, env_vars) = interpolate_template(template, &ctx, None, false);
+        assert_eq!(interpolated, format!("echo {}", local_path));
+        assert_eq!(env_vars.get("VELO_PATH_ENV").map(|s| s.as_str()), Some(local_path));
     }
 }
 
